@@ -1,0 +1,311 @@
+# ============================================================================
+# Konfiguracja bridge'a Satel Integra <-> Tuya <-> eBUS (Wolf)
+# Skopiuj ten plik jako config.yaml i uzupełnij własnymi danymi.
+# ============================================================================
+
+satel:
+  # Integration protocol (odczyt stanu wejść/wyjść, sterowanie wyjściami,
+  # (roz)uzbrajanie) - wymaga biblioteki `satel_integra` (port zwykle 7094)
+  host: "192.168.1.10"
+  port: 7094
+  integration_key: "TWOJ_KLUCZ_INTEGRACJI"   # ustawiony w DLOADX
+  partition: 1                                # numer strefy, zwykle 1
+
+  # "Wejścia IP" (wirtualne wejścia) ETHM-1 Plus - do WYSYŁANIA naruszeń
+  # (np. gdy Tuya wykryje ruch albo światło się zapala).
+  # Skonfigurowane w DLOADX -> zakładka "Wejścia IP".
+  # UWAGA: ETHM-1 Plus NIE zwraca standardowego kodu HTTP 200 dla tych
+  # zapytań - klient musi to tolerować (patrz satel_client.py).
+  virtual_inputs:
+    port: 8888              # port TCP/IP ustawiony w DLOADX dla wejść IP
+    # Dokładny format URL/parametrów (klucz, numer wejścia) skopiuj z
+    # DLOADX po skonfigurowaniu konkretnego wejścia IP - różni się
+    # zależnie od wersji firmware. Wzór poniżej to placeholder do
+    # podmiany na realny z Twojej konfiguracji DLOADX.
+    url_template: "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
+    inputs:
+      # nazwa logiczna -> (numer wejścia w systemie, klucz z DLOADX)
+      motion_hall_camera:      {number: 17, key: "KLUCZ_WE17"}
+      motion_tuya_pir_garage:  {number: 18, key: "KLUCZ_WE18"}
+      light_on_living_room:    {number: 19, key: "KLUCZ_WE19"}
+
+  # Wyjścia centrali sterowane programowo (np. przekaźnik, sygnalizacja)
+  outputs:
+    panic_output: 5
+
+  # Nazwane wejścia (czujki) i wyjścia do monitorowania statusu - widoczne
+  # w panelu webowym jako siatka statusów. Numery muszą pokrywać się z
+  # rzeczywistą konfiguracją stref/wyjść w Twojej centrali.
+  monitored_zones:
+    Salon: 12
+    Korytarz: 13
+    Garaż: 14
+    Wiatrołap: 15
+  monitored_outputs:
+    Syrena_zewn: 1
+    Oświetlenie_garaż: 5
+
+  # Nazwane strefy (partycje) do uzbrajania/rozbrajania z panelu -
+  # numery muszą pokrywać się z Twoją konfiguracją stref w centrali.
+  partitions:
+    Dom: 1
+    Garaż: 2
+
+tuya:
+  # Co ile sekund odpytywać lokalnie urządzenia Tuya o status (on/off,
+  # jasność) do panelu webowego. Krótszy interwał = szybciej widoczna
+  # zmiana w panelu, ale więcej ruchu sieciowego/obciążenia RPi.
+  status_poll_interval_seconds: 30
+
+  # Lokalne sterowanie (tinytuya) - gniazdka, włączniki, ściemniacze.
+  # local_key wyciągasz raz narzędziem: `python -m tinytuya wizard`
+  devices:
+    gniazdko_salon:
+      id: "bf1234567890abcdef"
+      ip: "192.168.1.50"
+      local_key: "xxxxxxxxxxxxxxxx"
+      version: 3.4
+      type: socket            # socket | dimmer | switch
+    swiatlo_korytarz:
+      id: "bf0987654321fedcba"
+      ip: "192.168.1.51"
+      local_key: "yyyyyyyyyyyyyyyy"
+      version: 3.4
+      type: dimmer
+      dimmer_dp: "3"           # data point ściemniacza (zwykle "2" lub "3")
+      dimmer_range: [10, 1000] # zakres wartości DP u producenta (sprawdź!)
+
+  # Detekcja ruchu z kamer Tuya - WYMAGA konta Tuya IoT Developer
+  # (developer.tuya.com), utworzonego projektu chmurowego, powiązania
+  # urządzeń z projektem i włączonej subskrypcji Message Service (Pulsar).
+  cloud:
+    access_id: "TWOJ_ACCESS_ID"
+    access_key: "TWOJ_ACCESS_KEY"
+    api_endpoint: "https://openapi.tuyaeu.com"   # region UE
+    mq_endpoint: "wss://mqe.tuyaeu.com:8285/"    # region UE
+    camera_device_ids:
+      - "bfabcdef1234567890"   # kamera 1
+      - "bf1122334455667788"   # kamera 2
+
+location:
+  # Potrzebne TYLKO jeśli jakaś reguła używa okna czasowego "sunset"/"sunrise"
+  # (patrz reguły_ruchu niżej). Współrzędne wystarczą przybliżone.
+  latitude: 52.23
+  longitude: 21.01
+
+scenes:
+  # Nazwane grupy akcji na wielu urządzeniach naraz - wywoływane przez
+  # reguły_ruchu (pole "scene"), reguły_kamera_alarm, eskalację, albo
+  # boiler_rules. Dostępne typy akcji: tuya_on, tuya_off,
+  # tuya_on_for_duration, satel_output, satel_virtual_input, satel_arm,
+  # satel_disarm, delay (sekundy).
+  - name: "wieczorne_powitanie"
+    actions:
+      - {type: tuya_on, device: swiatlo_korytarz, dimmer_level_percent: 30}
+      - {type: satel_virtual_input, virtual_input: light_on_living_room}
+
+  - name: "wykryto_intruza"
+    actions:
+      - {type: tuya_on, device: gniazdko_salon}
+      - {type: tuya_on, device: swiatlo_korytarz}
+      - {type: satel_output, output_number: 1, state: true}
+      - {type: delay, seconds: 2}
+      - {type: satel_virtual_input, virtual_input: motion_hall_camera}
+
+  - name: "ochrona_przed_mrozem"
+    actions:
+      - {type: tuya_on, device: grzalka_garaz}
+
+presence_simulation:
+  # Losowe włączanie/wyłączanie wybranych urządzeń w oknie czasowym -
+  # klasyczna symulacja obecności na czas wyjazdu. Włączasz/wyłączasz
+  # ręcznie (nie jest powiązana ze stanem uzbrojenia centrali - prostsze
+  # i bardziej przewidywalne).
+  enabled: false
+  devices: [swiatlo_korytarz, gniazdko_salon]
+  window:
+    start: "sunset"
+    end: "23:30"
+  min_interval_minutes: 15
+  max_interval_minutes: 60
+
+boiler_rules:
+  # Automatyka wyzwalana danymi z kotła - wywołuje SCENĘ (nie tylko alert
+  # jak alarm_rules). cooldown_seconds chroni przed wywoływaniem sceny co
+  # odczyt, gdy wartość oscyluje blisko progu.
+  - name: "Ochrona przed mrozem"
+    sensor: kociol_temp_zewnetrzna    # musi istnieć jako czujnik w sensors.yaml
+    condition: below                   # above | below
+    threshold: -5
+    scene: "ochrona_przed_mrozem"
+    cooldown_seconds: 1800             # nie częściej niż co 30 minut
+
+reguły_ruchu:
+  # Ruch wykryty (z Satela LUB z wirtualnych czujek Tuya) -> akcja na
+  # urządzeniu Tuya na określony czas.
+  - source: satel_zone            # satel_zone | tuya_pir
+    zone_number: 12                # numer wejścia w Satelu (jeśli source=satel_zone)
+    target_device: gniazdko_salon
+    duration_seconds: 300
+    dimmer_level_percent: null     # null = pełne włączenie (gniazdko/zwykłe światło)
+
+  - source: satel_zone
+    zone_number: 13
+    target_device: swiatlo_korytarz
+    duration_seconds: 120
+    dimmer_level_percent: 2        # ściemniacz -> 2%
+    time_window:                    # opcjonalnie - reguła aktywna tylko w tym oknie
+      start: "sunset-15"
+      end: "23:30"
+
+  - source: satel_zone
+    zone_number: 14                 # np. czujka w garażu, uzbrajana tylko "poza domem"
+    target_device: gniazdko_salon
+    duration_seconds: 60
+    escalation:
+      # 3 naruszenia w 120s -> zamiast zwykłej akcji, wywołaj mocniejszą scenę
+      threshold_count: 3
+      window_seconds: 120
+      escalated_scene: "wykryto_intruza"
+
+reguły_swiatlo_do_satela:
+  # Włączenie danego urządzenia Tuya -> naruszenie wirtualnego wejścia ETHM
+  - source_device: swiatlo_korytarz
+    virtual_input: light_on_living_room
+
+reguły_kamera_alarm:
+  # Ruch z kamery -> akcja w Satelu (uzbrojenie/wyjście/wirtualne wejście)
+  # LUB scena (pole "scene" - jeśli obecne, ZASTĘPUJE action/virtual_input)
+  - source: unifi_protect          # unifi_protect | tuya_cloud
+    camera_id: "UNIFI_CAMERA_ID"
+    action: virtual_input           # virtual_input | output | arm
+    virtual_input: motion_hall_camera
+    cooldown_seconds: 60             # opcjonalnie - min. odstęp między wywołaniami tej reguły
+    # time_window:                   # opcjonalnie - reguła aktywna tylko w tym oknie
+    #   start: "22:00"
+    #   end: "06:00"
+
+home_assistant:
+  # Integracja przez MQTT Discovery - HA sam tworzy encje, zero configu
+  # po stronie HA. Domyślnie WYŁĄCZONA.
+  enabled: false
+  mqtt_host: "127.0.0.1"
+  mqtt_port: 1883
+  discovery_prefix: "homeassistant"    # standardowy prefiks, dopasuj tylko jeśli zmieniłeś go w HA
+  state_topic_prefix: "home/bridge"    # własna przestrzeń tematów bridge'a (osobna od home/boiler)
+  device_name: "Satel-Tuya-eBUS Bridge"
+
+  # CELOWO nie ma tu żadnej opcji sterowania uzbrojeniem/rozbrojeniem przez
+  # MQTT - strefy trafiają do HA jako informacja (binary_sensor), nie jako
+  # sterowalna encja. Uzasadnienie i alternatywa (rest_command + nasz
+  # uwierzytelniony endpoint) - patrz README, sekcja "Home Assistant".
+
+unifi_protect:
+  host: "192.168.1.5"
+  username: "TWOJ_LOGIN"
+  password: "TWOJE_HASLO"
+  verify_ssl: false
+
+ebus:
+  # Lokalny broker MQTT, na który ebusd publikuje odczyty
+  mqtt_host: "127.0.0.1"
+  mqtt_port: 1883
+
+  # Lista czujników (co czytać z eBUS i dokąd wysyłać) NIE jest już tutaj -
+  # celowo wydzielona do osobnego pliku sensors.yaml (skopiuj z
+  # sensors.example.yaml), żeby dało się ją edytować z panelu webowego
+  # (zakładka "Ustawienia czujników") bez ryzyka nadpisania komentarzy
+  # w tym pliku. Ścieżka poniżej jest względna wobec katalogu config.yaml.
+  sensors_file: "sensors.yaml"
+
+dashboard:
+  # Wspólny plik SQLite dla bridge'a i panelu webowego (dashboard/app.py)
+  db_path: "bridge_history.db"
+
+  auth:
+    # Hasło administratora chroniące TYLKO akcje, które coś zmieniają:
+    # zapis konfiguracji czujników (/config) oraz uzbrajanie/rozbrajanie
+    # stref. Samo przeglądanie panelu (historia, statusy, dziennik
+    # zdarzeń) zostaje otwarte - to świadomy wybór.
+    #
+    # Wygeneruj hash hasła (nigdy nie wpisuj hasła jawnym tekstem):
+    #   python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('TWOJE_HASLO'))"
+    password_hash: ""   # puste = akcje zmieniające stan są ZABLOKOWANE, dopóki nie ustawisz hasła
+    max_failed_attempts: 5
+    lockout_seconds: 300
+
+  # UWAGA: Basic Auth przez zwykłe HTTP koduje hasło tylko w Base64, nie
+  # szyfruje go - wystarczające w zaufanej sieci domowej, ale jeśli
+  # wystawiasz panel poza LAN, postaw przed nim reverse proxy z HTTPS
+  # (Caddy/nginx) albo używaj VPN (WireGuard/Tailscale). Patrz README.
+
+alarm_rules:
+  # Alarmy progowe - widoczne jako czerwony baner w panelu + opcjonalne
+  # powiadomienie push (patrz sekcja `notifications` poniżej)
+  - name: "Zbyt wysoka temp. zasilania kotła"
+    sensor: kociol_temp_zasilania
+    condition: above          # above | below | stale
+    threshold: 85
+    hysteresis: 2              # o ile musi spaść, żeby alarm się zamknął
+
+  - name: "Zbyt niska temp. CWU"
+    sensor: kociol_temp_ck
+    condition: below
+    threshold: 35
+    hysteresis: 2
+
+  - name: "Brak danych z kotła (moduł eBUS/ebusd nie odpowiada)"
+    sensor: kociol_temp_zasilania
+    condition: stale
+    max_age_seconds: 600        # 10 minut bez nowego odczytu = alarm
+
+maintenance:
+  # Rotacja starych danych - baza SQLite rosłaby w nieskończoność na
+  # karcie SD bez czyszczenia. AKTYWNE alerty i OCZEKUJĄCE komendy nigdy
+  # nie są usuwane niezależnie od wieku - reprezentują bieżący stan.
+  purge_enabled: true
+  retention_days: 90          # jak długo trzymać historyczne odczyty/zdarzenia
+
+  # Backup - kopia bazy przez wbudowane API SQLite (bezpieczne nawet gdy
+  # bridge jednocześnie zapisuje). Domyślnie WYŁĄCZONY - włącz i ustaw
+  # backup_dir na punkt montowania sieciowego dysku/NAS, jeśli chcesz
+  # backup przetrwać awarię samej karty SD (backup na tej samej karcie SD
+  # co baza źródłowa NIE chroni przed awarią karty).
+  backup_enabled: false
+  backup_dir: "backups"
+  backup_keep_count: 7        # ile ostatnich backupów trzymać
+
+  # Czy bridge ma sam, automatycznie, robić powyższe raz na dobę (domyślnie
+  # tak). Ustaw na false, jeśli wolisz pełną kontrolę przez cron zamiast
+  # tego - patrz README, sekcja "Rotacja i backup bazy" oraz maintenance.py.
+  run_in_process: true
+  interval_hours: 24
+
+notifications:
+  # Opcjonalnie - powiadomienia push przez ntfy (https://ntfy.sh, można też
+  # self-hostować). Zostaw puste / usuń sekcję żeby wyłączyć powiadomienia.
+  ntfy_topic_url: "https://ntfy.sh/TWOJ_UNIKALNY_TOPIC"
+
+  # Ile sekund NIEPRZERWANEGO rozłączenia musi minąć, zanim wyślemy
+  # powiadomienie push o utracie połączenia (Satel, MQTT/eBUS, Tuya,
+  # kamery). Chroni przed spamem przy chwilowych zerwaniach WiFi -
+  # domyślnie 2 minuty. Powiadomienie o przywróceniu połączenia
+  # wysyłane jest natychmiast (nie czeka na żaden okres karencji).
+  grace_seconds: 120
+
+boiler_output:
+  # UWAGA: nie ma tu już globalnego przełącznika "mode" - o tym, co dokąd
+  # trafia, decyduje teraz `targets` PRZY KAŻDYM CZUJNIKU w sekcji `ebus.sensors`
+  # powyżej. Sekcje poniżej to tylko dane połączenia (adres MQTT, ID
+  # wirtualnego urządzenia Tuya) - używane automatycznie, jeśli
+  # PRZYNAJMNIEJ JEDEN czujnik ma dany target ustawiony na `true`.
+  mqtt:
+    host: "127.0.0.1"
+    port: 1883
+    topic_prefix: "home/boiler"
+  tuya_virtual_device:
+    # Wymaga wcześniejszego ręcznego utworzenia "Virtual Device" w Tuya
+    # IoT Platform i podpięcia go pod projekt (patrz README - sekcja
+    # o ograniczeniach tego podejścia). Kod DP dla każdego czujnika
+    # ustawiasz PRZY TYM CZUJNIKU (targets.tuya_dp), nie tutaj.
+    device_id: "TU_WSTAW_ID_WIRTUALNEGO_URZADZENIA"

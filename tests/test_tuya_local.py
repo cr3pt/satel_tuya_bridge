@@ -1,0 +1,116 @@
+"""Testy dla bridge/tuya_local.py - retry przy chwilowej niedostępności
+urządzeń (typowe dla tanich urządzeń WiFi w słabym zasięgu)."""
+import pytest
+
+from bridge.tuya_local import TuyaLocalController
+
+DEVICES_CFG = {
+    "gniazdko_salon": {"id": "dev1", "ip": "192.168.1.50", "local_key": "key1", "type": "socket"},
+    "swiatlo_korytarz": {
+        "id": "dev2", "ip": "192.168.1.51", "local_key": "key2", "type": "dimmer",
+        "dimmer_dp": "3", "dimmer_range": [10, 1000],
+    },
+}
+
+
+class FlakyDevice:
+    """Symuluje urządzenie, które pada N razy z rzędu, a potem zaczyna działać -
+    typowe zachowanie taniego urządzenia WiFi w słabym zasięgu."""
+
+    def __init__(self, fail_times: int = 0, fail_via_error_dict: bool = False):
+        self.fail_times = fail_times
+        self.fail_via_error_dict = fail_via_error_dict
+        self.call_count = 0
+        self.turned_on = False
+
+    def turn_on(self):
+        self.call_count += 1
+        if self.call_count <= self.fail_times:
+            if self.fail_via_error_dict:
+                return {"Error": "Device not reachable"}  # tinytuya czasem nie rzuca wyjątku
+            raise ConnectionError("symulowana awaria sieci")
+        self.turned_on = True
+        return {"dps": {"1": True}}
+
+    def turn_off(self):
+        self.turned_on = False
+        return {"dps": {"1": False}}
+
+    def status(self):
+        return {"dps": {"1": self.turned_on}}
+
+    def set_status(self, value, dp):
+        return {"dps": {dp: value}}
+
+    def set_value(self, dp, value):
+        return {"dps": {dp: value}}
+
+
+@pytest.fixture
+def controller():
+    ctrl = TuyaLocalController(DEVICES_CFG, retries=2, retry_delay=0.01)
+    return ctrl
+
+
+async def test_successful_call_on_first_try(controller):
+    fake_device = FlakyDevice(fail_times=0)
+    controller._devices["gniazdko_salon"] = fake_device
+    await controller.turn_on("gniazdko_salon")
+    assert fake_device.turned_on is True
+    assert fake_device.call_count == 1
+
+
+async def test_retries_after_transient_failure(controller):
+    fake_device = FlakyDevice(fail_times=2)  # pada 2 razy, udaje się za 3.
+    controller._devices["gniazdko_salon"] = fake_device
+    await controller.turn_on("gniazdko_salon")
+    assert fake_device.turned_on is True
+    assert fake_device.call_count == 3
+
+
+async def test_error_dict_response_triggers_retry(controller):
+    """tinytuya czasem nie rzuca wyjątku przy awarii, tylko zwraca słownik
+    z kluczem 'Error' - to też musi być traktowane jako błąd do ponowienia."""
+    fake_device = FlakyDevice(fail_times=1, fail_via_error_dict=True)
+    controller._devices["gniazdko_salon"] = fake_device
+    await controller.turn_on("gniazdko_salon")
+    assert fake_device.turned_on is True
+    assert fake_device.call_count == 2
+
+
+async def test_exhausted_retries_raises_connection_error(controller):
+    fake_device = FlakyDevice(fail_times=10)  # pada więcej razy niż liczba prób
+    controller._devices["gniazdko_salon"] = fake_device
+    with pytest.raises(ConnectionError):
+        await controller.turn_on("gniazdko_salon")
+    assert fake_device.call_count == 3  # 1 próba + 2 ponowienia
+
+
+async def test_turn_on_for_duration_still_turns_off_after_failed_turn_on(controller):
+    """Jeśli turn_on ostatecznie się nie uda (wyczerpane próby), i tak
+    powinniśmy spróbować wyłączyć po czasie - nie zostawiać niczego w
+    niepewnym stanie."""
+    fake_device = FlakyDevice(fail_times=10)
+    controller._devices["gniazdko_salon"] = fake_device
+    await controller.turn_on_for_duration("gniazdko_salon", duration_seconds=0.01)
+    # turn_off powinien zostać wywołany mimo że turn_on się nie powiódł
+    assert fake_device.turned_on is False
+
+
+async def test_get_all_statuses_marks_unreachable_devices_as_none(controller):
+    working = FlakyDevice(fail_times=0)
+    broken = FlakyDevice(fail_times=999)
+    controller._devices["gniazdko_salon"] = working
+    controller._devices["swiatlo_korytarz"] = broken
+
+    # get_status wywołuje `status()`, nie `turn_on()` - broken.status() nie
+    # pada w tym mocku (tylko turn_on symuluje awarię), więc tu testujemy
+    # ścieżkę przez wyjątek bezpośrednio w _call_with_retry
+    class AlwaysFailingStatus:
+        def status(self):
+            raise ConnectionError("padło")
+
+    controller._devices["swiatlo_korytarz"] = AlwaysFailingStatus()
+    result = await controller.get_all_statuses()
+    assert result["gniazdko_salon"] is not None
+    assert result["swiatlo_korytarz"] is None

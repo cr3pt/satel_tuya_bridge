@@ -1,0 +1,26 @@
+# Prawdziwa konfiguracja - zawiera poświadczenia, NIGDY nie commituj
+config.yaml
+sensors.yaml
+
+# Baza danych historii
+*.db
+*.db-journal
+
+# Lokalne backupy bazy (jeśli backup_dir wskazuje na katalog w repo)
+backups/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+venv/
+.venv/
+
+# Edytory
+.vscode/
+.idea/
+*.swp

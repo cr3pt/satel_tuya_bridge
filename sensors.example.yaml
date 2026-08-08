@@ -1,0 +1,51 @@
+# ============================================================================
+# Lista czujników eBUS (kocioł Wolf) - CO czytać i DOKĄD wysyłać.
+#
+# Ten plik jest edytowalny z panelu webowego (zakładka "Ustawienia
+# czujników", /config) - edytor nadpisuje CAŁY ten plik przy zapisie,
+# dlatego nie ma tu (celowo) obszernych komentarzy przy każdym wpisie jak
+# w config.yaml. Zmiany wymagają restartu głównego procesu bridge'a
+# (config wczytywany jest raz przy starcie), panel przypomina o tym po
+# zapisie.
+#
+# Skopiuj jako sensors.yaml i uzupełnij, albo edytuj przez panel webowy.
+#
+# Jak znaleźć dostępne pola: `ebusctl find -d` na RPi (patrz README).
+# ============================================================================
+
+sensors:
+  - name: kociol_temp_zasilania
+    label: "Temperatura zasilania"
+    mqtt_topic: "ebusd/bai/FlowTemp"
+    targets:
+      history: true
+      mqtt_publish: true
+      tuya_virtual_device: true
+      tuya_dp: "101"
+
+  - name: kociol_temp_ck
+    label: "Temperatura CWU"
+    mqtt_topic: "ebusd/bai/StorageTemp"
+    targets:
+      history: true
+      mqtt_publish: true
+      tuya_virtual_device: false
+      tuya_dp: ""
+
+  - name: kociol_status_palnika
+    label: "Status palnika"
+    mqtt_topic: "ebusd/bai/BurnerState"
+    targets:
+      history: true
+      mqtt_publish: false
+      tuya_virtual_device: false
+      tuya_dp: ""
+
+  - name: kociol_temp_zewnetrzna
+    label: "Temperatura zewnętrzna"
+    mqtt_topic: "ebusd/bai/OutdoorstempSensor"
+    targets:
+      history: true
+      mqtt_publish: true
+      tuya_virtual_device: false
+      tuya_dp: ""
