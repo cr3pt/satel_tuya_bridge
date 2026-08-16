@@ -91,6 +91,15 @@ class BridgeConfig:
                 data["satel"][key] = satel_fields[key]
             else:
                 data["satel"].setdefault(key, {})
+        # Rodzaje wejść/wyjść (nazwa -> np. "drzwi"/"ruch"/"syrena") - CZYSTO
+        # kosmetyczne, do ikon/etykiet w panelu (patrz dashboard/templates/
+        # index.html i statusCardClass()). Osobne mapy (nie pole wewnątrz
+        # monitored_zones/monitored_outputs), żeby NIE zmieniać kształtu
+        # "nazwa -> numer" (int), na którym polega satel_client.py
+        # (AsyncSatel(monitored_zones=list(...values()))) i rules_engine.py
+        # (odwrotne mapowanie numer -> nazwa).
+        for key in ("zone_types", "output_types"):
+            data["satel"][key] = satel_fields.get(key, {})
         data["satel"].setdefault("virtual_inputs", {})
         if "virtual_inputs" in satel_fields:
             data["satel"]["virtual_inputs"]["inputs"] = satel_fields["virtual_inputs"]

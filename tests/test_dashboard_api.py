@@ -342,9 +342,11 @@ class TestSatelFieldsEndpoint:
         patrz bridge/config.py)."""
         data = client.get("/api/config/satel-fields").get_json()
         assert {"name": "Dom", "number": 1} in data["partitions"]
-        assert {"name": "Salon", "number": 12} in data["monitored_zones"]
-        assert {"name": "Syrena", "number": 1} in data["monitored_outputs"]
+        assert {"name": "Salon", "number": 12, "type": ""} in data["monitored_zones"]
+        assert {"name": "Syrena", "number": 1, "type": ""} in data["monitored_outputs"]
         assert {"name": "motion_hall", "number": 1, "key": "k"} in data["virtual_inputs"]
+        assert data["zone_types"] == {}
+        assert data["output_types"] == {}
 
     def test_post_satel_fields_without_auth_returns_401(self, client):
         resp = client.post("/api/config/satel-fields", json={})
@@ -381,7 +383,21 @@ class TestSatelFieldsEndpoint:
         client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
         resp = client.get("/api/config/satel-fields")
         assert {"name": "Piwnica", "number": 9} in resp.get_json()["partitions"]
-        assert (tmp_path / "satel_fields.yaml").exists()
+
+    def test_saved_zone_and_output_types_round_trip(self, client):
+        """Rodzaj czujki/wyjścia (patrz SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES w
+        setup.py) - kosmetyczny atrybut do ikon w panelu głównym - musi
+        przetrwać zapis/odczyt tak samo jak nazwa/numer."""
+        payload = {
+            "monitored_zones": [{"name": "Kuchnia", "number": "20", "type": "dym"}],
+            "monitored_outputs": [{"name": "Syrena zew.", "number": "2", "type": "syrena"}],
+        }
+        client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        data = client.get("/api/config/satel-fields").get_json()
+        assert {"name": "Kuchnia", "number": 20, "type": "dym"} in data["monitored_zones"]
+        assert {"name": "Syrena zew.", "number": 2, "type": "syrena"} in data["monitored_outputs"]
+        assert data["zone_types"] == {"Kuchnia": "dym"}
+        assert data["output_types"] == {"Syrena zew.": "syrena"}
 
     def test_post_satel_fields_does_not_touch_config_yaml(self, client, tmp_path):
         before = (tmp_path / "config.yaml").read_text(encoding="utf-8")

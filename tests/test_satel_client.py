@@ -1,6 +1,7 @@
 """Testy dla bridge/satel_client.py - głównie test_connection() (podpowiedź
 "Testuj połączenie" w kreatorze/panelu), bez prawdziwej centrali Satel."""
 import asyncio
+import contextlib
 
 import pytest
 
@@ -209,3 +210,210 @@ class TestDiscoverActiveZonesAndOutputs:
         result = await discover_active_zones_and_outputs("127.0.0.1", 7094, timeout_seconds=0.2)
         assert result["zones"] == [1, 3, 5]
         assert result["outputs"] == [2, 9]
+
+
+class FakeAsyncSatelKeepAlive:
+    """Symuluje AsyncSatel dla run_forever() - rejestruje, czy keep_alive()
+    zostało uruchomione OBOK monitor_status() (regresja dla zgłoszonego z
+    prawdziwej centrali błędu 'Got exception: 0 bytes read... Most likely
+    the other side has disconnected!' - ETHM-1 Plus rozłącza integrację po
+    ok. 25s bezczynności, jeśli nic nie wysyła keep_alive())."""
+
+    def __init__(self, host, port, loop):
+        self._writer = None
+        self.keep_alive_called = False
+        self.keep_alive_cancelled = False
+        self.monitor_status_called = False
+        self.received_alarm_status_callback = None
+        self.received_zone_changed_callback = None
+        self.received_output_changed_callback = None
+
+    async def connect(self):
+        return True
+
+    async def keep_alive(self):
+        self.keep_alive_called = True
+        try:
+            await asyncio.sleep(999)
+        except asyncio.CancelledError:
+            self.keep_alive_cancelled = True
+            raise
+
+    async def monitor_status(self, alarm_status_callback=None, zone_changed_callback=None,
+                              output_changed_callback=None):
+        self.monitor_status_called = True
+        self.received_alarm_status_callback = alarm_status_callback
+        self.received_zone_changed_callback = zone_changed_callback
+        self.received_output_changed_callback = output_changed_callback
+        await asyncio.sleep(0.05)  # symuluje krótkotrwałe połączenie, potem "rozłączenie" (normalny powrót)
+
+
+class TestRunForeverKeepAlive:
+    async def test_keep_alive_started_alongside_monitor_status(self, monkeypatch):
+        import satel_integra.satel_integra as satel_module
+
+        fakes = []
+
+        def fake_ctor(host, port, loop, monitored_zones=None, monitored_outputs=None):
+            fake = FakeAsyncSatelKeepAlive(host, port, loop)
+            fakes.append(fake)
+            return fake
+
+        monkeypatch.setattr(satel_module, "AsyncSatel", fake_ctor)
+
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+        task = asyncio.create_task(client.run_forever())
+        await asyncio.sleep(0.15)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert fakes, "AsyncSatel nigdy nie zostało utworzone"
+        assert fakes[0].monitor_status_called is True
+        assert fakes[0].keep_alive_called is True
+
+    async def test_keep_alive_cancelled_when_monitor_status_returns(self, monkeypatch):
+        import satel_integra.satel_integra as satel_module
+
+        fakes = []
+
+        def fake_ctor(host, port, loop, monitored_zones=None, monitored_outputs=None):
+            fake = FakeAsyncSatelKeepAlive(host, port, loop)
+            fakes.append(fake)
+            return fake
+
+        monkeypatch.setattr(satel_module, "AsyncSatel", fake_ctor)
+
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+        task = asyncio.create_task(client.run_forever())
+        # monitor_status() w fejku kończy się po 0.05s (normalny powrót =
+        # utrata połączenia) - dajemy margines, żeby finally: zdążyło
+        # anulować keep_alive_task PRZED długim opóźnieniem ponawiania
+        # (Supervisor.base_delay domyślnie 5s).
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert fakes[0].keep_alive_cancelled is True
+
+    async def test_registered_callbacks_are_passed_into_monitor_status(self, monkeypatch):
+        """Regresja: monitor_status() w bibliotece PRZYPISUJE
+        self._zone_changed_callback/self._output_changed_callback/
+        self._alarm_status_callback z WŁASNYCH argumentów (domyślnie None) na
+        starcie - wywołanie go bez argumentów nadpisywało wartością None to,
+        co connect() dopiero co ustawił przez register_*_callback(), więc
+        żaden callback nigdy się nie wywoływał (stąd zgłoszony brak stanów
+        Satela na MQTT/w panelu poza wartościami zaszytymi na starcie)."""
+        import satel_integra.satel_integra as satel_module
+
+        fakes = []
+
+        def fake_ctor(host, port, loop, monitored_zones=None, monitored_outputs=None):
+            fake = FakeAsyncSatelKeepAlive(host, port, loop)
+            fakes.append(fake)
+            return fake
+
+        monkeypatch.setattr(satel_module, "AsyncSatel", fake_ctor)
+
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+
+        async def zone_cb(zones):
+            pass
+
+        async def output_cb(outputs):
+            pass
+
+        async def alarm_cb(states):
+            pass
+
+        client.register_zone_callback(zone_cb)
+        client.register_output_callback(output_cb)
+        client.register_alarm_status_callback(alarm_cb)
+
+        task = asyncio.create_task(client.run_forever())
+        await asyncio.sleep(0.15)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert fakes, "AsyncSatel nigdy nie zostało utworzone"
+        assert fakes[0].received_zone_changed_callback is zone_cb
+        assert fakes[0].received_output_changed_callback is output_cb
+        assert fakes[0].received_alarm_status_callback is alarm_cb
+
+
+class FakeAsyncSatelInitialStatus(FakeAsyncSatelKeepAlive):
+    """Jak FakeAsyncSatelKeepAlive, ale dodatkowo przechwytuje surowe dane
+    wysłane przez _send_data() - do testu dopytywania o początkowy stan
+    wejść/wyjść zaraz po (re)połączeniu (patrz _request_initial_status())."""
+
+    def __init__(self, host, port, loop):
+        super().__init__(host, port, loop)
+        self.closed = False
+        self.sent_queries: list[bytes] = []
+
+    async def _send_data(self, data):
+        self.sent_queries.append(bytes(data))
+
+
+class TestRequestInitialStatus:
+    async def test_queries_zones_and_outputs_after_connect(self, monkeypatch):
+        """Regresja/funkcja: biblioteka satel_integra wywołuje
+        zone_changed_callback/output_changed_callback TYLKO przy faktycznej
+        zmianie stanu - na spokojnym systemie panel/MQTT nigdy nie
+        dostałyby żadnego stanu wejść/wyjść aż do pierwszej zmiany.
+        SatelIntegraClient.connect() dopytuje więc aktywnie o bieżący stan
+        (funkcje protokołu 0x00/0x17) z opóźnieniem, żeby nie kolidować z
+        odczytem potwierdzenia start_monitoring()."""
+        import satel_integra.satel_integra as satel_module
+        from satel_integra.satel_integra import generate_query
+
+        fakes = []
+
+        def fake_ctor(host, port, loop, monitored_zones=None, monitored_outputs=None):
+            fake = FakeAsyncSatelInitialStatus(host, port, loop)
+            fakes.append(fake)
+            return fake
+
+        monkeypatch.setattr(satel_module, "AsyncSatel", fake_ctor)
+
+        client = SatelIntegraClient(
+            "127.0.0.1", 7094, "key",
+            monitored_zones={"Hol": 12}, monitored_outputs={"Brama": 3},
+        )
+        client._initial_status_delay_seconds = 0.01
+
+        task = asyncio.create_task(client.run_forever())
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert fakes, "AsyncSatel nigdy nie zostało utworzone"
+        assert bytes(generate_query(b'\x00')) in fakes[0].sent_queries
+        assert bytes(generate_query(b'\x17')) in fakes[0].sent_queries
+
+    async def test_skips_queries_when_nothing_monitored(self, monkeypatch):
+        import satel_integra.satel_integra as satel_module
+
+        fakes = []
+
+        def fake_ctor(host, port, loop, monitored_zones=None, monitored_outputs=None):
+            fake = FakeAsyncSatelInitialStatus(host, port, loop)
+            fakes.append(fake)
+            return fake
+
+        monkeypatch.setattr(satel_module, "AsyncSatel", fake_ctor)
+
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+        client._initial_status_delay_seconds = 0.01
+
+        task = asyncio.create_task(client.run_forever())
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert fakes, "AsyncSatel nigdy nie zostało utworzone"
+        assert fakes[0].sent_queries == []

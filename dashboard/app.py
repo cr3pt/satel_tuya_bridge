@@ -100,6 +100,13 @@ def _dict_to_name_number_rows(d: dict) -> list[dict]:
     return [{"name": name, "number": number} for name, number in d.items()]
 
 
+def _zones_to_rows(numbers: dict, types: dict) -> list[dict]:
+    """Jak _dict_to_name_number_rows, ale dokłada opcjonalny "type" (rodzaj
+    czujki/wyjścia - patrz SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES w setup.py) do
+    edycji w /config i wyświetlania ikon w panelu głównym."""
+    return [{"name": name, "number": number, "type": types.get(name, "")} for name, number in numbers.items()]
+
+
 def _virtual_inputs_to_rows(inputs: dict) -> list[dict]:
     return [{"name": name, "number": v.get("number"), "key": v.get("key")} for name, v in inputs.items()]
 
@@ -517,9 +524,14 @@ def api_config_satel_fields_get():
     satel = config_raw.get("satel", {})
     return jsonify({
         "partitions": _dict_to_name_number_rows(satel.get("partitions", {})),
-        "monitored_zones": _dict_to_name_number_rows(satel.get("monitored_zones", {})),
-        "monitored_outputs": _dict_to_name_number_rows(satel.get("monitored_outputs", {})),
+        "monitored_zones": _zones_to_rows(satel.get("monitored_zones", {}), satel.get("zone_types", {})),
+        "monitored_outputs": _zones_to_rows(satel.get("monitored_outputs", {}), satel.get("output_types", {})),
         "virtual_inputs": _virtual_inputs_to_rows(satel.get("virtual_inputs", {}).get("inputs", {})),
+        # Mapy nazwa -> rodzaj, osobno (obok wierszy wyżej) - wygodne dla
+        # panelu głównego (index.html), który dopasowuje typ do statusu po
+        # etykiecie (status.label), bez potrzeby osobnego zapytania.
+        "zone_types": satel.get("zone_types", {}),
+        "output_types": satel.get("output_types", {}),
     })
 
 

@@ -153,6 +153,10 @@ virtual_inputs:
   motion_hall_camera:
     number: 17
     key: KLUCZ17
+zone_types:
+  Salon: ruch
+output_types:
+  Syrena: syrena
 """
 
 TUYA_DEVICES_YAML = """
@@ -181,6 +185,8 @@ class TestSatelFieldsAndTuyaDevicesFiles:
         assert config.raw["satel"]["virtual_inputs"]["inputs"] == {
             "motion_hall_camera": {"number": 17, "key": "KLUCZ17"},
         }
+        assert config.raw["satel"]["zone_types"] == {"Salon": "ruch"}
+        assert config.raw["satel"]["output_types"] == {"Syrena": "syrena"}
         assert config.satel_fields_file == config_dir / "satel_fields.yaml"
 
     def test_tuya_devices_file_overrides_inline_values(self, config_dir):
@@ -195,6 +201,8 @@ class TestSatelFieldsAndTuyaDevicesFiles:
         assert config.raw["satel"]["monitored_outputs"] == {}
         assert config.raw["satel"]["partitions"] == {}
         assert config.raw["satel"]["virtual_inputs"]["inputs"] == {}
+        assert config.raw["satel"]["zone_types"] == {}
+        assert config.raw["satel"]["output_types"] == {}
         assert config.raw["tuya"]["devices"] == {}
 
     def test_inline_values_used_when_satel_fields_file_missing(self, tmp_path):

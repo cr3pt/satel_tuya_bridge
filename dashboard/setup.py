@@ -302,6 +302,34 @@ def _build_monitored_outputs(form: dict) -> dict:
     return {o["name"]: int(o["number"]) for o in form.get("monitored_outputs", []) if o.get("name") and o.get("number")}
 
 
+# Rodzaje wejść (czujek) i wyjść Satela - CZYSTO opisowe (ikona/etykieta w
+# panelu, patrz index.html), nie wpływają na logikę bridge'a. "inne"/brak
+# wyboru = zachowanie jak dotychczas (generyczna czujka/wyjście).
+SATEL_ZONE_TYPES = {
+    "drzwi": "Drzwi", "okno": "Okno", "ruch": "Czujka ruchu (PIR)",
+    "dym": "Czujka dymu", "zalanie": "Czujka zalania", "wibracja": "Czujka wibracji/stłuczenia",
+    "sabotaz": "Sabotaż/24h", "inne": "Inne",
+}
+SATEL_OUTPUT_TYPES = {
+    "syrena": "Syrena", "przekaznik": "Przekaźnik/gniazdko", "oswietlenie": "Oświetlenie",
+    "brama": "Brama/rolety", "ogrzewanie": "Ogrzewanie", "inne": "Inne",
+}
+
+
+def _build_zone_types(form: dict) -> dict:
+    return {
+        z["name"]: z["type"] for z in form.get("monitored_zones", [])
+        if z.get("name") and z.get("number") and z.get("type") in SATEL_ZONE_TYPES
+    }
+
+
+def _build_output_types(form: dict) -> dict:
+    return {
+        o["name"]: o["type"] for o in form.get("monitored_outputs", [])
+        if o.get("name") and o.get("number") and o.get("type") in SATEL_OUTPUT_TYPES
+    }
+
+
 def _build_virtual_inputs(form: dict) -> dict:
     return {
         vi["name"]: {"number": int(vi["number"]), "key": vi["key"]}
@@ -511,6 +539,8 @@ def build_satel_fields_dict(form: dict) -> dict:
         "monitored_outputs": _build_monitored_outputs(form),
         "partitions": _build_partitions(form),
         "virtual_inputs": _build_virtual_inputs(form),
+        "zone_types": _build_zone_types(form),
+        "output_types": _build_output_types(form),
     }
 
 

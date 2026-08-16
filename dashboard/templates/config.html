@@ -680,12 +680,57 @@ function addNameNumberRow(containerId, initial) {
   container.appendChild(row);
 }
 document.getElementById('addPartitionBtn').addEventListener('click', () => addNameNumberRow('partitionsRows'));
-document.getElementById('addZoneBtn').addEventListener('click', () => addNameNumberRow('zonesRows'));
-document.getElementById('addOutputBtn').addEventListener('click', () => addNameNumberRow('outputsRows'));
 
 function collectNameNumberRows(containerId) {
   return Array.from(document.querySelectorAll(`#${containerId} .repeatable-row`))
     .map(row => ({ name: row.querySelector('.row-name').value.trim(), number: row.querySelector('.row-number').value }))
+    .filter(r => r.name && r.number);
+}
+
+// Rodzaje wejść (czujek)/wyjść - czysto opisowe (ikona/etykieta w panelu
+// głównym), patrz SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES w dashboard/setup.py
+// (te same klucze - musi się zgadzać, inaczej zapis po cichu pominie typ).
+const SATEL_ZONE_TYPES = {
+  drzwi: 'Drzwi', okno: 'Okno', ruch: 'Czujka ruchu (PIR)', dym: 'Czujka dymu',
+  zalanie: 'Czujka zalania', wibracja: 'Czujka wibracji/stłuczenia', sabotaz: 'Sabotaż/24h', inne: 'Inne',
+};
+const SATEL_OUTPUT_TYPES = {
+  syrena: 'Syrena', przekaznik: 'Przekaźnik/gniazdko', oswietlenie: 'Oświetlenie',
+  brama: 'Brama/rolety', ogrzewanie: 'Ogrzewanie', inne: 'Inne',
+};
+
+function typeOptionsHtml(types) {
+  return '<option value="">(rodzaj - opcjonalnie)</option>'
+    + Object.entries(types).map(([slug, label]) => `<option value="${slug}">${label}</option>`).join('');
+}
+
+function addZoneOrOutputRow(containerId, initial, types) {
+  const container = document.getElementById(containerId);
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. Salon)" class="row-name">
+    <input type="number" placeholder="numer" class="row-number" style="max-width: 90px;">
+    <select class="row-type" style="max-width: 180px;">${typeOptionsHtml(types)}</select>
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.row-name').value = initial.name ?? '';
+    row.querySelector('.row-number').value = initial.number ?? '';
+    row.querySelector('.row-type').value = initial.type ?? '';
+  }
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+document.getElementById('addZoneBtn').addEventListener('click', () => addZoneOrOutputRow('zonesRows', null, SATEL_ZONE_TYPES));
+document.getElementById('addOutputBtn').addEventListener('click', () => addZoneOrOutputRow('outputsRows', null, SATEL_OUTPUT_TYPES));
+
+function collectZoneOrOutputRows(containerId) {
+  return Array.from(document.querySelectorAll(`#${containerId} .repeatable-row`))
+    .map(row => ({
+      name: row.querySelector('.row-name').value.trim(),
+      number: row.querySelector('.row-number').value,
+      type: row.querySelector('.row-type').value,
+    }))
     .filter(r => r.name && r.number);
 }
 
@@ -719,16 +764,16 @@ function collectVirtualInputs() {
 async function loadSatelFields() {
   const data = await (await fetch('/api/config/satel-fields')).json();
   (data.partitions || []).forEach(p => addNameNumberRow('partitionsRows', p));
-  (data.monitored_zones || []).forEach(z => addNameNumberRow('zonesRows', z));
-  (data.monitored_outputs || []).forEach(o => addNameNumberRow('outputsRows', o));
+  (data.monitored_zones || []).forEach(z => addZoneOrOutputRow('zonesRows', z, SATEL_ZONE_TYPES));
+  (data.monitored_outputs || []).forEach(o => addZoneOrOutputRow('outputsRows', o, SATEL_OUTPUT_TYPES));
   (data.virtual_inputs || []).forEach(v => addVirtualInputRow(v));
 }
 
 document.getElementById('saveSatelBtn').addEventListener('click', async () => {
   const payload = {
     partitions: collectNameNumberRows('partitionsRows'),
-    monitored_zones: collectNameNumberRows('zonesRows'),
-    monitored_outputs: collectNameNumberRows('outputsRows'),
+    monitored_zones: collectZoneOrOutputRows('zonesRows'),
+    monitored_outputs: collectZoneOrOutputRows('outputsRows'),
     virtual_inputs: collectVirtualInputs(),
   };
   try {

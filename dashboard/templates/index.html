@@ -70,6 +70,11 @@
   .status-card.on .value, .status-card.violated .value { color: var(--danger); }
   .status-card.off .value, .status-card.ok .value { color: var(--ok); }
   .status-card .ts { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .type-tag {
+    display: inline-block; font-size: 10px; font-weight: 400; color: var(--muted);
+    background: #1d2026; border: 1px solid var(--border); border-radius: 8px;
+    padding: 1px 6px; margin-left: 4px; vertical-align: middle;
+  }
   .partition-controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
   .partition-item {
     display: flex; align-items: center; gap: 8px; background: #262a32;
@@ -190,11 +195,15 @@
 </div>
 
 <div class="card">
-  <h2>Dziennik zdarzeń</h2>
-  <table id="eventsTable">
-    <thead><tr><th>Czas</th><th>Typ</th><th>Źródło</th><th>Szczegóły</th></tr></thead>
-    <tbody></tbody>
-  </table>
+  <h2>Dziennik zdarzeń
+    <button type="button" class="secondary" id="toggleEventsBtn" style="margin-left: 10px; font-size: 12px;">📋 DZIENNIK ZDARZEŃ</button>
+  </h2>
+  <div id="eventsSection" style="display: none;">
+    <table id="eventsTable">
+      <thead><tr><th>Czas</th><th>Typ</th><th>Źródło</th><th>Szczegóły</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
 </div>
 
 <div class="card">
@@ -446,6 +455,30 @@ async function loadAlertsHistory() {
     </tr>`).join('');
 }
 
+// Rodzaje czujek/wyjść Satela - ikony/etykiety CZYSTO kosmetyczne (patrz
+// SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES w dashboard/setup.py i config.html,
+// gdzie się je przypisuje nazwie wejścia/wyjścia). Zielone OK/czerwone
+// naruszone zostaje jak dotychczas (statusCardClass) - typ dokłada tylko
+// ikonę i etykietę rodzaju, żeby dało się od razu odróżnić np. czujkę dymu
+// od czujki ruchu na liście wejść.
+const SATEL_ZONE_TYPE_ICONS = { drzwi: '🚪', okno: '🪟', ruch: '🚶', dym: '🔥', zalanie: '💧', wibracja: '📳', sabotaz: '🚨', inne: '❔' };
+const SATEL_ZONE_TYPE_LABELS = { drzwi: 'Drzwi', okno: 'Okno', ruch: 'Ruch (PIR)', dym: 'Dym', zalanie: 'Zalanie', wibracja: 'Wibracja', sabotaz: 'Sabotaż/24h', inne: 'Inne' };
+const SATEL_OUTPUT_TYPE_ICONS = { syrena: '🔔', przekaznik: '🔌', oswietlenie: '💡', brama: '🚧', ogrzewanie: '♨️', inne: '❔' };
+const SATEL_OUTPUT_TYPE_LABELS = { syrena: 'Syrena', przekaznik: 'Przekaźnik', oswietlenie: 'Oświetlenie', brama: 'Brama/rolety', ogrzewanie: 'Ogrzewanie', inne: 'Inne' };
+
+let satelZoneTypes = {};   // nazwa wejścia -> slug rodzaju (np. "drzwi")
+let satelOutputTypes = {}; // nazwa wyjścia -> slug rodzaju (np. "syrena")
+
+async function loadSatelFieldTypes() {
+  try {
+    const data = await (await fetch('/api/config/satel-fields')).json();
+    satelZoneTypes = data.zone_types || {};
+    satelOutputTypes = data.output_types || {};
+  } catch (e) {
+    // brak połączenia z serwerem - panel działa dalej, po prostu bez ikon rodzaju
+  }
+}
+
 function statusCardClass(category, value) {
   const v = (value || '').toString().toLowerCase();
   if (category === 'satel_input') return v === 'naruszone' ? 'violated' : 'ok';
@@ -455,18 +488,33 @@ function statusCardClass(category, value) {
   return '';
 }
 
+function statusCardTypeInfo(category, label) {
+  if (category === 'satel_input' && satelZoneTypes[label]) {
+    const slug = satelZoneTypes[label];
+    return { icon: SATEL_ZONE_TYPE_ICONS[slug] || '', typeLabel: SATEL_ZONE_TYPE_LABELS[slug] || '' };
+  }
+  if (category === 'satel_output' && satelOutputTypes[label]) {
+    const slug = satelOutputTypes[label];
+    return { icon: SATEL_OUTPUT_TYPE_ICONS[slug] || '', typeLabel: SATEL_OUTPUT_TYPE_LABELS[slug] || '' };
+  }
+  return { icon: '', typeLabel: '' };
+}
+
 function renderStatusGrid(elementId, items) {
   const el = document.getElementById(elementId);
   if (items.length === 0) {
     el.innerHTML = '<div style="color: var(--muted); font-size: 13px;">Brak danych — jeszcze nic nie odczytano.</div>';
     return;
   }
-  el.innerHTML = items.map(s => `
+  el.innerHTML = items.map(s => {
+    const { icon, typeLabel } = statusCardTypeInfo(s.category, s.label);
+    return `
     <div class="status-card ${statusCardClass(s.category, s.value)}">
-      <div class="label">${s.label}</div>
+      <div class="label">${icon ? icon + ' ' : ''}${s.label}${typeLabel ? `<span class="type-tag">${typeLabel}</span>` : ''}</div>
       <div class="value">${s.value}</div>
       <div class="ts">${fmtTime(s.ts)}</div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 async function loadStatuses() {
@@ -568,23 +616,37 @@ function showArmMessage(kind, text) {
   el.textContent = text;
 }
 
+// Dziennik zdarzeń domyślnie UKRYTY (zbędny ruch/zapytania, dopóki nikt na
+// niego nie patrzy) - pokazuje się dopiero po kliknięciu przycisku
+// "DZIENNIK ZDARZEŃ" i dociąga dane dopiero wtedy.
+let eventsVisible = false;
+
+document.getElementById('toggleEventsBtn').addEventListener('click', async () => {
+  eventsVisible = !eventsVisible;
+  document.getElementById('eventsSection').style.display = eventsVisible ? '' : 'none';
+  document.getElementById('toggleEventsBtn').textContent = eventsVisible ? '📋 Ukryj dziennik zdarzeń' : '📋 DZIENNIK ZDARZEŃ';
+  if (eventsVisible) await loadEvents();
+});
+
 async function refreshAll() {
   await loadStatuses();
   await loadPartitionControls();
   await loadActiveAlerts();
   await loadHistory();
-  await loadEvents();
+  if (eventsVisible) await loadEvents();
   await loadAlertsHistory();
 }
 
 document.getElementById('rangeSelect').addEventListener('change', refreshAll);
-document.getElementById('eventTypeSelect').addEventListener('change', loadEvents);
+document.getElementById('eventTypeSelect').addEventListener('change', () => { if (eventsVisible) loadEvents(); });
 
 (async () => {
   await refreshAuthNav();
   await loadSensors();
+  await loadSatelFieldTypes();
   await refreshAll();
-  setInterval(refreshAll, 30000); // odświeżanie co 30s
+  setInterval(refreshAll, 30000);  // odświeżanie w tle co 30s (wykres/zdarzenia/alarmy) - bez przeładowania strony
+  setInterval(loadStatuses, 5000); // stany wejść/wyjść Satela i Tuya odświeżają się częściej - "na żywo"
 })();
 </script>
 </body>
