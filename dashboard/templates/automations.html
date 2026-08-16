@@ -72,7 +72,7 @@
 </style>
 </head>
 <body>
-<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/config">⚙ Ustawienia czujników eBUS</a></div>
+<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/config">⚙ Ustawienia czujników eBUS</a> &nbsp;·&nbsp; <a id="authNavLink" href="/login"></a></div>
 <h1>🎬 Automatyzacje</h1>
 <div class="hint">
   Sceny, reguły ruchu (harmonogram + eskalacja) i symulacja obecności -
@@ -80,8 +80,8 @@
   otwarty, ale <strong>zapis wymaga hasła administratora panelu</strong>
   (tego samego, które ustawiasz w kreatorze w kroku "Hasło administratora
   panelu" - patrz README).
-  <br><strong>Zmiany wchodzą w życie dopiero po restarcie procesu bridge'a</strong>
-  (nie samego panelu).
+  <br><strong>Zmiany wchodzą w życie automatycznie w ciągu ok. 1-2s, bez
+  restartu bridge'a</strong> (panel prosi bridge o przeładowanie w tle).
 </div>
 
 <div class="section" id="scenesSection">
@@ -143,21 +143,39 @@
 <script>
 let context = { tuya_devices: [], virtual_inputs: [] };
 
-// Autoryzacja tylko dla zapisu (POST) - hasło trzymane WYŁĄCZNIE w pamięci
-// karty przeglądarki, nigdy w localStorage/sessionStorage (tak samo jak /config).
-let authHeader = null;
-
+// Autoryzacja tylko dla zapisu (POST) - sesja przez /login (ciasteczko
+// HttpOnly, tak samo jak /config - patrz dashboard/auth.py).
 async function authorizedFetch(url, options = {}) {
-  if (!authHeader) {
-    const pass = prompt('Zapis automatyzacji wymaga hasła administratora:');
-    if (pass === null) throw new Error('Anulowano');
-    authHeader = 'Basic ' + btoa(':' + pass);
+  const resp = await fetch(url, options);
+  if (resp.status === 401) {
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname);
+    throw new Error('Wymagane zalogowanie - przekierowuję na /login...');
   }
-  const headers = Object.assign({}, options.headers, { 'Authorization': authHeader });
-  const resp = await fetch(url, Object.assign({}, options, { headers }));
-  if (resp.status === 401) authHeader = null;
   return resp;
 }
+
+async function refreshAuthNav() {
+  const link = document.getElementById('authNavLink');
+  try {
+    const status = await (await fetch('/api/auth/status')).json();
+    if (status.logged_in) {
+      link.textContent = '🔓 Wyloguj';
+      link.href = '#';
+      link.onclick = async (e) => {
+        e.preventDefault();
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.reload();
+      };
+    } else {
+      link.textContent = '🔒 Zaloguj';
+      link.href = '/login?next=' + encodeURIComponent(location.pathname);
+      link.onclick = null;
+    }
+  } catch (e) {
+    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+  }
+}
+refreshAuthNav();
 
 function escapeHtml(s) {
   const d = document.createElement('div');

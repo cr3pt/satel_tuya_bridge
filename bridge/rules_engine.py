@@ -15,7 +15,7 @@ from .tuya_local import TuyaLocalController
 from .tuya_cloud_events import TuyaCameraMotionListener
 from .unifi_protect_events import UnifiProtectMotionListener
 from .ebus_client import EbusMqttListener
-from .boiler_output import build_boiler_publishers
+from .boiler_output import build_boiler_publishers, MqttBoilerPublisher, TuyaVirtualDevicePublisher
 from .history_store import HistoryStore
 from .alarms import AlarmEngine
 from .resilience import HealthReporter
@@ -66,6 +66,7 @@ class RulesEngine:
         )
         self._active_timers: dict[str, asyncio.Task] = {}
         self.boiler_publishers = build_boiler_publishers(config, history=self.history)
+        self.ebus_listener: EbusMqttListener | None = None  # utworzony w start(), potrzebny reload_config()
         self._notify_cfg = notify_cfg
         self._grace_seconds = grace_seconds
         self._tuya_health: HealthReporter | None = None  # tworzony w start(), potrzebuje działającej pętli asyncio
@@ -352,11 +353,112 @@ class RulesEngine:
                 partitions = cmd["params"]["partitions"]
                 await self.satel.disarm(partitions=partitions)
                 self.history.mark_command_done(cmd["id"], {"message": f"Rozbrojono strefy {partitions}"})
+            elif cmd["command"] == "reload_config":
+                result = await self.reload_config()
+                self.history.mark_command_done(cmd["id"], result)
             else:
                 self.history.mark_command_error(cmd["id"], f"Nieznana komenda: {cmd['command']}")
         except Exception as exc:
             logger.exception("Błąd wykonania komendy #%s (%s)", cmd["id"], cmd["command"])
             self.history.mark_command_error(cmd["id"], str(exc))
+
+    # ------------------------------------------------------------------
+    # Przeładowanie konfiguracji BEZ restartu procesu - patrz też
+    # _execute_command (komenda 'reload_config') i dashboard/app.py, gdzie
+    # panel dokłada tę komendę automatycznie po każdym zapisie czujników
+    # eBUS/pól Satela/urządzeń Tuya/automatyzacji.
+    # ------------------------------------------------------------------
+    async def reload_config(self) -> dict:
+        """Przeładowuje 'lekką' część konfiguracji - dokładnie to, co
+        zmienia się CZĘSTO podczas donastrajania instalacji: czujniki eBUS
+        (sensors.yaml), pola Satela (satel_fields.yaml - etykiety/numery
+        stref/wyjść/wejść IP), urządzenia Tuya (tuya_devices.yaml), sceny/
+        reguły ruchu/symulacja obecności (automations.yaml), alarmy progowe.
+
+        CELOWO NIE dotyka żywych połączeń sieciowych - gniazdo TCP do
+        centrali Satel, klienci MQTT (eBUS/Home Assistant/publikacja
+        stanu), Tuya Cloud Pulsar. Host/port/klucz integracji Satela,
+        adresy brokerów MQTT i poświadczenia Tuya Cloud (zakładka
+        🔌 Połączenia) WCIĄŻ wymagają pełnego restartu procesu - bezpieczne
+        zamknięcie i odtworzenie żywych połączeń w trakcie działania byłoby
+        dużo bardziej ryzykowne niż warte tego dla ustawień, które i tak
+        zmienia się rzadko (w odróżnieniu od list czujników/urządzeń/reguł,
+        edytowanych często)."""
+        new_config = BridgeConfig.load(self.config.config_file)
+        self.config = new_config
+
+        # Tuya lokalne - bezpieczne do podmiany w całości: TuyaLocalController
+        # nie trzyma żywego połączenia (tylko krótkie żądania per komenda).
+        self.tuya = TuyaLocalController(new_config.tuya["devices"])
+
+        # Satel - etykiety/numery monitorowanych stref/wyjść/wejść IP,
+        # AKTUALIZOWANE na już istniejącym obiekcie klienta (NIE tworzymy
+        # nowego SatelIntegraClient - to zerwałoby żywe połączenie TCP).
+        # satel_integra przyjmuje monitored_zones/monitored_outputs tylko
+        # w konstruktorze AsyncSatel, więc faktyczne MONITOROWANIE nowych/
+        # usuniętych numerów zacznie działać dopiero po najbliższym
+        # (re)połączeniu - etykiety w panelu działają jednak natychmiast
+        # (patrz odświeżone na bieżąco zamknięcia _on_zone_change itp. w
+        # start()).
+        self.satel.monitored_zones = new_config.satel.get("monitored_zones", {})
+        self.satel.monitored_outputs = new_config.satel.get("monitored_outputs", {})
+        self.satel_virtual_inputs = SatelVirtualInputTrigger(
+            new_config.satel["host"], new_config.satel["virtual_inputs"],
+        )
+
+        # Sceny/automatyka kotła/alarmy progowe - budowane na bieżąco z
+        # configu przy każdym wywołaniu, bezpieczne do pełnej podmiany.
+        self.scenes = SceneRunner(
+            new_config.raw.get("scenes", []), self.tuya, self.satel, self.satel_virtual_inputs, history=self.history,
+        )
+        self.boiler_automation = BoilerAutomation(new_config.raw.get("boiler_rules", []), self.scenes)
+        self.alarms = AlarmEngine(new_config.raw.get("alarm_rules", []), self.history, notify_cfg=self._notify_cfg)
+
+        # Symulacja obecności - AKTUALIZOWANA na istniejącym obiekcie (NIE
+        # podmieniana) - jej run_forever() to już działające zadanie w tle,
+        # przywiązane do KONKRETNEGO obiektu; podmiana obiektu zgubiłaby to
+        # zadanie na zawsze. Bezpieczne, bo pętla w presence_simulation.py
+        # czyta self.cfg NA ŚWIEŻO przy każdym obrocie. WYJĄTEK: jeśli przy
+        # starcie procesu było enabled=false, ta pętla już się zakończyła -
+        # dopiero TERAZ włączenie tej opcji wciąż wymaga restartu procesu.
+        self.presence_simulation.cfg = new_config.raw.get("presence_simulation", {})
+
+        # eBUS - AKTUALIZOWANY na istniejącym listenerze (subskrybuje nowe
+        # tematy bez zrywania połączenia MQTT, patrz ebus_client.py).
+        if self.ebus_listener is not None:
+            self.ebus_listener.update_sensors(new_config.ebus)
+
+        # Publishery danych z kotła (MQTT/Tuya virtual device) - budowane
+        # LENIWIE: jeśli nowa lista czujników potrzebuje kanału, którego
+        # jeszcze nie ma (np. dopiero co zaznaczono "MQTT" na jakimś
+        # czujniku, a wcześniej żaden tego nie potrzebował), tworzymy go
+        # teraz. Już istniejące zostają NIETKNIĘTE - nie zrywamy działających
+        # połączeń tylko po to, żeby je zaraz odtworzyć identycznie.
+        sensors = new_config.ebus.get("sensors", [])
+        if any(s.get("targets", {}).get("mqtt_publish") for s in sensors) and "mqtt" not in self.boiler_publishers:
+            self.boiler_publishers["mqtt"] = MqttBoilerPublisher(
+                new_config.boiler_output["mqtt"], history=self.history, notify_cfg=self._notify_cfg,
+            )
+        if any(s.get("targets", {}).get("tuya_virtual_device") for s in sensors) and "tuya" not in self.boiler_publishers:
+            try:
+                self.boiler_publishers["tuya"] = TuyaVirtualDevicePublisher(
+                    new_config.tuya["cloud"], new_config.boiler_output["tuya_virtual_device"],
+                )
+            except Exception:
+                logger.exception(
+                    "Nie udało się zainicjować wirtualnego urządzenia Tuya przy przeładowaniu "
+                    "konfiguracji - ten kanał zostanie wyłączony, reszta reloadu się powiodła."
+                )
+
+        self._seed_satel_status_labels()
+
+        logger.info("Konfiguracja przeładowana bez restartu procesu")
+        self.history.write_event("system", detail={"message": "Konfiguracja przeładowana (bez restartu procesu)"})
+        return {
+            "message": "Konfiguracja przeładowana bez restartu procesu (czujniki eBUS, pola Satela, "
+                       "urządzenia Tuya, automatyzacje, alarmy progowe). Zmiany połączeń (host/port/"
+                       "klucze/brokery MQTT, zakładka 🔌 Połączenia) wciąż wymagają pełnego restartu.",
+        }
 
     # ------------------------------------------------------------------
     # Cykliczne odpytywanie statusów Tuya (nie mają callbacków lokalnie -
@@ -436,15 +538,20 @@ class RulesEngine:
         asyncio.create_task(self._stale_check_loop())
 
         self._seed_satel_status_labels()
-        zone_name_by_number = {v: k for k, v in self.satel.monitored_zones.items()}
-        output_name_by_number = {v: k for k, v in self.satel.monitored_outputs.items()}
 
         # Callback z centrali: zmiana wejść -> reguły ruchu (source=satel_zone)
         # + zapis statusu (widoczny w panelu jako "wejścia Satela").
         # Rejestrujemy PRZED uruchomieniem run_forever() - callbacki są
         # zapamiętane na obiekcie klienta i automatycznie podpinane na nowo
         # przy każdym (re)połączeniu, patrz satel_client.py.
+        #
+        # Etykiety (zone_name_by_number itp.) są liczone NA ŚWIEŻO z
+        # self.satel/self.config PRZY KAŻDYM zdarzeniu (nie raz, na starcie)
+        # - celowo, żeby reload_config() (patrz niżej) mogło podmienić
+        # numery/nazwy stref-wyjść-partycji w locie i te zamknięcia od razu
+        # zobaczyły nowe wartości, bez ponownego rejestrowania callbacków.
         async def _on_zone_change(zones: dict) -> None:
+            zone_name_by_number = {v: k for k, v in self.satel.monitored_zones.items()}
             for zone_number, violated in zones.items():
                 self.history.set_status(
                     f"satel_input:{zone_number}", "satel_input",
@@ -465,6 +572,7 @@ class RulesEngine:
                     await self.handle_motion("satel_zone", zone_number)
 
         async def _on_output_change(outputs: dict) -> None:
+            output_name_by_number = {v: k for k, v in self.satel.monitored_outputs.items()}
             for output_number, active in outputs.items():
                 self.history.set_status(
                     f"satel_output:{output_number}", "satel_output",
@@ -482,12 +590,11 @@ class RulesEngine:
                         "ON" if active else "OFF",
                     )
 
-        partition_name_by_number = {v: k for k, v in self.config.satel.get("partitions", {}).items()}
-
         async def _on_alarm_status_change(partition_states: dict) -> None:
             # Kształt `partition_states` zależy od wersji biblioteki
             # satel_integra - zakładamy {numer_strefy: bool_uzbrojona},
             # zweryfikuj przy pierwszym użyciu z realną centralą.
+            partition_name_by_number = {v: k for k, v in self.config.satel.get("partitions", {}).items()}
             for partition_number, armed in partition_states.items():
                 self.history.set_status(
                     f"satel_partition:{partition_number}", "satel_partition",
@@ -522,11 +629,14 @@ class RulesEngine:
         asyncio.create_task(self._maintenance_loop())
 
         # eBUS / kocioł (paho-mqtt ma wbudowany reconnect - patrz ebus_client.py)
-        ebus_listener = EbusMqttListener(
+        # Trzymane na self (nie jako lokalna zmienna) - reload_config()
+        # potrzebuje do niej dostępu, żeby zaktualizować listę czujników
+        # bez zrywania połączenia MQTT.
+        self.ebus_listener = EbusMqttListener(
             self.config.ebus, self.handle_boiler_value, history=self.history,
             notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
         )
-        ebus_listener.start()
+        self.ebus_listener.start()
 
         # Kamera Tuya (opcjonalnie, jeśli skonfigurowana)
         if "cloud" in self.config.tuya:

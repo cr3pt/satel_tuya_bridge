@@ -76,7 +76,7 @@
 </style>
 </head>
 <body>
-<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/automations">🎬 Automatyzacje</a></div>
+<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/automations">🎬 Automatyzacje</a> &nbsp;·&nbsp; <a id="authNavLink" href="/login"></a></div>
 <h1>⚙ Ustawienia</h1>
 <div class="hint">
   Czujniki eBUS, pola Satela (strefy/wyjścia/wejścia IP/partycje) i
@@ -85,8 +85,10 @@
   nic nie jest jeszcze dodane, dopiero uzupełnienie wiersza i zapis
   włącza dane pole. <strong>Odczyt jest otwarty, zapis wymaga hasła
   administratora</strong> panelu (patrz kreator, krok "Hasło administratora
-  panelu"). <strong>Zmiany wchodzą w życie po restarcie procesu bridge'a</strong>
-  (nie samego panelu).
+  panelu"). <strong>Zmiany z tej strony (eBUS/Satel/Tuya) wchodzą w życie
+  automatycznie w ciągu ok. 1-2s, bez restartu bridge'a</strong> - jedynie
+  zakładka 🔌 Połączenia (host/port/klucze/brokery MQTT) wciąż wymaga
+  pełnego restartu procesu, bo dotyka żywych połączeń sieciowych.
 </div>
 
 <!-- ============================== Połączenia ============================== -->
@@ -278,21 +280,42 @@
 </div>
 
 <script>
-// Autoryzacja tylko dla zapisu (POST) - hasło trzymane WYŁĄCZNIE w pamięci
-// karty przeglądarki, nigdy w localStorage/sessionStorage.
-let authHeader = null;
-
+// Autoryzacja tylko dla zapisu (POST) - sesja przez /login (ciasteczko
+// HttpOnly, patrz dashboard/auth.py). Strona nigdy sama nie widzi/trzyma
+// hasła - brak ważnej sesji przy akcji wymagającej logowania przekierowuje
+// na /login zamiast pytać o hasło w prompt() (który wyświetlał wpisywany
+// tekst jawnie, bez maskowania - stąd ta zmiana).
 async function authorizedFetch(url, options = {}) {
-  if (!authHeader) {
-    const pass = prompt('Zapis ustawień wymaga hasła administratora:');
-    if (pass === null) throw new Error('Anulowano');
-    authHeader = 'Basic ' + btoa(':' + pass);
+  const resp = await fetch(url, options);
+  if (resp.status === 401) {
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname);
+    throw new Error('Wymagane zalogowanie - przekierowuję na /login...');
   }
-  const headers = Object.assign({}, options.headers, { 'Authorization': authHeader });
-  const resp = await fetch(url, Object.assign({}, options, { headers }));
-  if (resp.status === 401) authHeader = null;
   return resp;
 }
+
+async function refreshAuthNav() {
+  const link = document.getElementById('authNavLink');
+  try {
+    const status = await (await fetch('/api/auth/status')).json();
+    if (status.logged_in) {
+      link.textContent = '🔓 Wyloguj';
+      link.href = '#';
+      link.onclick = async (e) => {
+        e.preventDefault();
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.reload();
+      };
+    } else {
+      link.textContent = '🔒 Zaloguj';
+      link.href = '/login?next=' + encodeURIComponent(location.pathname);
+      link.onclick = null;
+    }
+  } catch (e) {
+    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+  }
+}
+refreshAuthNav();
 
 function showMsg(elId, ok, text) {
   const el = document.getElementById(elId);

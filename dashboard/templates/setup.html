@@ -1297,14 +1297,15 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
       // Kreator ma się już nie pokazać ponownie po zapisie (/setup samo
       // przekierowuje na / po tym, jak config.yaml istnieje - patrz
       // dashboard/app.py: is_configured()) - tutaj tylko dajemy chwilę na
-      // przeczytanie komunikatu, zanim przełączymy stronę. Hasło, które
-      // WŁAŚNIE ustawiono, przekazujemy do panelu przez fragment URL
-      // (nigdy nie trafia do localStorage/sessionStorage, znika z paska
-      // adresu natychmiast po odczytaniu - patrz templates/index.html) -
-      // żeby nie trzeba było wpisywać go drugi raz 30 sekund później.
-      const authToken = btoa(':' + data.admin_password);
+      // przeczytanie komunikatu, zanim przełączymy stronę. api_setup_save
+      // już ustawiło ciasteczko sesji w SWOJEJ odpowiedzi (patrz
+      // dashboard/app.py), więc panel po przeładowaniu jest od razu
+      // zalogowany - nie trzeba niczego dodatkowo robić ani przekazywać
+      // hasła w adresie URL (wcześniejsza wersja robiła dokładnie to:
+      // #auth=base64(hasło) - jawne, odwracalne kodowanie hasła w pasku
+      // adresu, widoczne w historii przeglądarki).
       setTimeout(() => {
-        window.location.href = '/#auth=' + encodeURIComponent(authToken);
+        window.location.href = '/';
       }, 1800);
     }
   } catch (err) {
