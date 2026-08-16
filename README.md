@@ -519,7 +519,11 @@ tego wzorca):
   **bez przycisku wykrywania**: protokół integracji Satela nie udostępnia
   listy skonfigurowanych stref/wyjść (tylko bieżący stan już znanych
   numerów), więc nazwę i numer trzeba przepisać z DLOADX ręcznie, tak jak
-  w kreatorze.
+  w kreatorze. Każda strefa/wyjście ma dodatkowo **opcjonalny "rodzaj"**
+  (np. drzwi/okno/ruch/dym/zalanie/wibracja/sabotaż dla wejść, syrena/
+  przekaźnik/oświetlenie/brama/ogrzewanie dla wyjść) - czysto opisowy,
+  dokłada tylko ikonę i etykietę rodzaju na panelu głównym (zielone
+  OK/czerwone naruszone zostaje bez zmian niezależnie od wybranego rodzaju).
 - **Urządzenia Tuya** (`tuya_devices.yaml`) - przycisk
   **"🔍 Skanuj sieć"** wywołuje broadcast UDP w LAN (`tinytuya.deviceScan`,
   ok. 18 sekund) i podpowiada ID + adres IP znalezionych urządzeń. **Nie

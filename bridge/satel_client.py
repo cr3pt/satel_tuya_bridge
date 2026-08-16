@@ -204,11 +204,15 @@ class SatelIntegraClient:
         self._output_cb = None
         self._alarm_status_cb = None
         self._supervisor = Supervisor("satel", history=history, notify_cfg=notify_cfg, grace_seconds=grace_seconds)
+        # Opóźnienie przed dopytaniem o początkowy stan wejść/wyjść po
+        # (re)połączeniu - patrz _request_initial_status(). Wydzielone jako
+        # atrybut instancji (zamiast stałej), żeby testy mogły je skrócić.
+        self._initial_status_delay_seconds = 1.0
 
     async def connect(self) -> None:
         # Import odroczony - żeby moduł dało się zaimportować nawet bez
         # zainstalowanej biblioteki, jeśli ktoś używa tylko wirtualnych wejść.
-        from satel_integra.satel_integra import AsyncSatel, AlarmState  # type: ignore
+        from satel_integra.satel_integra import AsyncSatel, AlarmState, generate_query  # type: ignore
 
         self._AlarmState = AlarmState
         self._client = AsyncSatel(
@@ -230,6 +234,48 @@ class SatelIntegraClient:
         if self._alarm_status_cb:
             self._client._alarm_status_callback = self._alarm_status_cb
         logger.info("Połączono z centralą Satel Integra (%s:%s)", self.host, self.port)
+
+        # Biblioteka satel_integra wywołuje zone_changed_callback/
+        # output_changed_callback TYLKO gdy centrala sama wyśle broadcast o
+        # zmianie (funkcje 0x00/0x17) - na spokojnym systemie, gdzie nic się
+        # nie narusza, może to nigdy nie nastąpić, więc panel/MQTT nie
+        # dostają ŻADNEGO stanu aż do pierwszej faktycznej zmiany. Funkcje
+        # 0x00 ("zones violation") i 0x17 ("outputs state") to jednak też
+        # zwykłe polecenia ODCZYTU w protokole integracji - centrala
+        # odpowiada tym samym typem wiadomości niezależnie, czy przyszła jako
+        # broadcast, czy jako odpowiedź na nasze zapytanie, a
+        # _zone_violated()/_output_changed() w bibliotece i tak zawsze
+        # wywołują callback z pełnym bieżącym stanem WSZYSTKICH monitorowanych
+        # wejść/wyjść. Dlatego dopytujemy o stan od razu po (re)połączeniu,
+        # żeby panel/MQTT pokazały aktualny stan natychmiast, a nie dopiero
+        # po pierwszej zmianie.
+        #
+        # UWAGA na kolejność: wysyłamy to z OPÓŹNIENIEM (osobne zadanie w
+        # tle, nie tutaj synchronicznie) - zaraz po connect() biblioteka sama
+        # wysyła własne polecenie startu nasłuchu (monitor_status() ->
+        # start_monitoring()) i czyta DOKŁADNIE JEDNĄ odpowiedź na nie. Gdyby
+        # nasze zapytania trafiły do kolejki PRZED tamtym poleceniem,
+        # start_monitoring() błędnie potraktowałby naszą odpowiedź jako
+        # potwierdzenie własnego polecenia (i zalogował mylące "Monitoring
+        # not accepted."), a nasza odpowiedź przepadłaby nieobsłużona.
+        # Krótkie opóźnienie daje
+        # pewność, że start_monitoring() (pojedynczy odczyt, ~milisekundy w
+        # sieci lokalnej) zdąży się zakończyć pierwszy.
+        asyncio.ensure_future(self._request_initial_status(generate_query))
+        return
+
+    async def _request_initial_status(self, generate_query) -> None:
+        await asyncio.sleep(self._initial_status_delay_seconds)
+        client = self._client
+        if client is None or getattr(client, "closed", True):
+            return
+        try:
+            if self.monitored_zones:
+                await client._send_data(generate_query(b'\x00'))
+            if self.monitored_outputs:
+                await client._send_data(generate_query(b'\x17'))
+        except Exception:
+            logger.exception("Nie udało się dopytać o początkowy stan wejść/wyjść Satela")
 
     async def set_output(self, output_number: int, state: bool) -> None:
         if self._client is None:
@@ -304,8 +350,40 @@ class SatelIntegraClient:
         async def _connect_and_monitor(on_connected) -> None:
             await self.connect()
             await on_connected()
-            # monitor_status blokuje dopóki połączenie żyje; jego powrót
-            # (normalny albo przez wyjątek) oznacza utratę połączenia
-            await self._client.monitor_status()
+            # ETHM-1 Plus rozłącza połączenie integracji po ok. 25s
+            # bezczynności (znana cecha centrali, nie błąd biblioteki -
+            # patrz AsyncSatel.keep_alive() w satel_integra.py: "A
+            # workaround for Satel Integra disconnecting after 25s") - BEZ
+            # tego zadania w tle połączenie regularnie padało z komunikatem
+            # "0 bytes read... Most likely the other side has
+            # disconnected!" w logach, mimo że sama centrala/sieć działały
+            # poprawnie. keep_alive() wysyła nieszkodliwe zapytanie o
+            # status co ~20s, żeby centrala nie uznała połączenia za martwe.
+            keep_alive_task = asyncio.ensure_future(self._client.keep_alive())
+            try:
+                # WAŻNE: monitor_status() w bibliotece PRZYPISUJE callbacki z
+                # własnych argumentów na starcie (self._zone_changed_callback
+                # = zone_changed_callback, ...) - wywołanie go BEZ
+                # argumentów (jak poprzednio) NADPISYWAŁO wartością None to,
+                # co connect() dopiero co ustawił przez register_*_callback()
+                # (patrz wyżej), więc _on_zone_change/_on_output_change/
+                # _on_alarm_status_change w RulesEngine NIGDY się nie
+                # wywoływały - stąd zgłoszony brak stanów Satela na MQTT i w
+                # panelu (poza wartościami zaszytymi na starcie). Trzeba
+                # przekazać je jawnie przy każdym wywołaniu.
+                #
+                # monitor_status blokuje dopóki połączenie żyje; jego powrót
+                # (normalny albo przez wyjątek) oznacza utratę połączenia
+                await self._client.monitor_status(
+                    alarm_status_callback=self._alarm_status_cb,
+                    zone_changed_callback=self._zone_cb,
+                    output_changed_callback=self._output_cb,
+                )
+            finally:
+                keep_alive_task.cancel()
+                try:
+                    await keep_alive_task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
         await self._supervisor.run(_connect_and_monitor)

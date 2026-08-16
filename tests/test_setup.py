@@ -198,8 +198,8 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
     def test_build_satel_fields_shape(self):
         form = {
             "partitions": [{"name": "Dom", "number": "1"}, {"name": "Garaz", "number": "2"}],
-            "monitored_zones": [{"name": "Salon", "number": "12"}],
-            "monitored_outputs": [{"name": "Syrena", "number": "1"}],
+            "monitored_zones": [{"name": "Salon", "number": "12", "type": "ruch"}],
+            "monitored_outputs": [{"name": "Syrena", "number": "1", "type": "syrena"}],
             "virtual_inputs": [{"name": "motion_hall_camera", "number": "17", "key": "KLUCZ17"}],
         }
         fields = build_satel_fields_dict(form)
@@ -208,7 +208,16 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
             "monitored_zones": {"Salon": 12},
             "monitored_outputs": {"Syrena": 1},
             "virtual_inputs": {"motion_hall_camera": {"number": 17, "key": "KLUCZ17"}},
+            "zone_types": {"Salon": "ruch"},
+            "output_types": {"Syrena": "syrena"},
         }
+
+    def test_build_satel_fields_type_ignored_when_unknown_slug(self):
+        """Nieznany slug rodzaju (np. literówka albo stary zapis sprzed tej
+        funkcji) jest po prostu pomijany - nie wywala walidacji/zapisu."""
+        form = {"monitored_zones": [{"name": "Salon", "number": "12", "type": "cos-nieznanego"}]}
+        fields = build_satel_fields_dict(form)
+        assert fields["zone_types"] == {}
 
     def test_build_satel_fields_partitions_default_to_dom_1_when_empty(self):
         fields = build_satel_fields_dict({"partitions": []})
@@ -223,6 +232,7 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         fields = build_satel_fields_dict({})
         assert fields == {
             "partitions": {"Dom": 1}, "monitored_zones": {}, "monitored_outputs": {}, "virtual_inputs": {},
+            "zone_types": {}, "output_types": {},
         }
 
     def test_validate_satel_fields_no_errors_when_complete(self):
