@@ -25,15 +25,18 @@ from bridge.config import BridgeConfig
 from bridge.history_store import HistoryStore
 from dashboard.auth import AuthGuard, require_auth
 from dashboard.setup import (
-    CONFIG_HEADER, SENSORS_HEADER, build_config_dict, validate,
+    CONFIG_HEADER, SENSORS_HEADER, AUTOMATIONS_HEADER,
+    build_config_dict, validate, build_automations_dict, validate_automations,
     draft_path_for, load_draft, save_draft, delete_draft,
 )
 
 app = Flask(__name__)
 history: HistoryStore | None = None  # ustawiane w create_app()
 sensors_file_path = None  # ustawiane w create_app() - ścieżka do sensors.yaml
+automations_file_path = None  # ustawiane w create_app() - ścieżka do automations.yaml
 auth_guard: AuthGuard | None = None  # ustawiane w create_app()
 satel_partitions_cfg: dict = {}  # nazwa -> numer strefy, ustawiane w create_app()
+config_raw: dict = {}  # ostatnio wczytany config.raw (do odczytu automatyzacji/kontekstu), ustawiane w create_app()
 config_path: pathlib.Path | None = None  # ustawiane w main() - potrzebne, zanim config.yaml w ogóle istnieje
 
 # Endpointy dostępne, ZANIM config.yaml istnieje (kreator + statyka) -
@@ -46,12 +49,14 @@ def is_configured() -> bool:
 
 
 def create_app(config: BridgeConfig) -> Flask:
-    global history, sensors_file_path, auth_guard, satel_partitions_cfg
+    global history, sensors_file_path, automations_file_path, auth_guard, satel_partitions_cfg, config_raw
     db_path = config.raw.get("dashboard", {}).get("db_path", "bridge_history.db")
     history = HistoryStore(db_path)
     sensors_file_path = config.sensors_file
+    automations_file_path = config.automations_file
     auth_guard = AuthGuard(config.raw.get("dashboard", {}).get("auth"))
     satel_partitions_cfg = config.satel.get("partitions", {"Dom": config.satel.get("partition", 1)})
+    config_raw = config.raw
     return app
 
 
@@ -120,6 +125,7 @@ def api_setup_save():
         return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
     config_dict = build_config_dict(form)
+    automations_dict = build_automations_dict(form)
 
     with open(config_path, "w", encoding="utf-8") as f:
         f.write(CONFIG_HEADER)
@@ -129,6 +135,11 @@ def api_setup_save():
     with open(sensors_path, "w", encoding="utf-8") as f:
         f.write(SENSORS_HEADER)
         yaml.safe_dump({"sensors": []}, f, allow_unicode=True, sort_keys=False)
+
+    automations_path = config_path.parent / config_dict["automations_file"]
+    with open(automations_path, "w", encoding="utf-8") as f:
+        f.write(AUTOMATIONS_HEADER)
+        yaml.safe_dump(automations_dict, f, allow_unicode=True, sort_keys=False)
 
     # Konfiguracja jest już kompletna i zapisana - plik roboczy kreatora
     # (postęp między krokami) nie jest już potrzebny.
@@ -147,6 +158,7 @@ def api_setup_save():
         "next_steps": [
             "python main.py --config " + str(config_path),
             "Dodaj czujniki kotła eBUS w zakładce ⚙ Ustawienia czujników",
+            "Dodaj/edytuj sceny, harmonogramy, eskalację i symulację obecności w zakładce 🎬 Automatyzacje",
         ],
     })
 
@@ -205,6 +217,72 @@ def api_config_sensors_post():
 
     return jsonify({
         "saved": len(cleaned),
+        "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
+                    "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
+    })
+
+
+@app.route("/automations")
+def automations_page():
+    return render_template("automations.html")
+
+
+@app.route("/api/config/automation-context", methods=["GET"])
+def api_config_automation_context():
+    """Dane pomocnicze do budowania formularza w /automations - nazwy
+    urządzeń Tuya i wirtualnych wejść Satela już skonfigurowanych w
+    config.yaml (te dwie rzeczy panel /automations tylko ODCZYTUJE, nie
+    edytuje - edycja urządzeń/wejść zostaje ręczna w config.yaml, patrz
+    README). Publiczny - same nazwy nie są wrażliwe (bez local_key/kluczy)."""
+    tuya_devices = list(config_raw.get("tuya", {}).get("devices", {}).keys())
+    virtual_inputs = list(config_raw.get("satel", {}).get("virtual_inputs", {}).get("inputs", {}).keys())
+    return jsonify({"tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs})
+
+
+@app.route("/api/config/automations", methods=["GET"])
+def api_config_automations_get():
+    """Aktualne sceny/reguły ruchu/symulacja obecności - z LIVE config.raw
+    (nie bezpośrednio z pliku), żeby poprawnie obsłużyć zarówno nowe configi
+    (automations.yaml) jak i starsze, gdzie te sekcje są wciąż wpisane
+    bezpośrednio w config.yaml (patrz BridgeConfig.load)."""
+    return jsonify({
+        "scenes": config_raw.get("scenes", []),
+        "motion_rules": config_raw.get("reguły_ruchu", []),
+        "presence_simulation": config_raw.get("presence_simulation", {"enabled": False}),
+    })
+
+
+@app.route("/api/config/automations", methods=["POST"])
+@require_auth()
+def api_config_automations_post():
+    """Nadpisuje CAŁĄ zawartość automations.yaml (sceny + reguły ruchu +
+    symulacja obecności) przesłanym formularzem - ten sam kształt danych,
+    jaki zbiera kreator w krokach "Sceny"/"Reguły ruchu" (patrz
+    dashboard/setup.py: validate_automations/build_automations_dict)."""
+    form = request.get_json(silent=True)
+    if not isinstance(form, dict):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+    errors = validate_automations(form)
+    if errors:
+        return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+    automations_dict = build_automations_dict(form)
+    with open(automations_file_path, "w", encoding="utf-8") as f:
+        f.write(AUTOMATIONS_HEADER)
+        yaml.safe_dump(automations_dict, f, allow_unicode=True, sort_keys=False)
+
+    # Jak przy zapisie czujników - odświeżamy config.raw w TYM procesie
+    # (żeby GET zaraz potem pokazał świeże dane), ale sam proces bridge'a
+    # (osobny proces) wciąż wymaga ręcznego restartu.
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+
+    return jsonify({
+        "saved": {
+            "scenes": len(automations_dict["scenes"]),
+            "motion_rules": len(automations_dict["reguły_ruchu"]),
+        },
         "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
                     "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
     })

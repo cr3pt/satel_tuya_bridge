@@ -16,9 +16,18 @@ satel:
   virtual_inputs:
     port: 8888
     url_template: "http://{{host}}:{{port}}/x"
-    inputs: {{}}
+    inputs:
+      motion_hall:
+        number: 1
+        key: "k"
 tuya:
-  devices: {{}}
+  devices:
+    gniazdko:
+      id: "d1"
+      ip: "1.2.3.4"
+      local_key: "k"
+      version: 3.4
+      type: socket
 reguły_ruchu: []
 ebus:
   mqtt_host: "127.0.0.1"
@@ -164,3 +173,87 @@ class TestProtectedArmDisarmEndpoints:
         command_id = resp.get_json()["command_id"]
         status_resp = client.get(f"/api/commands/{command_id}")
         assert set(status_resp.get_json()["params"]["partitions"]) == {1, 2}
+
+
+class TestAutomationContextEndpoint:
+    def test_context_public_no_auth_required(self, client):
+        assert client.get("/api/config/automation-context").status_code == 200
+
+    def test_context_returns_configured_device_and_virtual_input_names(self, client):
+        data = client.get("/api/config/automation-context").get_json()
+        assert data["tuya_devices"] == ["gniazdko"]
+        assert data["virtual_inputs"] == ["motion_hall"]
+
+
+class TestAutomationsEndpoint:
+    def test_automations_page_loads(self, client):
+        assert client.get("/automations").status_code == 200
+
+    def test_get_automations_no_auth_required(self, client):
+        resp = client.get("/api/config/automations")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"scenes": [], "motion_rules": [], "presence_simulation": {"enabled": False}}
+
+    def test_post_automations_without_auth_returns_401(self, client):
+        payload = {"scenes": [], "motion_rules": [], "presence_simulation": {}}
+        resp = client.post("/api/config/automations", json=payload)
+        assert resp.status_code == 401
+
+    def test_post_automations_with_wrong_auth_returns_401(self, client):
+        payload = {"scenes": [], "motion_rules": [], "presence_simulation": {}}
+        resp = client.post("/api/config/automations", json=payload, headers=_basic_auth_header("złe_hasło"))
+        assert resp.status_code == 401
+
+    def test_post_automations_with_correct_auth_saves_scene(self, client):
+        payload = {
+            "scenes": [{"name": "test_scena", "actions": [{"type": "tuya_on", "device": "gniazdko"}]}],
+            "motion_rules": [],
+            "presence_simulation": {"enabled": False},
+        }
+        resp = client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json()["saved"] == {"scenes": 1, "motion_rules": 0}
+
+    def test_post_automations_validates_scene_fields(self, client):
+        payload = {"scenes": [{"name": "", "actions": []}], "motion_rules": [], "presence_simulation": {}}
+        resp = client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 400
+        assert "details" in resp.get_json()
+
+    def test_saved_automations_persist_and_are_readable(self, client):
+        payload = {
+            "scenes": [{"name": "scena1", "actions": [{"type": "satel_disarm"}]}],
+            "motion_rules": [{"zone_number": "5", "scene": "scena1"}],
+            "presence_simulation": {
+                "enabled": True, "devices": ["gniazdko"],
+                "min_interval_minutes": "5", "max_interval_minutes": "10",
+            },
+        }
+        client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        resp = client.get("/api/config/automations")
+        data = resp.get_json()
+        assert data["scenes"][0]["name"] == "scena1"
+        assert data["motion_rules"][0]["scene"] == "scena1"
+        assert data["presence_simulation"]["enabled"] is True
+        assert data["presence_simulation"]["devices"] == ["gniazdko"]
+
+    def test_post_automations_writes_automations_yaml_file(self, client, tmp_path):
+        payload = {
+            "scenes": [{"name": "s", "actions": [{"type": "satel_disarm"}]}],
+            "motion_rules": [], "presence_simulation": {},
+        }
+        client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert (tmp_path / "automations.yaml").exists()
+
+    def test_post_automations_does_not_touch_config_yaml(self, client, tmp_path):
+        """Zapis z panelu MUSI iść do automations.yaml, nigdy do config.yaml -
+        inaczej ręczne komentarze/zmiany w config.yaml zostałyby skasowane
+        (patrz uzasadnienie dla sensors.yaml w bridge/config.py)."""
+        before = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+        payload = {
+            "scenes": [{"name": "s", "actions": [{"type": "satel_disarm"}]}],
+            "motion_rules": [], "presence_simulation": {},
+        }
+        client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        after = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+        assert before == after

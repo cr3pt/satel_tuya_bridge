@@ -84,12 +84,20 @@ def require_auth(guard_attr: str = "auth_guard"):
     """Dekorator dla endpointów Flask, które ZMIENIAJĄ stan (config,
     uzbrojenie/rozbrojenie). `guard_attr` to nazwa zmiennej globalnej w
     module wywołującym (dashboard/app.py), przez którą dekorator dostaje
-    się do skonfigurowanego AuthGuard - unika importu cyklicznego."""
+    się do skonfigurowanego AuthGuard.
+
+    CELOWO czyta ją z `fn.__globals__` (globalne zmienne modułu, w którym
+    fizycznie zdefiniowana jest dekorowana funkcja), a NIE przez
+    `import dashboard.app` - `python -m dashboard.app` uruchamia ten plik
+    jako `__main__`, więc dodatkowy `import dashboard.app` w trakcie obsługi
+    żądania tworzyłby DRUGĄ, osobną kopię modułu pod inną nazwą w
+    sys.modules - z własnymi, nigdy nie zainicjowanymi zmiennymi globalnymi
+    (auth_guard zawsze None, mimo poprawnie skonfigurowanego hasła) - stąd
+    fn.__globals__ zamiast dodatkowego importu."""
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            import dashboard.app as app_module
-            guard: AuthGuard = getattr(app_module, guard_attr)
+            guard: AuthGuard = fn.__globals__[guard_attr]
             ok, message = guard.check()
             if not ok:
                 response = jsonify({"error": message})
