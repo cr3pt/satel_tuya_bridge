@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kreator konfiguracji - Satel-Tuya-eBUS Bridge</title>
+<style>
+  :root {
+    --bg: #14161a; --card: #1d2026; --border: #2c3038;
+    --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
+    --danger: #e5484d; --ok: #3dd68c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 20px; max-width: 760px; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 6px; }
+  .intro { color: var(--muted); font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
+  .step {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px; margin-bottom: 16px;
+  }
+  .step-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .step-number {
+    background: var(--accent); color: white; width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600;
+    flex-shrink: 0;
+  }
+  .step-title { font-size: 16px; font-weight: 600; }
+  .step-hint { color: var(--muted); font-size: 13px; margin: -6px 0 14px 36px; line-height: 1.5; }
+  .field-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .field { flex: 1; min-width: 140px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input[type=text], input[type=password], input[type=number] {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; font-size: 14px; width: 100%;
+  }
+  select { background: #262a32; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; width: 100%; }
+  .external-link {
+    display: inline-flex; align-items: center; gap: 6px; background: #262a32; color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 6px; padding: 7px 14px; font-size: 13px;
+    text-decoration: none; margin: 6px 0 12px; cursor: pointer;
+  }
+  .external-link:hover { background: #2d3340; }
+  .repeatable-row {
+    display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap;
+  }
+  .repeatable-row input, .repeatable-row select { flex: 1; min-width: 90px; }
+  .row-remove {
+    background: transparent; color: var(--danger); border: none; font-size: 16px;
+    cursor: pointer; padding: 4px 8px; flex-shrink: 0;
+  }
+  .add-row-btn {
+    background: #262a32; color: var(--text); border: 1px dashed var(--border);
+    border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-top: 4px;
+  }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .checkbox-row input { width: 17px; height: 17px; }
+  .optional-content { display: none; margin-top: 10px; padding-left: 4px; }
+  .optional-content.show { display: block; }
+  .save-bar {
+    position: sticky; bottom: 0; background: var(--bg); padding: 16px 0;
+    border-top: 1px solid var(--border); margin-top: 8px;
+  }
+  #saveBtn {
+    background: var(--accent); color: white; border: none; border-radius: 8px;
+    padding: 14px 24px; font-size: 15px; font-weight: 600; cursor: pointer; width: 100%;
+  }
+  #saveBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+  #resultBox { margin-top: 14px; padding: 14px; border-radius: 8px; font-size: 13px; display: none; }
+  #resultBox.ok { display: block; background: #16281f; border: 1px solid var(--ok); }
+  #resultBox.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); }
+  #resultBox ul { margin: 8px 0 0; padding-left: 20px; }
+  #resultBox code { background: #262a32; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>🧙 Kreator konfiguracji</h1>
+<div class="intro">
+  Pierwsza konfiguracja bridge'a Satel-Tuya-eBUS. Wypełnij poniższe kroki i
+  zapisz - reszta (zaawansowane reguły, sceny, harmonogramy) da się dodać
+  później ręcznie w <code>config.yaml</code> albo przez panel.
+</div>
+
+<form id="setupForm">
+
+  <div class="step">
+    <div class="step-header"><div class="step-number">1</div><div class="step-title">Centrala Satel Integra</div></div>
+    <div class="step-hint">Dane z konfiguracji ETHM-1 Plus w programie DLOADX.</div>
+    <div class="field-row">
+      <div class="field"><label>Adres IP centrali/ETHM</label><input type="text" id="satel_host" placeholder="192.168.1.10"></div>
+      <div class="field"><label>Port (integration protocol)</label><input type="number" id="satel_port" value="7094"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Klucz integracji</label><input type="text" id="satel_integration_key" placeholder="ustawiony w DLOADX"></div>
+      <div class="field"><label>Port wejść IP (wirtualne wejścia)</label><input type="number" id="satel_virtual_inputs_port" value="8888"></div>
+    </div>
+
+    <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">Strefy (do uzbrajania/rozbrajania z panelu)</label>
+    <div id="partitionsRows"></div>
+    <button type="button" class="add-row-btn" data-add="partitionsRows" data-template="nameNumber">+ Dodaj strefę</button>
+
+    <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">Monitorowane wejścia (czujki) - opcjonalnie, można dodać później</label>
+    <div id="zonesRows"></div>
+    <button type="button" class="add-row-btn" data-add="zonesRows" data-template="nameNumber">+ Dodaj wejście</button>
+
+    <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">Monitorowane wyjścia - opcjonalnie</label>
+    <div id="outputsRows"></div>
+    <button type="button" class="add-row-btn" data-add="outputsRows" data-template="nameNumber">+ Dodaj wyjście</button>
+  </div>
+
+  <div class="step">
+    <div class="step-header"><div class="step-number">2</div><div class="step-title">Urządzenia Tuya (lokalnie)</div></div>
+    <div class="step-hint">
+      Local key każdego urządzenia wyciągasz narzędziem <code>tinytuya wizard</code>
+      z terminala (wymaga jednorazowego zalogowania do konta Tuya) - zajmuje
+      dosłownie chwilę, ale trzeba je uruchomić w konsoli na RPi, nie da się
+      tego zrobić z przeglądarki.
+    </div>
+    <a class="external-link" href="https://github.com/jasonacox/tinytuya#tuya-device-preparation" target="_blank" rel="noopener">
+      ↗ Otwórz instrukcję tinytuya wizard
+    </a>
+    <div id="tuyaDevicesRows"></div>
+    <button type="button" class="add-row-btn" id="addTuyaDeviceBtn">+ Dodaj urządzenie</button>
+  </div>
+
+  <div class="step">
+    <div class="step-header"><div class="step-number">3</div><div class="step-title">eBUS / ebusd (kocioł)</div></div>
+    <div class="step-hint">Broker MQTT, na który publikuje ebusd. Same czujniki kotła dodasz po zapisaniu, w zakładce "Ustawienia czujników".</div>
+    <div class="field-row">
+      <div class="field"><label>Adres brokera MQTT</label><input type="text" id="ebus_mqtt_host" placeholder="127.0.0.1"></div>
+      <div class="field"><label>Port MQTT</label><input type="number" id="ebus_mqtt_port" value="1883"></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-header"><div class="step-number">4</div><div class="step-title">Hasło administratora panelu</div></div>
+    <div class="step-hint">Wymagane tylko do zmiany ustawień i uzbrajania/rozbrajania - podgląd panelu zostaje bez hasła.</div>
+    <div class="field-row">
+      <div class="field"><label>Hasło (min. 8 znaków)</label><input type="password" id="admin_password"></div>
+      <div class="field"><label>Powtórz hasło</label><input type="password" id="admin_password_confirm"></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-header"><div class="step-number">5</div><div class="step-title">Powiadomienia push (opcjonalnie)</div></div>
+    <div class="step-hint">Darmowa usługa ntfy.sh - załóż unikalny temat (nazwę), nie wymaga rejestracji.</div>
+    <a class="external-link" href="https://ntfy.sh" target="_blank" rel="noopener">↗ Otwórz ntfy.sh</a>
+    <div class="field">
+      <label>Adres tematu ntfy (np. https://ntfy.sh/twoj-unikalny-temat)</label>
+      <input type="text" id="ntfy_topic_url" placeholder="https://ntfy.sh/...">
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-header"><div class="step-number">6</div><div class="step-title">Lokalizacja (opcjonalnie)</div></div>
+    <div class="step-hint">Potrzebne tylko jeśli później dodasz reguły z oknem czasowym "wschód/zachód słońca".</div>
+    <div class="field-row">
+      <div class="field"><label>Szerokość geograficzna</label><input type="text" id="loc_lat" placeholder="52.23"></div>
+      <div class="field"><label>Długość geograficzna</label><input type="text" id="loc_lon" placeholder="21.01"></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-header"><div class="step-number">7</div><div class="step-title">Integracje opcjonalne</div></div>
+
+    <div class="checkbox-row"><input type="checkbox" id="ha_enabled"><label for="ha_enabled">Home Assistant (MQTT Discovery)</label></div>
+    <div class="optional-content" id="haContent">
+      <div class="field-row">
+        <div class="field"><label>Broker MQTT (jeśli inny niż eBUS)</label><input type="text" id="ha_mqtt_host" placeholder="pozostaw puste = ten sam co eBUS"></div>
+      </div>
+    </div>
+
+    <div class="checkbox-row"><input type="checkbox" id="unifi_enabled"><label for="unifi_enabled">Kamery UniFi Protect</label></div>
+    <div class="optional-content" id="unifiContent">
+      <div class="field-row">
+        <div class="field"><label>Adres kontrolera</label><input type="text" id="unifi_host" placeholder="192.168.1.5"></div>
+        <div class="field"><label>Login</label><input type="text" id="unifi_username"></div>
+        <div class="field"><label>Hasło</label><input type="password" id="unifi_password"></div>
+      </div>
+    </div>
+
+    <div class="checkbox-row"><input type="checkbox" id="tuya_cloud_enabled"><label for="tuya_cloud_enabled">Tuya Cloud (kamery Tuya / wirtualne urządzenie)</label></div>
+    <div class="optional-content" id="tuyaCloudContent">
+      <a class="external-link" href="https://developer.tuya.com" target="_blank" rel="noopener">↗ Otwórz developer.tuya.com</a>
+      <div class="field-row">
+        <div class="field"><label>Access ID</label><input type="text" id="tuya_access_id"></div>
+        <div class="field"><label>Access Secret</label><input type="password" id="tuya_access_key"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="save-bar">
+    <button type="submit" id="saveBtn">Zapisz i uruchom</button>
+    <div id="resultBox"></div>
+  </div>
+</form>
+
+<script>
+function addRow(containerId, template) {
+  const container = document.getElementById(containerId);
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  if (template === 'nameNumber') {
+    row.innerHTML = `
+      <input type="text" placeholder="nazwa (np. Salon)" class="row-name">
+      <input type="number" placeholder="numer" class="row-number" style="max-width: 90px;">
+      <button type="button" class="row-remove">✕</button>`;
+  }
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+
+document.querySelectorAll('[data-add]').forEach(btn => {
+  btn.addEventListener('click', () => addRow(btn.dataset.add, btn.dataset.template));
+});
+
+function addTuyaDeviceRow() {
+  const container = document.getElementById('tuyaDevicesRows');
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. gniazdko_salon)" class="td-name">
+    <input type="text" placeholder="device id" class="td-id">
+    <input type="text" placeholder="adres IP" class="td-ip">
+    <input type="text" placeholder="local key" class="td-key">
+    <select class="td-type">
+      <option value="socket">gniazdko/przełącznik</option>
+      <option value="dimmer">ściemniacz</option>
+    </select>
+    <input type="text" placeholder="DP jasności (tylko ściemniacz)" class="td-dp" style="display:none;">
+    <button type="button" class="row-remove">✕</button>`;
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  row.querySelector('.td-type').addEventListener('change', (e) => {
+    row.querySelector('.td-dp').style.display = e.target.value === 'dimmer' ? '' : 'none';
+  });
+  container.appendChild(row);
+}
+document.getElementById('addTuyaDeviceBtn').addEventListener('click', addTuyaDeviceRow);
+addTuyaDeviceRow(); // jeden wiersz od razu widoczny
+
+// Rozwijanie sekcji integracji opcjonalnych po zaznaczeniu checkboxa
+[['ha_enabled', 'haContent'], ['unifi_enabled', 'unifiContent'], ['tuya_cloud_enabled', 'tuyaCloudContent']]
+  .forEach(([checkboxId, contentId]) => {
+    document.getElementById(checkboxId).addEventListener('change', (e) => {
+      document.getElementById(contentId).classList.toggle('show', e.target.checked);
+    });
+  });
+
+function collectNameNumberRows(containerId) {
+  return Array.from(document.querySelectorAll(`#${containerId} .repeatable-row`))
+    .map(row => ({ name: row.querySelector('.row-name').value.trim(), number: row.querySelector('.row-number').value }))
+    .filter(r => r.name && r.number);
+}
+
+function collectTuyaDevices() {
+  return Array.from(document.querySelectorAll('#tuyaDevicesRows .repeatable-row')).map(row => ({
+    name: row.querySelector('.td-name').value.trim(),
+    id: row.querySelector('.td-id').value.trim(),
+    ip: row.querySelector('.td-ip').value.trim(),
+    local_key: row.querySelector('.td-key').value.trim(),
+    type: row.querySelector('.td-type').value,
+    dimmer_dp: row.querySelector('.td-dp').value.trim(),
+  })).filter(d => d.name);
+}
+
+document.getElementById('setupForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const resultBox = document.getElementById('resultBox');
+  const saveBtn = document.getElementById('saveBtn');
+  resultBox.className = '';
+  resultBox.style.display = 'none';
+
+  const password = document.getElementById('admin_password').value;
+  const passwordConfirm = document.getElementById('admin_password_confirm').value;
+  if (password !== passwordConfirm) {
+    resultBox.className = 'error';
+    resultBox.textContent = '❌ Hasła nie są identyczne';
+    return;
+  }
+
+  const form = {
+    satel: {
+      host: document.getElementById('satel_host').value.trim(),
+      port: document.getElementById('satel_port').value,
+      integration_key: document.getElementById('satel_integration_key').value.trim(),
+      virtual_inputs_port: document.getElementById('satel_virtual_inputs_port').value,
+    },
+    partitions: collectNameNumberRows('partitionsRows'),
+    monitored_zones: collectNameNumberRows('zonesRows'),
+    monitored_outputs: collectNameNumberRows('outputsRows'),
+    tuya_devices: collectTuyaDevices(),
+    ebus: {
+      mqtt_host: document.getElementById('ebus_mqtt_host').value.trim(),
+      mqtt_port: document.getElementById('ebus_mqtt_port').value,
+    },
+    admin_password: password,
+    notifications: { ntfy_topic_url: document.getElementById('ntfy_topic_url').value.trim() },
+    location: { latitude: document.getElementById('loc_lat').value.trim(), longitude: document.getElementById('loc_lon').value.trim() },
+    home_assistant: {
+      enabled: document.getElementById('ha_enabled').checked,
+      mqtt_host: document.getElementById('ha_mqtt_host').value.trim(),
+    },
+    unifi_protect: {
+      host: document.getElementById('unifi_enabled').checked ? document.getElementById('unifi_host').value.trim() : '',
+      username: document.getElementById('unifi_username').value.trim(),
+      password: document.getElementById('unifi_password').value,
+    },
+    tuya_cloud: {
+      access_id: document.getElementById('tuya_cloud_enabled').checked ? document.getElementById('tuya_access_id').value.trim() : '',
+      access_key: document.getElementById('tuya_access_key').value,
+    },
+  };
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Zapisywanie...';
+  try {
+    const resp = await fetch('/api/setup/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      resultBox.className = 'error';
+      resultBox.innerHTML = '❌ ' + (data.error || 'Błąd zapisu') +
+        (data.details ? '<ul>' + data.details.map(d => `<li>${d}</li>`).join('') + '</ul>' : '');
+    } else {
+      resultBox.className = 'ok';
+      resultBox.innerHTML = '✅ ' + data.message + '<br>' +
+        data.next_steps.map(s => `<code>${s}</code>`).join('<br>') +
+        '<br><br><a href="/" style="color: var(--accent);">→ Przejdź do panelu</a>';
+    }
+  } catch (err) {
+    resultBox.className = 'error';
+    resultBox.textContent = '❌ Błąd komunikacji z serwerem: ' + err;
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Zapisz i uruchom';
+  }
+});
+</script>
+</body>
+</html>
