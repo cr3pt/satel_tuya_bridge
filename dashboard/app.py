@@ -5,6 +5,9 @@ bibliotek nie ma problemu z architekturą ARMv6 RPi Zero W, w przeciwieństwie
 do Grafany/InfluxDB (Go, brak binarek dla armv6). Cały ciężki render
 wykresów robi przeglądarka (Chart.js) - RPi tylko serwuje JSON z SQLite.
 
+Jeśli config.yaml jeszcze nie istnieje, panel automatycznie przekierowuje
+na /setup (kreator pierwszej konfiguracji) - patrz dashboard/setup.py.
+
 Uruchomienie (osobny proces od głównego bridge'a - czyta ten sam plik
 SQLite, więc nie trzeba go integrować z pętlą asyncio):
     python -m dashboard.app --config config.yaml
@@ -12,20 +15,31 @@ SQLite, więc nie trzeba go integrować z pętlą asyncio):
 from __future__ import annotations
 
 import argparse
+import pathlib
 import time
 
 import yaml
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 from bridge.config import BridgeConfig
 from bridge.history_store import HistoryStore
 from dashboard.auth import AuthGuard, require_auth
+from dashboard.setup import CONFIG_HEADER, SENSORS_HEADER, build_config_dict, validate
 
 app = Flask(__name__)
-history: HistoryStore  # ustawiane w create_app()
+history: HistoryStore | None = None  # ustawiane w create_app()
 sensors_file_path = None  # ustawiane w create_app() - ścieżka do sensors.yaml
-auth_guard: AuthGuard  # ustawiane w create_app()
+auth_guard: AuthGuard | None = None  # ustawiane w create_app()
 satel_partitions_cfg: dict = {}  # nazwa -> numer strefy, ustawiane w create_app()
+config_path: pathlib.Path | None = None  # ustawiane w main() - potrzebne, zanim config.yaml w ogóle istnieje
+
+# Endpointy dostępne, ZANIM config.yaml istnieje (kreator + statyka) -
+# wszystko inne przekierowuje na /setup, dopóki konfiguracja nie powstanie.
+_SETUP_EXEMPT_ENDPOINTS = {"setup_page", "api_setup_save", "static"}
+
+
+def is_configured() -> bool:
+    return config_path is not None and config_path.exists()
 
 
 def create_app(config: BridgeConfig) -> Flask:
@@ -36,6 +50,14 @@ def create_app(config: BridgeConfig) -> Flask:
     auth_guard = AuthGuard(config.raw.get("dashboard", {}).get("auth"))
     satel_partitions_cfg = config.satel.get("partitions", {"Dom": config.satel.get("partition", 1)})
     return app
+
+
+@app.before_request
+def _redirect_to_setup_if_unconfigured():
+    if request.endpoint in _SETUP_EXEMPT_ENDPOINTS:
+        return
+    if not is_configured():
+        return redirect(url_for("setup_page"))
 
 
 def _parse_range() -> tuple[float, float]:
@@ -49,6 +71,57 @@ def _parse_range() -> tuple[float, float]:
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/setup")
+def setup_page():
+    if is_configured():
+        return redirect(url_for("index"))
+    return render_template("setup.html")
+
+
+@app.route("/api/setup/save", methods=["POST"])
+def api_setup_save():
+    if is_configured():
+        # Kreator NIE nadpisuje istniejącej konfiguracji - żeby ręczne
+        # zmiany w config.yaml nigdy nie zniknęły przez przypadkowe
+        # ponowne wejście na /setup (np. ktoś inny w sieci domowej).
+        return jsonify({"error": "Konfiguracja już istnieje. Usuń config.yaml ręcznie, żeby uruchomić kreator ponownie."}), 409
+
+    form = request.get_json(silent=True)
+    if not isinstance(form, dict):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+    errors = validate(form)
+    if errors:
+        return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+    config_dict = build_config_dict(form)
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(CONFIG_HEADER)
+        yaml.safe_dump(config_dict, f, allow_unicode=True, sort_keys=False)
+
+    sensors_path = config_path.parent / config_dict["ebus"]["sensors_file"]
+    with open(sensors_path, "w", encoding="utf-8") as f:
+        f.write(SENSORS_HEADER)
+        yaml.safe_dump({"sensors": []}, f, allow_unicode=True, sort_keys=False)
+
+    # Od razu wczytujemy świeżo zapisaną konfigurację do TEGO procesu -
+    # panel jest natychmiast użyteczny bez ręcznego restartu (sam proces
+    # bridge'a to osobny proces i wciąż wymaga uruchomienia/restartu -
+    # patrz komunikat zwracany niżej).
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+
+    return jsonify({
+        "message": "Konfiguracja zapisana. Uruchom teraz główny proces bridge'a, żeby zacząć zbierać dane "
+                    "(panel sam się już przeładował i jest gotowy).",
+        "next_steps": [
+            "python main.py --config " + str(config_path),
+            "Dodaj czujniki kotła eBUS w zakładce ⚙ Ustawienia czujników",
+        ],
+    })
 
 
 @app.route("/config")
@@ -212,11 +285,20 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8090)
     args = parser.parse_args()
 
-    config = BridgeConfig.load(args.config)
-    create_app(config)
+    global config_path
+    config_path = pathlib.Path(args.config)
 
     from waitress import serve
-    print(f"Panel dostępny pod http://{args.host}:{args.port}")
+
+    if config_path.exists():
+        create_app(BridgeConfig.load(config_path))
+        print(f"Panel dostępny pod http://{args.host}:{args.port}")
+    else:
+        print(
+            f"Brak {config_path} - uruchamiam kreator pierwszej konfiguracji.\n"
+            f"Otwórz http://{args.host if args.host != '0.0.0.0' else '<adres-rpi>'}:{args.port}/setup w przeglądarce."
+        )
+
     serve(app, host=args.host, port=args.port, threads=2)
 
 

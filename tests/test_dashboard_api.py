@@ -52,6 +52,9 @@ def client(tmp_path):
     )
     (tmp_path / "config.yaml").write_text(config_text, encoding="utf-8")
 
+    import dashboard.app as app_module
+    app_module.config_path = tmp_path / "config.yaml"  # inaczej before_request przekieruje wszystko na /setup
+
     config = BridgeConfig.load(tmp_path / "config.yaml")
     create_app(config)
     flask_app.config["TESTING"] = True

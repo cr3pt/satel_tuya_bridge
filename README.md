@@ -32,7 +32,7 @@ pytest
 pytest --cov=bridge --cov=dashboard --cov-report=term-missing
 ```
 
-**140 testów, wszystkie przechodzą, pokrycie kodu ~70%.** Uczciwie o
+**169 testów, wszystkie przechodzą, pokrycie kodu ~71%.** Uczciwie o
 brakującym pokryciu: moduły będące cienkimi wrapperami na biblioteki
 zewnętrzne (`satel_client.py` - satel_integra, `ebus_client.py` -
 callbacki paho-mqtt, `tuya_cloud_events.py`/`unifi_protect_events.py` -
@@ -64,6 +64,34 @@ pip install -r requirements.txt
 ```
 
 ## Konfiguracja
+
+Dwie drogi - wybierz wygodniejszą:
+
+### A) Kreator w przeglądarce (zalecane na start)
+
+Jeśli `config.yaml` jeszcze nie istnieje, panel **automatycznie
+przekierowuje** na `/setup` przy pierwszym wejściu - kreator krok po
+kroku z przyciskami otwierającymi w nowej karcie strony, których
+potrzebujesz (developer.tuya.com, ntfy.sh). Wystarczy:
+
+```bash
+python -m dashboard.app --config config.yaml
+```
+
+i otworzyć `http://<adres-rpi>:8090/` w przeglądarce - trafisz prosto do
+kreatora. Po zapisaniu panel jest **od razu gotowy** (bez restartu
+dashboardu) - zostaje tylko uruchomić główny proces bridge'a (dokładna
+komenda pojawi się na ekranie po zapisie).
+
+Kreator pokrywa podstawy (Satel, Tuya lokalnie, eBUS/MQTT, hasło panelu,
+powiadomienia, opcjonalnie Home Assistant/UniFi Protect/Tuya Cloud).
+Rzeczy bardziej zaawansowane (sceny, harmonogramy, eskalacja, automatyka
+kotła, alarmy progowe) dostają puste wartości domyślne - dopisujesz je
+później ręcznie w `config.yaml` (który zostaje w pełni edytowalny -
+kreator nie uruchomi się drugi raz, dopóki plik istnieje, więc żadne
+Twoje ręczne zmiany nie zostaną nadpisane).
+
+### B) Ręczna edycja plików
 
 1. `cp config.example.yaml config.yaml`
 2. `cp sensors.example.yaml sensors.yaml` (lista czujników eBUS - można
@@ -574,8 +602,10 @@ satel_tuya_bridge/
   dashboard/
     app.py                   # backend panelu (Flask + waitress)
     auth.py                   # autoryzacja - tylko akcje zmieniające stan
+    setup.py                   # logika kreatora pierwszej konfiguracji
     templates/index.html     # frontend panelu (Chart.js, filtrowanie, sterowanie alarmem)
     templates/config.html    # edytor listy czujników eBUS (lista + przełączniki)
+    templates/setup.html      # kreator pierwszej konfiguracji (krok po kroku)
   tests/                     # testy pytest (126 testów, patrz sekcja "Testy automatyczne")
   .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.9/3.11/3.12
   maintenance.py              # CLI do rotacji/backupu bazy (do crona, patrz sekcja "Rotacja i backup bazy")
