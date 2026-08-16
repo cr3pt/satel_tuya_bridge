@@ -3,28 +3,47 @@ COŚ ZMIENIAJĄ (zapis konfiguracji czujników, uzbrajanie/rozbrajanie stref).
 Zwykłe przeglądanie panelu (historia, statusy, dziennik zdarzeń) zostaje
 otwarte - to był świadomy wybór, nie przez zapomnienie.
 
-HTTP Basic Auth z pojedynczym hasłem administratora (nie ma potrzeby
-wielu kont w domowym systemie). Hasło trzymane jako hash (werkzeug -
-ta sama biblioteka, której i tak używa Flask, więc zero nowej zależności).
+Pojedyncze hasło administratora (nie ma potrzeby wielu kont w domowym
+systemie), trzymane jako hash (werkzeug - ta sama biblioteka, której i tak
+używa Flask, więc zero nowej zależności). Dwa sposoby zalogowania:
 
-WAŻNE ograniczenie, o którym warto wiedzieć: Basic Auth przez zwykłe HTTP
-(nie HTTPS) koduje hasło tylko w Base64 - to NIE jest szyfrowanie, każdy
+1. **Sesja przez `/login`** (używana przez panel webowy) - hasło wpisujesz
+   RAZ w prawdziwym, zamaskowanym polu formularza (`<input type=password>`,
+   NIE `prompt()` - `prompt()` wyświetla wpisywany tekst JAWNIE, bez
+   maskowania, co był realny problem we wcześniejszej wersji tego panelu).
+   Po zalogowaniu serwer wystawia losowy token sesji w ciasteczku
+   `HttpOnly` (niedostępnym dla JS na stronie - ochrona przed XSS) - dalsze
+   żądania NIE wysyłają już hasła, tylko ten token, aż do wylogowania
+   (`/api/logout`) albo wygaśnięcia sesji.
+2. **HTTP Basic Auth** (fallback, dla skryptów/curl/automatyzacji poza
+   przeglądarką - np. wywołanie API z crona) - działa jak dotychczas.
+
+WAŻNE ograniczenie, o którym warto wiedzieć: zarówno ciasteczko sesji, jak
+i Basic Auth, przez zwykłe HTTP (nie HTTPS) nie są szyfrowane - każdy
 podsłuchujący ruch w tej samej sieci LAN (niezbyt trudne w sieci WiFi ze
 słabym szyfrowaniem lub gdy urządzenie jest współdzielone) może je
-odczytać. Dla realnego bezpieczeństwa poza zaufaną siecią domową: postaw
-reverse proxy z HTTPS (Caddy/nginx) przed panelem, albo używaj VPN
-(WireGuard/Tailscale) zamiast wystawiać port bezpośrednio.
+przechwycić. Ciasteczko sesji jest jednak STRICTLY LEPSZE niż wysyłanie
+hasła Basic Auth przy KAŻDYM żądaniu: to losowy token bez związku z
+hasłem, który wygasa i można go unieważnić przez /api/logout, więc jego
+przechwycenie nie ujawnia hasła administratora. Dla realnego bezpieczeństwa
+poza zaufaną siecią domową: postaw reverse proxy z HTTPS (Caddy/nginx)
+przed panelem, albo używaj VPN (WireGuard/Tailscale) zamiast wystawiać
+port bezpośrednio.
 """
 from __future__ import annotations
 
 import functools
 import logging
+import secrets
 import time
 
 from flask import jsonify, request
 from werkzeug.security import check_password_hash
 
 logger = logging.getLogger("bridge.dashboard_auth")
+
+SESSION_COOKIE_NAME = "stb_session"
+SESSION_TTL_SECONDS = 12 * 3600  # 12h - wystarczająco długo na jedną "sesję" pracy z panelem
 
 
 class AuthGuard:
@@ -36,6 +55,11 @@ class AuthGuard:
         # wystarczające dla domowego użytku, resetuje się przy restarcie
         # panelu (co jest OK - restart panelu to rzadkie, świadome zdarzenie)
         self._failed_attempts: dict[str, list[float]] = {}
+        # token sesji -> timestamp wygaśnięcia. W pamięci procesu (jak wyżej)
+        # - restart panelu wylogowuje wszystkich, co jest akceptowalne
+        # (rzadkie, świadome zdarzenie, użytkownik po prostu loguje się
+        # ponownie raz).
+        self._sessions: dict[str, float] = {}
 
     @property
     def configured(self) -> bool:
@@ -53,8 +77,64 @@ class AuthGuard:
     def _record_success(self, ip: str) -> None:
         self._failed_attempts.pop(ip, None)
 
+    # -- logowanie sesyjne (/login, /api/login, /api/logout) ------------
+    def check_password(self, password: str) -> tuple[bool, str]:
+        """Sprawdza hasło wprost (nie z nagłówka Basic Auth) - używane przez
+        POST /api/login. Ten sam rate-limiting po IP co reszta metod."""
+        if not self.configured:
+            return False, (
+                "Panel nie ma skonfigurowanego hasła administratora "
+                "(dashboard.auth.password_hash w config.yaml) - akcje zmieniające "
+                "stan są zablokowane, dopóki nie ustawisz hasła. Patrz README."
+            )
+
+        ip = request.remote_addr or "unknown"
+        if self._is_locked_out(ip):
+            logger.warning("Zablokowano próbę logowania z %s - zbyt wiele nieudanych prób", ip)
+            return False, f"Zbyt wiele nieudanych prób - spróbuj ponownie za maks. {self.lockout_seconds}s"
+
+        if not password or not check_password_hash(self.password_hash, password):
+            self._record_failure(ip)
+            logger.warning("Nieudana próba logowania z %s", ip)
+            return False, "Nieprawidłowe hasło"
+
+        self._record_success(ip)
+        return True, ""
+
+    def _prune_expired_sessions(self) -> None:
+        now = time.time()
+        expired = [token for token, expires in self._sessions.items() if expires < now]
+        for token in expired:
+            del self._sessions[token]
+
+    def create_session(self) -> str:
+        """Zwraca NOWY token sesji - wywołaj TYLKO po udanym check_password().
+        `secrets.token_urlsafe` - kryptograficznie bezpieczny generator,
+        token nie ma żadnego związku matematycznego z hasłem (w
+        odróżnieniu od Basic Auth, gdzie nagłówek to zakodowane hasło)."""
+        self._prune_expired_sessions()
+        token = secrets.token_urlsafe(32)
+        self._sessions[token] = time.time() + SESSION_TTL_SECONDS
+        return token
+
+    def destroy_session(self, token: str | None) -> None:
+        if token:
+            self._sessions.pop(token, None)
+
+    def check_session(self, token: str | None) -> bool:
+        if not token:
+            return False
+        self._prune_expired_sessions()
+        return token in self._sessions
+
+    # -- sprawdzenie dla require_auth() - sesja ALBO Basic Auth ----------
     def check(self) -> tuple[bool, str]:
-        """Zwraca (czy_ok, komunikat_błędu)."""
+        """Zwraca (czy_ok, komunikat_błędu). Najpierw sprawdza ciasteczko
+        sesji (panel webowy po zalogowaniu przez /login) - dopiero gdy go
+        brak, spada do HTTP Basic Auth (skrypty/curl/automatyzacja)."""
+        if self.check_session(request.cookies.get(SESSION_COOKIE_NAME)):
+            return True, ""
+
         if not self.configured:
             return False, (
                 "Panel nie ma skonfigurowanego hasła administratora "

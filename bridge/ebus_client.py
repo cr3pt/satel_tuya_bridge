@@ -87,6 +87,23 @@ class EbusMqttListener:
         # loop_start) - exponential backoff między 1s a 120s.
         self._client.reconnect_delay_set(min_delay=1, max_delay=120)
 
+    def update_sensors(self, cfg: dict) -> None:
+        """Aktualizuje listę czujników BEZ zrywania połączenia MQTT - do
+        przeładowania konfiguracji w locie (patrz
+        RulesEngine.reload_config w rules_engine.py), wywoływane po zapisie
+        czujników w panelu (/config), zamiast wymagać restartu całego
+        procesu. Subskrybuje temat KAŻDEGO nowego czujnika natychmiast -
+        usunięte czujniki po prostu przestają być rozpoznawane w
+        _on_message (dalej fizycznie zasubskrybowane, ale ignorowane -
+        bez znaczenia praktycznego, nie warte dodatkowej złożoności
+        jawnego odsubskrybowania)."""
+        old_topics = set(self._topic_to_sensor)
+        self.cfg = cfg
+        self._topic_to_sensor = {s["mqtt_topic"]: s for s in cfg["sensors"]}
+        for topic in set(self._topic_to_sensor) - old_topics:
+            self._client.subscribe(topic)
+            logger.info("Subskrybuję nowy topik ebusd (przeładowanie configu): %s", topic)
+
     def start(self) -> None:
         # connect_async + loop_start: nie blokuje startu procesu jeśli
         # broker MQTT nie jest jeszcze gotowy (np. ebusd startuje wolniej

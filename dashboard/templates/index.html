@@ -34,6 +34,10 @@
     background: #262a32; color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 6px 10px; font-size: 13px;
   }
+  button.secondary {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer;
+  }
   .card {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 8px; padding: 16px; margin-bottom: 16px;
@@ -83,10 +87,34 @@
   .btn-disarm { background: var(--ok); color: #0a1a12; }
   #armMessage.ok { color: var(--ok); }
   #armMessage.error { color: var(--danger); }
+  .sensor-multiselect { position: relative; }
+  .sensor-multi-panel {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+    background: #1d2026; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; width: 280px; max-height: 320px; display: flex; flex-direction: column; gap: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .sensor-multi-panel input[type=text] { width: 100%; }
+  .sensor-checkbox-list { overflow-y: auto; flex: 1; }
+  .sensor-group-header {
+    color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; padding: 6px 4px 2px;
+  }
+  .sensor-check-row {
+    display: flex; align-items: center; gap: 8px; padding: 4px; border-radius: 4px;
+    font-size: 13px; cursor: pointer;
+  }
+  .sensor-check-row:hover { background: #262a32; }
+  .sensor-check-row input { width: 15px; height: 15px; flex-shrink: 0; }
+  .sensor-panel-actions { display: flex; gap: 8px; }
+  .sensor-panel-actions button {
+    flex: 1; background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px; font-size: 12px; cursor: pointer;
+  }
 </style>
 </head>
 <body>
-<h1>Panel Satel-Tuya-eBUS <a href="/config" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">⚙ Ustawienia czujników eBUS</a> <a href="/automations" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">🎬 Automatyzacje</a></h1>
+<h1>Panel Satel-Tuya-eBUS <a href="/config" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">⚙ Ustawienia czujników eBUS</a> <a href="/automations" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">🎬 Automatyzacje</a> <a id="authNavLink" href="/login" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;"></a></h1>
 
 <div id="alertsBanner" class="alerts-banner"></div>
 
@@ -122,9 +150,17 @@
 </div>
 
 <div class="controls">
-  <label>Czujnik:
-    <select id="sensorSelect"></select>
-  </label>
+  <div class="sensor-multiselect">
+    <button type="button" id="sensorMultiToggle" class="secondary">Czujniki (<span id="sensorSelectedCount">0</span>) ▾</button>
+    <div id="sensorMultiPanel" class="sensor-multi-panel" style="display:none;">
+      <input type="text" id="sensorFilterInput" placeholder="Szukaj czujnika...">
+      <div class="sensor-panel-actions">
+        <button type="button" id="sensorSelectAllBtn">Zaznacz wszystkie</button>
+        <button type="button" id="sensorClearAllBtn">Odznacz wszystkie</button>
+      </div>
+      <div id="sensorCheckboxList" class="sensor-checkbox-list"></div>
+    </div>
+  </div>
   <label>Zakres:
     <select id="rangeSelect">
       <option value="1">1 godzina</option>
@@ -173,52 +209,155 @@
 let chart = null;
 
 // --- Autoryzacja (tylko dla akcji zmieniających stan: zapis configu,
-// uzbrojenie/rozbrojenie) - hasło trzymane WYŁĄCZNIE w pamięci karty
-// przeglądarki (zmienna JS), nigdy w localStorage/sessionStorage -
-// znika przy odświeżeniu strony, nie jest nigdzie zapisywane na dysku.
-let authHeader = null;
-
-// Jeśli trafiliśmy tu z kreatora (/setup) zaraz po zapisaniu hasła
-// administratora, kreator dołącza je do adresu jako fragment URL
-// (#auth=...) - odczytujemy RAZ, wpisujemy do authHeader (dalej trzymane
-// tak samo, wyłącznie w pamięci) i NATYCHMIAST usuwamy z paska adresu
-// (history.replaceState) - nigdzie po drodze nie trafia do
-// localStorage/sessionStorage/historii przeglądarki. Dzięki temu pierwsza
-// akcja wymagająca hasła (np. uzbrojenie) po świeżym zapisaniu konfiguracji
-// nie pyta o nie drugi raz, 30 sekund po tym, jak użytkownik już je wpisał.
-(function adoptHandoffAuthFromSetup() {
-  if (!location.hash.startsWith('#auth=')) return;
-  try {
-    const token = decodeURIComponent(location.hash.slice('#auth='.length));
-    authHeader = 'Basic ' + token;
-  } finally {
-    history.replaceState(null, '', location.pathname + location.search);
-  }
-})();
-
+// uzbrojenie/rozbrojenie) - sesja przez /login (ciasteczko HttpOnly,
+// ustawiane przez serwer) - patrz dashboard/auth.py. Strona NIGDY sama nie
+// widzi ani nie trzyma hasła - jeśli akcja wymaga logowania i nie ma
+// ważnej sesji, przekierowujemy na /login zamiast pytać o hasło w prompt()
+// (który wyświetlał wpisywany tekst JAWNIE, bez maskowania).
 async function authorizedFetch(url, options = {}) {
-  if (!authHeader) {
-    const pass = prompt('Ta akcja zmienia stan systemu - podaj hasło administratora:');
-    if (pass === null) throw new Error('Anulowano');
-    authHeader = 'Basic ' + btoa(':' + pass);
-  }
-  const headers = Object.assign({}, options.headers, { 'Authorization': authHeader });
-  const resp = await fetch(url, Object.assign({}, options, { headers }));
+  const resp = await fetch(url, options);
   if (resp.status === 401) {
-    authHeader = null; // złe hasło (albo blokada) - wyczyść, pozwól spróbować znów przy kolejnej akcji
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+    throw new Error('Wymagane zalogowanie - przekierowuję na /login...');
   }
   return resp;
+}
+
+async function refreshAuthNav() {
+  const link = document.getElementById('authNavLink');
+  try {
+    const status = await (await fetch('/api/auth/status')).json();
+    if (status.logged_in) {
+      link.textContent = '🔓 Wyloguj';
+      link.href = '#';
+      link.onclick = async (e) => {
+        e.preventDefault();
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.reload();
+      };
+    } else {
+      link.textContent = '🔒 Zaloguj';
+      link.href = '/login?next=' + encodeURIComponent(location.pathname);
+      link.onclick = null;
+    }
+  } catch (e) {
+    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+  }
 }
 
 function fmtTime(ts) {
   return new Date(ts * 1000).toLocaleString('pl-PL');
 }
 
-async function loadSensors() {
-  const sensors = await (await fetch('/api/sensors')).json();
-  const sel = document.getElementById('sensorSelect');
-  sel.innerHTML = sensors.map(s => `<option value="${s}">${s}</option>`).join('');
+// --- Wybór czujników do wykresu (wielokrotny, pogrupowany wg obwodu) ---
+// Grupowanie po drugim segmencie tematu MQTT (ten sam mechanizm co w
+// /config dla wykrywania czujników eBUS) - np. "ebusd/bm/FlowTemp" i
+// "ebusd/fha/FlowTemp" trafiają do osobnych grup "bm"/"fha".
+function topicCircuit(topic) {
+  const parts = (topic || '').split('/').filter(Boolean);
+  return parts.length >= 2 ? parts[1] : 'inne';
 }
+
+let sensorNames = [];       // wszystkie nazwy z historycznymi danymi (/api/sensors)
+let sensorMeta = {};        // nazwa -> {label, mqtt_topic} (z /api/config/sensors, jeśli skonfigurowany)
+let selectedSensors = new Set();
+
+async function loadSensors() {
+  const [names, configured] = await Promise.all([
+    fetch('/api/sensors').then(r => r.json()),
+    fetch('/api/config/sensors').then(r => r.json()),
+  ]);
+  const byName = Object.fromEntries(configured.map(s => [s.name, s]));
+  sensorNames = names;
+  sensorMeta = {};
+  names.forEach(name => {
+    const cfg = byName[name];
+    sensorMeta[name] = { label: (cfg && cfg.label) || name, mqtt_topic: cfg ? cfg.mqtt_topic : '' };
+  });
+  // Domyślnie zaznacz pierwszy czujnik, żeby wykres nie startował pusty -
+  // ale tylko przy pierwszym wczytaniu (nie nadpisuj wyboru użytkownika
+  // przy kolejnych automatycznych odświeżeniach co 30s).
+  if (names.length && selectedSensors.size === 0) selectedSensors.add(names[0]);
+  renderSensorChecklist();
+  updateSensorToggleLabel();
+}
+
+function updateSensorToggleLabel() {
+  document.getElementById('sensorSelectedCount').textContent = selectedSensors.size;
+}
+
+function renderSensorChecklist() {
+  const filterText = document.getElementById('sensorFilterInput').value.trim().toLowerCase();
+  const groups = new Map();
+  sensorNames
+    .filter(name => !filterText
+      || name.toLowerCase().includes(filterText)
+      || sensorMeta[name].label.toLowerCase().includes(filterText))
+    .forEach(name => {
+      const circuit = topicCircuit(sensorMeta[name].mqtt_topic);
+      if (!groups.has(circuit)) groups.set(circuit, []);
+      groups.get(circuit).push(name);
+    });
+
+  const list = document.getElementById('sensorCheckboxList');
+  list.innerHTML = '';
+  if (groups.size === 0) {
+    list.innerHTML = '<div style="color: var(--muted); font-size: 12.5px; padding: 4px;">Brak wyników</div>';
+    return;
+  }
+  groups.forEach((names, circuit) => {
+    const header = document.createElement('div');
+    header.className = 'sensor-group-header';
+    header.textContent = circuit;
+    list.appendChild(header);
+    names.forEach(name => {
+      const row = document.createElement('label');
+      row.className = 'sensor-check-row';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = name;
+      checkbox.checked = selectedSensors.has(name);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selectedSensors.add(name); else selectedSensors.delete(name);
+        updateSensorToggleLabel();
+        loadHistory();
+      });
+      row.appendChild(checkbox);
+      row.appendChild(document.createTextNode(sensorMeta[name].label));
+      list.appendChild(row);
+    });
+  });
+}
+
+document.getElementById('sensorFilterInput').addEventListener('input', renderSensorChecklist);
+
+document.getElementById('sensorSelectAllBtn').addEventListener('click', () => {
+  sensorNames.forEach(name => selectedSensors.add(name));
+  renderSensorChecklist();
+  updateSensorToggleLabel();
+  loadHistory();
+});
+
+document.getElementById('sensorClearAllBtn').addEventListener('click', () => {
+  selectedSensors.clear();
+  renderSensorChecklist();
+  updateSensorToggleLabel();
+  loadHistory();
+});
+
+document.getElementById('sensorMultiToggle').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const panel = document.getElementById('sensorMultiPanel');
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+});
+
+document.addEventListener('click', (e) => {
+  const panel = document.getElementById('sensorMultiPanel');
+  const toggle = document.getElementById('sensorMultiToggle');
+  if (panel.style.display !== 'none' && !panel.contains(e.target) && e.target !== toggle) {
+    panel.style.display = 'none';
+  }
+});
 
 async function loadActiveAlerts() {
   const alerts = await (await fetch('/api/alerts/active')).json();
@@ -233,23 +372,46 @@ async function loadActiveAlerts() {
   ).join('');
 }
 
-async function loadHistory() {
-  const sensor = document.getElementById('sensorSelect').value;
-  const hours = document.getElementById('rangeSelect').value;
-  if (!sensor) return;
-  const data = await (await fetch(`/api/history?sensor=${encodeURIComponent(sensor)}&hours=${hours}`)).json();
+// Paleta cykliczna dla wielu czujników naraz na jednym wykresie.
+const SENSOR_CHART_COLORS = ['#4d8dfd', '#3dd68c', '#e5484d', '#f2b93d', '#c792ea', '#5ecbe0', '#ff9f68', '#8b93a1'];
 
-  const labels = data.map(d => fmtTime(d.t));
-  const values = data.map(d => d.v);
+async function loadHistory() {
+  const hours = document.getElementById('rangeSelect').value;
+  const names = Array.from(selectedSensors);
+  if (names.length === 0) {
+    if (chart) { chart.destroy(); chart = null; }
+    return;
+  }
+
+  // Każdy czujnik publikuje niezależnie (różne znaczniki czasu) - dlatego
+  // punkty to {x, y} na osi liczbowej (unix timestamp), NIE wspólna oś
+  // kategoryczna "labels" (ta zakładałaby, że wszystkie czujniki mają
+  // DOKŁADNIE te same znaczniki czasu, co nieprawda przy więcej niż
+  // jednym czujniku naraz).
+  const datasets = await Promise.all(names.map(async (name, i) => {
+    const data = await (await fetch(`/api/history?sensor=${encodeURIComponent(name)}&hours=${hours}`)).json();
+    const color = SENSOR_CHART_COLORS[i % SENSOR_CHART_COLORS.length];
+    return {
+      label: sensorMeta[name] ? sensorMeta[name].label : name,
+      data: data.map(d => ({ x: d.t * 1000, y: d.v })),
+      borderColor: color, backgroundColor: color + '1a',
+      pointRadius: 0, tension: 0.2, fill: false,
+    };
+  }));
 
   if (chart) chart.destroy();
   chart = new Chart(document.getElementById('historyChart'), {
     type: 'line',
-    data: { labels, datasets: [{ label: sensor, data: values, borderColor: '#4d8dfd', backgroundColor: 'rgba(77,141,253,0.1)', pointRadius: 0, tension: 0.2, fill: true }] },
+    data: { datasets },
     options: {
       responsive: true,
+      parsing: false,
       scales: {
-        x: { ticks: { color: '#8b93a1', maxTicksLimit: 8 }, grid: { color: '#2c3038' } },
+        x: {
+          type: 'linear',
+          ticks: { color: '#8b93a1', maxTicksLimit: 8, callback: (v) => fmtTime(v / 1000) },
+          grid: { color: '#2c3038' },
+        },
         y: { ticks: { color: '#8b93a1' }, grid: { color: '#2c3038' } },
       },
       plugins: { legend: { labels: { color: '#e6e8eb' } } },
@@ -415,11 +577,11 @@ async function refreshAll() {
   await loadAlertsHistory();
 }
 
-document.getElementById('sensorSelect').addEventListener('change', loadHistory);
 document.getElementById('rangeSelect').addEventListener('change', refreshAll);
 document.getElementById('eventTypeSelect').addEventListener('change', loadEvents);
 
 (async () => {
+  await refreshAuthNav();
   await loadSensors();
   await refreshAll();
   setInterval(refreshAll, 30000); // odświeżanie co 30s

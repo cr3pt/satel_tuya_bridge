@@ -100,6 +100,58 @@ class TestPublicEndpoints:
         assert resp.status_code == 404  # nie istnieje, ale endpoint jest dostępny bez auth
 
 
+class TestSessionAuthEndpoints:
+    """/login, /api/login, /api/logout, /api/auth/status - logowanie
+    sesyjne, które zastąpiło prompt()-owy Basic Auth w panelu webowym."""
+
+    def test_login_page_loads(self, client):
+        assert client.get("/login").status_code == 200
+
+    def test_auth_status_when_not_logged_in(self, client):
+        resp = client.get("/api/auth/status")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"logged_in": False, "configured": True}
+
+    def test_login_with_correct_password_sets_session_cookie(self, client):
+        resp = client.post("/api/login", json={"password": "test_haslo_123"})
+        assert resp.status_code == 200
+        assert "stb_session" in resp.headers.get("Set-Cookie", "")
+
+    def test_login_with_wrong_password_returns_401(self, client):
+        resp = client.post("/api/login", json={"password": "złe hasło"})
+        assert resp.status_code == 401
+
+    def test_auth_status_true_after_login(self, client):
+        client.post("/api/login", json={"password": "test_haslo_123"})
+        resp = client.get("/api/auth/status")
+        assert resp.get_json()["logged_in"] is True
+
+    def test_session_cookie_authorizes_protected_endpoint_without_basic_auth(self, client):
+        """Kluczowe zachowanie: PO /api/login żądania działają bez
+        żadnego nagłówka Authorization - sam token w ciasteczku wystarcza
+        (klient testowy Flask trzyma ciasteczka między żądaniami jak
+        prawdziwa przeglądarka)."""
+        client.post("/api/login", json={"password": "test_haslo_123"})
+        resp = client.post("/api/config/sensors", json=[])
+        assert resp.status_code == 200
+
+    def test_logout_clears_session(self, client):
+        client.post("/api/login", json={"password": "test_haslo_123"})
+        client.post("/api/logout")
+        resp = client.get("/api/auth/status")
+        assert resp.get_json()["logged_in"] is False
+
+    def test_logout_without_active_session_still_succeeds(self, client):
+        resp = client.post("/api/logout")
+        assert resp.status_code == 200
+
+    def test_protected_endpoint_still_works_with_basic_auth_fallback(self, client):
+        """Basic Auth wciąż działa (skrypty/curl/automatyzacja poza
+        przeglądarką) - sesja to dodatek, nie zamiennik."""
+        resp = client.post("/api/config/sensors", json=[], headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+
+
 class TestProtectedConfigEndpoint:
     def test_post_sensors_without_auth_returns_401(self, client):
         resp = client.post("/api/config/sensors", json=[])
@@ -113,6 +165,17 @@ class TestProtectedConfigEndpoint:
         resp = client.post("/api/config/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 200
         assert resp.get_json()["saved"] == 1
+
+    def test_post_sensors_enqueues_bridge_reload_command(self, client):
+        """Bridge (osobny proces) musi dowiedzieć się o zmianie BEZ ręcznego
+        restartu - panel dokłada komendę 'reload_config' do tej samej
+        kolejki co uzbrojenie/rozbrojenie (patrz dashboard/app.py:
+        _enqueue_bridge_reload, bridge/rules_engine.py: reload_config)."""
+        import dashboard.app as app_module
+
+        client.post("/api/config/sensors", json=[], headers=_basic_auth_header("test_haslo_123"))
+        pending = app_module.history.get_pending_commands()
+        assert any(c["command"] == "reload_config" for c in pending)
 
     def test_post_sensors_with_wrong_auth_returns_401(self, client):
         resp = client.post("/api/config/sensors", json=[], headers=_basic_auth_header("złe_hasło"))
@@ -216,6 +279,14 @@ class TestAutomationsEndpoint:
         assert resp.status_code == 200
         assert resp.get_json()["saved"] == {"scenes": 1, "motion_rules": 0}
 
+    def test_post_automations_enqueues_bridge_reload_command(self, client):
+        import dashboard.app as app_module
+
+        payload = {"scenes": [], "motion_rules": [], "presence_simulation": {}}
+        client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        pending = app_module.history.get_pending_commands()
+        assert any(c["command"] == "reload_config" for c in pending)
+
     def test_post_automations_validates_scene_fields(self, client):
         payload = {"scenes": [{"name": "", "actions": []}], "motion_rules": [], "presence_simulation": {}}
         resp = client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
@@ -290,6 +361,13 @@ class TestSatelFieldsEndpoint:
         assert resp.status_code == 200
         assert resp.get_json()["saved"]["monitored_zones"] == 1
 
+    def test_post_satel_fields_enqueues_bridge_reload_command(self, client):
+        import dashboard.app as app_module
+
+        client.post("/api/config/satel-fields", json={}, headers=_basic_auth_header("test_haslo_123"))
+        pending = app_module.history.get_pending_commands()
+        assert any(c["command"] == "reload_config" for c in pending)
+
     def test_post_satel_fields_validates_incomplete_virtual_input(self, client):
         payload = {"virtual_inputs": [{"name": "x", "number": "", "key": ""}]}
         resp = client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
@@ -335,6 +413,13 @@ class TestTuyaDevicesEndpoint:
         resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 200
         assert resp.get_json()["saved"] == 1
+
+    def test_post_tuya_devices_enqueues_bridge_reload_command(self, client):
+        import dashboard.app as app_module
+
+        client.post("/api/config/tuya-devices", json={"tuya_devices": []}, headers=_basic_auth_header("test_haslo_123"))
+        pending = app_module.history.get_pending_commands()
+        assert any(c["command"] == "reload_config" for c in pending)
 
     def test_post_tuya_devices_validates_incomplete_device(self, client):
         payload = {"tuya_devices": [{"name": "x", "id": "", "ip": "1.2.3.4", "local_key": "k"}]}

@@ -433,6 +433,25 @@ sceny/reguły ruchu/harmonogramy/eskalacja/symulacja obecności, patrz
 sekcja "Automatyzacje" niżej) - obie odczytują bez hasła, zapis wymaga
 hasła administratora.
 
+### Wykres historii - wybór wielu czujników naraz
+
+Przycisk **"Czujniki (N) ▾"** nad wykresem otwiera panel z listą WSZYSTKICH
+czujników, które mają choć jeden zapisany odczyt (tylko liczbowe czujniki
+eBUS - Satel/Tuya mają na razie tylko status na żywo, bez historii do
+wykresu). Lista jest:
+
+- **pogrupowana wg obwodu** - ten sam mechanizm co grupowanie w `/config`
+  (drugi segment tematu MQTT, np. `ebusd/bm/...` i `ebusd/fha/...` trafiają
+  do osobnych grup "bm"/"fha"),
+- **filtrowalna** - pole tekstowe nad listą filtruje po nazwie/etykiecie,
+- **wielokrotnego wyboru** - zaznacz kilka czujników naraz, żeby nałożyć
+  je na jednym wykresie (np. porównać temperaturę zasilania i powrotu) -
+  każdy dostaje inny kolor linii, z osobną legendą.
+
+Wybór zapamiętywany jest tylko w pamięci karty przeglądarki (jak reszta
+stanu UI) - znika przy odświeżeniu strony, przy starcie domyślnie
+zaznaczony jest pierwszy czujnik na liście.
+
 ### Zakładka ⚙ Ustawienia - eBUS, Satel, Tuya bez edycji YAML-a
 
 Trzy sekcje na jednej stronie (`/config`), każda z własnym przyciskiem
@@ -471,6 +490,27 @@ czujniki" nadaje też od razu czytelną etykietę wyprowadzoną z tematu (np.
 `FlowTemp` -> "Flow Temp") zamiast zostawiać ją pustą - stąd każdy nowo
 wykryty wiersz ma inną etykietę widoczną od razu, nie tylko ten sam szary
 placeholder.
+
+### Zmiany działają od razu - bez restartu Dockera
+
+Zapis czujników eBUS, pól Satela, urządzeń Tuya (ta strona, `/config`) albo
+scen/reguł ruchu/symulacji obecności (`/automations`) **nie wymaga
+restartu** bridge'a ani całego kontenera Docker - panel prosi bridge o
+przeładowanie konfiguracji w tle (przez tę samą kolejkę komend co
+uzbrojenie/rozbrojenie, patrz "Jak działa uzbrajanie/rozbrajanie
+technicznie" niżej), a bridge podłapuje zmianę w ciągu ok. 1-2s. Widać to
+w komunikacie po zapisie oraz jako zdarzenie "Konfiguracja przeładowana"
+w dzienniku zdarzeń panelu głównego.
+
+**Wyjątek: zakładka 🔌 Połączenia** (host/port centrali Satel, adresy
+brokerów MQTT, poświadczenia Tuya Cloud, Home Assistant) - te ustawienia
+dotyczą ŻYWYCH połączeń sieciowych (gniazdo TCP do centrali, klienci
+MQTT, Tuya Cloud Pulsar), więc bezpieczne zamknięcie i odtworzenie ich w
+locie byłoby dużo bardziej ryzykowne niż warte tego dla ustawień, które i
+tak zmienia się rzadko. Zmiana czegokolwiek w tej zakładce **wciąż
+wymaga pełnego restartu** procesu bridge'a - patrz "Build i rebuild -
+krok po kroku" (Docker) albo `sudo systemctl restart satel-tuya-bridge`
+(systemd).
 
 ### Zakładka 🔌 Połączenia - host/port/klucze/tematy MQTT po pierwszej konfiguracji
 
@@ -528,8 +568,9 @@ Panel jest **celowo** podzielony na dwie strefy:
   dziennik zdarzeń, aktywne alarmy. To świadomy wybór, nie przeoczenie -
   w domowej sieci LAN podgląd stanu domu nie jest tak wrażliwy jak
   możliwość jego ZMIANY.
-- **Wymaga hasła (HTTP Basic Auth)**: zapis ustawień czujników (`/config`)
-  oraz uzbrajanie/rozbrajanie stref alarmowych z panelu głównego.
+- **Wymaga zalogowania**: zapis ustawień czujników (`/config`,
+  `/automations`) oraz uzbrajanie/rozbrajanie stref alarmowych z panelu
+  głównego.
 
 #### Konfiguracja hasła
 
@@ -546,14 +587,23 @@ nieudanych próbach z tego samego adresu IP, dalsze próby są odrzucane
 przez `lockout_seconds` (domyślnie 300s) - **nawet z poprawnym hasłem**,
 dopóki blokada nie wygaśnie. Sprawdzone testem.
 
-#### Jak to działa w przeglądarce
+#### Jak to działa w przeglądarce - logowanie sesyjne (`/login`)
 
-Przy pierwszej akcji wymagającej hasła (zapis w `/config`, kliknięcie
-"Uzbrój"/"Rozbrój") przeglądarka poprosi o hasło zwykłym `prompt()`.
-Hasło trzymane jest **wyłącznie w pamięci karty przeglądarki** (zmienna
-JS) - nigdy w `localStorage`/`sessionStorage`, znika przy odświeżeniu
-strony. W ramach jednej sesji karty nie trzeba wpisywać go przy każdej
-akcji z osobna.
+Prawdziwe logowanie, nie okienko `prompt()`: strona `/login` ma
+zamaskowane pole hasła (`<input type=password>`, jak wszędzie indziej w
+sieci) - wpisujesz hasło RAZ, serwer wystawia losowy token sesji w
+ciasteczku **`HttpOnly`** (niedostępnym dla JavaScriptu na stronie -
+ochrona przed odczytaniem go przez ewentualny złośliwy skrypt/XSS).
+Dalsze żądania z panelu **nie wysyłają już hasła w ogóle** - tylko ten
+token, aż do wylogowania (link "🔓 Wyloguj" w nawigacji każdej strony,
+wywołuje `POST /api/logout`) albo wygaśnięcia sesji (12h).
+
+Próba akcji wymagającej logowania bez ważnej sesji (np. wejście prosto na
+`/config` i kliknięcie "Zapisz") przekierowuje na `/login?next=...` -
+po zalogowaniu wracasz dokładnie tam, gdzie byłeś. HTTP Basic Auth
+(nagłówek `Authorization: Basic ...`) wciąż działa jako alternatywa **dla
+skryptów/automatyzacji poza przeglądarką** (np. `curl` z crona) - panel
+webowy go już nie używa.
 
 #### Jak działa uzbrajanie/rozbrajanie technicznie
 
@@ -563,11 +613,15 @@ kolejki komend we wspólnej bazie SQLite (tabela `commands`), a bridge
 odpytuje ją co ~1.5s i wykonuje. Panel pokazuje status na żywo
 ("⏳ zlecono" -> "✅ wykonano"/"❌ błąd"), odpytując wynik komendy.
 
-#### Ważne ograniczenie: to nie jest szyfrowanie
+#### Ważne ograniczenie: to nie jest szyfrowanie transmisji
 
-HTTP Basic Auth przez zwykłe (nie-HTTPS) połączenie koduje hasło tylko w
-Base64 - to **nie** jest szyfrowanie, ktoś podsłuchujący ruch w tej samej
-sieci mógłby je odczytać. W zaufanej sieci domowej to akceptowalne
+Ciasteczko sesji (i HTTP Basic Auth, patrz wyżej) przez zwykłe (nie-HTTPS)
+połączenie **nie jest szyfrowane w transmisji** - ktoś podsłuchujący ruch
+w tej samej sieci mógłby je przechwycić. Sesja jest jednak **wyraźnie
+lepsza** niż wysyłanie samego hasła (albo jego zakodowanej postaci) przy
+każdym żądaniu: to losowy token bez matematycznego związku z hasłem,
+ograniczony czasowo i odwoływalny przez wylogowanie - jego przechwycenie
+NIE ujawnia hasła administratora. W zaufanej sieci domowej to akceptowalne
 ryzyko; jeśli wystawiasz panel poza LAN (np. przez przekierowanie portów
 na routerze), postaw przed nim reverse proxy z HTTPS (Caddy/nginx) albo
 używaj VPN (WireGuard/Tailscale) zamiast wystawiać port bezpośrednio.

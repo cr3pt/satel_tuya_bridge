@@ -27,7 +27,7 @@ from bridge.ebus_client import discover_topics as discover_ebus_topics
 from bridge.history_store import HistoryStore
 from bridge.satel_client import test_connection as test_satel_connection
 from bridge.tuya_local import scan_network as scan_tuya_network, fetch_cloud_devices as fetch_tuya_cloud_devices
-from dashboard.auth import AuthGuard, require_auth
+from dashboard.auth import AuthGuard, require_auth, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
 from dashboard.setup import (
     CONFIG_HEADER, SENSORS_HEADER, AUTOMATIONS_HEADER, SATEL_FIELDS_HEADER, TUYA_DEVICES_HEADER,
     build_config_dict, validate, build_automations_dict, validate_automations,
@@ -77,6 +77,23 @@ def create_app(config: BridgeConfig) -> Flask:
     return app
 
 
+_RELOAD_MESSAGE = (
+    "Zapisano. Bridge sam przeładuje konfigurację w ciągu ok. 1-2s, bez restartu procesu "
+    "(patrz RulesEngine.reload_config w bridge/rules_engine.py) - nic więcej nie trzeba robić."
+)
+
+
+def _enqueue_bridge_reload() -> None:
+    """Prosi główny proces bridge'a o przeładowanie 'lekkiej' konfiguracji
+    (czujniki eBUS/pola Satela/urządzenia Tuya/automatyzacje) BEZ restartu
+    procesu - ten sam mechanizm kolejki komend co uzbrojenie/rozbrojenie
+    (patrz history_store.py: enqueue_command, rules_engine.py:
+    _command_poll_loop/_execute_command/reload_config). Panel i bridge to
+    DWA OSOBNE procesy, więc to jedyny sposób, żeby panel poprosił bridge
+    o cokolwiek."""
+    history.enqueue_command("reload_config", {})
+
+
 def _dict_to_name_number_rows(d: dict) -> list[dict]:
     return [{"name": name, "number": number} for name, number in d.items()]
 
@@ -115,6 +132,46 @@ def _parse_range() -> tuple[float, float]:
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/login")
+def login_page():
+    return render_template("login.html")
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    """Prawdziwe logowanie sesyjne - hasło w ciele żądania POST (zamaskowane
+    pole formularza w templates/login.html, NIGDY prompt()), token sesji
+    wraca w ciasteczku HttpOnly. Rate-limiting po IP jak reszta AuthGuard."""
+    payload = request.get_json(silent=True) or {}
+    password = payload.get("password", "")
+    ok, message = auth_guard.check_password(password)
+    if not ok:
+        return jsonify({"error": message}), 401
+
+    token = auth_guard.create_session()
+    resp = jsonify({"message": "Zalogowano"})
+    resp.set_cookie(SESSION_COOKIE_NAME, token, max_age=SESSION_TTL_SECONDS, httponly=True, samesite="Lax")
+    return resp
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    """Zawsze zwraca 200 (nawet bez aktywnej sesji) - wylogowanie kogoś, kto
+    już nie jest zalogowany, nie jest błędem."""
+    auth_guard.destroy_session(request.cookies.get(SESSION_COOKIE_NAME))
+    resp = jsonify({"message": "Wylogowano"})
+    resp.delete_cookie(SESSION_COOKIE_NAME)
+    return resp
+
+
+@app.route("/api/auth/status")
+def api_auth_status():
+    """Do pokazania stanu (Zaloguj/Wyloguj) w nawigacji paneli - publiczny,
+    nic nie ujawnia poza tym, czy TA przeglądarka ma ważną sesję."""
+    logged_in = auth_guard.check_session(request.cookies.get(SESSION_COOKIE_NAME))
+    return jsonify({"logged_in": logged_in, "configured": auth_guard.configured})
 
 
 @app.route("/setup")
@@ -232,7 +289,7 @@ def api_setup_save():
     config = BridgeConfig.load(config_path)
     create_app(config)
 
-    return jsonify({
+    resp = jsonify({
         "message": "Konfiguracja zapisana. Uruchom teraz główny proces bridge'a, żeby zacząć zbierać dane "
                     "(panel sam się już przeładował i jest gotowy).",
         "next_steps": [
@@ -241,6 +298,15 @@ def api_setup_save():
             "Dodaj/edytuj sceny, harmonogramy, eskalację i symulację obecności w zakładce 🎬 Automatyzacje",
         ],
     })
+    # Logujemy od razu tym samym hasłem, które właśnie ustawiono w kreatorze
+    # - ciasteczkiem sesji (HttpOnly), NIE przez przekazywanie hasła w
+    # fragmencie URL (tak robiła wcześniejsza wersja - #auth=base64(hasło),
+    # co jest jawnym, odwracalnym zakodowaniem hasła w adresie strony).
+    # Panel po przeładowaniu jest więc od razu zalogowany, bez ponownego
+    # wpisywania hasła 30 sekund później.
+    token = auth_guard.create_session()
+    resp.set_cookie(SESSION_COOKIE_NAME, token, max_age=SESSION_TTL_SECONDS, httponly=True, samesite="Lax")
+    return resp
 
 
 @app.route("/config")
@@ -294,12 +360,9 @@ def api_config_sensors_post():
     with open(sensors_file_path, "w", encoding="utf-8") as f:
         f.write("# Wygenerowane z panelu webowego (/config) - patrz sensors.example.yaml po opis pól\n")
         yaml.safe_dump({"sensors": cleaned}, f, allow_unicode=True, sort_keys=False)
+    _enqueue_bridge_reload()
 
-    return jsonify({
-        "saved": len(cleaned),
-        "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
-                    "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
-    })
+    return jsonify({"saved": len(cleaned), "message": _RELOAD_MESSAGE})
 
 
 @app.route("/api/discover/ebus", methods=["POST"])
@@ -400,11 +463,11 @@ def api_config_satel_fields_post():
 
     config = BridgeConfig.load(config_path)
     create_app(config)
+    _enqueue_bridge_reload()
 
     return jsonify({
         "saved": {k: len(v) if isinstance(v, dict) else v for k, v in satel_fields_dict.items()},
-        "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
-                    "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
+        "message": _RELOAD_MESSAGE,
     })
 
 
@@ -434,12 +497,9 @@ def api_config_tuya_devices_post():
 
     config = BridgeConfig.load(config_path)
     create_app(config)
+    _enqueue_bridge_reload()
 
-    return jsonify({
-        "saved": len(tuya_devices_dict["devices"]),
-        "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
-                    "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
-    })
+    return jsonify({"saved": len(tuya_devices_dict["devices"]), "message": _RELOAD_MESSAGE})
 
 
 @app.route("/api/config/connections", methods=["GET"])
@@ -540,18 +600,19 @@ def api_config_automations_post():
         yaml.safe_dump(automations_dict, f, allow_unicode=True, sort_keys=False)
 
     # Jak przy zapisie czujników - odświeżamy config.raw w TYM procesie
-    # (żeby GET zaraz potem pokazał świeże dane), ale sam proces bridge'a
-    # (osobny proces) wciąż wymaga ręcznego restartu.
+    # (żeby GET zaraz potem pokazał świeże dane), i prosimy bridge o
+    # przeładowanie SWOJEJ konfiguracji (osobny proces) przez kolejkę
+    # komend - patrz _enqueue_bridge_reload/RulesEngine.reload_config.
     config = BridgeConfig.load(config_path)
     create_app(config)
+    _enqueue_bridge_reload()
 
     return jsonify({
         "saved": {
             "scenes": len(automations_dict["scenes"]),
             "motion_rules": len(automations_dict["reguły_ruchu"]),
         },
-        "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
-                    "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
+        "message": _RELOAD_MESSAGE,
     })
 
 

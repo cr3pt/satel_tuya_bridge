@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Logowanie - Panel Satel-Tuya-eBUS</title>
+<style>
+  :root {
+    --bg: #14161a; --card: #1d2026; --border: #2c3038;
+    --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
+    --danger: #e5484d; --danger-bg: #3a1a1c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 28px; width: 100%; max-width: 360px;
+  }
+  h1 { font-size: 18px; font-weight: 500; margin: 0 0 6px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 18px; line-height: 1.5; }
+  label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+  input[type=password] {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px; font-size: 14px; width: 100%; margin-bottom: 14px;
+  }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 10px 16px; font-size: 14px; cursor: pointer; font-weight: 500; width: 100%;
+  }
+  button:disabled { opacity: 0.6; cursor: not-allowed; }
+  .msg-box { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 14px; display: none; }
+  .msg-box.error { display: block; background: var(--danger-bg); border: 1px solid var(--danger); color: var(--danger); }
+  .back-link { display: block; margin-top: 16px; font-size: 13px; color: var(--accent); text-decoration: none; text-align: center; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🔒 Logowanie administratora</h1>
+  <div class="hint">
+    Wymagane do zapisu ustawień (⚙ Ustawienia, 🎬 Automatyzacje) i
+    uzbrajania/rozbrajania stref. Samo przeglądanie panelu nie wymaga
+    logowania.
+  </div>
+  <form id="loginForm">
+    <label for="password">Hasło administratora</label>
+    <input type="password" id="password" autocomplete="current-password" autofocus>
+    <button type="submit" id="loginBtn">Zaloguj</button>
+  </form>
+  <div id="loginMsg" class="msg-box"></div>
+  <a class="back-link" href="/">&larr; Wróć do panelu (bez logowania)</a>
+</div>
+<script>
+function nextUrl() {
+  const params = new URLSearchParams(location.search);
+  const next = params.get('next');
+  // Tylko ścieżki WEWNĄTRZ tej samej aplikacji - nigdy pełny URL (ochrona
+  // przed open-redirect przez spreparowany link "?next=https://zla-strona").
+  return (next && next.startsWith('/')) ? next : '/';
+}
+
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('loginBtn');
+  const msg = document.getElementById('loginMsg');
+  const password = document.getElementById('password').value;
+  btn.disabled = true;
+  msg.style.display = 'none';
+  try {
+    const resp = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      msg.className = 'msg-box error';
+      msg.style.display = 'block';
+      msg.textContent = '❌ ' + (data.error || 'Błąd logowania');
+      btn.disabled = false;
+      return;
+    }
+    window.location.href = nextUrl();
+  } catch (err) {
+    msg.className = 'msg-box error';
+    msg.style.display = 'block';
+    msg.textContent = '❌ Błąd komunikacji z serwerem: ' + err;
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

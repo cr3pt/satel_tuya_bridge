@@ -211,6 +211,104 @@ class TestBoilerValueRouting:
         assert any(s["value"] == "heating" for s in statuses)
 
 
+class TestReloadConfig:
+    """RulesEngine.reload_config() - przeładowanie 'lekkiej' konfiguracji
+    (czujniki eBUS/pola Satela/urządzenia Tuya/automatyzacje/alarmy) BEZ
+    restartu procesu - wywoływane przez komendę 'reload_config' w kolejce
+    (patrz dashboard/app.py: _enqueue_bridge_reload, dokładane po każdym
+    zapisie z panelu). Fixture `engine` nigdy nie wywołuje start(), więc
+    engine.ebus_listener zostaje None - dokładnie tak, jak w testach
+    powyżej w tym pliku (testujemy logikę, nie żywe połączenia sieciowe)."""
+
+    async def test_ebus_listener_none_does_not_crash_reload(self, engine):
+        assert engine.ebus_listener is None
+        await engine.reload_config()  # nie powinno rzucić wyjątku
+
+    async def test_config_object_is_replaced(self, engine, tmp_path):
+        old_config = engine.config
+        await engine.reload_config()
+        assert engine.config is not old_config
+
+    async def test_picks_up_new_tuya_device_without_restart(self, engine, tmp_path):
+        (tmp_path / "tuya_devices.yaml").write_text(
+            "devices:\n"
+            "  nowe_urzadzenie:\n"
+            "    id: dNEW\n"
+            "    ip: 1.2.3.9\n"
+            "    local_key: k9\n"
+            "    type: socket\n",
+            encoding="utf-8",
+        )
+        await engine.reload_config()
+        assert "nowe_urzadzenie" in engine.tuya.devices_cfg
+
+    async def test_picks_up_new_satel_zone_without_restart(self, engine, tmp_path):
+        (tmp_path / "satel_fields.yaml").write_text(
+            "monitored_zones:\n  Nowe_wejscie: 99\n"
+            "monitored_outputs: {}\n"
+            "partitions: {Dom: 1}\n"
+            "virtual_inputs: {}\n",
+            encoding="utf-8",
+        )
+        await engine.reload_config()
+        assert engine.satel.monitored_zones == {"Nowe_wejscie": 99}
+
+    async def test_satel_object_itself_is_not_replaced(self, engine, tmp_path):
+        """Kluczowe dla bezpieczeństwa reloadu: NIE tworzymy nowego
+        SatelIntegraClient (to zerwałoby żywe połączenie TCP) - tylko
+        mutujemy monitored_zones/monitored_outputs na istniejącym obiekcie."""
+        old_satel = engine.satel
+        await engine.reload_config()
+        assert engine.satel is old_satel
+
+    async def test_picks_up_new_scene_without_restart(self, engine, tmp_path):
+        (tmp_path / "automations.yaml").write_text(
+            "scenes:\n"
+            "  - name: nowa_scena\n"
+            "    actions:\n"
+            "      - {type: tuya_on, device: gniazdko_salon}\n"
+            "reguły_ruchu: []\n"
+            "presence_simulation: {enabled: false}\n",
+            encoding="utf-8",
+        )
+        await engine.reload_config()
+        assert engine.scenes.exists("nowa_scena")
+
+    async def test_presence_simulation_object_identity_preserved(self, engine, tmp_path):
+        """presence_simulation NIE jest podmieniane (tylko .cfg mutowane w
+        miejscu) - jego run_forever() mogło już być uruchomione jako
+        zadanie w tle przywiązane do TEGO obiektu (patrz reload_config)."""
+        old_presence = engine.presence_simulation
+        (tmp_path / "automations.yaml").write_text(
+            "scenes: []\nreguły_ruchu: []\n"
+            "presence_simulation: {enabled: true, devices: [gniazdko_salon], min_interval_minutes: 5, max_interval_minutes: 10}\n",
+            encoding="utf-8",
+        )
+        await engine.reload_config()
+        assert engine.presence_simulation is old_presence
+        assert engine.presence_simulation.cfg["enabled"] is True
+        assert engine.presence_simulation.cfg["devices"] == ["gniazdko_salon"]
+
+    async def test_picks_up_new_alarm_rule_without_restart(self, engine, tmp_path):
+        config_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+        config_text += "\nalarm_rules:\n  - name: test\n    sensor: kociol_temp\n    condition: above\n    threshold: 90\n"
+        (tmp_path / "config.yaml").write_text(config_text, encoding="utf-8")
+        await engine.reload_config()
+        assert len(engine.alarms.rules) == 1
+
+    async def test_ebus_listener_update_sensors_called_when_present(self, engine, tmp_path):
+        calls = []
+
+        class FakeEbusListener:
+            def update_sensors(self, cfg):
+                calls.append(cfg)
+
+        engine.ebus_listener = FakeEbusListener()
+        await engine.reload_config()
+        assert len(calls) == 1
+        assert "sensors" in calls[0]
+
+
 class TestStateMqttPublisher:
     """self.state_mqtt - publikacja stanu Satel/Tuya do MQTT pod
     konfigurowalnym tematem PER INTEGRACJA, niezależnie od

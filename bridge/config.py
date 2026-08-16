@@ -48,6 +48,11 @@ class BridgeConfig:
     # zostaje inline w config.yaml - to tylko NAZWANE POLA.
     satel_fields_file: pathlib.Path = field(default=None)
     tuya_devices_file: pathlib.Path = field(default=None)
+    # Ścieżka do GŁÓWNEGO config.yaml, z którego to wczytano - potrzebna,
+    # żeby RulesEngine.reload_config() (bridge/rules_engine.py) mogło
+    # ponownie wczytać świeżą konfigurację z DOKŁADNIE tego samego miejsca,
+    # bez konieczności pamiętania ścieżki gdzie indziej.
+    config_file: pathlib.Path = field(default=None)
 
     @classmethod
     def load(cls, path: str | pathlib.Path) -> "BridgeConfig":
@@ -110,6 +115,7 @@ class BridgeConfig:
         return cls(
             raw=data, sensors_file=sensors_path, automations_file=automations_path,
             satel_fields_file=satel_fields_path, tuya_devices_file=tuya_devices_path,
+            config_file=path,
         )
 
     @staticmethod
