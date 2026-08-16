@@ -32,7 +32,7 @@ pytest
 pytest --cov=bridge --cov=dashboard --cov-report=term-missing
 ```
 
-**273 testy, wszystkie przechodzą, pokrycie kodu ~76%.** Uczciwie o
+**296 testów, wszystkie przechodzą, pokrycie kodu ~76%.** Uczciwie o
 brakującym pokryciu: moduły będące cienkimi wrapperami na biblioteki
 zewnętrzne (`satel_client.py` - satel_integra, `ebus_client.py` -
 callbacki paho-mqtt, `tuya_cloud_events.py`/`unifi_protect_events.py` -
@@ -83,9 +83,24 @@ python -m dashboard.app --config config.yaml
 ```
 
 i otworzyć `http://<adres-rpi>:8090/` w przeglądarce - trafisz prosto do
-kreatora. Po zapisaniu panel jest **od razu gotowy** (bez restartu
-dashboardu) - zostaje tylko uruchomić główny proces bridge'a (dokładna
-komenda pojawi się na ekranie po zapisie).
+kreatora. Po zapisaniu ("Zapisz i uruchom") strona **sama przenosi Cię do
+panelu** (`/`) po krótkiej chwili, **już zalogowany** - hasło administratora,
+które właśnie ustawiłeś, jest gotowe do pierwszej akcji (np. uzbrojenia)
+bez ponownego wpisywania (przekazane przez fragment adresu URL, nigdy do
+localStorage/sessionStorage - patrz `templates/index.html`). `/setup`
+przestaje być dostępne od tego momentu (przekierowuje na `/`). Panel jest
+**od razu gotowy** (bez restartu dashboardu) - zostaje tylko uruchomić
+główny proces bridge'a (dokładna komenda pojawi się na ekranie po
+zapisie, razem z informacją, jak skonfigurować automatyczne uruchamianie
+po restarcie RPi - systemd albo Docker).
+
+**Krok 1 (Satel)** ma przycisk **"🔌 Testuj połączenie"** - sprawdza, czy
+pod podanym adresem/portem w ogóle coś odpowiada (TCP), zanim przejdziesz
+dalej. Uczciwie: to test osiągalności, NIE samego klucza integracji -
+protokół integracji Satela wysyła klucz dopiero przy konkretnym poleceniu
+(uzbrojenie/wyjście), a test świadomie niczego takiego nie wykonuje, żeby
+nic nie zmienić w systemie alarmowym. Błędny klucz integracji ujawni się
+dopiero przy pierwszym uzbrojeniu/rozbrojeniu.
 
 **Postęp zapisuje się automatycznie po każdym kliknięciu "Dalej"** (w
 pliku roboczym `.setup_draft.json` obok `config.yaml`) - kreator da się
@@ -113,6 +128,26 @@ przeglądarce, w zabezpieczonej hasłem zakładce **🎬 Automatyzacje**
 niżej) jest tam edytowalna od razu, mimo że kreator jej jeszcze nie zbiera.
 Szczegóły - sekcja "Automatyzacje" niżej.
 
+**Krok 2 (urządzenia Tuya)** ma trzy sposoby dodawania - ręcznie, skan
+sieci LAN (`🔍 Skanuj sieć` - podpowiada ID+IP, bez `local_key`) i
+**import z Tuya Cloud** (`☁ Import z Tuya Cloud` - podaj region + Access
+ID + Access Secret, pobiera WSZYSTKIE podpięte urządzenia razem z nazwą i
+`local_key` jednym kliknięciem; dokładnie to, co robi `tinytuya wizard`,
+tylko bez konsoli). **Polecane przy wielu urządzeniach** - ręczne
+wpisywanie `local_key` jednego po drugim szybko się nie opłaca. Gdzie
+znaleźć Access ID/Secret i jak założyć projekt w Tuya IoT Platform, jeśli
+go nie masz - patrz krok 7 (ta sama sekcja, co dla integracji kamer Tuya
+Cloud) i sekcja "Konto Tuya Cloud" niżej.
+
+**Krok 3 (eBUS)** ma przełącznik **"Uruchom lokalny broker MQTT dla
+mnie"** - po zaznaczeniu adres/port wypełniają się same
+(`127.0.0.1:1883`) i przestają być polem do ręcznego ustawienia; kreator
+NIE uruchamia sam żadnej usługi systemowej (wymagałoby to uprawnień roota
+z poziomu przeglądarki), tylko pokazuje gotowe komendy do wklejenia
+(`apt install mosquitto` + `systemctl enable --now`, albo
+`docker compose --profile broker up -d mosquitto` dla wdrożeń w Dockerze)
+- patrz sekcja "Lokalny broker MQTT" niżej.
+
 Rzeczy, których panel WCIĄŻ nie obsługuje (reguły kamer, reguły
 "światło Tuya → Satel", automatyka kotła, alarmy progowe) dostają puste
 wartości domyślne w `config.yaml` - dopisujesz je później ręcznie (plik
@@ -137,6 +172,67 @@ plik istnieje, więc żadne Twoje ręczne zmiany nie zostaną nadpisane).
    ```bash
    python -m tinytuya wizard
    ```
+
+## Konto Tuya Cloud (Access ID / Access Secret)
+
+Te same dwa poświadczenia (**Access ID** i **Access Secret**) są potrzebne
+w trzech niezależnych miejscach tego projektu - import urządzeń w
+kreatorze (krok 2, `☁ Import z Tuya Cloud`), integracja kamer Tuya Cloud
+(krok 7 kreatora / `tuya.cloud` w `config.yaml`) i wirtualne urządzenie
+dla danych z kotła (patrz sekcja niżej) - **jeden projekt w Tuya IoT
+Platform obsługuje wszystkie trzy**, nie trzeba zakładać osobnych.
+
+**Gdzie znaleźć, jeśli już masz projekt:** [developer.tuya.com](https://developer.tuya.com)
+→ zaloguj się → **Cloud** (menu boczne) → wybierz projekt z listy →
+zakładka **Overview** pokazuje `Access ID/Client ID` oraz
+`Access Secret/Client Secret` (kliknij "Show" przy Secret).
+
+**Jeśli nie masz jeszcze projektu:**
+1. Załóż konto na developer.tuya.com (darmowe, osobne od konta w
+   aplikacji Tuya Smart/Smart Life, którego już używasz do włączników).
+2. **Cloud → Create Cloud Project** - dowolna nazwa, region jak najbliższy
+   Tobie (np. Europa Centralna - musi być spójny z regionem wybieranym
+   później przy imporcie/integracji), typ *Smart Home PaaS* albo
+   *Smart Home Basic Edition*.
+3. Po utworzeniu: zakładka **Devices → Link Tuya App Account** - zeskanuj
+   kod QR aplikacją Tuya Smart/Smart Life - to podpina Twoje realne
+   urządzenia pod projekt chmurowy (bez tego import zwróci pustą listę).
+4. Zakładka **Service API** - upewnij się, że włączone są co najmniej
+   *IoT Core* i *Authorization* (zwykle domyślnie tak).
+5. Wróć do zakładki **Overview** po Access ID/Secret.
+
+Poświadczenia wpisywane przy imporcie w kreatorze/panelu **nie są nigdzie
+zapisywane** - używane jednorazowo do pobrania listy urządzeń, potem
+zapominane (w przeciwieństwie do `tuya.cloud` w `config.yaml`, gdzie
+zostają trwale, jeśli włączysz integrację kamer).
+
+## Lokalny broker MQTT
+
+Zarówno eBUS (`ebusd`), jak i opcjonalnie Home Assistant potrzebują
+brokera MQTT. Jeśli nie masz jeszcze żadnego działającego (np. już
+używanego przez inne urządzenia w domu), kreator (krok 3, przełącznik
+"Uruchom lokalny broker MQTT dla mnie") skonfiguruje adres na
+`127.0.0.1:1883` za Ciebie - **ale sam broker trzeba uruchomić ręcznie**,
+jedną z dwóch metod (kreator celowo nie wykonuje poleceń systemowych z
+poziomu przeglądarki):
+
+**A) Bezpośrednio na RPi:**
+```bash
+sudo apt update && sudo apt install -y mosquitto
+sudo systemctl enable --now mosquitto
+```
+
+**B) W Dockerze** (jeśli tak wdrażasz bridge - patrz sekcja "Uruchomienie
+w Dockerze" niżej), profil `broker` w `docker-compose.yml`:
+```bash
+docker compose --profile broker up -d mosquitto
+```
+
+W obu przypadkach broker nasłuchuje na porcie `1883` bez hasła/TLS -
+wystarczające w zaufanej sieci domowej (ten sam kompromis co reszta
+panelu, patrz sekcja "Bezpieczeństwo panelu"). Sam `ebusd` (fizyczne
+podłączenie do magistrali eBUS kotła) konfigurujesz niezależnie od tego
+wyboru - patrz sekcja "eBUS / ebusd" niżej.
 
 ## eBUS / ebusd (dane z kotła Wolf)
 
@@ -803,8 +899,8 @@ satel_tuya_bridge/
   main.py                   # punkt wejścia głównego bridge'a
   bridge/
     config.py               # loader YAML
-    satel_client.py         # protokół integracji + wirtualne wejścia IP
-    tuya_local.py            # sterowanie lokalne (tinytuya) + scan_network() (podpowiedź do /config)
+    satel_client.py         # protokół integracji + wirtualne wejścia IP + test_connection() ("Testuj połączenie")
+    tuya_local.py            # sterowanie lokalne (tinytuya) + scan_network()/fetch_cloud_devices() (import w /config)
     tuya_cloud_events.py     # ruch z kamer Tuya (Pulsar, wymaga chmury)
     unifi_protect_events.py  # ruch z kamer UniFi Protect
     ebus_client.py           # odczyt danych z ebusd (MQTT) + discover_topics() (podpowiedź do /config)

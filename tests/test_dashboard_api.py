@@ -406,3 +406,79 @@ class TestDiscoveryEndpoints:
         monkeypatch.setattr("dashboard.app.scan_tuya_network", raise_error)
         resp = client.post("/api/discover/tuya", json={})
         assert resp.status_code == 502
+
+
+class TestSatelConnectionTestEndpoint:
+    def test_no_auth_required(self, client, monkeypatch):
+        async def fake_test_connection(host, port):
+            return None
+
+        monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
+        resp = client.post("/api/setup/test-satel-connection", json={"host": "192.168.1.10", "port": 7094})
+        assert resp.status_code == 200
+
+    def test_missing_host_returns_400(self, client):
+        resp = client.post("/api/setup/test-satel-connection", json={})
+        assert resp.status_code == 400
+
+    def test_connection_error_returns_502_with_message(self, client, monkeypatch):
+        async def fake_test_connection(host, port):
+            raise ConnectionError(f"Nie udało się połączyć z {host}:{port}")
+
+        monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
+        resp = client.post("/api/setup/test-satel-connection", json={"host": "10.0.0.5", "port": 7094})
+        assert resp.status_code == 502
+        assert "10.0.0.5" in resp.get_json()["error"]
+
+    def test_default_port_used_when_omitted(self, client, monkeypatch):
+        captured = {}
+
+        async def fake_test_connection(host, port):
+            captured["port"] = port
+
+        monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
+        client.post("/api/setup/test-satel-connection", json={"host": "192.168.1.10"})
+        assert captured["port"] == 7094
+
+
+class TestTuyaCloudDiscoveryEndpoint:
+    def test_no_auth_required(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.fetch_tuya_cloud_devices", lambda region, aid, akey: [
+            {"id": "d1", "name": "Gniazdko", "local_key": "k1", "ip": "1.2.3.4", "version": "3.4"},
+        ])
+        resp = client.post(
+            "/api/discover/tuya-cloud",
+            json={"api_region": "eu", "access_id": "aid", "access_key": "akey"},
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["devices"][0]["name"] == "Gniazdko"
+
+    def test_missing_credentials_returns_400(self, client):
+        resp = client.post("/api/discover/tuya-cloud", json={"api_region": "eu"})
+        assert resp.status_code == 400
+
+    def test_connection_error_returns_502(self, client, monkeypatch):
+        def raise_error(region, aid, akey):
+            raise ConnectionError("Błąd logowania do Tuya Cloud: zły klucz")
+
+        monkeypatch.setattr("dashboard.app.fetch_tuya_cloud_devices", raise_error)
+        resp = client.post(
+            "/api/discover/tuya-cloud",
+            json={"api_region": "eu", "access_id": "aid", "access_key": "bad"},
+        )
+        assert resp.status_code == 502
+        assert "zły klucz" in resp.get_json()["error"]
+
+    def test_credentials_passed_through(self, client, monkeypatch):
+        captured = {}
+
+        def fake_fetch(region, aid, akey):
+            captured.update(region=region, aid=aid, akey=akey)
+            return []
+
+        monkeypatch.setattr("dashboard.app.fetch_tuya_cloud_devices", fake_fetch)
+        client.post(
+            "/api/discover/tuya-cloud",
+            json={"api_region": "us", "access_id": "myid", "access_key": "mykey"},
+        )
+        assert captured == {"region": "us", "aid": "myid", "akey": "mykey"}

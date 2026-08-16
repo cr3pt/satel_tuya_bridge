@@ -2,7 +2,7 @@
 urządzeń (typowe dla tanich urządzeń WiFi w słabym zasięgu)."""
 import pytest
 
-from bridge.tuya_local import TuyaLocalController, scan_network
+from bridge.tuya_local import TuyaLocalController, scan_network, fetch_cloud_devices
 
 DEVICES_CFG = {
     "gniazdko_salon": {"id": "dev1", "ip": "192.168.1.50", "local_key": "key1", "type": "socket"},
@@ -144,3 +144,91 @@ class TestScanNetwork:
         scan_network(maxretry=3)
         assert captured["maxretry"] == 3
         assert captured["poll"] is False  # nie mamy local_key przy skanowaniu - nie próbujemy odpytać dps
+
+
+class FakeCloud:
+    """Symuluje tinytuya.Cloud na tyle, ile potrzebuje fetch_cloud_devices()."""
+
+    def __init__(self, devices=None, error=None, getdevices_raises=None, **kwargs):
+        self.error = error
+        self._devices = devices if devices is not None else []
+        self._raises = getdevices_raises
+
+    def getdevices(self, *args, **kwargs):
+        if self._raises:
+            raise self._raises
+        return self._devices
+
+
+class TestFetchCloudDevices:
+    """fetch_cloud_devices() - import urządzeń z Tuya Cloud (kreator/panel),
+    alternatywa dla ręcznego wpisywania każdego urządzenia - bez prawdziwego
+    konta Tuya (tinytuya.Cloud zamockowane)."""
+
+    def test_returns_name_id_local_key_from_cloud(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
+            {"id": "d1", "name": "Gniazdko", "key": "localkey1"},
+        ]))
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
+        devices = fetch_cloud_devices("eu", "access_id", "access_secret")
+        assert devices == [{"id": "d1", "name": "Gniazdko", "local_key": "localkey1", "ip": "", "version": ""}]
+
+    def test_cross_references_lan_scan_by_id_for_ip(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
+            {"id": "d1", "name": "Gniazdko", "key": "localkey1"},
+        ]))
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [
+            {"id": "d1", "ip": "192.168.1.50", "version": "3.4"},
+        ])
+        devices = fetch_cloud_devices("eu", "access_id", "access_secret")
+        assert devices[0]["ip"] == "192.168.1.50"
+        assert devices[0]["version"] == "3.4"
+
+    def test_lan_scan_failure_does_not_break_cloud_import(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
+            {"id": "d1", "name": "Gniazdko", "key": "localkey1"},
+        ]))
+
+        def raise_scan(**kwargs):
+            raise RuntimeError("brak dostępu do sieci")
+
+        monkeypatch.setattr("bridge.tuya_local.scan_network", raise_scan)
+        devices = fetch_cloud_devices("eu", "access_id", "access_secret")
+        assert devices[0]["ip"] == ""
+
+    def test_login_error_raises_connection_error(self, monkeypatch):
+        monkeypatch.setattr(
+            "bridge.tuya_local.tinytuya.Cloud",
+            lambda **kw: FakeCloud(error={"Error": "Cloud _gettoken() failed"}),
+        )
+        with pytest.raises(ConnectionError):
+            fetch_cloud_devices("eu", "bad_id", "bad_secret")
+
+    def test_getdevices_exception_raises_connection_error(self, monkeypatch):
+        monkeypatch.setattr(
+            "bridge.tuya_local.tinytuya.Cloud",
+            lambda **kw: FakeCloud(getdevices_raises=KeyError("result")),
+        )
+        with pytest.raises(ConnectionError):
+            fetch_cloud_devices("eu", "access_id", "access_secret")
+
+    def test_getdevices_error_dict_raises_connection_error(self, monkeypatch):
+        monkeypatch.setattr(
+            "bridge.tuya_local.tinytuya.Cloud",
+            lambda **kw: FakeCloud(devices={"Error": "token expired"}),
+        )
+        with pytest.raises(ConnectionError, match="token expired"):
+            fetch_cloud_devices("eu", "access_id", "access_secret")
+
+    def test_constructor_raising_is_wrapped_as_connection_error(self, monkeypatch):
+        def raise_typeerror(**kwargs):
+            raise TypeError("Tuya Cloud Key and Secret required")
+
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", raise_typeerror)
+        with pytest.raises(ConnectionError):
+            fetch_cloud_devices("eu", "", "")
+
+    def test_no_devices_found_returns_empty_list(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[]))
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
+        assert fetch_cloud_devices("eu", "access_id", "access_secret") == []

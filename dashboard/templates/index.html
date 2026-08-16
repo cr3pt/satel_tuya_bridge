@@ -178,6 +178,24 @@ let chart = null;
 // znika przy odświeżeniu strony, nie jest nigdzie zapisywane na dysku.
 let authHeader = null;
 
+// Jeśli trafiliśmy tu z kreatora (/setup) zaraz po zapisaniu hasła
+// administratora, kreator dołącza je do adresu jako fragment URL
+// (#auth=...) - odczytujemy RAZ, wpisujemy do authHeader (dalej trzymane
+// tak samo, wyłącznie w pamięci) i NATYCHMIAST usuwamy z paska adresu
+// (history.replaceState) - nigdzie po drodze nie trafia do
+// localStorage/sessionStorage/historii przeglądarki. Dzięki temu pierwsza
+// akcja wymagająca hasła (np. uzbrojenie) po świeżym zapisaniu konfiguracji
+// nie pyta o nie drugi raz, 30 sekund po tym, jak użytkownik już je wpisał.
+(function adoptHandoffAuthFromSetup() {
+  if (!location.hash.startsWith('#auth=')) return;
+  try {
+    const token = decodeURIComponent(location.hash.slice('#auth='.length));
+    authHeader = 'Basic ' + token;
+  } finally {
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+})();
+
 async function authorizedFetch(url, options = {}) {
   if (!authHeader) {
     const pass = prompt('Ta akcja zmienia stan systemu - podaj hasło administratora:');

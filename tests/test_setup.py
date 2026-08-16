@@ -285,6 +285,34 @@ class TestSetupRedirect:
         resp = client.get("/setup")
         assert resp.status_code == 200
 
+    def test_satel_connection_test_reachable_without_redirect(self, setup_client, monkeypatch):
+        """Kreator (krok "Centrala Satel") musi móc wywołać test połączenia
+        ZANIM config.yaml w ogóle istnieje - endpoint jest zwolniony z
+        przekierowania na /setup (patrz _SETUP_EXEMPT_ENDPOINTS)."""
+        client, _ = setup_client
+
+        async def fake_test_connection(host, port):
+            return None
+
+        monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
+        resp = client.post("/api/setup/test-satel-connection", json={"host": "192.168.1.10", "port": 7094})
+        assert resp.status_code == 200
+
+    def test_discover_tuya_cloud_reachable_without_redirect(self, setup_client, monkeypatch):
+        client, _ = setup_client
+        monkeypatch.setattr("dashboard.app.fetch_tuya_cloud_devices", lambda *a, **kw: [])
+        resp = client.post(
+            "/api/discover/tuya-cloud",
+            json={"api_region": "eu", "access_id": "x", "access_key": "y"},
+        )
+        assert resp.status_code == 200
+
+    def test_discover_tuya_lan_scan_reachable_without_redirect(self, setup_client, monkeypatch):
+        client, _ = setup_client
+        monkeypatch.setattr("dashboard.app.scan_tuya_network", lambda: [])
+        resp = client.post("/api/discover/tuya", json={})
+        assert resp.status_code == 200
+
 
 class TestSetupSave:
     def test_save_creates_config_and_sensors_files(self, setup_client):
