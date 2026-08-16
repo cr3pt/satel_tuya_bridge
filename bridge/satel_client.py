@@ -31,6 +31,37 @@ from .resilience import Supervisor
 logger = logging.getLogger("bridge.satel")
 
 
+async def test_connection(host: str, port: int, timeout_seconds: float = 5.0) -> None:
+    """Sprawdza, czy pod podanym adresem/portem w ogóle coś odpowiada po TCP
+    (do kroku "Testuj połączenie" w kreatorze/panelu, ZANIM zapiszemy
+    config.yaml) - nie zgłasza wyjątku przy sukcesie, rzuca ConnectionError
+    z czytelnym komunikatem przy niepowodzeniu.
+
+    UCZCIWIE: to test SAMEJ OSIĄGALNOŚCI hosta/portu, NIE klucza integracji.
+    `AsyncSatel.connect()` tylko otwiera gniazdo TCP - klucz jest wysyłany
+    dopiero przy konkretnych poleceniach (set_output/arm/disarm), których
+    test świadomie nie wykonuje (nie chcemy niczego zmieniać w systemie
+    alarmowym w ramach "testu"). Błędny klucz integracji ujawni się dopiero
+    przy pierwszej próbie uzbrojenia/rozbrojenia/sterowania wyjściem."""
+    # Import odroczony - jak w SatelIntegraClient.connect() (patrz niżej) -
+    # żeby moduł dało się zaimportować nawet bez zainstalowanej biblioteki.
+    from satel_integra.satel_integra import AsyncSatel  # type: ignore
+
+    client = AsyncSatel(host, port, asyncio.get_event_loop())
+    try:
+        connected = await asyncio.wait_for(client.connect(), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        raise ConnectionError(
+            f"Przekroczono czas oczekiwania ({timeout_seconds:.0f}s) na połączenie z {host}:{port}"
+        )
+    finally:
+        if client._writer is not None:
+            client._writer.close()
+
+    if not connected:
+        raise ConnectionError(f"Nie udało się połączyć z {host}:{port} - sprawdź adres IP i port")
+
+
 class SatelVirtualInputTrigger:
     """Wywołuje naruszenie wirtualnego wejścia IP w ETHM-1 Plus."""
 

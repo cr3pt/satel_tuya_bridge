@@ -80,6 +80,30 @@
     background: #2c2413; border: 1px solid var(--warn); border-radius: 8px;
     padding: 10px 12px; font-size: 12.5px; line-height: 1.5; color: #e8d6ae; margin: 8px 0 14px;
   }
+  .info-box {
+    background: #16281f; border: 1px solid var(--ok); border-radius: 8px;
+    padding: 12px 14px; font-size: 12.5px; line-height: 1.6; color: #b9ecd2; margin: 8px 0 14px;
+  }
+  .info-box code, .warn-box code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 4px; }
+  .info-box pre, .warn-box pre {
+    background: #0e1a14; border-radius: 6px; padding: 10px; margin: 8px 0 0; overflow-x: auto;
+    font-size: 11.5px; line-height: 1.5; white-space: pre-wrap;
+  }
+  button.secondary {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button.secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .discover-status { font-size: 12.5px; color: var(--muted); }
+  .tab-row { display: flex; gap: 8px; margin-bottom: 14px; }
+  .tab-btn {
+    background: #262a32; color: var(--muted); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 14px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  .tab-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
   .sub-card {
     background: #171a1f; border: 1px solid var(--border); border-radius: 8px;
     padding: 14px; margin-bottom: 12px;
@@ -148,6 +172,19 @@
       <div class="field"><label>Klucz integracji</label><input type="text" id="satel_integration_key" placeholder="ustawiony w DLOADX"></div>
       <div class="field"><label>Port wejść IP (wirtualne wejścia)</label><input type="number" id="satel_virtual_inputs_port" value="8888"></div>
     </div>
+
+    <div class="discover-row">
+      <button type="button" class="secondary" id="testSatelConnectionBtn">🔌 Testuj połączenie</button>
+      <span class="discover-status" id="satelConnectionStatus"></span>
+    </div>
+    <div class="step-hint" style="margin: -6px 0 14px;">
+      Sprawdza tylko, czy pod tym adresem/portem coś odpowiada (TCP) - protokół
+      integracji Satela nie pozwala zweryfikować samego klucza bez wykonania
+      polecenia zmieniającego stan (uzbrojenie/wyjście), więc test świadomie
+      tego nie robi. Błędny klucz ujawni się dopiero przy pierwszym
+      uzbrojeniu/rozbrojeniu.
+    </div>
+
     <div class="warn-box">
       ⚠ <b>To hasło protokołu integracji, nie klucz szyfrowania.</b> Ten
       bridge (biblioteka <code>satel_integra</code>) nie obsługuje
@@ -181,26 +218,99 @@
   </div>
 
   <div class="step" data-step="2">
-    <div class="step-header"><div class="step-number">2</div><div class="step-title">Urządzenia Tuya (lokalnie)</div></div>
+    <div class="step-header"><div class="step-number">2</div><div class="step-title">Urządzenia Tuya</div></div>
     <div class="step-hint">
-      Local key każdego urządzenia wyciągasz narzędziem <code>tinytuya wizard</code>
-      z terminala (wymaga jednorazowego zalogowania do konta Tuya) - zajmuje
-      dosłownie chwilę, ale trzeba je uruchomić w konsoli na RPi, nie da się
-      tego zrobić z przeglądarki.
+      Trzy sposoby dodania urządzeń poniżej - można je łączyć, wszystkie
+      trafiają na tę samą listę na dole. <b>Przy wielu urządzeniach polecamy
+      import z Tuya Cloud</b> - jedno pobranie zamiast ręcznego wpisywania
+      każdego z osobna (dokładnie to samo, co robi <code>tinytuya wizard</code>,
+      tylko bez konsoli).
     </div>
-    <a class="external-link" href="https://github.com/jasonacox/tinytuya#tuya-device-preparation" target="_blank" rel="noopener">
-      ↗ Otwórz instrukcję tinytuya wizard
-    </a>
+
+    <div class="tab-row">
+      <button type="button" class="tab-btn active" data-tab="tuyaTabManual">✏ Ręcznie / skanuj sieć</button>
+      <button type="button" class="tab-btn" data-tab="tuyaTabCloud">☁ Import z Tuya Cloud</button>
+    </div>
+
+    <div class="tab-content active" id="tuyaTabManual">
+      <div class="step-hint">
+        Local key każdego urządzenia wyciągasz narzędziem <code>tinytuya wizard</code>
+        z terminala (wymaga jednorazowego zalogowania do konta Tuya) - albo
+        skanem sieci niżej, który podpowie ID i adres IP (ale NIE local_key -
+        Tuya świadomie go nie rozgłasza).
+      </div>
+      <a class="external-link" href="https://github.com/jasonacox/tinytuya#tuya-device-preparation" target="_blank" rel="noopener">
+        ↗ Otwórz instrukcję tinytuya wizard
+      </a>
+      <div class="discover-row">
+        <button type="button" class="secondary" id="scanTuyaLanBtn">🔍 Skanuj sieć (do ok. 18s)</button>
+        <span class="discover-status" id="tuyaLanScanStatus"></span>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tuyaTabCloud">
+      <div class="step-hint">
+        Wymaga projektu w Tuya IoT Platform z podpiętą aplikacją (Tuya Smart /
+        Smart Life) - gdzie znaleźć Access ID/Secret i jak założyć projekt,
+        jeśli go nie masz, patrz krok 7 ("Integracje opcjonalne").
+        Pobranie działa jednorazowo (nie zapisujemy tych poświadczeń) -
+        jeśli chcesz też integrację kamer Tuya Cloud, wpisz te same dane
+        ponownie w kroku 7.
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Region</label>
+          <select id="tuya_cloud_import_region">
+            <option value="eu">Europa (Centralna)</option>
+            <option value="eu-w">Europa (Zachodnia)</option>
+            <option value="us">USA (Zachodnie wybrzeże)</option>
+            <option value="us-e">USA (Wschodnie wybrzeże)</option>
+            <option value="in">Indie</option>
+            <option value="sg">Singapur</option>
+            <option value="cn">Chiny</option>
+          </select>
+        </div>
+        <div class="field"><label>Access ID</label><input type="text" id="tuya_cloud_import_id"></div>
+        <div class="field"><label>Access Secret</label><input type="password" id="tuya_cloud_import_key"></div>
+      </div>
+      <div class="discover-row">
+        <button type="button" id="fetchTuyaCloudBtn">☁ Pobierz urządzenia</button>
+        <span class="discover-status" id="tuyaCloudImportStatus"></span>
+      </div>
+    </div>
+
+    <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">Urządzenia</label>
     <div id="tuyaDevicesRows"></div>
-    <button type="button" class="add-row-btn" id="addTuyaDeviceBtn">+ Dodaj urządzenie</button>
+    <button type="button" class="add-row-btn" id="addTuyaDeviceBtn">+ Dodaj ręcznie</button>
   </div>
 
   <div class="step" data-step="3">
     <div class="step-header"><div class="step-number">3</div><div class="step-title">eBUS / ebusd (kocioł)</div></div>
     <div class="step-hint">Broker MQTT, na który publikuje ebusd. Same czujniki kotła dodasz po zapisaniu, w zakładce "Ustawienia czujników".</div>
-    <div class="field-row">
-      <div class="field"><label>Adres brokera MQTT</label><input type="text" id="ebus_mqtt_host" placeholder="127.0.0.1"></div>
-      <div class="field"><label>Port MQTT</label><input type="number" id="ebus_mqtt_port" value="1883"></div>
+
+    <div class="checkbox-row">
+      <input type="checkbox" id="ebus_run_local_broker">
+      <label for="ebus_run_local_broker">Uruchom lokalny broker MQTT (mosquitto) dla mnie</label>
+    </div>
+
+    <div class="optional-content show" id="ebusManualBrokerContent">
+      <div class="field-row">
+        <div class="field"><label>Adres brokera MQTT</label><input type="text" id="ebus_mqtt_host" placeholder="np. 192.168.1.20 - adres Twojego istniejącego brokera"></div>
+        <div class="field"><label>Port MQTT</label><input type="number" id="ebus_mqtt_port" value="1883"></div>
+      </div>
+    </div>
+
+    <div class="info-box" id="ebusLocalBrokerInfo" style="display:none;">
+      Bridge sam NIE instaluje/uruchamia usług systemowych (wymagałoby to
+      uprawnień administratora RPi z poziomu przeglądarki - świadomie tego
+      unikamy). Adres skonfigurowany na <code>127.0.0.1:1883</code> - zanim
+      uruchomisz bridge'a, uruchom broker jedną z dwóch metod:
+      <pre>sudo apt update && sudo apt install -y mosquitto
+sudo systemctl enable --now mosquitto</pre>
+      ...albo, jeśli używasz Dockera (patrz README, sekcja "Uruchomienie w Dockerze"):
+      <pre>docker compose --profile broker up -d mosquitto</pre>
+      Sam <code>ebusd</code> (fizyczne podłączenie do magistrali eBUS
+      kotła) trzeba skonfigurować osobno niezależnie od tego wyboru - patrz
+      README, sekcja "eBUS / ebusd".
     </div>
   </div>
 
@@ -254,6 +364,30 @@
     <div class="checkbox-row"><input type="checkbox" id="tuya_cloud_enabled"><label for="tuya_cloud_enabled">Tuya Cloud (kamery Tuya / wirtualne urządzenie)</label></div>
     <div class="optional-content" id="tuyaCloudContent">
       <a class="external-link" href="https://developer.tuya.com" target="_blank" rel="noopener">↗ Otwórz developer.tuya.com</a>
+      <div class="info-box">
+        <b>Gdzie znaleźć Access ID / Access Secret:</b> developer.tuya.com →
+        zaloguj się → <b>Cloud</b> (menu boczne) → wybierz swój projekt z
+        listy → zakładka <b>Overview</b> pokazuje <code>Access ID/Client ID</code>
+        oraz <code>Access Secret/Client Secret</code> (kliknij "Show" przy
+        Secret).
+        <br><br>
+        <b>Nie masz jeszcze projektu?</b> Załóż go raz (te same
+        poświadczenia wykorzystasz też w kroku 2, jeśli importowałeś stamtąd
+        urządzenia Tuya):
+        <ol style="margin: 6px 0 0; padding-left: 20px;">
+          <li>Zarejestruj się/zaloguj na developer.tuya.com (darmowe konto).</li>
+          <li><b>Cloud → Create Cloud Project</b> - dowolna nazwa, region jak
+            najbliższy Tobie (np. Europa Centralna), typ
+            "Smart Home PaaS" albo "Smart Home Basic Edition".</li>
+          <li>Po utworzeniu projektu: zakładka <b>Devices → Link Tuya App
+            Account</b> - zeskanuj kod QR aplikacją Tuya Smart/Smart Life (tą
+            samą, w której masz już dodane swoje urządzenia) - to podpina
+            Twoje realne urządzenia pod projekt chmurowy.</li>
+          <li>Zakładka <b>Service API</b> - upewnij się, że włączone są co
+            najmniej "IoT Core" i "Authorization" (zwykle domyślnie tak).</li>
+          <li>Wróć do zakładki <b>Overview</b> po Access ID/Secret.</li>
+        </ol>
+      </div>
       <div class="field-row">
         <div class="field"><label>Access ID</label><input type="text" id="tuya_access_id"></div>
         <div class="field"><label>Access Secret</label><input type="password" id="tuya_access_key"></div>
@@ -291,6 +425,40 @@
     <div class="step-header"><div class="step-number">10</div><div class="step-title">Podsumowanie</div></div>
     <div class="step-hint">Sprawdź poniżej, zanim zapiszesz - po zapisie kreator się blokuje (patrz nagłówek wygenerowanego config.yaml).</div>
     <div id="summaryContent"></div>
+
+    <div class="info-box">
+      <b>Żeby to wszystko uruchamiało się automatycznie po restarcie RPi</b>
+      (zamiast ręcznie odpalać za każdym razem) - zrób to PO zapisaniu,
+      jedną z dwóch metod:
+      <br><br>
+      <b>A) usługi systemd</b> (dwa pliki - bridge i panel):
+      <pre>sudo tee /etc/systemd/system/satel-tuya-bridge.service &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Satel-Tuya-eBUS bridge
+After=network-online.target
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/satel_tuya_bridge
+ExecStart=/home/pi/satel_tuya_bridge/venv/bin/python main.py
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now satel-tuya-bridge</pre>
+      ...analogicznie drugi plik dla panelu (<code>satel-tuya-dashboard.service</code>,
+      <code>ExecStart=... python -m dashboard.app --config config.yaml --port 8090</code>).
+      Dopasuj ścieżki (<code>WorkingDirectory</code>/<code>ExecStart</code>) do
+      swojej instalacji. Pełny opis - README, sekcja "Uruchomienie jako usługa systemd".
+      <br><br>
+      <b>B) Docker</b> (jeśli tak wdrażasz - patrz README, sekcja
+      "Uruchomienie w Dockerze"):
+      <pre>docker compose up -d</pre>
+      restart po awarii/reboot już wbudowany (<code>restart: unless-stopped</code>
+      w <code>docker-compose.yml</code>).
+    </div>
   </div>
 
 </form>
@@ -369,6 +537,32 @@ function collectVirtualInputs() {
   })).filter(v => v.name || v.number || v.key);
 }
 
+document.getElementById('testSatelConnectionBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('testSatelConnectionBtn');
+  const status = document.getElementById('satelConnectionStatus');
+  const host = document.getElementById('satel_host').value.trim();
+  const port = document.getElementById('satel_port').value;
+  if (!host) {
+    status.textContent = '❌ Podaj najpierw adres IP centrali';
+    return;
+  }
+  btn.disabled = true;
+  status.textContent = 'Łączę...';
+  try {
+    const resp = await fetch('/api/setup/test-satel-connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, port }),
+    });
+    const data = await resp.json();
+    status.textContent = (resp.ok ? '✅ ' : '❌ ') + (data.message || data.error);
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ------------------------------------------------------------------
 // Urządzenia Tuya
 // ------------------------------------------------------------------
@@ -416,6 +610,94 @@ function collectTuyaDevices() {
   })).filter(d => d.name || d.id || d.ip || d.local_key);
 }
 
+// Dodaje wykryte urządzenie (skan LAN albo import z Tuya Cloud) - jeśli
+// wiersz z tym samym ID już istnieje (np. skan LAN dodał samo ID+IP, a
+// import z Cloud dorzuca teraz nazwę+local_key), UZUPEŁNIA go zamiast
+// tworzyć duplikat.
+function upsertTuyaDeviceRow(device) {
+  if (!device.id) { addTuyaDeviceRow(device); return; }
+  const existingRow = Array.from(document.querySelectorAll('#tuyaDevicesRows .repeatable-row'))
+    .find(row => row.querySelector('.td-id').value.trim() === device.id);
+  if (existingRow) {
+    if (device.name && !existingRow.querySelector('.td-name').value.trim()) {
+      existingRow.querySelector('.td-name').value = device.name;
+    }
+    if (device.ip) existingRow.querySelector('.td-ip').value = device.ip;
+    if (device.local_key) existingRow.querySelector('.td-key').value = device.local_key;
+    return false;
+  }
+  addTuyaDeviceRow(device);
+  return true;
+}
+
+// Zakładki "Ręcznie / skanuj sieć" vs "Import z Tuya Cloud" - obie
+// dopisują do TEJ SAMEJ listy urządzeń na dole, więc przełączanie
+// zakładek niczego nie ukrywa ani nie kasuje.
+document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const targetId = btn.dataset.tab;
+    btn.parentElement.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+    const container = btn.closest('.step');
+    container.querySelectorAll('.tab-content').forEach(el => el.classList.toggle('active', el.id === targetId));
+  });
+});
+
+document.getElementById('scanTuyaLanBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('scanTuyaLanBtn');
+  const status = document.getElementById('tuyaLanScanStatus');
+  btn.disabled = true;
+  status.textContent = 'Skanuję sieć (do ok. 18s)...';
+  try {
+    const resp = await fetch('/api/discover/tuya', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) { status.textContent = '❌ ' + (data.error || 'Błąd skanowania'); return; }
+    let added = 0;
+    (data.devices || []).forEach(dev => {
+      if (upsertTuyaDeviceRow({ id: dev.id, ip: dev.ip, type: 'socket' })) added++;
+    });
+    status.textContent = added
+      ? `Znaleziono ${data.devices.length} urządzeń, dodano ${added} nowych - uzupełnij nazwę i local_key.`
+      : `Nie znaleziono nowych urządzeń (${data.devices.length} już na liście albo żadne nie odpowiedziało).`;
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('fetchTuyaCloudBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('fetchTuyaCloudBtn');
+  const status = document.getElementById('tuyaCloudImportStatus');
+  const api_region = document.getElementById('tuya_cloud_import_region').value;
+  const access_id = document.getElementById('tuya_cloud_import_id').value.trim();
+  const access_key = document.getElementById('tuya_cloud_import_key').value.trim();
+  if (!access_id || !access_key) {
+    status.textContent = '❌ Podaj Access ID i Access Secret';
+    return;
+  }
+  btn.disabled = true;
+  status.textContent = 'Pobieram listę urządzeń...';
+  try {
+    const resp = await fetch('/api/discover/tuya-cloud', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_region, access_id, access_key }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { status.textContent = '❌ ' + (data.error || 'Błąd importu'); return; }
+    let added = 0, updated = 0;
+    (data.devices || []).forEach(dev => {
+      if (upsertTuyaDeviceRow({ id: dev.id, name: dev.name, local_key: dev.local_key, ip: dev.ip, type: 'socket' })) added++;
+      else updated++;
+    });
+    status.textContent = `Pobrano ${data.devices.length} urządzeń (${added} nowych, ${updated} uzupełnionych o nazwę/local_key) - sprawdź typ (gniazdko/ściemniacz) przed zapisem.`;
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 function getTuyaDeviceNames() {
   return Array.from(document.querySelectorAll('#tuyaDevicesRows .td-name'))
     .map(el => el.value.trim()).filter(Boolean);
@@ -446,6 +728,24 @@ function refreshVirtualInputsDatalist() {
       document.getElementById(contentId).classList.toggle('show', e.target.checked);
     });
   });
+
+// "Uruchom lokalny broker MQTT dla mnie" - po zaznaczeniu adres/port
+// wypełniają się same (127.0.0.1:1883, tam gdzie wyląduje mosquitto z
+// instrukcji w info-boxie) i znikają jako pole do ręcznego wypełnienia -
+// nie pytamy o to drugi raz. Po odznaczeniu wracamy do pustego pola do
+// ręcznego wpisania adresu istniejącego brokera.
+document.getElementById('ebus_run_local_broker').addEventListener('change', (e) => {
+  const hostField = document.getElementById('ebus_mqtt_host');
+  const portField = document.getElementById('ebus_mqtt_port');
+  document.getElementById('ebusManualBrokerContent').classList.toggle('show', !e.target.checked);
+  document.getElementById('ebusLocalBrokerInfo').style.display = e.target.checked ? '' : 'none';
+  if (e.target.checked) {
+    hostField.value = '127.0.0.1';
+    portField.value = '1883';
+  } else {
+    hostField.value = '';
+  }
+});
 
 function escapeHtml(s) {
   const d = document.createElement('div');
@@ -763,6 +1063,11 @@ function populateForm(data) {
 
   const ebus = data.ebus || {};
   set('ebus_mqtt_host', ebus.mqtt_host); set('ebus_mqtt_port', ebus.mqtt_port);
+  if (ebus.mqtt_host === '127.0.0.1') {
+    document.getElementById('ebus_run_local_broker').checked = true;
+    document.getElementById('ebusManualBrokerContent').classList.remove('show');
+    document.getElementById('ebusLocalBrokerInfo').style.display = '';
+  }
 
   set('admin_password', data.admin_password); set('admin_password_confirm', data.admin_password_confirm);
   set('ntfy_topic_url', (data.notifications || {}).ntfy_topic_url);
@@ -988,7 +1293,19 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
       resultBox.className = 'ok';
       resultBox.innerHTML = '✅ ' + respData.message + '<br>' +
         respData.next_steps.map(s => `<code>${escapeHtml(s)}</code>`).join('<br>') +
-        '<br><br><a href="/" style="color: var(--accent);">→ Przejdź do panelu</a>';
+        '<br><br>Przenoszę do panelu (już zalogowany)...';
+      // Kreator ma się już nie pokazać ponownie po zapisie (/setup samo
+      // przekierowuje na / po tym, jak config.yaml istnieje - patrz
+      // dashboard/app.py: is_configured()) - tutaj tylko dajemy chwilę na
+      // przeczytanie komunikatu, zanim przełączymy stronę. Hasło, które
+      // WŁAŚNIE ustawiono, przekazujemy do panelu przez fragment URL
+      // (nigdy nie trafia do localStorage/sessionStorage, znika z paska
+      // adresu natychmiast po odczytaniu - patrz templates/index.html) -
+      // żeby nie trzeba było wpisywać go drugi raz 30 sekund później.
+      const authToken = btoa(':' + data.admin_password);
+      setTimeout(() => {
+        window.location.href = '/#auth=' + encodeURIComponent(authToken);
+      }, 1800);
     }
   } catch (err) {
     resultBox.className = 'error';

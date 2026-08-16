@@ -36,6 +36,76 @@ def scan_network(maxretry: int = 1) -> list[dict]:
     return devices
 
 
+# Kody regionów Tuya Cloud rozpoznawane przez tinytuya.Cloud - to samo, czego
+# używa `tinytuya wizard`. "cn" to domyślny region biblioteki (nie na liście
+# poniżej, bo Tuya IoT Platform i tak wymaga wyboru regionu przy zakładaniu
+# projektu - "cn" rzadko dotyczy instalacji spoza Chin).
+TUYA_CLOUD_REGIONS = {
+    "eu": "Europa (Centralna)",
+    "eu-w": "Europa (Zachodnia)",
+    "us": "USA (Zachodnie wybrzeże)",
+    "us-e": "USA (Wschodnie wybrzeże)",
+    "in": "Indie",
+    "sg": "Singapur",
+    "cn": "Chiny",
+}
+
+
+def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> list[dict]:
+    """Pobiera WSZYSTKIE urządzenia podpięte do projektu Tuya Cloud (nazwa,
+    id, `local_key`) przez `tinytuya.Cloud` - dokładnie to samo, czego
+    używa `python -m tinytuya wizard`, tylko bez interaktywnej konsoli.
+    Alternatywa dla ręcznego dodawania urządzenia po urządzeniu w
+    kreatorze/panelu - przydatna, gdy jest ich dużo.
+
+    Krzyżuje wynik z krótkim skanem LAN (`scan_network`), żeby dorzucić
+    adres IP tam, gdzie się da (Tuya Cloud go nie zwraca) - dopasowanie po
+    ID urządzenia. Brak dopasowania w LAN (urządzenie offline/inna
+    podsieć) nie jest błędem - `ip` zostaje puste, użytkownik uzupełnia
+    ręcznie.
+
+    Wymaga projektu w Tuya IoT Platform (developer.tuya.com) z podpiętą
+    aplikacją (Tuya Smart / Smart Life) - patrz README po instrukcję
+    założenia projektu i znalezienia Access ID/Secret."""
+    try:
+        cloud = tinytuya.Cloud(apiRegion=api_region, apiKey=access_id, apiSecret=access_key)
+    except Exception as exc:
+        raise ConnectionError(f"Błąd logowania do Tuya Cloud: {exc}") from exc
+
+    if getattr(cloud, "error", None):
+        message = cloud.error.get("Error") if isinstance(cloud.error, dict) else str(cloud.error)
+        raise ConnectionError(f"Błąd logowania do Tuya Cloud: {message}")
+
+    try:
+        result = cloud.getdevices()
+    except Exception as exc:
+        raise ConnectionError(f"Błąd pobierania urządzeń z Tuya Cloud: {exc}") from exc
+
+    if isinstance(result, dict) and result.get("Error"):
+        raise ConnectionError(f"Błąd pobierania urządzeń z Tuya Cloud: {result['Error']}")
+    if not isinstance(result, list):
+        raise ConnectionError("Nieoczekiwana odpowiedź z Tuya Cloud")
+
+    try:
+        lan_devices = {d["id"]: d for d in scan_network(maxretry=1) if d.get("id")}
+    except Exception:
+        logger.warning("Skan LAN podczas importu z Tuya Cloud nie powiódł się - kontynuuję bez adresów IP", exc_info=True)
+        lan_devices = {}
+
+    devices = []
+    for d in result:
+        dev_id = d.get("id", "")
+        lan_match = lan_devices.get(dev_id, {})
+        devices.append({
+            "id": dev_id,
+            "name": d.get("name", ""),
+            "local_key": d.get("key", ""),
+            "ip": lan_match.get("ip", ""),
+            "version": lan_match.get("version", ""),
+        })
+    return devices
+
+
 class TuyaLocalController:
     def __init__(self, devices_cfg: dict, retries: int = 2, retry_delay: float = 1.5):
         self.devices_cfg = devices_cfg

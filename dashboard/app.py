@@ -15,6 +15,7 @@ SQLite, więc nie trzeba go integrować z pętlą asyncio):
 from __future__ import annotations
 
 import argparse
+import asyncio
 import pathlib
 import time
 
@@ -24,7 +25,8 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 from bridge.config import BridgeConfig
 from bridge.ebus_client import discover_topics as discover_ebus_topics
 from bridge.history_store import HistoryStore
-from bridge.tuya_local import scan_network as scan_tuya_network
+from bridge.satel_client import test_connection as test_satel_connection
+from bridge.tuya_local import scan_network as scan_tuya_network, fetch_cloud_devices as fetch_tuya_cloud_devices
 from dashboard.auth import AuthGuard, require_auth
 from dashboard.setup import (
     CONFIG_HEADER, SENSORS_HEADER, AUTOMATIONS_HEADER, SATEL_FIELDS_HEADER, TUYA_DEVICES_HEADER,
@@ -46,7 +48,13 @@ config_path: pathlib.Path | None = None  # ustawiane w main() - potrzebne, zanim
 
 # Endpointy dostępne, ZANIM config.yaml istnieje (kreator + statyka) -
 # wszystko inne przekierowuje na /setup, dopóki konfiguracja nie powstanie.
-_SETUP_EXEMPT_ENDPOINTS = {"setup_page", "api_setup_save", "api_setup_draft", "static"}
+# Testy/wykrywanie (satel-connection, tuya-cloud, tuya LAN scan) są tu
+# celowo - kreator sam z nich korzysta, ZANIM config.yaml w ogóle istnieje
+# (patrz templates/setup.html, kroki "Centrala Satel"/"Urządzenia Tuya").
+_SETUP_EXEMPT_ENDPOINTS = {
+    "setup_page", "api_setup_save", "api_setup_draft", "static",
+    "api_setup_test_satel_connection", "api_discover_tuya_cloud", "api_discover_tuya",
+}
 
 
 def is_configured() -> bool:
@@ -133,6 +141,38 @@ def api_setup_draft():
         return jsonify({"error": "Nieprawidłowe dane"}), 400
     save_draft(draft_path_for(config_path), data)
     return jsonify({"message": "Zapisano postęp"})
+
+
+@app.route("/api/setup/test-satel-connection", methods=["POST"])
+def api_setup_test_satel_connection():
+    """"Testuj połączenie" w kroku 1 kreatora (i w zakładce ⚙ Ustawienia po
+    zapisaniu) - sprawdza, czy pod danym adresem/portem w ogóle coś
+    odpowiada po TCP. NIE waliduje samego klucza integracji (patrz
+    docstring bridge/satel_client.py:test_connection - protokół integracji
+    wysyła klucz dopiero przy konkretnych poleceniach, nie przy samym
+    połączeniu). Publiczny - to tylko test osiągalności, nic nie zmienia."""
+    payload = request.get_json(silent=True) or {}
+    host = (payload.get("host") or "").strip()
+    if not host:
+        return jsonify({"error": "Brak adresu IP centrali"}), 400
+    try:
+        port = int(payload.get("port") or 7094)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Nieprawidłowy port"}), 400
+
+    try:
+        asyncio.run(test_satel_connection(host, port))
+    except ImportError:
+        return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
+    except ConnectionError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:
+        return jsonify({"error": f"Błąd testu połączenia: {exc}"}), 502
+
+    return jsonify({
+        "message": f"Połączono z {host}:{port}. Pamiętaj: to test osiągalności, nie klucza integracji "
+                    "- błędny klucz ujawni się dopiero przy uzbrajaniu/rozbrajaniu/sterowaniu wyjściem.",
+    })
 
 
 @app.route("/api/setup/save", methods=["POST"])
@@ -298,6 +338,31 @@ def api_discover_tuya():
         devices = scan_tuya_network()
     except Exception as exc:
         return jsonify({"error": f"Błąd skanowania: {exc}"}), 502
+    return jsonify({"devices": devices})
+
+
+@app.route("/api/discover/tuya-cloud", methods=["POST"])
+def api_discover_tuya_cloud():
+    """Import urządzeń z Tuya Cloud (nazwa + ID + local_key na raz) -
+    alternatywa dla ręcznego dodawania jednego urządzenia na raz (przydatna
+    przy wielu urządzeniach), dostępna w kreatorze (krok "Urządzenia Tuya")
+    i w zakładce ⚙ Ustawienia. Publiczny - poświadczenia Tuya Cloud
+    przychodzą w ciele żądania i NIE są nigdzie zapisywane przez ten
+    endpoint (o zapis do config.yaml/tuya_devices.yaml dba osobny krok
+    zapisu formularza - patrz api_setup_save/api_config_tuya_devices_post)."""
+    payload = request.get_json(silent=True) or {}
+    api_region = (payload.get("api_region") or "").strip()
+    access_id = (payload.get("access_id") or "").strip()
+    access_key = (payload.get("access_key") or "").strip()
+    if not api_region or not access_id or not access_key:
+        return jsonify({"error": "Region, Access ID i Access Secret są wymagane"}), 400
+
+    try:
+        devices = fetch_tuya_cloud_devices(api_region, access_id, access_key)
+    except ConnectionError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:
+        return jsonify({"error": f"Błąd importu z Tuya Cloud: {exc}"}), 502
     return jsonify({"devices": devices})
 
 
