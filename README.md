@@ -462,6 +462,55 @@ nie uzupełnisz wiersza (po odkryciu albo ręcznie) i nie klikniesz "Zapisz"
 dla danej sekcji - odkrycie samo w sobie niczego nie włącza ani nie
 zapisuje.
 
+Czujniki eBUS są dodatkowo **pogrupowane w tabeli wg drugiego segmentu
+tematu MQTT** (np. `ebusd/bm/FlowTemp` i `ebusd/fha/FlowTemp` trafiają do
+osobnych grup "bm"/"fha" - dokładny podział zależy od tego, jak `ebusd`
+nazywa Twoje obwody, np. `bai`/`bm`/`fha`/`hc1` itd. - mechanizm jest
+ogólny, nie hardkodowany na konkretne nazwy). Przycisk "🔍 Wykryj
+czujniki" nadaje też od razu czytelną etykietę wyprowadzoną z tematu (np.
+`FlowTemp` -> "Flow Temp") zamiast zostawiać ją pustą - stąd każdy nowo
+wykryty wiersz ma inną etykietę widoczną od razu, nie tylko ten sam szary
+placeholder.
+
+### Zakładka 🔌 Połączenia - host/port/klucze/tematy MQTT po pierwszej konfiguracji
+
+Kreator (`/setup`) jest **celowo zablokowany** po pierwszym zapisie (żeby
+przypadkowe ponowne wejście na `/setup` nigdy nie nadpisało ręcznych zmian
+w `config.yaml`) - więc host/port centrali Satel, klucz integracji, adres
+brokera MQTT, poświadczenia Tuya Cloud, Home Assistant i tematy MQTT
+zmienia się **z panelu**, w zakładce **🔌 Połączenia** (`/config`, sekcja
+na górze strony). W odróżnieniu od reszty `/config` - **odczyt też wymaga
+hasła administratora** (kliknij "🔒 Wczytaj bieżące ustawienia"), bo dane
+obejmują klucz integracji Satela i sekrety Tuya Cloud; formularz nigdy nie
+pokazuje prawdziwej wartości sekretu z powrotem - tylko informację, czy
+jest już ustawiony. Zostaw pole hasła/klucza puste, żeby go NIE zmieniać.
+
+Zmiany z tej zakładki dotykają **tylko** pól połączeń w `config.yaml` -
+reszta pliku (reguły kamer/alarmów, automatyka kotła, ustawienia
+konserwacji) zostaje nietknięta.
+
+### Publikacja stanu do MQTT (niezależnie od Home Assistant)
+
+Stan wejść/wyjść/stref Satela i urządzeń Tuya jest publikowany na
+skonfigurowany broker MQTT pod osobnym tematem per integracja -
+**niezależnie od tego, czy Home Assistant jest włączony** (dotychczas
+publikacja bez HA działała tylko dla danych z kotła eBUS, przez
+`boiler_output.mqtt.topic_prefix`). Domyślne tematy: `satel/...` i
+`tuya/...`, konfigurowalne w zakładce 🔌 Połączenia (sekcja "Publikacja
+stanu do MQTT") albo wprost w `config.yaml`:
+
+```yaml
+mqtt_publish:
+  enabled: true      # domyślnie true, jeśli ebus.mqtt_host jest ustawiony
+  topics:
+    satel: satel      # -> satel/input/<numer>/state, satel/output/<numer>/state, satel/partition/<numer>/state
+    tuya: tuya         # -> tuya/<nazwa_urządzenia>/state
+```
+
+Temat MQTT dla danych z kotła eBUS (dotychczasowy `boiler_output.mqtt.
+topic_prefix`, domyślnie `home/boiler`) jest teraz też edytowalny z tej
+samej zakładki, jako "Temat MQTT dla stanu eBUS".
+
 ### Alarmy progowe
 
 Reguły w `config.yaml` -> `alarm_rules` pozwalają zdefiniować progi (np.
@@ -845,6 +894,80 @@ trzeba zrestartować, żeby wczytał świeżo zapisaną konfigurację:
 ```bash
 docker compose restart bridge
 ```
+
+### Build i rebuild - krok po kroku
+
+Wszystkie polecenia niżej uruchamiasz z katalogu repo (tam, gdzie jest
+`docker-compose.yml`). Rozróżnienie, które ma znaczenie: **zmiana w
+`config.yaml`/`sensors.yaml`/itd. (przez panel albo ręcznie) wymaga tylko
+restartu** (dane są w zamontowanym `./data/`, nie w obrazie) - **zmiana w
+kodzie (`bridge/`, `dashboard/`, `requirements.txt`, `Dockerfile`) wymaga
+przebudowy obrazu (`--build`)**, inaczej kontener dalej uruchamia STARY kod.
+
+**1. Pierwszy build (raz, przy pierwszej instalacji):**
+```bash
+mkdir -p data
+sudo chown 1000:1000 data
+docker compose up -d --build
+```
+Buduje obraz od zera i uruchamia kontenery w tle (`-d`). Sprawdź, że oba
+kontenery żyją:
+```bash
+docker compose ps
+```
+
+**2. Rebuild po aktualizacji kodu (np. `git pull`, zmiana w `bridge/`,
+`dashboard/` albo `requirements.txt`):**
+```bash
+git pull
+docker compose up -d --build
+```
+`--build` przebudowuje obraz TYLKO jeśli coś się zmieniło od ostatniego
+builda (Docker cache'uje warstwy) - bezpiecznie odpalać za każdym razem,
+nawet jeśli nic się nie zmieniło (wtedy po prostu nic nie robi). `-d`
+sprawia, że stare kontenery są podmieniane na nowe automatycznie, bez
+osobnego `stop`/`start`.
+
+**3. Restart BEZ rebuildu (wystarczy po zmianie tylko w `config.yaml`/
+`sensors.yaml`/`automations.yaml`/`satel_fields.yaml`/`tuya_devices.yaml`,
+np. przez panel `/config` albo `/automations` - te pliki żyją w `./data/`,
+nie w obrazie, więc rebuild niczego by tu nie zmienił):**
+```bash
+docker compose restart bridge
+```
+Sam panel webowy (`dashboard`) wczytuje zmiany od razu (bez restartu) po
+zapisie z UI - restartu wymaga tylko proces `bridge` (osobny proces, patrz
+"Co jest w środku" niżej).
+
+**4. Podgląd logów (sprawdzenie, czy wszystko wstało poprawnie po
+build/rebuild/restarcie):**
+```bash
+docker compose logs -f bridge      # logi głównego procesu (Satel, Tuya, eBUS...)
+docker compose logs -f dashboard   # logi panelu webowego
+docker compose logs -f             # oba naraz
+```
+(`Ctrl+C`, żeby przestać śledzić - to nie zatrzymuje kontenerów).
+
+**5. Pełny "czysty" rebuild (gdy coś jest wyraźnie nie tak i podejrzewasz
+uszkodzony/nieaktualny cache warstw Dockera - rzadko potrzebne):**
+```bash
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+```
+`--no-cache` ignoruje WSZYSTKIE cache'owane warstwy i buduje obraz od
+zera (wolniejsze, ale gwarantuje świeżość) - `./data/` (config, baza,
+backupy) przetrwa, bo to osobny wolumen, nie część obrazu.
+
+**6. Zatrzymanie (bez usuwania obrazu/wolumenu - dane w `./data/`
+zostają):**
+```bash
+docker compose down
+```
+(`docker compose down -v` USUNĄŁBY też nazwane wolumeny Dockera - `./data/`
+to zwykły bind mount na hosta, więc `-v` go nie kasuje, ale i tak lepiej
+tego flagi nie używać bez upewnienia się, co dokładnie robi w Twojej
+konfiguracji).
 
 ### Co jest w środku
 

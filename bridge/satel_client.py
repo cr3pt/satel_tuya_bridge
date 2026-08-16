@@ -154,8 +154,8 @@ class SatelIntegraClient:
             self.host,
             self.port,
             asyncio.get_event_loop(),
-            monitored_zones=list(self.monitored_zones.values()) or None,
-            monitored_outputs=list(self.monitored_outputs.values()) or None,
+            monitored_zones=list(self.monitored_zones.values()),
+            monitored_outputs=list(self.monitored_outputs.values()),
         )
         connected = await self._client.connect()
         if not connected:

@@ -63,6 +63,16 @@
   .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
   .discover-status { font-size: 12.5px; color: var(--muted); }
   .candidate-badge { background: #2c2413; color: #e8d6ae; border: 1px solid var(--warn, #e6a23c); border-radius: 4px; padding: 1px 6px; font-size: 11px; margin-left: 6px; }
+  .group-header td { color: var(--muted); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: #191c22; padding: 6px 6px; border-bottom: 1px solid var(--border); }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .checkbox-row label { font-size: 14px; cursor: pointer; }
+  .checkbox-row input { width: 17px; height: 17px; }
+  .optional-content { display: none; padding-left: 4px; margin-bottom: 4px; }
+  .optional-content.visible { display: block; }
+  .conn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .conn-grid .field label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+  @media (max-width: 640px) { .conn-grid { grid-template-columns: 1fr; } }
+  .secret-hint { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
 </style>
 </head>
 <body>
@@ -77,6 +87,94 @@
   administratora</strong> panelu (patrz kreator, krok "Hasło administratora
   panelu"). <strong>Zmiany wchodzą w życie po restarcie procesu bridge'a</strong>
   (nie samego panelu).
+</div>
+
+<!-- ============================== Połączenia ============================== -->
+<div class="section" id="connectionsSection">
+  <h2>🔌 Połączenia</h2>
+  <div class="section-hint">
+    Host/port/klucze centrali Satel, brokera MQTT (eBUS), Tuya Cloud i Home
+    Assistant, oraz tematy MQTT, pod którymi bridge publikuje stan każdej
+    integracji (niezależnie od Home Assistant). To jedyne miejsce do zmiany
+    tych ustawień PO pierwszej konfiguracji - kreator (<code>/setup</code>)
+    jest celowo zablokowany po zapisie, żeby nie nadpisać przypadkiem
+    ręcznych zmian w <code>config.yaml</code>. <strong>Odczyt TEŻ wymaga
+    hasła administratora</strong> (w odróżnieniu od reszty tej strony) -
+    dane obejmują klucz integracji Satela i sekrety Tuya Cloud.
+  </div>
+
+  <div class="discover-row">
+    <button type="button" class="secondary" id="loadConnectionsBtn">🔒 Wczytaj bieżące ustawienia</button>
+    <span class="discover-status" id="connectionsLoadStatus">Kliknij, żeby wczytać (wymaga hasła) - pola poniżej są puste, dopóki nie wczytasz.</span>
+  </div>
+
+  <div class="field-group">
+    <label>Centrala Satel Integra</label>
+    <div class="conn-grid">
+      <div class="field"><label>Adres IP</label><input type="text" id="conn_satel_host" placeholder="192.168.1.20"></div>
+      <div class="field"><label>Port</label><input type="number" id="conn_satel_port" placeholder="7094"></div>
+      <div class="field"><label>Klucz integracji</label><input type="password" id="conn_satel_key" placeholder="(bez zmian)"></div>
+      <div class="field"><label>Strefa główna (numer)</label><input type="number" id="conn_satel_partition" placeholder="1"></div>
+      <div class="field"><label>Port wejść IP (ETHM-1 Plus)</label><input type="number" id="conn_satel_vi_port" placeholder="8888"></div>
+    </div>
+    <div class="secret-hint" id="conn_satel_key_hint"></div>
+  </div>
+
+  <div class="field-group">
+    <label>Broker MQTT (eBUS / ebusd)</label>
+    <div class="conn-grid">
+      <div class="field"><label>Adres brokera</label><input type="text" id="conn_ebus_host" placeholder="127.0.0.1"></div>
+      <div class="field"><label>Port</label><input type="number" id="conn_ebus_port" placeholder="1883"></div>
+      <div class="field"><label>Temat MQTT dla stanu eBUS</label><input type="text" id="conn_ebus_topic" placeholder="home/boiler"></div>
+    </div>
+  </div>
+
+  <div class="field-group">
+    <label>Publikacja stanu do MQTT (poza Home Assistant)</label>
+    <div class="section-hint" style="margin: 0 0 10px;">
+      Stan wejść/wyjść/stref Satela i urządzeń Tuya jest publikowany na
+      broker MQTT wyżej pod tematem <code>&lt;temat&gt;/.../state</code> -
+      niezależnie od tego, czy Home Assistant jest włączony.
+    </div>
+    <div class="checkbox-row"><input type="checkbox" id="conn_mqtt_publish_enabled"><label for="conn_mqtt_publish_enabled">Publikuj stan Satela i Tuya do MQTT</label></div>
+    <div class="conn-grid">
+      <div class="field"><label>Temat MQTT dla Satela</label><input type="text" id="conn_mqtt_satel_topic" placeholder="satel"></div>
+      <div class="field"><label>Temat MQTT dla Tuya</label><input type="text" id="conn_mqtt_tuya_topic" placeholder="tuya"></div>
+    </div>
+  </div>
+
+  <div class="field-group">
+    <div class="checkbox-row"><input type="checkbox" id="conn_tuya_cloud_enabled"><label for="conn_tuya_cloud_enabled">Tuya Cloud (kamery Tuya / wirtualne urządzenie)</label></div>
+    <div class="optional-content" id="connTuyaCloudContent">
+      <div class="conn-grid">
+        <div class="field"><label>Access ID</label><input type="text" id="conn_tuya_access_id"></div>
+        <div class="field"><label>Access Secret</label><input type="password" id="conn_tuya_access_key" placeholder="(bez zmian)"></div>
+        <div class="field"><label>API endpoint</label><input type="text" id="conn_tuya_api_endpoint" placeholder="https://openapi.tuyaeu.com"></div>
+        <div class="field"><label>MQ endpoint (Pulsar)</label><input type="text" id="conn_tuya_mq_endpoint" placeholder="wss://mqe.tuyaeu.com:8285/"></div>
+      </div>
+      <div class="secret-hint" id="conn_tuya_key_hint"></div>
+    </div>
+  </div>
+
+  <div class="field-group">
+    <div class="checkbox-row"><input type="checkbox" id="conn_ha_enabled"><label for="conn_ha_enabled">Home Assistant (MQTT Discovery)</label></div>
+    <div class="optional-content" id="connHaContent">
+      <div class="conn-grid">
+        <div class="field"><label>Adres brokera (puste = jak eBUS)</label><input type="text" id="conn_ha_host" placeholder="127.0.0.1"></div>
+        <div class="field"><label>Port</label><input type="number" id="conn_ha_port" placeholder="1883"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="field-group">
+    <label>Powiadomienia push (ntfy)</label>
+    <input type="text" id="conn_ntfy_url" placeholder="https://ntfy.sh/moj-temat (puste = wyłączone)">
+  </div>
+
+  <div class="actions-bar">
+    <button id="saveConnectionsBtn" type="button">Zapisz połączenia</button>
+  </div>
+  <div id="connectionsMsg" class="msg-box"></div>
 </div>
 
 <!-- ============================== eBUS ============================== -->
@@ -204,14 +302,152 @@ function showMsg(elId, ok, text) {
 }
 
 // ------------------------------------------------------------------
+// Połączenia (host/port/klucze/tematy MQTT per integracja)
+// ------------------------------------------------------------------
+[['conn_tuya_cloud_enabled', 'connTuyaCloudContent'], ['conn_ha_enabled', 'connHaContent']]
+  .forEach(([checkboxId, contentId]) => {
+    const checkbox = document.getElementById(checkboxId);
+    const content = document.getElementById(contentId);
+    checkbox.addEventListener('change', () => content.classList.toggle('visible', checkbox.checked));
+  });
+
+document.getElementById('loadConnectionsBtn').addEventListener('click', async () => {
+  const status = document.getElementById('connectionsLoadStatus');
+  try {
+    const resp = await authorizedFetch('/api/config/connections');
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = '❌ ' + (data.error || 'Błąd wczytywania');
+      return;
+    }
+    document.getElementById('conn_satel_host').value = data.satel.host || '';
+    document.getElementById('conn_satel_port').value = data.satel.port || '';
+    document.getElementById('conn_satel_partition').value = data.satel.partition || '';
+    document.getElementById('conn_satel_vi_port').value = data.satel.virtual_inputs_port || '';
+    document.getElementById('conn_satel_key_hint').textContent = data.satel.integration_key_set
+      ? 'Klucz integracji jest już ustawiony - zostaw pole puste, żeby go nie zmieniać.'
+      : 'Klucz integracji NIE jest jeszcze ustawiony.';
+
+    document.getElementById('conn_ebus_host').value = data.ebus.mqtt_host || '';
+    document.getElementById('conn_ebus_port').value = data.ebus.mqtt_port || '';
+    document.getElementById('conn_ebus_topic').value = data.ebus.topic_prefix || '';
+
+    document.getElementById('conn_mqtt_publish_enabled').checked = !!data.mqtt_publish.enabled;
+    document.getElementById('conn_mqtt_satel_topic').value = data.mqtt_publish.satel_topic || '';
+    document.getElementById('conn_mqtt_tuya_topic').value = data.mqtt_publish.tuya_topic || '';
+
+    const tcCheckbox = document.getElementById('conn_tuya_cloud_enabled');
+    tcCheckbox.checked = !!data.tuya_cloud.enabled;
+    document.getElementById('connTuyaCloudContent').classList.toggle('visible', tcCheckbox.checked);
+    document.getElementById('conn_tuya_access_id').value = data.tuya_cloud.access_id || '';
+    document.getElementById('conn_tuya_api_endpoint').value = data.tuya_cloud.api_endpoint || '';
+    document.getElementById('conn_tuya_mq_endpoint').value = data.tuya_cloud.mq_endpoint || '';
+    document.getElementById('conn_tuya_key_hint').textContent = data.tuya_cloud.access_key_set
+      ? 'Access Secret jest już ustawiony - zostaw pole puste, żeby go nie zmieniać.'
+      : 'Access Secret NIE jest jeszcze ustawiony.';
+
+    const haCheckbox = document.getElementById('conn_ha_enabled');
+    haCheckbox.checked = !!data.home_assistant.enabled;
+    document.getElementById('connHaContent').classList.toggle('visible', haCheckbox.checked);
+    document.getElementById('conn_ha_host').value = data.home_assistant.mqtt_host || '';
+    document.getElementById('conn_ha_port').value = data.home_assistant.mqtt_port || '';
+
+    document.getElementById('conn_ntfy_url').value = data.notifications.ntfy_topic_url || '';
+
+    status.textContent = '✅ Wczytano bieżące ustawienia.';
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  }
+});
+
+document.getElementById('saveConnectionsBtn').addEventListener('click', async () => {
+  const payload = {
+    satel: {
+      host: document.getElementById('conn_satel_host').value.trim(),
+      port: document.getElementById('conn_satel_port').value,
+      partition: document.getElementById('conn_satel_partition').value,
+      virtual_inputs_port: document.getElementById('conn_satel_vi_port').value,
+      integration_key: document.getElementById('conn_satel_key').value,
+    },
+    ebus: {
+      mqtt_host: document.getElementById('conn_ebus_host').value.trim(),
+      mqtt_port: document.getElementById('conn_ebus_port').value,
+      topic_prefix: document.getElementById('conn_ebus_topic').value.trim(),
+    },
+    mqtt_publish: {
+      enabled: document.getElementById('conn_mqtt_publish_enabled').checked,
+      satel_topic: document.getElementById('conn_mqtt_satel_topic').value.trim(),
+      tuya_topic: document.getElementById('conn_mqtt_tuya_topic').value.trim(),
+    },
+    tuya_cloud: {
+      enabled: document.getElementById('conn_tuya_cloud_enabled').checked,
+      access_id: document.getElementById('conn_tuya_access_id').value.trim(),
+      access_key: document.getElementById('conn_tuya_access_key').value,
+      api_endpoint: document.getElementById('conn_tuya_api_endpoint').value.trim(),
+      mq_endpoint: document.getElementById('conn_tuya_mq_endpoint').value.trim(),
+    },
+    home_assistant: {
+      enabled: document.getElementById('conn_ha_enabled').checked,
+      mqtt_host: document.getElementById('conn_ha_host').value.trim(),
+      mqtt_port: document.getElementById('conn_ha_port').value,
+    },
+    notifications: {
+      ntfy_topic_url: document.getElementById('conn_ntfy_url').value.trim(),
+    },
+  };
+  try {
+    const resp = await authorizedFetch('/api/config/connections', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const details = data.details ? ' - ' + data.details.join('; ') : '';
+      showMsg('connectionsMsg', false, (data.error || 'Błąd zapisu') + details);
+    } else {
+      document.getElementById('conn_satel_key').value = '';
+      document.getElementById('conn_tuya_access_key').value = '';
+      showMsg('connectionsMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('connectionsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+// ------------------------------------------------------------------
 // eBUS czujniki
 // ------------------------------------------------------------------
+// Grupowanie czujników wg SEGMENTU OBWODU w temacie MQTT - np. dla
+// "ebusd/bm/FlowTemp" i "ebusd/fha/FlowTemp" to "bm" i "fha" (drugi
+// segment, licząc od 0: ebusd=0, bm/fha=1, FlowTemp=2). To OGÓLNY
+// mechanizm - działa dla dowolnej nazwy obwodu w temacie, nie tylko
+// bm/fha (te dwie akurat pojawiły się jako przykład instalacji ebusd
+// z kilkoma obwodami grzewczymi/c.w.u.).
+function topicCircuit(topic) {
+  const parts = (topic || '').split('/').filter(Boolean);
+  return parts.length >= 2 ? parts[1] : 'inne';
+}
+
+// Podpowiedź czytelnej etykiety z tematu MQTT (np. "ebusd/bm/FlowTemp" ->
+// "Flow Temp") - używana przy wykrywaniu czujników, żeby każdy nowy wiersz
+// dostał INNĄ, sensowną etykietę zamiast zostawać pustym (puste pole =
+// ten sam szary placeholder "Temperatura zasilania" wyświetlany w KAŻDYM
+// wierszu, co wyglądało jak "wszystkie etykiety są takie same").
+function labelFromTopic(topic) {
+  const parts = (topic || '').split('/').filter(Boolean);
+  const last = parts[parts.length - 1] || topic || '';
+  const spaced = last.replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 function makeSensorRow(sensor) {
   const s = sensor || {
     name: "", label: "", mqtt_topic: "",
     targets: { history: true, mqtt_publish: false, tuya_virtual_device: false, tuya_dp: "" },
   };
   const tr = document.createElement("tr");
+  const dpPlaceholder = s.targets.tuya_virtual_device ? '101' : '';
   tr.innerHTML = `
     <td><input type="text" class="f-name" value="${s.name}" placeholder="np. kociol_temp_zasilania"></td>
     <td><input type="text" class="f-label" value="${s.label || ''}" placeholder="Temperatura zasilania"></td>
@@ -219,14 +455,46 @@ function makeSensorRow(sensor) {
     <td class="col-check"><input type="checkbox" class="f-history" ${s.targets.history ? 'checked' : ''}></td>
     <td class="col-check"><input type="checkbox" class="f-mqtt" ${s.targets.mqtt_publish ? 'checked' : ''}></td>
     <td class="col-check"><input type="checkbox" class="f-tuya" ${s.targets.tuya_virtual_device ? 'checked' : ''}></td>
-    <td><input type="text" class="f-dp" value="${s.targets.tuya_dp || ''}" placeholder="101" ${s.targets.tuya_virtual_device ? '' : 'disabled'}></td>
+    <td><input type="text" class="f-dp" value="${s.targets.tuya_dp || ''}" placeholder="${dpPlaceholder}" ${s.targets.tuya_virtual_device ? '' : 'disabled'}></td>
     <td class="col-actions"><button class="danger-icon" type="button" title="Usuń">✕</button></td>
   `;
   const tuyaCheckbox = tr.querySelector(".f-tuya");
   const dpInput = tr.querySelector(".f-dp");
-  tuyaCheckbox.addEventListener("change", () => { dpInput.disabled = !tuyaCheckbox.checked; });
+  tuyaCheckbox.addEventListener("change", () => {
+    dpInput.disabled = !tuyaCheckbox.checked;
+    dpInput.placeholder = tuyaCheckbox.checked ? '101' : '';
+  });
   tr.querySelector(".danger-icon").addEventListener("click", () => tr.remove());
   return tr;
+}
+
+function makeGroupHeaderRow(circuitName) {
+  const tr = document.createElement("tr");
+  tr.className = "group-header";
+  tr.innerHTML = `<td colspan="8">▸ ${circuitName}</td>`;
+  return tr;
+}
+
+// Przebudowuje #sensorRows tak, żeby czujniki były pogrupowane wg
+// topicCircuit() - kolejność grup wg pierwszego wystąpienia, wewnątrz
+// grupy kolejność bez zmian. Bezpieczne do wywołania w dowolnym momencie
+// (np. po wczytaniu z serwera, po wykryciu nowych czujników) - działa na
+// AKTUALNEJ zawartości wierszy (collectSensorRows), nie na jakimś
+// osobnym stanie w pamięci.
+function regroupSensorRows() {
+  const sensors = collectSensorRows();
+  const tbody = document.getElementById('sensorRows');
+  tbody.innerHTML = '';
+  const groups = new Map();
+  sensors.forEach(s => {
+    const circuit = topicCircuit(s.mqtt_topic);
+    if (!groups.has(circuit)) groups.set(circuit, []);
+    groups.get(circuit).push(s);
+  });
+  groups.forEach((groupSensors, circuit) => {
+    tbody.appendChild(makeGroupHeaderRow(circuit));
+    groupSensors.forEach(s => tbody.appendChild(makeSensorRow(s)));
+  });
 }
 
 async function loadSensors() {
@@ -234,20 +502,23 @@ async function loadSensors() {
   const tbody = document.getElementById('sensorRows');
   tbody.innerHTML = '';
   sensors.forEach(s => tbody.appendChild(makeSensorRow(s)));
+  regroupSensorRows();
 }
 
 function collectSensorRows() {
-  return Array.from(document.querySelectorAll('#sensorRows tr')).map(tr => ({
-    name: tr.querySelector('.f-name').value.trim(),
-    label: tr.querySelector('.f-label').value.trim(),
-    mqtt_topic: tr.querySelector('.f-topic').value.trim(),
-    targets: {
-      history: tr.querySelector('.f-history').checked,
-      mqtt_publish: tr.querySelector('.f-mqtt').checked,
-      tuya_virtual_device: tr.querySelector('.f-tuya').checked,
-      tuya_dp: tr.querySelector('.f-dp').value.trim(),
-    },
-  }));
+  return Array.from(document.querySelectorAll('#sensorRows tr'))
+    .filter(tr => tr.querySelector('.f-name'))  // pomija wiersze-nagłówki grup (bez pól formularza)
+    .map(tr => ({
+      name: tr.querySelector('.f-name').value.trim(),
+      label: tr.querySelector('.f-label').value.trim(),
+      mqtt_topic: tr.querySelector('.f-topic').value.trim(),
+      targets: {
+        history: tr.querySelector('.f-history').checked,
+        mqtt_publish: tr.querySelector('.f-mqtt').checked,
+        tuya_virtual_device: tr.querySelector('.f-tuya').checked,
+        tuya_dp: tr.querySelector('.f-dp').value.trim(),
+      },
+    }));
 }
 
 document.getElementById('addSensorRowBtn').addEventListener('click', () => {
@@ -289,14 +560,15 @@ document.getElementById('discoverEbusBtn').addEventListener('click', async () =>
       if (existingTopics.has(topic)) return;
       const suggestedName = topic.split('/').slice(1).join('_') || topic;
       const row = makeSensorRow({
-        name: suggestedName, label: '', mqtt_topic: topic,
+        name: suggestedName, label: labelFromTopic(topic), mqtt_topic: topic,
         targets: { history: true, mqtt_publish: false, tuya_virtual_device: false, tuya_dp: '' },
       });
       document.getElementById('sensorRows').appendChild(row);
       added++;
     });
+    if (added) regroupSensorRows();
     status.textContent = added
-      ? `Znaleziono ${data.topics.length} tematów, dodano ${added} nowych wierszy (sprawdź nazwy przed zapisem).`
+      ? `Znaleziono ${data.topics.length} tematów, dodano ${added} nowych wierszy pogrupowanych wg obwodu (sprawdź nazwy/etykiety przed zapisem).`
       : `Nie znaleziono nowych tematów (${data.topics.length} już na liście albo ebusd nic nie opublikował w tym czasie - spróbuj ponownie).`;
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;

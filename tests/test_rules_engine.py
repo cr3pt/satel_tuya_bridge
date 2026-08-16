@@ -209,3 +209,46 @@ class TestBoilerValueRouting:
         assert engine.history.get_history("kociol_status", 0, time.time() + 1) == []
         statuses = engine.history.get_status("boiler")
         assert any(s["value"] == "heating" for s in statuses)
+
+
+class TestStateMqttPublisher:
+    """self.state_mqtt - publikacja stanu Satel/Tuya do MQTT pod
+    konfigurowalnym tematem PER INTEGRACJA, niezależnie od
+    home_assistant.enabled (patrz bridge/ha_mqtt.py:HomeAssistantMqttBridge,
+    użyty tu w trybie 'tylko publikacja', entities=[])."""
+
+    def _build_engine(self, tmp_path, extra_yaml=""):
+        (tmp_path / "sensors.yaml").write_text("sensors: []\n", encoding="utf-8")
+        (tmp_path / "config.yaml").write_text(
+            CONFIG_TEMPLATE.format(db_path=str(tmp_path / "history.db")) + extra_yaml, encoding="utf-8",
+        )
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+        return RulesEngine(config)
+
+    async def test_created_by_default_when_ebus_mqtt_configured(self, tmp_path):
+        engine = self._build_engine(tmp_path)
+        assert engine.state_mqtt is not None
+        assert engine._satel_mqtt_topic == "satel"
+        assert engine._tuya_mqtt_topic == "tuya"
+
+    async def test_can_be_disabled_via_config(self, tmp_path):
+        engine = self._build_engine(tmp_path, "\nmqtt_publish:\n  enabled: false\n")
+        assert engine.state_mqtt is None
+
+    async def test_custom_topics_from_config(self, tmp_path):
+        engine = self._build_engine(
+            tmp_path,
+            "\nmqtt_publish:\n  enabled: true\n  topics:\n    satel: alarm\n    tuya: smart_home\n",
+        )
+        assert engine.state_mqtt is not None
+        assert engine._satel_mqtt_topic == "alarm"
+        assert engine._tuya_mqtt_topic == "smart_home"
+
+    async def test_independent_of_home_assistant_enabled(self, tmp_path):
+        """Kluczowa różnica względem ha_mqtt: state_mqtt działa NAWET gdy
+        home_assistant.enabled nie jest ustawione (albo false) - to był
+        dokładnie zgłoszony brak ('stany urządzeń powinny odkładać się też
+        w MQTT', niezależnie od Home Assistant)."""
+        engine = self._build_engine(tmp_path)
+        assert engine.ha_mqtt is None
+        assert engine.state_mqtt is not None

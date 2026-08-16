@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from bridge.satel_client import SatelIntegraClient
 from bridge.satel_client import test_connection as satel_test_connection
 # ^ import aliasu jest CELOWY, nie kosmetyczny - pytest zbiera każdą funkcję
 # o nazwie pasującej do "test_*" widoczną w module testowym, więc zwykłe
@@ -68,3 +69,66 @@ async def test_closes_writer_if_present(monkeypatch):
 
     await satel_test_connection("127.0.0.1", 7094)
     assert closed.get("called") is True
+
+
+class FakeAsyncSatelCapture:
+    """Do testu SatelIntegraClient.connect() - przechwytuje argumenty
+    monitored_zones/monitored_outputs, żeby sprawdzić dokładnie CO
+    dostaje AsyncSatel (a nie tylko czy connect() się powiodło)."""
+
+    def __init__(self, host, port, loop, monitored_zones=None, monitored_outputs=None):
+        self.host = host
+        self.port = port
+        self.monitored_zones = monitored_zones
+        self.monitored_outputs = monitored_outputs
+        self.closed = True
+
+    async def connect(self):
+        self.closed = False
+        return True
+
+
+async def test_connect_passes_empty_lists_not_none_when_no_monitored_items(monkeypatch):
+    """Regresja dla zgłoszonego z prawdziwej centrali błędu 'NoneType' object
+    is not iterable: biblioteka satel_integra bezwarunkowo iteruje
+    `for zone in self._monitored_zones` przy każdym zdarzeniu naruszenia
+    strefy (id 0x00, patrz satel_integra.py:_zone_violated) - pusta lista
+    jest dla niej bezpieczna, ale None wywala TypeError w momencie
+    pierwszego zdarzenia z centrali. SatelIntegraClient.connect() musi więc
+    przekazywać [] (nie None) gdy nie skonfigurowano żadnych stref/wyjść."""
+    captured = {}
+
+    def fake_ctor(host, port, loop, monitored_zones=None, monitored_outputs=None):
+        captured["zones"] = monitored_zones
+        captured["outputs"] = monitored_outputs
+        return FakeAsyncSatelCapture(host, port, loop, monitored_zones, monitored_outputs)
+
+    import satel_integra.satel_integra as satel_module
+    monkeypatch.setattr(satel_module, "AsyncSatel", fake_ctor)
+
+    client = SatelIntegraClient("127.0.0.1", 7094, "key", monitored_zones={}, monitored_outputs={})
+    await client.connect()
+
+    assert captured["zones"] == []
+    assert captured["outputs"] == []
+
+
+async def test_connect_passes_configured_monitored_zones_and_outputs(monkeypatch):
+    captured = {}
+
+    def fake_ctor(host, port, loop, monitored_zones=None, monitored_outputs=None):
+        captured["zones"] = monitored_zones
+        captured["outputs"] = monitored_outputs
+        return FakeAsyncSatelCapture(host, port, loop, monitored_zones, monitored_outputs)
+
+    import satel_integra.satel_integra as satel_module
+    monkeypatch.setattr(satel_module, "AsyncSatel", fake_ctor)
+
+    client = SatelIntegraClient(
+        "127.0.0.1", 7094, "key",
+        monitored_zones={"Hol": 12}, monitored_outputs={"Brama": 3},
+    )
+    await client.connect()
+
+    assert captured["zones"] == [12]
+    assert captured["outputs"] == [3]

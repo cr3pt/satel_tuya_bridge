@@ -361,6 +361,72 @@ class TestTuyaDevicesEndpoint:
         assert before == after
 
 
+class TestConnectionsEndpoint:
+    """Zakładka "Połączenia" - jedyne miejsce do zmiany host/port/kluczy/
+    tematów MQTT PO pierwszej konfiguracji (patrz dashboard/setup.py:
+    build_connections_patch/connections_to_form). W ODRÓŻNIENIU od reszty
+    /api/config/* - odczyt TEŻ wymaga hasła (zwraca informacje o tym, czy
+    sekrety Satela/Tuya Cloud są ustawione)."""
+
+    def test_get_without_auth_returns_401(self, client):
+        assert client.get("/api/config/connections").status_code == 401
+
+    def test_get_with_auth_returns_current_values(self, client):
+        resp = client.get("/api/config/connections", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["satel"]["host"] == "127.0.0.1"
+        assert data["satel"]["integration_key_set"] is True
+        assert data["ebus"]["mqtt_host"] == "127.0.0.1"
+
+    def test_get_never_leaks_integration_key(self, client):
+        resp = client.get("/api/config/connections", headers=_basic_auth_header("test_haslo_123"))
+        assert '"x"' not in resp.get_data(as_text=True)  # "x" to integration_key w CONFIG_TEMPLATE
+
+    def test_post_without_auth_returns_401(self, client):
+        resp = client.post("/api/config/connections", json={})
+        assert resp.status_code == 401
+
+    def test_post_updates_satel_host(self, client, tmp_path):
+        payload = {"satel": {"host": "10.0.0.9", "port": "7094"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        resp = client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["satel"]["host"] == "10.0.0.9"
+
+    def test_post_blank_integration_key_preserves_existing_secret(self, client, tmp_path):
+        payload = {
+            "satel": {"host": "127.0.0.1", "port": "7094", "integration_key": ""},
+            "ebus": {"mqtt_host": "127.0.0.1"},
+        }
+        client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["satel"]["integration_key"] == "x"  # niezmieniony, patrz CONFIG_TEMPLATE
+
+    def test_post_validates_missing_satel_host(self, client):
+        payload = {"satel": {"host": ""}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        resp = client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 400
+
+    def test_post_preserves_other_config_sections(self, client, tmp_path):
+        """reguły_ruchu i inne sekcje spoza formularza połączeń nie mogą
+        zniknąć po zapisie (patrz build_connections_patch)."""
+        payload = {"satel": {"host": "10.0.0.9"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"
+        assert saved["dashboard"]["auth"]["password_hash"]
+
+    def test_post_sets_custom_mqtt_publish_topics(self, client, tmp_path):
+        payload = {
+            "satel": {"host": "127.0.0.1"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "mqtt_publish": {"enabled": True, "satel_topic": "alarm", "tuya_topic": "smart_home"},
+        }
+        client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home"}
+
+
 class TestDiscoveryEndpoints:
     """POST /api/discover/ebus i /api/discover/tuya - publiczne (tylko
     odczyt sieci), wykrywanie samo w sobie zamockowane (bridge/ebus_client.py

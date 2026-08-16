@@ -311,6 +311,19 @@ notifications:
   # wysyłane jest natychmiast (nie czeka na żaden okres karencji).
   grace_seconds: 120
 
+mqtt_publish:
+  # Publikacja stanu Satela (wejścia/wyjścia/strefy) i Tuya (on/off) do MQTT
+  # pod OSOBNYM tematem PER INTEGRACJA - NIEZALEŻNIE od home_assistant.enabled
+  # wyżej (ha_mqtt publikuje TYLKO gdy Home Assistant jest włączony, pod
+  # jednym wspólnym state_topic_prefix). Domyślnie WŁĄCZONE, jeśli
+  # ebus.mqtt_host (broker) jest ustawiony - edytowalne też z panelu,
+  # zakładka 🔌 Połączenia. Temat dla danych z kotła eBUS to osobne pole,
+  # patrz boiler_output.mqtt.topic_prefix niżej (istniało już wcześniej).
+  enabled: true
+  topics:
+    satel: "satel"   # -> satel/input/<numer>/state, satel/output/<numer>/state, satel/partition/<numer>/state
+    tuya: "tuya"      # -> tuya/<nazwa_urządzenia>/state
+
 boiler_output:
   # UWAGA: nie ma tu już globalnego przełącznika "mode" - o tym, co dokąd
   # trafia, decyduje teraz `targets` PRZY KAŻDYM CZUJNIKU w sekcji `ebus.sensors`
