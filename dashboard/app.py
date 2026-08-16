@@ -24,7 +24,10 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 from bridge.config import BridgeConfig
 from bridge.history_store import HistoryStore
 from dashboard.auth import AuthGuard, require_auth
-from dashboard.setup import CONFIG_HEADER, SENSORS_HEADER, build_config_dict, validate
+from dashboard.setup import (
+    CONFIG_HEADER, SENSORS_HEADER, build_config_dict, validate,
+    draft_path_for, load_draft, save_draft, delete_draft,
+)
 
 app = Flask(__name__)
 history: HistoryStore | None = None  # ustawiane w create_app()
@@ -35,7 +38,7 @@ config_path: pathlib.Path | None = None  # ustawiane w main() - potrzebne, zanim
 
 # Endpointy dostępne, ZANIM config.yaml istnieje (kreator + statyka) -
 # wszystko inne przekierowuje na /setup, dopóki konfiguracja nie powstanie.
-_SETUP_EXEMPT_ENDPOINTS = {"setup_page", "api_setup_save", "static"}
+_SETUP_EXEMPT_ENDPOINTS = {"setup_page", "api_setup_save", "api_setup_draft", "static"}
 
 
 def is_configured() -> bool:
@@ -80,6 +83,26 @@ def setup_page():
     return render_template("setup.html")
 
 
+@app.route("/api/setup/draft", methods=["GET", "POST"])
+def api_setup_draft():
+    """Stan roboczy wieloetapowego kreatora - zapisywany przez frontend po
+    KAŻDYM kliknięciu "Dalej" (POST), wczytywany przy otwarciu /setup (GET),
+    żeby dało się wznowić konfigurację po przerwie (patrz dashboard/setup.py).
+    Osobny plik od config.yaml - kreator NIGDY nie zapisuje niepełnej/
+    niezwalidowanej konfiguracji pod docelową nazwą."""
+    if is_configured():
+        return jsonify({"error": "Konfiguracja już istnieje."}), 409
+
+    if request.method == "GET":
+        return jsonify(load_draft(draft_path_for(config_path)))
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Nieprawidłowe dane"}), 400
+    save_draft(draft_path_for(config_path), data)
+    return jsonify({"message": "Zapisano postęp"})
+
+
 @app.route("/api/setup/save", methods=["POST"])
 def api_setup_save():
     if is_configured():
@@ -106,6 +129,10 @@ def api_setup_save():
     with open(sensors_path, "w", encoding="utf-8") as f:
         f.write(SENSORS_HEADER)
         yaml.safe_dump({"sensors": []}, f, allow_unicode=True, sort_keys=False)
+
+    # Konfiguracja jest już kompletna i zapisana - plik roboczy kreatora
+    # (postęp między krokami) nie jest już potrzebny.
+    delete_draft(draft_path_for(config_path))
 
     # Od razu wczytujemy świeżo zapisaną konfigurację do TEGO procesu -
     # panel jest natychmiast użyteczny bez ręcznego restartu (sam proces

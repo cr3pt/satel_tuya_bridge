@@ -8,16 +8,32 @@
   :root {
     --bg: #14161a; --card: #1d2026; --border: #2c3038;
     --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
-    --danger: #e5484d; --ok: #3dd68c;
+    --danger: #e5484d; --ok: #3dd68c; --warn: #e6a23c;
   }
   * { box-sizing: border-box; }
   body {
     background: var(--bg); color: var(--text); margin: 0;
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-    padding: 20px; max-width: 760px; margin-left: auto; margin-right: auto;
+    padding: 20px; padding-bottom: 100px; max-width: 760px; margin-left: auto; margin-right: auto;
   }
   h1 { font-size: 22px; font-weight: 600; margin: 0 0 6px; }
-  .intro { color: var(--muted); font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
+  .intro { color: var(--muted); font-size: 14px; margin-bottom: 16px; line-height: 1.5; }
+  .progress { display: flex; align-items: center; gap: 6px; margin-bottom: 22px; flex-wrap: wrap; }
+  .progress-dot {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--border); flex-shrink: 0;
+  }
+  .progress-dot.done { background: var(--ok); }
+  .progress-dot.active { background: var(--accent); width: 14px; height: 14px; }
+  .progress-label { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .resume-banner {
+    background: #1c2b3a; border: 1px solid var(--accent); border-radius: 8px;
+    padding: 10px 14px; font-size: 13px; margin-bottom: 16px; display: flex;
+    justify-content: space-between; align-items: center; gap: 10px;
+  }
+  .resume-banner button {
+    background: transparent; border: 1px solid var(--muted); color: var(--muted);
+    border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; flex-shrink: 0;
+  }
   .step {
     background: var(--card); border: 1px solid var(--border); border-radius: 10px;
     padding: 20px; margin-bottom: 16px;
@@ -60,14 +76,39 @@
   .checkbox-row input { width: 17px; height: 17px; }
   .optional-content { display: none; margin-top: 10px; padding-left: 4px; }
   .optional-content.show { display: block; }
-  .save-bar {
-    position: sticky; bottom: 0; background: var(--bg); padding: 16px 0;
-    border-top: 1px solid var(--border); margin-top: 8px;
+  .warn-box {
+    background: #2c2413; border: 1px solid var(--warn); border-radius: 8px;
+    padding: 10px 12px; font-size: 12.5px; line-height: 1.5; color: #e8d6ae; margin: 8px 0 14px;
   }
-  #saveBtn {
-    background: var(--accent); color: white; border: none; border-radius: 8px;
-    padding: 14px 24px; font-size: 15px; font-weight: 600; cursor: pointer; width: 100%;
+  .sub-card {
+    background: #171a1f; border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px; margin-bottom: 12px;
   }
+  .sub-card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .sub-card-header input[type=text] { font-weight: 600; }
+  .action-row { background: #1d2129; border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+  .action-fields { display: flex; gap: 8px; flex: 2; flex-wrap: wrap; }
+  .action-fields input, .action-fields select { flex: 1; min-width: 100px; }
+  .step-error {
+    background: #3a1a1c; border: 1px solid var(--danger); border-radius: 8px;
+    padding: 10px 14px; font-size: 13px; margin-top: 12px;
+  }
+  .step-error ul { margin: 6px 0 0; padding-left: 18px; }
+  .summary-section { margin-bottom: 14px; }
+  .summary-section h3 { font-size: 13px; color: var(--accent); margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .summary-section p { margin: 2px 0; font-size: 13.5px; color: var(--text); }
+  .summary-section .muted-line { color: var(--muted); font-size: 13px; }
+  .step-nav {
+    position: fixed; bottom: 0; left: 0; right: 0; background: var(--bg);
+    border-top: 1px solid var(--border); padding: 14px 20px;
+    display: flex; gap: 10px; justify-content: center;
+  }
+  .step-nav-inner { display: flex; gap: 10px; width: 100%; max-width: 760px; align-items: center; }
+  #backBtn, #nextBtn, #saveBtn {
+    border: none; border-radius: 8px; padding: 13px 20px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  #backBtn { background: #262a32; color: var(--text); }
+  #nextBtn, #saveBtn { background: var(--accent); color: white; flex: 1; }
   #saveBtn:disabled { opacity: 0.5; cursor: not-allowed; }
   #resultBox { margin-top: 14px; padding: 14px; border-radius: 8px; font-size: 13px; display: none; }
   #resultBox.ok { display: block; background: #16281f; border: 1px solid var(--ok); }
@@ -79,14 +120,24 @@
 <body>
 <h1>🧙 Kreator konfiguracji</h1>
 <div class="intro">
-  Pierwsza konfiguracja bridge'a Satel-Tuya-eBUS. Wypełnij poniższe kroki i
-  zapisz - reszta (zaawansowane reguły, sceny, harmonogramy) da się dodać
-  później ręcznie w <code>config.yaml</code> albo przez panel.
+  Pierwsza konfiguracja bridge'a Satel-Tuya-eBUS - podzielona na etapy.
+  Po każdym kliknięciu <b>Dalej</b> postęp zapisuje się automatycznie na
+  serwerze, więc kreator da się bezpiecznie przerwać i wrócić do niego
+  później (nawet z innego urządzenia w tej samej sieci). To, czego kreator
+  nie obsługuje (reguły kamer, alarmy progowe, automatyka kotła), da się
+  dopisać ręcznie w <code>config.yaml</code> albo przez panel po zapisie.
 </div>
 
-<form id="setupForm">
+<div id="resumeBanner" class="resume-banner" style="display:none;">
+  <span>↻ Wznowiono zapisany wcześniej postęp kreatora.</span>
+  <button type="button" id="discardDraftBtn">Zacznij od nowa</button>
+</div>
 
-  <div class="step">
+<div class="progress" id="progressDots"></div>
+
+<form id="setupForm" novalidate>
+
+  <div class="step" data-step="1">
     <div class="step-header"><div class="step-number">1</div><div class="step-title">Centrala Satel Integra</div></div>
     <div class="step-hint">Dane z konfiguracji ETHM-1 Plus w programie DLOADX.</div>
     <div class="field-row">
@@ -97,21 +148,39 @@
       <div class="field"><label>Klucz integracji</label><input type="text" id="satel_integration_key" placeholder="ustawiony w DLOADX"></div>
       <div class="field"><label>Port wejść IP (wirtualne wejścia)</label><input type="number" id="satel_virtual_inputs_port" value="8888"></div>
     </div>
+    <div class="warn-box">
+      ⚠ <b>To hasło protokołu integracji, nie klucz szyfrowania.</b> Ten
+      bridge (biblioteka <code>satel_integra</code>) nie obsługuje
+      opcjonalnego szyfrowania AES transmisji TCP, jakie oferują niektóre
+      centrale/moduły ETHM - komunikacja z centralą idzie czystym tekstem
+      po sieci LAN. Jeśli panel/bridge ma być dostępny spoza zaufanej
+      sieci domowej, użyj VPN (WireGuard/Tailscale) albo izolowanego
+      VLAN-u zamiast wystawiać port na świat. Szczegóły w README, sekcja
+      "Bezpieczeństwo".
+    </div>
 
     <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">Strefy (do uzbrajania/rozbrajania z panelu)</label>
     <div id="partitionsRows"></div>
-    <button type="button" class="add-row-btn" data-add="partitionsRows" data-template="nameNumber">+ Dodaj strefę</button>
+    <button type="button" class="add-row-btn" id="addPartitionBtn">+ Dodaj strefę</button>
 
     <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">Monitorowane wejścia (czujki) - opcjonalnie, można dodać później</label>
     <div id="zonesRows"></div>
-    <button type="button" class="add-row-btn" data-add="zonesRows" data-template="nameNumber">+ Dodaj wejście</button>
+    <button type="button" class="add-row-btn" id="addZoneBtn">+ Dodaj wejście</button>
 
     <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">Monitorowane wyjścia - opcjonalnie</label>
     <div id="outputsRows"></div>
-    <button type="button" class="add-row-btn" data-add="outputsRows" data-template="nameNumber">+ Dodaj wyjście</button>
+    <button type="button" class="add-row-btn" id="addOutputBtn">+ Dodaj wyjście</button>
+
+    <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">
+      Wirtualne wejścia IP (do wysyłania naruszeń z Tuya/scen) - skonfigurowane
+      w DLOADX, zakładka "Wejścia IP"; nazwy stąd wykorzystasz w krokach
+      "Sceny" i "Reguły ruchu"
+    </label>
+    <div id="virtualInputsRows"></div>
+    <button type="button" class="add-row-btn" id="addVirtualInputBtn">+ Dodaj wirtualne wejście</button>
   </div>
 
-  <div class="step">
+  <div class="step" data-step="2">
     <div class="step-header"><div class="step-number">2</div><div class="step-title">Urządzenia Tuya (lokalnie)</div></div>
     <div class="step-hint">
       Local key każdego urządzenia wyciągasz narzędziem <code>tinytuya wizard</code>
@@ -126,7 +195,7 @@
     <button type="button" class="add-row-btn" id="addTuyaDeviceBtn">+ Dodaj urządzenie</button>
   </div>
 
-  <div class="step">
+  <div class="step" data-step="3">
     <div class="step-header"><div class="step-number">3</div><div class="step-title">eBUS / ebusd (kocioł)</div></div>
     <div class="step-hint">Broker MQTT, na który publikuje ebusd. Same czujniki kotła dodasz po zapisaniu, w zakładce "Ustawienia czujników".</div>
     <div class="field-row">
@@ -135,7 +204,7 @@
     </div>
   </div>
 
-  <div class="step">
+  <div class="step" data-step="4">
     <div class="step-header"><div class="step-number">4</div><div class="step-title">Hasło administratora panelu</div></div>
     <div class="step-hint">Wymagane tylko do zmiany ustawień i uzbrajania/rozbrajania - podgląd panelu zostaje bez hasła.</div>
     <div class="field-row">
@@ -144,7 +213,7 @@
     </div>
   </div>
 
-  <div class="step">
+  <div class="step" data-step="5">
     <div class="step-header"><div class="step-number">5</div><div class="step-title">Powiadomienia push (opcjonalnie)</div></div>
     <div class="step-hint">Darmowa usługa ntfy.sh - załóż unikalny temat (nazwę), nie wymaga rejestracji.</div>
     <a class="external-link" href="https://ntfy.sh" target="_blank" rel="noopener">↗ Otwórz ntfy.sh</a>
@@ -154,16 +223,16 @@
     </div>
   </div>
 
-  <div class="step">
+  <div class="step" data-step="6">
     <div class="step-header"><div class="step-number">6</div><div class="step-title">Lokalizacja (opcjonalnie)</div></div>
-    <div class="step-hint">Potrzebne tylko jeśli później dodasz reguły z oknem czasowym "wschód/zachód słońca".</div>
+    <div class="step-hint">Potrzebne, jeśli w kroku "Reguły ruchu" użyjesz harmonogramu z "wschód/zachód słońca" zamiast stałej godziny.</div>
     <div class="field-row">
       <div class="field"><label>Szerokość geograficzna</label><input type="text" id="loc_lat" placeholder="52.23"></div>
       <div class="field"><label>Długość geograficzna</label><input type="text" id="loc_lon" placeholder="21.01"></div>
     </div>
   </div>
 
-  <div class="step">
+  <div class="step" data-step="7">
     <div class="step-header"><div class="step-number">7</div><div class="step-title">Integracje opcjonalne</div></div>
 
     <div class="checkbox-row"><input type="checkbox" id="ha_enabled"><label for="ha_enabled">Home Assistant (MQTT Discovery)</label></div>
@@ -192,32 +261,118 @@
     </div>
   </div>
 
-  <div class="save-bar">
-    <button type="submit" id="saveBtn">Zapisz i uruchom</button>
-    <div id="resultBox"></div>
+  <div class="step" data-step="8">
+    <div class="step-header"><div class="step-number">8</div><div class="step-title">Sceny (zaawansowane)</div></div>
+    <div class="step-hint">
+      Nazwana grupa akcji na wielu urządzeniach naraz, wywoływana jednym
+      zdarzeniem (np. "wykryto_intruza" włącza światła i wywołuje wirtualne
+      wejście). Sceny zdefiniowane tutaj będzie można wybrać w kolejnym
+      kroku ("Reguły ruchu") jako akcję albo jako cel eskalacji.
+    </div>
+    <div id="scenesContainer"></div>
+    <button type="button" class="add-row-btn" id="addSceneBtn">+ Dodaj scenę</button>
   </div>
+
+  <div class="step" data-step="9">
+    <div class="step-header"><div class="step-number">9</div><div class="step-title">Reguły ruchu: harmonogramy i eskalacja</div></div>
+    <div class="step-hint">
+      Naruszenie wejścia Satela → włącz urządzenie na czas (albo uruchom
+      scenę). Opcjonalnie: <b>harmonogram</b> - reguła aktywna tylko w
+      wybranych godzinach, oraz <b>eskalacja</b> - kilka naruszeń w krótkim
+      czasie wywołuje mocniejszą scenę zamiast zwykłej akcji. (Reguły dla
+      ruchu z czujek Tuya PIR i reguły kamer da się dodać tylko ręcznie w
+      config.yaml - patrz README.)
+    </div>
+    <div id="motionRulesContainer"></div>
+    <button type="button" class="add-row-btn" id="addMotionRuleBtn">+ Dodaj regułę</button>
+  </div>
+
+  <div class="step" data-step="10">
+    <div class="step-header"><div class="step-number">10</div><div class="step-title">Podsumowanie</div></div>
+    <div class="step-hint">Sprawdź poniżej, zanim zapiszesz - po zapisie kreator się blokuje (patrz nagłówek wygenerowanego config.yaml).</div>
+    <div id="summaryContent"></div>
+  </div>
+
 </form>
 
+<div class="step-nav">
+  <div class="step-nav-inner">
+    <button type="button" id="backBtn">‹ Wstecz</button>
+    <button type="button" id="nextBtn">Dalej ›</button>
+    <button type="button" id="saveBtn" style="display:none;">Zapisz i uruchom</button>
+  </div>
+</div>
+<div style="max-width: 760px; margin: 0 auto;">
+  <div id="resultBox"></div>
+</div>
+
 <script>
-function addRow(containerId, template) {
+const TOTAL_STEPS = 10;
+let currentStep = 1;
+
+// ------------------------------------------------------------------
+// Sekcje typu "nazwa + numer" (strefy, wejścia, wyjścia)
+// ------------------------------------------------------------------
+function addNameNumberRow(containerId, initial) {
   const container = document.getElementById(containerId);
   const row = document.createElement('div');
   row.className = 'repeatable-row';
-  if (template === 'nameNumber') {
-    row.innerHTML = `
-      <input type="text" placeholder="nazwa (np. Salon)" class="row-name">
-      <input type="number" placeholder="numer" class="row-number" style="max-width: 90px;">
-      <button type="button" class="row-remove">✕</button>`;
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. Salon)" class="row-name">
+    <input type="number" placeholder="numer" class="row-number" style="max-width: 90px;">
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.row-name').value = initial.name || '';
+    row.querySelector('.row-number').value = initial.number || '';
   }
   row.querySelector('.row-remove').addEventListener('click', () => row.remove());
   container.appendChild(row);
 }
+document.getElementById('addPartitionBtn').addEventListener('click', () => addNameNumberRow('partitionsRows'));
+document.getElementById('addZoneBtn').addEventListener('click', () => addNameNumberRow('zonesRows'));
+document.getElementById('addOutputBtn').addEventListener('click', () => addNameNumberRow('outputsRows'));
 
-document.querySelectorAll('[data-add]').forEach(btn => {
-  btn.addEventListener('click', () => addRow(btn.dataset.add, btn.dataset.template));
-});
+function collectNameNumberRows(containerId) {
+  return Array.from(document.querySelectorAll(`#${containerId} .repeatable-row`))
+    .map(row => ({ name: row.querySelector('.row-name').value.trim(), number: row.querySelector('.row-number').value }))
+    .filter(r => r.name && r.number);
+}
 
-function addTuyaDeviceRow() {
+// ------------------------------------------------------------------
+// Wirtualne wejścia IP (nazwa + numer + klucz DLOADX)
+// ------------------------------------------------------------------
+function addVirtualInputRow(initial) {
+  const container = document.getElementById('virtualInputsRows');
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. motion_hall_camera)" class="vi-name">
+    <input type="number" placeholder="numer wejścia" class="vi-number" style="max-width: 120px;">
+    <input type="text" placeholder="klucz z DLOADX" class="vi-key">
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.vi-name').value = initial.name || '';
+    row.querySelector('.vi-number').value = initial.number || '';
+    row.querySelector('.vi-key').value = initial.key || '';
+  }
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  row.querySelector('.vi-name').addEventListener('input', refreshVirtualInputsDatalist);
+  container.appendChild(row);
+}
+document.getElementById('addVirtualInputBtn').addEventListener('click', () => addVirtualInputRow());
+
+function collectVirtualInputs() {
+  return Array.from(document.querySelectorAll('#virtualInputsRows .repeatable-row')).map(row => ({
+    name: row.querySelector('.vi-name').value.trim(),
+    number: row.querySelector('.vi-number').value,
+    key: row.querySelector('.vi-key').value.trim(),
+  })).filter(v => v.name || v.number || v.key);
+}
+
+// ------------------------------------------------------------------
+// Urządzenia Tuya
+// ------------------------------------------------------------------
+function addTuyaDeviceRow(initial) {
   const container = document.getElementById('tuyaDevicesRows');
   const row = document.createElement('div');
   row.className = 'repeatable-row';
@@ -232,28 +387,23 @@ function addTuyaDeviceRow() {
     </select>
     <input type="text" placeholder="DP jasności (tylko ściemniacz)" class="td-dp" style="display:none;">
     <button type="button" class="row-remove">✕</button>`;
-  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  row.querySelector('.row-remove').addEventListener('click', () => { row.remove(); refreshRuleDropdowns(); });
   row.querySelector('.td-type').addEventListener('change', (e) => {
     row.querySelector('.td-dp').style.display = e.target.value === 'dimmer' ? '' : 'none';
   });
+  row.querySelector('.td-name').addEventListener('input', refreshRuleDropdowns);
+  if (initial) {
+    row.querySelector('.td-name').value = initial.name || '';
+    row.querySelector('.td-id').value = initial.id || '';
+    row.querySelector('.td-ip').value = initial.ip || '';
+    row.querySelector('.td-key').value = initial.local_key || '';
+    row.querySelector('.td-type').value = initial.type || 'socket';
+    row.querySelector('.td-dp').value = initial.dimmer_dp || '';
+    row.querySelector('.td-dp').style.display = initial.type === 'dimmer' ? '' : 'none';
+  }
   container.appendChild(row);
 }
-document.getElementById('addTuyaDeviceBtn').addEventListener('click', addTuyaDeviceRow);
-addTuyaDeviceRow(); // jeden wiersz od razu widoczny
-
-// Rozwijanie sekcji integracji opcjonalnych po zaznaczeniu checkboxa
-[['ha_enabled', 'haContent'], ['unifi_enabled', 'unifiContent'], ['tuya_cloud_enabled', 'tuyaCloudContent']]
-  .forEach(([checkboxId, contentId]) => {
-    document.getElementById(checkboxId).addEventListener('change', (e) => {
-      document.getElementById(contentId).classList.toggle('show', e.target.checked);
-    });
-  });
-
-function collectNameNumberRows(containerId) {
-  return Array.from(document.querySelectorAll(`#${containerId} .repeatable-row`))
-    .map(row => ({ name: row.querySelector('.row-name').value.trim(), number: row.querySelector('.row-number').value }))
-    .filter(r => r.name && r.number);
-}
+document.getElementById('addTuyaDeviceBtn').addEventListener('click', () => addTuyaDeviceRow());
 
 function collectTuyaDevices() {
   return Array.from(document.querySelectorAll('#tuyaDevicesRows .repeatable-row')).map(row => ({
@@ -263,25 +413,299 @@ function collectTuyaDevices() {
     local_key: row.querySelector('.td-key').value.trim(),
     type: row.querySelector('.td-type').value,
     dimmer_dp: row.querySelector('.td-dp').value.trim(),
-  })).filter(d => d.name);
+  })).filter(d => d.name || d.id || d.ip || d.local_key);
 }
 
-document.getElementById('setupForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const resultBox = document.getElementById('resultBox');
-  const saveBtn = document.getElementById('saveBtn');
-  resultBox.className = '';
-  resultBox.style.display = 'none';
+function getTuyaDeviceNames() {
+  return Array.from(document.querySelectorAll('#tuyaDevicesRows .td-name'))
+    .map(el => el.value.trim()).filter(Boolean);
+}
+function getVirtualInputNames() {
+  return Array.from(document.querySelectorAll('#virtualInputsRows .vi-name'))
+    .map(el => el.value.trim()).filter(Boolean);
+}
+function getSceneNames() {
+  return Array.from(document.querySelectorAll('#scenesContainer .scene-name'))
+    .map(el => el.value.trim()).filter(Boolean);
+}
 
-  const password = document.getElementById('admin_password').value;
-  const passwordConfirm = document.getElementById('admin_password_confirm').value;
-  if (password !== passwordConfirm) {
-    resultBox.className = 'error';
-    resultBox.textContent = '❌ Hasła nie są identyczne';
-    return;
+function refreshVirtualInputsDatalist() {
+  let list = document.getElementById('virtualInputsList');
+  if (!list) {
+    list = document.createElement('datalist');
+    list.id = 'virtualInputsList';
+    document.body.appendChild(list);
   }
+  list.innerHTML = getVirtualInputNames().map(n => `<option value="${escapeHtml(n)}">`).join('');
+}
 
-  const form = {
+// Rozwijanie sekcji integracji opcjonalnych po zaznaczeniu checkboxa
+[['ha_enabled', 'haContent'], ['unifi_enabled', 'unifiContent'], ['tuya_cloud_enabled', 'tuyaCloudContent']]
+  .forEach(([checkboxId, contentId]) => {
+    document.getElementById(checkboxId).addEventListener('change', (e) => {
+      document.getElementById(contentId).classList.toggle('show', e.target.checked);
+    });
+  });
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ------------------------------------------------------------------
+// Sceny - karta na scenę, wewnątrz repeatable-row na każdą akcję
+// ------------------------------------------------------------------
+const SCENE_ACTION_LABELS = {
+  tuya_on: 'Włącz urządzenie Tuya',
+  tuya_off: 'Wyłącz urządzenie Tuya',
+  tuya_on_for_duration: 'Włącz urządzenie Tuya na czas',
+  satel_output: 'Ustaw wyjście Satela',
+  satel_virtual_input: 'Wywołaj wirtualne wejście',
+  satel_arm: 'Uzbrój strefę(y)',
+  satel_disarm: 'Rozbrój strefę(y)',
+  delay: 'Opóźnienie (sekundy)',
+};
+
+function deviceOptionsHtml(selected) {
+  const names = getTuyaDeviceNames();
+  if (names.length === 0) {
+    return `<option value="">(brak urządzeń Tuya - dodaj je w kroku 2)</option>`;
+  }
+  return names.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+}
+
+function renderActionFields(fieldsEl, type, initial) {
+  initial = initial || {};
+  if (type === 'tuya_on' || type === 'tuya_off' || type === 'tuya_on_for_duration') {
+    let html = `<select class="af-device">${deviceOptionsHtml(initial.device)}</select>`;
+    if (type === 'tuya_on_for_duration') {
+      html += `<input type="number" class="af-duration" placeholder="czas (s)" value="${initial.duration_seconds || ''}">`;
+    }
+    if (type !== 'tuya_off') {
+      html += `<input type="number" class="af-dimmer" placeholder="jasność % (opcjonalnie)" value="${initial.dimmer_level_percent ?? ''}">`;
+    }
+    fieldsEl.innerHTML = html;
+  } else if (type === 'satel_output') {
+    fieldsEl.innerHTML = `
+      <input type="number" class="af-output-number" placeholder="nr wyjścia" value="${initial.output_number ?? ''}">
+      <select class="af-state">
+        <option value="true" ${initial.state !== false ? 'selected' : ''}>włącz</option>
+        <option value="false" ${initial.state === false ? 'selected' : ''}>wyłącz</option>
+      </select>`;
+  } else if (type === 'satel_virtual_input') {
+    fieldsEl.innerHTML = `<input type="text" class="af-vinput" list="virtualInputsList" placeholder="nazwa wirtualnego wejścia" value="${escapeHtml(initial.virtual_input || '')}">`;
+  } else if (type === 'satel_arm') {
+    fieldsEl.innerHTML = `<input type="number" class="af-mode" placeholder="tryb (0 domyślny, opcjonalnie)" value="${initial.mode ?? ''}">`;
+  } else if (type === 'satel_disarm') {
+    fieldsEl.innerHTML = `<span style="color: var(--muted); font-size: 13px;">brak dodatkowych pól</span>`;
+  } else if (type === 'delay') {
+    fieldsEl.innerHTML = `<input type="number" step="0.1" class="af-seconds" placeholder="sekundy" value="${initial.seconds ?? ''}">`;
+  }
+}
+
+function addActionRow(actionsEl, initial) {
+  initial = initial || {};
+  const row = document.createElement('div');
+  row.className = 'action-row repeatable-row';
+  const type = initial.type || 'tuya_on';
+  row.innerHTML = `
+    <select class="action-type" style="max-width: 220px;">
+      ${Object.entries(SCENE_ACTION_LABELS).map(([v, l]) => `<option value="${v}" ${v === type ? 'selected' : ''}>${l}</option>`).join('')}
+    </select>
+    <span class="action-fields"></span>
+    <button type="button" class="row-remove">✕</button>`;
+  const fieldsEl = row.querySelector('.action-fields');
+  renderActionFields(fieldsEl, type, initial);
+  row.querySelector('.action-type').addEventListener('change', (e) => renderActionFields(fieldsEl, e.target.value));
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  actionsEl.appendChild(row);
+}
+
+function addSceneCard(initial) {
+  initial = initial || {};
+  const container = document.getElementById('scenesContainer');
+  const card = document.createElement('div');
+  card.className = 'sub-card';
+  card.innerHTML = `
+    <div class="sub-card-header">
+      <input type="text" class="scene-name" placeholder="nazwa sceny (np. wykryto_intruza)" style="flex:1;">
+      <button type="button" class="row-remove">✕ usuń scenę</button>
+    </div>
+    <div class="scene-actions"></div>
+    <button type="button" class="add-row-btn add-action-btn">+ Dodaj akcję</button>`;
+  card.querySelector('.scene-name').value = initial.name || '';
+  card.querySelector('.scene-name').addEventListener('input', refreshRuleDropdowns);
+  card.querySelector('.row-remove').addEventListener('click', () => { card.remove(); refreshRuleDropdowns(); });
+  const actionsEl = card.querySelector('.scene-actions');
+  card.querySelector('.add-action-btn').addEventListener('click', () => addActionRow(actionsEl));
+  (initial.actions || []).forEach(a => addActionRow(actionsEl, a));
+  if (!initial.actions || initial.actions.length === 0) addActionRow(actionsEl);
+  container.appendChild(card);
+}
+document.getElementById('addSceneBtn').addEventListener('click', () => addSceneCard());
+
+function collectScenes() {
+  return Array.from(document.querySelectorAll('#scenesContainer .sub-card')).map(card => ({
+    name: card.querySelector('.scene-name').value.trim(),
+    actions: Array.from(card.querySelectorAll('.action-row')).map(row => {
+      const type = row.querySelector('.action-type').value;
+      const f = row.querySelector('.action-fields');
+      const get = (cls) => { const el = f.querySelector(cls); return el ? el.value.trim() : ''; };
+      const action = { type };
+      if (type === 'tuya_on' || type === 'tuya_off' || type === 'tuya_on_for_duration') {
+        action.device = get('.af-device');
+        if (type === 'tuya_on_for_duration') action.duration_seconds = get('.af-duration');
+        if (type !== 'tuya_off') action.dimmer_level_percent = get('.af-dimmer');
+      } else if (type === 'satel_output') {
+        action.output_number = get('.af-output-number');
+        action.state = get('.af-state') !== 'false';
+      } else if (type === 'satel_virtual_input') {
+        action.virtual_input = get('.af-vinput');
+      } else if (type === 'satel_arm') {
+        action.mode = get('.af-mode');
+      } else if (type === 'delay') {
+        action.seconds = get('.af-seconds');
+      }
+      return action;
+    }),
+  }));
+}
+
+// ------------------------------------------------------------------
+// Reguły ruchu - karta na regułę (Satel zone -> urządzenie/scena),
+// z opcjonalnym harmonogramem i eskalacją
+// ------------------------------------------------------------------
+function sceneOptionsHtml(selected) {
+  const names = getSceneNames();
+  const placeholder = `<option value="">${names.length ? '(wybierz scenę)' : '(brak scen - dodaj je w kroku 8)'}</option>`;
+  return placeholder + names.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+}
+
+function addMotionRuleCard(initial) {
+  initial = initial || {};
+  const window_ = initial.time_window || {};
+  const escalation = initial.escalation || {};
+  const actionKind = initial.scene ? 'scene' : 'device';
+  const container = document.getElementById('motionRulesContainer');
+  const card = document.createElement('div');
+  card.className = 'sub-card';
+  card.innerHTML = `
+    <div class="sub-card-header">
+      <b style="color: var(--muted); font-size: 13px;">Reguła ruchu</b>
+      <button type="button" class="row-remove">✕ usuń regułę</button>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Numer wejścia w Satelu (naruszenie wywoła regułę)</label>
+        <input type="number" class="mr-zone" value="${initial.zone_number ?? ''}"></div>
+      <div class="field"><label>Akcja</label>
+        <select class="mr-action-kind">
+          <option value="device" ${actionKind === 'device' ? 'selected' : ''}>Włącz urządzenie na czas</option>
+          <option value="scene" ${actionKind === 'scene' ? 'selected' : ''}>Uruchom scenę</option>
+        </select></div>
+    </div>
+    <div class="field-row mr-device-fields">
+      <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${deviceOptionsHtml(initial.target_device)}</select></div>
+      <div class="field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" value="${initial.duration_seconds ?? ''}"></div>
+      <div class="field"><label>Jasność % (ściemniacz, opcjonalnie)</label><input type="number" class="mr-dimmer" value="${initial.dimmer_level_percent ?? ''}"></div>
+    </div>
+    <div class="field-row mr-scene-fields">
+      <div class="field"><label>Scena</label><select class="mr-scene">${sceneOptionsHtml(initial.scene)}</select></div>
+    </div>
+
+    <div class="checkbox-row"><input type="checkbox" class="mr-window-enabled" ${window_.start ? 'checked' : ''}>
+      <label>Harmonogram - reguła aktywna tylko w oknie czasowym</label></div>
+    <div class="optional-content mr-window-fields ${window_.start ? 'show' : ''}">
+      <div class="field-row">
+        <div class="field"><label>Początek (HH:MM albo sunset/sunrise ± minuty)</label>
+          <input type="text" class="mr-window-start" placeholder="np. 22:00 albo sunset-15" value="${escapeHtml(window_.start || '')}"></div>
+        <div class="field"><label>Koniec</label>
+          <input type="text" class="mr-window-end" placeholder="np. 06:00" value="${escapeHtml(window_.end || '')}"></div>
+      </div>
+    </div>
+
+    <div class="checkbox-row"><input type="checkbox" class="mr-escalation-enabled" ${escalation.escalated_scene ? 'checked' : ''}>
+      <label>Eskalacja - powtarzające się naruszenia wywołują mocniejszą scenę</label></div>
+    <div class="optional-content mr-escalation-fields ${escalation.escalated_scene ? 'show' : ''}">
+      <div class="field-row">
+        <div class="field"><label>Próg (liczba naruszeń)</label><input type="number" class="mr-esc-threshold" value="${escalation.threshold_count ?? 3}"></div>
+        <div class="field"><label>W oknie (sekundy)</label><input type="number" class="mr-esc-window" value="${escalation.window_seconds ?? 120}"></div>
+        <div class="field"><label>Wywołaj scenę</label><select class="mr-esc-scene">${sceneOptionsHtml(escalation.escalated_scene)}</select></div>
+      </div>
+    </div>`;
+
+  const deviceFields = card.querySelector('.mr-device-fields');
+  const sceneFields = card.querySelector('.mr-scene-fields');
+  function syncActionKind() {
+    const kind = card.querySelector('.mr-action-kind').value;
+    deviceFields.style.display = kind === 'device' ? '' : 'none';
+    sceneFields.style.display = kind === 'scene' ? '' : 'none';
+  }
+  card.querySelector('.mr-action-kind').addEventListener('change', syncActionKind);
+  syncActionKind();
+
+  card.querySelector('.mr-window-enabled').addEventListener('change', (e) => {
+    card.querySelector('.mr-window-fields').classList.toggle('show', e.target.checked);
+  });
+  card.querySelector('.mr-escalation-enabled').addEventListener('change', (e) => {
+    card.querySelector('.mr-escalation-fields').classList.toggle('show', e.target.checked);
+  });
+  card.querySelector('.row-remove').addEventListener('click', () => card.remove());
+
+  container.appendChild(card);
+}
+document.getElementById('addMotionRuleBtn').addEventListener('click', () => addMotionRuleCard());
+
+function refreshRuleDropdowns() {
+  refreshVirtualInputsDatalist();
+  document.querySelectorAll('#scenesContainer .action-row').forEach(row => {
+    const sel = row.querySelector('.af-device');
+    if (sel) { const cur = sel.value; sel.innerHTML = deviceOptionsHtml(cur); }
+  });
+  document.querySelectorAll('#motionRulesContainer .sub-card').forEach(card => {
+    const deviceSel = card.querySelector('.mr-target-device');
+    const curDevice = deviceSel.value;
+    deviceSel.innerHTML = deviceOptionsHtml(curDevice);
+    const sceneSel = card.querySelector('.mr-scene');
+    const curScene = sceneSel.value;
+    sceneSel.innerHTML = sceneOptionsHtml(curScene);
+    const escSel = card.querySelector('.mr-esc-scene');
+    const curEsc = escSel.value;
+    escSel.innerHTML = sceneOptionsHtml(curEsc);
+  });
+}
+
+function collectMotionRules() {
+  return Array.from(document.querySelectorAll('#motionRulesContainer .sub-card')).map(card => {
+    const kind = card.querySelector('.mr-action-kind').value;
+    const rule = { zone_number: card.querySelector('.mr-zone').value.trim() };
+    if (kind === 'scene') {
+      rule.scene = card.querySelector('.mr-scene').value.trim();
+    } else {
+      rule.target_device = card.querySelector('.mr-target-device').value.trim();
+      rule.duration_seconds = card.querySelector('.mr-duration').value.trim();
+      rule.dimmer_level_percent = card.querySelector('.mr-dimmer').value.trim();
+    }
+    rule.time_window = {
+      enabled: card.querySelector('.mr-window-enabled').checked,
+      start: card.querySelector('.mr-window-start').value.trim(),
+      end: card.querySelector('.mr-window-end').value.trim(),
+    };
+    rule.escalation = {
+      enabled: card.querySelector('.mr-escalation-enabled').checked,
+      threshold_count: card.querySelector('.mr-esc-threshold').value.trim(),
+      window_seconds: card.querySelector('.mr-esc-window').value.trim(),
+      escalated_scene: card.querySelector('.mr-esc-scene').value.trim(),
+    };
+    return rule;
+  });
+}
+
+// ------------------------------------------------------------------
+// Zbieranie / wypełnianie całego formularza
+// ------------------------------------------------------------------
+function collectFormData() {
+  return {
     satel: {
       host: document.getElementById('satel_host').value.trim(),
       port: document.getElementById('satel_port').value,
@@ -291,12 +715,14 @@ document.getElementById('setupForm').addEventListener('submit', async (e) => {
     partitions: collectNameNumberRows('partitionsRows'),
     monitored_zones: collectNameNumberRows('zonesRows'),
     monitored_outputs: collectNameNumberRows('outputsRows'),
+    virtual_inputs: collectVirtualInputs(),
     tuya_devices: collectTuyaDevices(),
     ebus: {
       mqtt_host: document.getElementById('ebus_mqtt_host').value.trim(),
       mqtt_port: document.getElementById('ebus_mqtt_port').value,
     },
-    admin_password: password,
+    admin_password: document.getElementById('admin_password').value,
+    admin_password_confirm: document.getElementById('admin_password_confirm').value,
     notifications: { ntfy_topic_url: document.getElementById('ntfy_topic_url').value.trim() },
     location: { latitude: document.getElementById('loc_lat').value.trim(), longitude: document.getElementById('loc_lon').value.trim() },
     home_assistant: {
@@ -304,15 +730,246 @@ document.getElementById('setupForm').addEventListener('submit', async (e) => {
       mqtt_host: document.getElementById('ha_mqtt_host').value.trim(),
     },
     unifi_protect: {
+      enabled: document.getElementById('unifi_enabled').checked,
       host: document.getElementById('unifi_enabled').checked ? document.getElementById('unifi_host').value.trim() : '',
       username: document.getElementById('unifi_username').value.trim(),
       password: document.getElementById('unifi_password').value,
     },
     tuya_cloud: {
+      enabled: document.getElementById('tuya_cloud_enabled').checked,
       access_id: document.getElementById('tuya_cloud_enabled').checked ? document.getElementById('tuya_access_id').value.trim() : '',
       access_key: document.getElementById('tuya_access_key').value,
     },
+    scenes: collectScenes(),
+    motion_rules: collectMotionRules(),
   };
+}
+
+function populateForm(data) {
+  if (!data) return;
+  const set = (id, val) => { if (val !== undefined && val !== null) document.getElementById(id).value = val; };
+
+  const satel = data.satel || {};
+  set('satel_host', satel.host); set('satel_port', satel.port);
+  set('satel_integration_key', satel.integration_key); set('satel_virtual_inputs_port', satel.virtual_inputs_port);
+
+  (data.partitions || []).forEach(p => addNameNumberRow('partitionsRows', p));
+  (data.monitored_zones || []).forEach(z => addNameNumberRow('zonesRows', z));
+  (data.monitored_outputs || []).forEach(o => addNameNumberRow('outputsRows', o));
+  (data.virtual_inputs || []).forEach(v => addVirtualInputRow(v));
+
+  document.getElementById('tuyaDevicesRows').innerHTML = '';
+  (data.tuya_devices && data.tuya_devices.length ? data.tuya_devices : [null]).forEach(d => addTuyaDeviceRow(d || undefined));
+
+  const ebus = data.ebus || {};
+  set('ebus_mqtt_host', ebus.mqtt_host); set('ebus_mqtt_port', ebus.mqtt_port);
+
+  set('admin_password', data.admin_password); set('admin_password_confirm', data.admin_password_confirm);
+  set('ntfy_topic_url', (data.notifications || {}).ntfy_topic_url);
+
+  const loc = data.location || {};
+  set('loc_lat', loc.latitude); set('loc_lon', loc.longitude);
+
+  const ha = data.home_assistant || {};
+  document.getElementById('ha_enabled').checked = !!ha.enabled;
+  document.getElementById('haContent').classList.toggle('show', !!ha.enabled);
+  set('ha_mqtt_host', ha.mqtt_host);
+
+  const unifi = data.unifi_protect || {};
+  document.getElementById('unifi_enabled').checked = !!unifi.enabled;
+  document.getElementById('unifiContent').classList.toggle('show', !!unifi.enabled);
+  set('unifi_host', unifi.host); set('unifi_username', unifi.username); set('unifi_password', unifi.password);
+
+  const tc = data.tuya_cloud || {};
+  document.getElementById('tuya_cloud_enabled').checked = !!tc.enabled;
+  document.getElementById('tuyaCloudContent').classList.toggle('show', !!tc.enabled);
+  set('tuya_access_id', tc.access_id); set('tuya_access_key', tc.access_key);
+
+  (data.scenes || []).forEach(s => addSceneCard(s));
+  (data.motion_rules || []).forEach(r => addMotionRuleCard(r));
+
+  refreshRuleDropdowns();
+}
+
+// ------------------------------------------------------------------
+// Walidacja pojedynczego kroku (przed przejściem "Dalej"/zapisem)
+// ------------------------------------------------------------------
+const SCENE_ACTION_REQUIRED = {
+  tuya_on: ['device'], tuya_off: ['device'], tuya_on_for_duration: ['device', 'duration_seconds'],
+  satel_output: ['output_number'], satel_virtual_input: ['virtual_input'],
+  satel_arm: [], satel_disarm: [], delay: ['seconds'],
+};
+
+function validateStep(n, data) {
+  const errors = [];
+  if (n === 1) {
+    if (!data.satel.host) errors.push('Adres IP centrali/ETHM jest wymagany');
+    if (!data.satel.integration_key) errors.push('Klucz integracji jest wymagany');
+    data.virtual_inputs.forEach((v, i) => {
+      if (!(v.name && v.number && v.key)) errors.push(`Wirtualne wejście #${i + 1}: uzupełnij nazwę, numer i klucz (albo usuń wiersz)`);
+    });
+  } else if (n === 2) {
+    data.tuya_devices.forEach((d, i) => {
+      if (!(d.name && d.id && d.ip && d.local_key)) errors.push(`Urządzenie Tuya #${i + 1}: nazwa, ID, adres IP i local_key są wymagane (albo usuń wiersz)`);
+    });
+  } else if (n === 3) {
+    if (!data.ebus.mqtt_host) errors.push('Adres brokera MQTT (eBUS) jest wymagany');
+  } else if (n === 4) {
+    if (data.admin_password.length < 8) errors.push('Hasło panelu: minimum 8 znaków');
+    if (data.admin_password !== data.admin_password_confirm) errors.push('Hasła nie są identyczne');
+  } else if (n === 6) {
+    const hasLat = !!data.location.latitude, hasLon = !!data.location.longitude;
+    if (hasLat !== hasLon) errors.push('Podaj obie współrzędne (szerokość i długość) albo żadną');
+  } else if (n === 7) {
+    if (data.unifi_protect.enabled && !data.unifi_protect.host) errors.push('UniFi Protect: adres kontrolera jest wymagany, jeśli integracja włączona');
+    if (data.tuya_cloud.enabled && !data.tuya_cloud.access_id) errors.push('Tuya Cloud: Access ID jest wymagany, jeśli integracja włączona');
+  } else if (n === 8) {
+    const seen = new Set();
+    data.scenes.forEach((s, i) => {
+      const label = `Scena #${i + 1}`;
+      if (!s.name) { errors.push(`${label}: nazwa jest wymagana`); }
+      else if (seen.has(s.name)) { errors.push(`${label}: nazwa '${s.name}' powtarza się`); }
+      else seen.add(s.name);
+      if (!s.actions.length) errors.push(`${label} ('${s.name || '?'}'): dodaj co najmniej jedną akcję`);
+      s.actions.forEach((a, j) => {
+        (SCENE_ACTION_REQUIRED[a.type] || []).forEach(field => {
+          if (!a[field]) errors.push(`${label} ('${s.name || '?'}'), akcja #${j + 1} (${a.type}): pole '${field}' jest wymagane`);
+        });
+      });
+    });
+  } else if (n === 9) {
+    const sceneNames = new Set(data.scenes.map(s => s.name).filter(Boolean));
+    data.motion_rules.forEach((r, i) => {
+      const label = `Reguła ruchu #${i + 1}`;
+      if (!r.zone_number) errors.push(`${label}: numer wejścia Satela jest wymagany`);
+      if (r.scene !== undefined) {
+        if (!r.scene) errors.push(`${label}: wybierz scenę`);
+        else if (!sceneNames.has(r.scene)) errors.push(`${label}: wybrana scena '${r.scene}' nie istnieje - wróć do kroku "Sceny"`);
+      } else {
+        if (!r.target_device) errors.push(`${label}: wybierz urządzenie docelowe`);
+        if (!r.duration_seconds) errors.push(`${label}: czas włączenia (sekundy) jest wymagany`);
+      }
+      if (r.time_window.enabled && !(r.time_window.start && r.time_window.end)) {
+        errors.push(`${label}: harmonogram - podaj początek i koniec okna`);
+      }
+      if (r.escalation.enabled) {
+        if (!r.escalation.threshold_count) errors.push(`${label}: eskalacja - liczba naruszeń jest wymagana`);
+        if (!r.escalation.window_seconds) errors.push(`${label}: eskalacja - okno czasowe (sekundy) jest wymagane`);
+        if (!r.escalation.escalated_scene) errors.push(`${label}: eskalacja - wybierz scenę`);
+        else if (!sceneNames.has(r.escalation.escalated_scene)) errors.push(`${label}: eskalacja - wybrana scena nie istnieje`);
+      }
+    });
+  }
+  return errors;
+}
+
+function validateAllSteps(data) {
+  let errors = [];
+  for (let n = 1; n <= 9; n++) errors = errors.concat(validateStep(n, data));
+  return errors;
+}
+
+function showStepError(errors) {
+  const existing = document.querySelector('.step-error');
+  if (existing) existing.remove();
+  if (!errors.length) return;
+  const box = document.createElement('div');
+  box.className = 'step-error';
+  box.innerHTML = '❌ Popraw przed przejściem dalej:<ul>' + errors.map(e => `<li>${escapeHtml(e)}</li>`).join('') + '</ul>';
+  document.querySelector(`.step[data-step="${currentStep}"]`).appendChild(box);
+  box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// ------------------------------------------------------------------
+// Nawigacja między krokami + autozapis postępu na serwer
+// ------------------------------------------------------------------
+function renderProgressDots() {
+  const dots = document.getElementById('progressDots');
+  dots.innerHTML = '';
+  for (let i = 1; i <= TOTAL_STEPS; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'progress-dot' + (i < currentStep ? ' done' : '') + (i === currentStep ? ' active' : '');
+    dots.appendChild(dot);
+  }
+  const label = document.createElement('span');
+  label.className = 'progress-label';
+  label.textContent = `Krok ${currentStep} z ${TOTAL_STEPS}`;
+  dots.appendChild(label);
+}
+
+function renderSummary() {
+  const data = collectFormData();
+  const el = document.getElementById('summaryContent');
+  const line = (label, val) => `<p><b>${label}:</b> ${escapeHtml(String(val))}</p>`;
+  let html = '';
+  html += `<div class="summary-section"><h3>Satel</h3>${line('Adres', data.satel.host + ':' + data.satel.port)}${line('Strefy', data.partitions.map(p => p.name).join(', ') || '(domyślnie: Dom)')}${line('Wirtualne wejścia', data.virtual_inputs.length)}</div>`;
+  html += `<div class="summary-section"><h3>Tuya</h3>${line('Urządzenia', data.tuya_devices.length)}</div>`;
+  html += `<div class="summary-section"><h3>eBUS</h3>${line('Broker MQTT', data.ebus.mqtt_host + ':' + data.ebus.mqtt_port)}</div>`;
+  html += `<div class="summary-section"><h3>Sceny</h3>${data.scenes.length ? line('Zdefiniowane', data.scenes.map(s => s.name).filter(Boolean).join(', ')) : '<p class="muted-line">brak</p>'}</div>`;
+  html += `<div class="summary-section"><h3>Reguły ruchu</h3>${data.motion_rules.length ? line('Liczba reguł', data.motion_rules.length) + line('Z harmonogramem', data.motion_rules.filter(r => r.time_window.enabled).length) + line('Z eskalacją', data.motion_rules.filter(r => r.escalation.enabled).length) : '<p class="muted-line">brak</p>'}</div>`;
+  html += `<div class="summary-section"><h3>Integracje opcjonalne</h3>${line('Home Assistant', data.home_assistant.enabled ? 'włączony' : 'wyłączony')}${line('UniFi Protect', data.unifi_protect.enabled ? 'włączony' : 'wyłączony')}${line('Tuya Cloud', data.tuya_cloud.enabled ? 'włączony' : 'wyłączony')}</div>`;
+  el.innerHTML = html;
+}
+
+async function saveDraft(step, data) {
+  try {
+    await fetch('/api/setup/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ step, data }),
+    });
+  } catch (err) {
+    // Brak sieci nie powinien blokować dalszej pracy w kreatorze - spróbujemy
+    // zapisać przy kolejnym kroku. Ostateczny zapis i tak wymaga /api/setup/save.
+    console.warn('Nie udało się zapisać postępu kreatora:', err);
+  }
+}
+
+function showStep(n) {
+  currentStep = n;
+  document.querySelectorAll('.step').forEach(el => {
+    el.style.display = (parseInt(el.dataset.step, 10) === n) ? '' : 'none';
+  });
+  document.getElementById('backBtn').style.display = n === 1 ? 'none' : '';
+  document.getElementById('nextBtn').style.display = n === TOTAL_STEPS ? 'none' : '';
+  document.getElementById('saveBtn').style.display = n === TOTAL_STEPS ? '' : 'none';
+  renderProgressDots();
+  if (n === 8 || n === 9) refreshRuleDropdowns();
+  if (n === 10) renderSummary();
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
+document.getElementById('nextBtn').addEventListener('click', async () => {
+  const data = collectFormData();
+  const errors = validateStep(currentStep, data);
+  showStepError(errors);
+  if (errors.length) return;
+  const nextStep = currentStep + 1;
+  await saveDraft(nextStep, data);
+  showStep(nextStep);
+});
+
+document.getElementById('backBtn').addEventListener('click', () => {
+  showStepError([]);
+  showStep(currentStep - 1);
+});
+
+document.getElementById('setupForm').addEventListener('submit', (e) => e.preventDefault());
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  const resultBox = document.getElementById('resultBox');
+  const saveBtn = document.getElementById('saveBtn');
+  resultBox.className = '';
+  resultBox.style.display = '';
+
+  const data = collectFormData();
+  const errors = validateAllSteps(data);
+  if (errors.length) {
+    resultBox.className = 'error';
+    resultBox.innerHTML = '❌ Popraw błędy przed zapisem:<ul>' + errors.map(e => `<li>${escapeHtml(e)}</li>`).join('') + '</ul>';
+    resultBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
 
   saveBtn.disabled = true;
   saveBtn.textContent = 'Zapisywanie...';
@@ -320,17 +977,17 @@ document.getElementById('setupForm').addEventListener('submit', async (e) => {
     const resp = await fetch('/api/setup/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify(data),
     });
-    const data = await resp.json();
+    const respData = await resp.json();
     if (!resp.ok) {
       resultBox.className = 'error';
-      resultBox.innerHTML = '❌ ' + (data.error || 'Błąd zapisu') +
-        (data.details ? '<ul>' + data.details.map(d => `<li>${d}</li>`).join('') + '</ul>' : '');
+      resultBox.innerHTML = '❌ ' + (respData.error || 'Błąd zapisu') +
+        (respData.details ? '<ul>' + respData.details.map(d => `<li>${escapeHtml(d)}</li>`).join('') + '</ul>' : '');
     } else {
       resultBox.className = 'ok';
-      resultBox.innerHTML = '✅ ' + data.message + '<br>' +
-        data.next_steps.map(s => `<code>${s}</code>`).join('<br>') +
+      resultBox.innerHTML = '✅ ' + respData.message + '<br>' +
+        respData.next_steps.map(s => `<code>${escapeHtml(s)}</code>`).join('<br>') +
         '<br><br><a href="/" style="color: var(--accent);">→ Przejdź do panelu</a>';
     }
   } catch (err) {
@@ -341,6 +998,35 @@ document.getElementById('setupForm').addEventListener('submit', async (e) => {
     saveBtn.textContent = 'Zapisz i uruchom';
   }
 });
+
+document.getElementById('discardDraftBtn').addEventListener('click', async () => {
+  if (!confirm('Wyczyścić zapisany postęp i zacząć kreator od nowa?')) return;
+  await saveDraft(1, {});
+  location.reload();
+});
+
+// ------------------------------------------------------------------
+// Start: wczytaj zapisany postęp (jeśli jest), inaczej pusty krok 1
+// ------------------------------------------------------------------
+(async function init() {
+  addTuyaDeviceRow(); // domyślny jeden wiersz, nadpisywany przez populateForm() jeśli jest draft
+
+  let draft = {};
+  try {
+    const resp = await fetch('/api/setup/draft');
+    if (resp.ok) draft = await resp.json();
+  } catch (err) {
+    console.warn('Nie udało się wczytać zapisanego postępu kreatora:', err);
+  }
+
+  if (draft && draft.data && Object.keys(draft.data).length) {
+    populateForm(draft.data);
+    document.getElementById('resumeBanner').style.display = 'flex';
+    showStep(Math.min(Math.max(draft.step || 1, 1), TOTAL_STEPS));
+  } else {
+    showStep(1);
+  }
+})();
 </script>
 </body>
 </html>

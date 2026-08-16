@@ -1,10 +1,13 @@
-"""Testy dla dashboard/setup.py i tras kreatora (/setup, /api/setup/save)."""
+"""Testy dla dashboard/setup.py i tras kreatora (/setup, /api/setup/save,
+/api/setup/draft)."""
 import pathlib
 
 import pytest
 import yaml
 
-from dashboard.setup import build_config_dict, validate
+from dashboard.setup import (
+    build_config_dict, validate, draft_path_for, load_draft, save_draft, delete_draft,
+)
 
 
 VALID_FORM = {
@@ -218,3 +221,262 @@ class TestSetupSave:
         config = BridgeConfig.load(tmp_path / "config.yaml")
         assert config.satel["host"] == "192.168.1.10"
         assert config.ebus["sensors"] == []  # pusta lista - dodaje się przez /config
+
+
+# ---------------------------------------------------------------------
+# Sceny, reguły ruchu (harmonogram + eskalacja), wirtualne wejścia
+# ---------------------------------------------------------------------
+
+FORM_WITH_ADVANCED = {
+    **VALID_FORM,
+    "virtual_inputs": [{"name": "motion_hall_camera", "number": "17", "key": "KLUCZ17"}],
+    "scenes": [
+        {
+            "name": "wykryto_intruza",
+            "actions": [
+                {"type": "tuya_on", "device": "gniazdko_salon", "dimmer_level_percent": ""},
+                {"type": "satel_output", "output_number": "1", "state": True},
+                {"type": "delay", "seconds": "2"},
+                {"type": "satel_virtual_input", "virtual_input": "motion_hall_camera"},
+            ],
+        },
+    ],
+    "motion_rules": [
+        {
+            "zone_number": "12",
+            "target_device": "gniazdko_salon",
+            "duration_seconds": "60",
+            "dimmer_level_percent": "",
+            "time_window": {"enabled": True, "start": "sunset-15", "end": "23:30"},
+            "escalation": {
+                "enabled": True, "threshold_count": "3", "window_seconds": "120",
+                "escalated_scene": "wykryto_intruza",
+            },
+        },
+    ],
+}
+
+
+class TestValidationAdvanced:
+    def test_advanced_form_has_no_errors(self):
+        assert validate(FORM_WITH_ADVANCED) == []
+
+    def test_scene_without_name_is_error(self):
+        form = {**FORM_WITH_ADVANCED, "scenes": [{"name": "", "actions": [{"type": "tuya_on", "device": "x"}]}]}
+        errors = validate(form)
+        assert any("nazwa jest wymagana" in e for e in errors)
+
+    def test_scene_without_actions_is_error(self):
+        form = {**FORM_WITH_ADVANCED, "scenes": [{"name": "pusta", "actions": []}]}
+        errors = validate(form)
+        assert any("co najmniej jedną akcję" in e for e in errors)
+
+    def test_scene_action_missing_required_field_is_error(self):
+        form = {**FORM_WITH_ADVANCED, "scenes": [{"name": "s", "actions": [{"type": "tuya_on", "device": ""}]}]}
+        errors = validate(form)
+        assert any("device" in e for e in errors)
+
+    def test_duplicate_scene_names_is_error(self):
+        form = {**FORM_WITH_ADVANCED, "scenes": [
+            {"name": "dup", "actions": [{"type": "satel_disarm"}]},
+            {"name": "dup", "actions": [{"type": "satel_disarm"}]},
+        ]}
+        errors = validate(form)
+        assert any("powtarza się" in e for e in errors)
+
+    def test_motion_rule_without_zone_number_is_error(self):
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [{**FORM_WITH_ADVANCED["motion_rules"][0], "zone_number": ""}]}
+        errors = validate(form)
+        assert any("numer wejścia" in e for e in errors)
+
+    def test_motion_rule_needs_device_or_scene(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0]}
+        rule.pop("target_device")
+        rule["duration_seconds"] = ""
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("urządzenie docelowe" in e for e in errors)
+
+    def test_motion_rule_scene_reference_must_exist(self):
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {"zone_number": "12", "scene": "nieistniejaca"},
+        ]}
+        errors = validate(form)
+        assert any("nie istnieje" in e for e in errors)
+
+    def test_motion_rule_escalation_scene_reference_must_exist(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0]}
+        rule["escalation"] = {**rule["escalation"], "escalated_scene": "nieistniejaca"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("nie istnieje" in e for e in errors)
+
+    def test_motion_rule_escalation_missing_fields_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0]}
+        rule["escalation"] = {"enabled": True, "threshold_count": "", "window_seconds": "", "escalated_scene": ""}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("liczba naruszeń" in e for e in errors)
+        assert any("okno czasowe" in e for e in errors)
+        assert any("wybierz scenę" in e for e in errors)
+
+    def test_motion_rule_window_missing_end_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0]}
+        rule["time_window"] = {"enabled": True, "start": "22:00", "end": ""}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("harmonogram" in e for e in errors)
+
+    def test_incomplete_virtual_input_is_error(self):
+        form = {**FORM_WITH_ADVANCED, "virtual_inputs": [{"name": "x", "number": "", "key": ""}]}
+        errors = validate(form)
+        assert any("Wirtualne wejście" in e for e in errors)
+
+
+class TestBuildConfigDictAdvanced:
+    def test_scenes_built_with_typed_fields(self):
+        config = build_config_dict(FORM_WITH_ADVANCED)
+        scenes = config["scenes"]
+        assert len(scenes) == 1
+        assert scenes[0]["name"] == "wykryto_intruza"
+        actions = scenes[0]["actions"]
+        assert actions[0] == {"type": "tuya_on", "device": "gniazdko_salon"}
+        assert actions[1] == {"type": "satel_output", "output_number": 1, "state": True}
+        assert actions[2] == {"type": "delay", "seconds": 2.0}
+        assert actions[3] == {"type": "satel_virtual_input", "virtual_input": "motion_hall_camera"}
+
+    def test_motion_rules_built_with_harmonogram_and_escalation(self):
+        config = build_config_dict(FORM_WITH_ADVANCED)
+        rules = config["reguły_ruchu"]
+        assert len(rules) == 1
+        rule = rules[0]
+        assert rule["source"] == "satel_zone"
+        assert rule["zone_number"] == 12
+        assert rule["target_device"] == "gniazdko_salon"
+        assert rule["duration_seconds"] == 60
+        assert rule["time_window"] == {"start": "sunset-15", "end": "23:30"}
+        assert rule["escalation"] == {
+            "threshold_count": 3, "window_seconds": 120, "escalated_scene": "wykryto_intruza",
+        }
+
+    def test_motion_rule_with_scene_instead_of_device(self):
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {"zone_number": "14", "scene": "wykryto_intruza", "time_window": {}, "escalation": {}},
+        ]}
+        config = build_config_dict(form)
+        rule = config["reguły_ruchu"][0]
+        assert rule["scene"] == "wykryto_intruza"
+        assert "target_device" not in rule
+        assert "time_window" not in rule
+        assert "escalation" not in rule
+
+    def test_virtual_inputs_built_into_satel_config(self):
+        config = build_config_dict(FORM_WITH_ADVANCED)
+        assert config["satel"]["virtual_inputs"]["inputs"] == {
+            "motion_hall_camera": {"number": 17, "key": "KLUCZ17"},
+        }
+
+    def test_disabled_time_window_and_escalation_are_omitted(self):
+        rule = {
+            "zone_number": "13", "target_device": "gniazdko_salon", "duration_seconds": "30",
+            "time_window": {"enabled": False, "start": "22:00", "end": "06:00"},
+            "escalation": {"enabled": False, "threshold_count": "3", "window_seconds": "120", "escalated_scene": "x"},
+        }
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        config = build_config_dict(form)
+        built = config["reguły_ruchu"][0]
+        assert "time_window" not in built
+        assert "escalation" not in built
+
+    def test_advanced_result_is_yaml_serializable(self):
+        config = build_config_dict(FORM_WITH_ADVANCED)
+        dumped = yaml.safe_dump(config, allow_unicode=True, sort_keys=False)
+        reloaded = yaml.safe_load(dumped)
+        assert reloaded["scenes"][0]["name"] == "wykryto_intruza"
+
+    def test_saved_advanced_config_is_loadable_and_runs_scene_runner(self):
+        """Sprawdza integrację end-to-end: config z kreatora (sceny +
+        reguła z harmonogramem/eskalacją) da się wczytać przez BridgeConfig
+        i podać wprost do SceneRunner bez żadnych transformacji."""
+        from bridge.scenes import SceneRunner
+
+        config = build_config_dict(FORM_WITH_ADVANCED)
+        dumped = yaml.safe_dump(config, allow_unicode=True, sort_keys=False)
+        reloaded = yaml.safe_load(dumped)
+        runner = SceneRunner(reloaded["scenes"], tuya=None, satel=None, satel_virtual_inputs=None)
+        assert runner.exists("wykryto_intruza")
+
+
+class TestSetupDraft:
+    def test_no_draft_returns_empty_object(self, setup_client):
+        client, _ = setup_client
+        resp = client.get("/api/setup/draft")
+        assert resp.status_code == 200
+        assert resp.get_json() == {}
+
+    def test_saving_and_loading_draft_roundtrips(self, setup_client):
+        client, _ = setup_client
+        payload = {"step": 3, "data": {"satel": {"host": "192.168.1.10"}}}
+        resp = client.post("/api/setup/draft", json=payload)
+        assert resp.status_code == 200
+
+        resp = client.get("/api/setup/draft")
+        assert resp.get_json() == payload
+
+    def test_draft_persists_to_disk_next_to_config_path(self, setup_client):
+        client, tmp_path = setup_client
+        client.post("/api/setup/draft", json={"step": 2, "data": {"a": 1}})
+        assert (tmp_path / ".setup_draft.json").exists()
+
+    def test_draft_overwritten_by_later_save(self, setup_client):
+        client, _ = setup_client
+        client.post("/api/setup/draft", json={"step": 2, "data": {"a": 1}})
+        client.post("/api/setup/draft", json={"step": 5, "data": {"a": 2}})
+        resp = client.get("/api/setup/draft")
+        assert resp.get_json() == {"step": 5, "data": {"a": 2}}
+
+    def test_draft_rejected_when_already_configured(self, setup_client):
+        client, _ = setup_client
+        client.post("/api/setup/save", json=VALID_FORM)
+        resp = client.post("/api/setup/draft", json={"step": 1, "data": {}})
+        assert resp.status_code == 409
+        resp = client.get("/api/setup/draft")
+        assert resp.status_code == 409
+
+    def test_final_save_deletes_draft(self, setup_client):
+        client, tmp_path = setup_client
+        client.post("/api/setup/draft", json={"step": 4, "data": {"a": 1}})
+        assert (tmp_path / ".setup_draft.json").exists()
+        client.post("/api/setup/save", json=VALID_FORM)
+        assert not (tmp_path / ".setup_draft.json").exists()
+
+    def test_invalid_draft_body_returns_400(self, setup_client):
+        client, _ = setup_client
+        resp = client.post("/api/setup/draft", data="not json", content_type="application/json")
+        assert resp.status_code == 400
+
+
+class TestDraftHelpers:
+    def test_load_draft_missing_file_returns_empty(self, tmp_path):
+        assert load_draft(tmp_path / "missing.json") == {}
+
+    def test_load_draft_corrupted_file_returns_empty(self, tmp_path):
+        path = tmp_path / ".setup_draft.json"
+        path.write_text("{not valid json", encoding="utf-8")
+        assert load_draft(path) == {}
+
+    def test_save_then_load_roundtrips(self, tmp_path):
+        path = tmp_path / ".setup_draft.json"
+        save_draft(path, {"step": 2, "data": {"x": 1}})
+        assert load_draft(path) == {"step": 2, "data": {"x": 1}}
+
+    def test_delete_draft_is_idempotent(self, tmp_path):
+        path = tmp_path / ".setup_draft.json"
+        delete_draft(path)  # nie istnieje - nie powinno wywalić
+        save_draft(path, {"a": 1})
+        delete_draft(path)
+        assert not path.exists()
+
+    def test_draft_path_for_is_next_to_config(self, tmp_path):
+        config_path = tmp_path / "sub" / "config.yaml"
+        assert draft_path_for(config_path) == tmp_path / "sub" / ".setup_draft.json"
