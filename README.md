@@ -84,23 +84,38 @@ python -m dashboard.app --config config.yaml
 
 i otworzyć `http://<adres-rpi>:8090/` w przeglądarce - trafisz prosto do
 kreatora. Po zapisaniu ("Zapisz i uruchom") strona **sama przenosi Cię do
-panelu** (`/`) po krótkiej chwili, **już zalogowany** - hasło administratora,
-które właśnie ustawiłeś, jest gotowe do pierwszej akcji (np. uzbrojenia)
-bez ponownego wpisywania (przekazane przez fragment adresu URL, nigdy do
-localStorage/sessionStorage - patrz `templates/index.html`). `/setup`
-przestaje być dostępne od tego momentu (przekierowuje na `/`). Panel jest
-**od razu gotowy** (bez restartu dashboardu) - zostaje tylko uruchomić
-główny proces bridge'a (dokładna komenda pojawi się na ekranie po
-zapisie, razem z informacją, jak skonfigurować automatyczne uruchamianie
-po restarcie RPi - systemd albo Docker).
+panelu** (`/`) po krótkiej chwili, **już zalogowany** - kreator loguje Cię
+od razu tym samym hasłem, ciasteczkiem sesji ustawionym przez serwer
+(patrz sekcja "Bezpieczeństwo panelu" niżej), bez ponownego wpisywania.
+`/setup` przestaje być dostępne od tego momentu (przekierowuje na `/`).
+Panel jest **od razu gotowy** (bez restartu dashboardu) - zostaje tylko
+uruchomić główny proces bridge'a (dokładna komenda pojawi się na ekranie
+po zapisie, razem z informacją, jak skonfigurować automatyczne
+uruchamianie po restarcie RPi - systemd albo Docker).
 
-**Krok 1 (Satel)** ma przycisk **"🔌 Testuj połączenie"** - sprawdza, czy
-pod podanym adresem/portem w ogóle coś odpowiada (TCP), zanim przejdziesz
-dalej. Uczciwie: to test osiągalności, NIE samego klucza integracji -
-protokół integracji Satela wysyła klucz dopiero przy konkretnym poleceniu
-(uzbrojenie/wyjście), a test świadomie niczego takiego nie wykonuje, żeby
-nic nie zmienić w systemie alarmowym. Błędny klucz integracji ujawni się
-dopiero przy pierwszym uzbrojeniu/rozbrojeniu.
+**Przycisk "🐛 Pokaż debug"** (górny pasek kreatora) pokazuje na bieżąco
+dziennik komunikacji sieciowej (żądanie/odpowiedź) dla akcji w bieżącym
+kroku - test połączenia, wykrywanie stref/czujników, import z Tuya Cloud,
+skan sieci, zapis. Przydatne przy diagnozowaniu problemów bez zaglądania
+do logów serwera - hasła/klucze/sekrety są w nim zawsze ukryte.
+
+**Krok 1 (Satel)** ma dwa przyciski:
+- **"🔌 Testuj połączenie"** - sprawdza, czy pod podanym adresem/portem w
+  ogóle coś odpowiada (TCP), zanim przejdziesz dalej. Uczciwie: to test
+  osiągalności, NIE samego klucza integracji - protokół integracji Satela
+  wysyła klucz dopiero przy konkretnym poleceniu (uzbrojenie/wyjście), a
+  test świadomie niczego takiego nie wykonuje, żeby nic nie zmienić w
+  systemie alarmowym. Błędny klucz integracji ujawni się dopiero przy
+  pierwszym uzbrojeniu/rozbrojeniu.
+- **"🔍 Wykryj aktywne strefy/wyjścia"** - protokół integracji Satela NIE
+  udostępnia pełnej listy skonfigurowanych stref/wyjść wraz z nazwami
+  (ograniczenie samego protokołu, nie da się tego obejść) - ten przycisk
+  nasłuchuje przez 30 sekund i notuje numery, które w tym czasie
+  ZMIENIĄ STAN. Podczas nasłuchu przejdź fizycznie przez pilnowane
+  pomieszczenia (otwórz/zamknij drzwi i okna, wywołaj czujki ruchu) -
+  wykryte numery trafią jako nowe wiersze niżej (dodaj im nazwy). Strefy,
+  które nie zmienią stanu w tym oknie, trzeba dodać ręcznie (numer z
+  DLOADX) - to świadome ograniczenie, nie błąd.
 
 **Postęp zapisuje się automatycznie po każdym kliknięciu "Dalej"** (w
 pliku roboczym `.setup_draft.json` obok `config.yaml`) - kreator da się
@@ -181,6 +196,12 @@ kreatorze (krok 2, `☁ Import z Tuya Cloud`), integracja kamer Tuya Cloud
 (krok 7 kreatora / `tuya.cloud` w `config.yaml`) i wirtualne urządzenie
 dla danych z kotła (patrz sekcja niżej) - **jeden projekt w Tuya IoT
 Platform obsługuje wszystkie trzy**, nie trzeba zakładać osobnych.
+**Kreator wpisuje je tylko raz** - pola w kroku 2 i kroku 7 są
+zsynchronizowane na bieżąco (wpisanie w którymkolwiek miejscu wypełnia
+drugie), więc nie trzeba przepisywać ich dwa razy. Region wybrany w
+kroku 2 jest też używany do wyprowadzenia adresów API/Message Service
+zapisywanych do `config.yaml` (patrz "Częsty problem: 0 urządzeń..."
+niżej) - nie trzeba go osobno wybierać w kroku 7.
 
 **Gdzie znaleźć, jeśli już masz projekt:** [developer.tuya.com](https://developer.tuya.com)
 → zaloguj się → **Cloud** (menu boczne) → wybierz projekt z listy →
@@ -205,6 +226,30 @@ Poświadczenia wpisywane przy imporcie w kreatorze/panelu **nie są nigdzie
 zapisywane** - używane jednorazowo do pobrania listy urządzeń, potem
 zapominane (w przeciwieństwie do `tuya.cloud` w `config.yaml`, gdzie
 zostają trwale, jeśli włączysz integrację kamer).
+
+### Częsty problem: import zwraca 0 urządzeń (albo błąd 401 na kamery) mimo poprawnych danych
+
+Najczęstsza przyczyna to **niedopasowanie regionu** - Tuya Cloud wymaga,
+żeby wybrany region odpowiadał *Data Center* faktycznie przypisanemu do
+Twojego konta w aplikacji Tuya Smart/Smart Life (widoczne w apce:
+**Ustawienia konta → Merge Account/Account and Security** - tam pokazany
+jest region konta). Wybranie innego regionu w kreatorze niż faktyczny
+region konta skutkuje albo pustą listą urządzeń, albo błędem
+uwierzytelniania na kanale powiadomień (Pulsar/Message Service) dla
+integracji kamer, mimo że Access ID/Secret same w sobie są poprawne.
+
+Sprawdź też:
+1. Czy w projekcie wykonano **Devices → Link Tuya App Account** (zeskanowanie
+   kodu QR) - bez tego projekt nie "widzi" żadnych urządzeń.
+2. Czy w zakładce **Cloud → Twój projekt → Message Service** widoczna jest
+   aktywna subskrypcja (potrzebna dla integracji kamer/Pulsar w kroku 7) -
+   tam też znajdziesz FAKTYCZNY adres serwera Pulsar dla Twojego projektu,
+   przydatny, jeśli region nie jest jednym z podstawowych czterech
+   (Europa Centralna/USA Zachodnie/Chiny/Indie - dla pozostałych kreator
+   celowo NIE zgaduje adresu, patrz komentarz w `setup.html`).
+3. **Kliknij "🐛 Pokaż debug"** w kreatorze przed próbą importu - panel na
+   dole pokaże dokładną odpowiedź serwera (kod błędu Tuya, treść komunikatu)
+   zamiast tylko "0 urządzeń", co zwykle od razu wskazuje przyczynę.
 
 ## Lokalny broker MQTT
 
@@ -266,11 +311,16 @@ MQTT dane pole jest publikowane, sprawdź konfigurację MQTT ebusd (domyślnie
 `<mqtttopic>/<circuit>/<pole>`, np. `ebusd/bai/FlowTemp`) albo podsłuchaj
 ruch bezpośrednio: `mosquitto_sub -h 127.0.0.1 -t 'ebusd/#' -v`.
 
-Dokładnie to ostatnie (krótkie podsłuchanie ruchu MQTT) robi automatycznie
-przycisk **"🔍 Wykryj czujniki"** w zakładce ⚙ Ustawienia (`/config`) -
-wygodna podpowiedź w przeglądarce zamiast SSH + `mosquitto_sub`, ale wciąż
-tylko podpowiedź (pola rzadziej publikowane niż raz na ~4s mogą się nie
-pojawić) - `ebusctl find -d` daje pełniejszy, ale ręczny obraz.
+Dokładnie to ostatnie (podsłuchanie ruchu MQTT) robi automatycznie
+przycisk **"🔍 Rozpocznij nasłuch"** w zakładce ⚙ Ustawienia (`/config`) -
+wygodna podpowiedź w przeglądarce zamiast SSH + `mosquitto_sub`. Nasłuch
+działa **w tle do 5 minut** (żądanie wraca od razu, wykryte tematy
+dopisują się na bieżąco jako nowe wiersze w miarę wykrywania - nie trzeba
+czekać na koniec) - dłuższe okno łapie też pola publikowane rzadziej niż
+co kilka sekund; zamknięcie/odświeżenie strony nie przerywa nasłuchu w
+tle, można wrócić później albo zatrzymać go od razu przyciskiem
+"Zatrzymaj teraz". Wciąż tylko podpowiedź, nie pełna lista - `ebusctl
+find -d` daje pełniejszy, ale ręczny obraz.
 
 ### Jak wybrać, co dokąd trafia
 
@@ -280,8 +330,8 @@ Dwie równoważne drogi - wybierz wygodniejszą:
 górnym pasku panelu głównego): tabela z listą czujników, gdzie każdy ma
 trzy niezależne przełączniki (Historia / MQTT / Tuya) i pole na kod DP.
 Można dodawać/usuwać czujniki bez dotykania pliku ręcznie. **Zmiany
-zaczynają działać dopiero po restarcie procesu bridge'a** (nie samego
-panelu) - edytor przypomina o tym po zapisie.
+działają automatycznie w ciągu ok. 1-2s, bez restartu bridge'a** (patrz
+"Zmiany działają od razu - bez restartu Dockera" niżej).
 
 **B) Ręczna edycja `sensors.yaml`** (skopiuj z `sensors.example.yaml`):
 

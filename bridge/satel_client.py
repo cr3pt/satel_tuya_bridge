@@ -62,6 +62,67 @@ async def test_connection(host: str, port: int, timeout_seconds: float = 5.0) ->
         raise ConnectionError(f"Nie udało się połączyć z {host}:{port} - sprawdź adres IP i port")
 
 
+async def discover_active_zones_and_outputs(host: str, port: int, timeout_seconds: float = 60.0) -> dict:
+    """Best-effort 'wykrywanie' stref (wejść) i wyjść Satela, do kroku 1
+    kreatora/panelu - PO PODANIU SAMEGO adresu IP/portu (klucz integracji
+    NIE jest potrzebny, tak jak w test_connection() wyżej - monitorowanie
+    statusu jest częścią protokołu integracji dostępną bez niego).
+
+    UCZCIWIE, zanim to użyjesz: protokół integracji Satela NIE udostępnia
+    listy WSZYSTKICH skonfigurowanych stref/wyjść wraz z nazwami - to
+    ograniczenie samego protokołu/biblioteki `satel_integra`, którego nie
+    da się obejść (stąd też brak przycisku "wykryj" w panelu /config, patrz
+    tamtejszy komentarz). To, co REALNIE można zrobić: biblioteka zawsze
+    parsuje PEŁNĄ maskę bitową naruszonych stref/aktywnych wyjść z każdej
+    transmisji o zmianie stanu (`AsyncSatel.violated_zones`/
+    `.violated_outputs`, niezależnie od tego, co jest "monitorowane") -
+    więc nasłuchując przez `timeout_seconds` i notując numery, które w tym
+    czasie ZMIENIŁY STAN, wykryjemy numery stref/wyjść, które użytkownik
+    fizycznie wyzwoli w tym oknie (otworzy drzwi/okno, wywoła czujkę ruchu,
+    załączy wyjście). Strefy, które NIE zmienią stanu podczas nasłuchu
+    (np. zamknięte drzwi, które nikt nie otworzy), pozostaną niewykryte -
+    to jest świadome ograniczenie tej funkcji, nie błąd.
+
+    Zwraca {"zones": [numery...], "outputs": [numery...]} posortowane
+    rosnąco. Rzuca ConnectionError przy niepowodzeniu połączenia."""
+    from satel_integra.satel_integra import AsyncSatel  # type: ignore
+
+    client = AsyncSatel(host, port, asyncio.get_event_loop())
+    seen_zones: set[int] = set()
+    seen_outputs: set[int] = set()
+
+    def _on_zone(_status: dict) -> None:
+        seen_zones.update(client.violated_zones)
+
+    def _on_output(_status: dict) -> None:
+        seen_outputs.update(client.violated_outputs)
+
+    try:
+        connected = await asyncio.wait_for(client.connect(), timeout=5.0)
+    except asyncio.TimeoutError:
+        raise ConnectionError(f"Przekroczono czas oczekiwania na połączenie z {host}:{port}")
+    if not connected:
+        raise ConnectionError(f"Nie udało się połączyć z {host}:{port} - sprawdź adres IP i port")
+
+    monitor_task = asyncio.ensure_future(
+        client.monitor_status(zone_changed_callback=_on_zone, output_changed_callback=_on_output)
+    )
+    try:
+        await asyncio.wait_for(asyncio.shield(monitor_task), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        pass  # oczekiwane - monitor_status() działa w nieskończoność, dopóki go nie przerwiemy
+    finally:
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        if client._writer is not None:
+            client._writer.close()
+
+    return {"zones": sorted(seen_zones), "outputs": sorted(seen_outputs)}
+
+
 class SatelVirtualInputTrigger:
     """Wywołuje naruszenie wirtualnego wejścia IP w ETHM-1 Plus."""
 

@@ -154,6 +154,33 @@ class TestBuildConfigDict:
         config = build_config_dict(form)
         assert config["unifi_protect"]["host"] == "192.168.1.5"
 
+    def test_tuya_cloud_uses_region_derived_endpoints_from_wizard(self):
+        """Kreator wyprowadza api_endpoint/mq_endpoint z regionu wybranego w
+        kroku 2 (patrz setup.html: TUYA_REGION_ENDPOINTS) i wysyła je wprost
+        w formularzu - build_config_dict ma je zapisać, NIE nadpisywać
+        domyślnym (UE), inaczej integracja łączy się z niewłaściwym regionem
+        mimo poprawnie wybranego przez użytkownika (dokładnie ten bug, który
+        mógł powodować 401 na Pulsar mimo poprawnych danych)."""
+        form = {**VALID_FORM, "tuya_cloud": {
+            "enabled": True, "access_id": "id1", "access_key": "key1",
+            "api_endpoint": "https://openapi.tuyaus.com", "mq_endpoint": "wss://mqe.tuyaus.com:8285/",
+        }}
+        config = build_config_dict(form)
+        assert config["tuya"]["cloud"]["api_endpoint"] == "https://openapi.tuyaus.com"
+        assert config["tuya"]["cloud"]["mq_endpoint"] == "wss://mqe.tuyaus.com:8285/"
+
+    def test_tuya_cloud_blank_endpoints_fall_back_to_eu_defaults(self):
+        """Dla regionów bez pewnego adresu Pulsar (us-e/eu-w/sg) kreator
+        celowo wysyła mq_endpoint jako pusty string zamiast zgadywać - to
+        MUSI spaść na domyślny adres UE, nie zostać zapisane jako pusty."""
+        form = {**VALID_FORM, "tuya_cloud": {
+            "enabled": True, "access_id": "id1", "access_key": "key1",
+            "api_endpoint": "", "mq_endpoint": "",
+        }}
+        config = build_config_dict(form)
+        assert config["tuya"]["cloud"]["api_endpoint"] == "https://openapi.tuyaeu.com"
+        assert config["tuya"]["cloud"]["mq_endpoint"] == "wss://mqe.tuyaeu.com:8285/"
+
     def test_result_is_yaml_serializable(self):
         """Krytyczne - jeśli to się nie da zserializować, zapis configu
         wywali się w runtime, więc test to wyłapuje na sucho."""

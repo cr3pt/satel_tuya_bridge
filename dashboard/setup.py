@@ -630,8 +630,13 @@ def build_config_dict(form: dict) -> dict:
         config["tuya"]["cloud"] = {
             "access_id": form["tuya_cloud"]["access_id"],
             "access_key": form["tuya_cloud"].get("access_key", ""),
-            "api_endpoint": form["tuya_cloud"].get("api_endpoint", "https://openapi.tuyaeu.com"),
-            "mq_endpoint": form["tuya_cloud"].get("mq_endpoint", "wss://mqe.tuyaeu.com:8285/"),
+            # `or` (nie .get(key, default)) celowo - kreator wysyła ""
+            # (nie brak klucza) dla regionów, dla których nie zgadujemy
+            # nieudokumentowanego adresu Pulsar (patrz setup.html:
+            # TUYA_REGION_ENDPOINTS) - pusty string ma spaść do domyślnego
+            # (UE), nie zostać zapisany jako pusty adres.
+            "api_endpoint": form["tuya_cloud"].get("api_endpoint") or "https://openapi.tuyaeu.com",
+            "mq_endpoint": form["tuya_cloud"].get("mq_endpoint") or "wss://mqe.tuyaeu.com:8285/",
             "camera_device_ids": [],
         }
 

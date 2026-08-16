@@ -23,9 +23,10 @@ import yaml
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 from bridge.config import BridgeConfig
-from bridge.ebus_client import discover_topics as discover_ebus_topics
+from bridge.ebus_client import discover_topics as discover_ebus_topics, BackgroundTopicDiscovery
 from bridge.history_store import HistoryStore
 from bridge.satel_client import test_connection as test_satel_connection
+from bridge.satel_client import discover_active_zones_and_outputs
 from bridge.tuya_local import scan_network as scan_tuya_network, fetch_cloud_devices as fetch_tuya_cloud_devices
 from dashboard.auth import AuthGuard, require_auth, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
 from dashboard.setup import (
@@ -55,6 +56,7 @@ config_path: pathlib.Path | None = None  # ustawiane w main() - potrzebne, zanim
 _SETUP_EXEMPT_ENDPOINTS = {
     "setup_page", "api_setup_save", "api_setup_draft", "static",
     "api_setup_test_satel_connection", "api_discover_tuya_cloud", "api_discover_tuya",
+    "api_discover_satel",
 }
 
 
@@ -233,6 +235,40 @@ def api_setup_test_satel_connection():
     })
 
 
+@app.route("/api/discover/satel", methods=["POST"])
+def api_discover_satel():
+    """Best-effort wykrywanie AKTYWNYCH stref/wyjść Satela (krok 1
+    kreatora, przycisk "🔍 Wykryj aktywne strefy/wyjścia") - klucz
+    integracji NIE jest potrzebny (jak w teście połączenia wyżej). Publiczny
+    - to tylko nasłuch, nic nie zmienia w centrali. Przeczytaj docstring
+    bridge/satel_client.py:discover_active_zones_and_outputs PRZED użyciem
+    gdziekolwiek indziej - to NIE jest pełny import konfiguracji, tylko
+    numery, które fizycznie zmienią stan podczas nasłuchu."""
+    payload = request.get_json(silent=True) or {}
+    host = (payload.get("host") or "").strip()
+    if not host:
+        return jsonify({"error": "Brak adresu IP centrali"}), 400
+    try:
+        port = int(payload.get("port") or 7094)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Nieprawidłowy port"}), 400
+    try:
+        timeout_seconds = min(float(payload.get("timeout_seconds") or 30), 120)
+    except (TypeError, ValueError):
+        timeout_seconds = 30.0
+
+    try:
+        result = asyncio.run(discover_active_zones_and_outputs(host, port, timeout_seconds=timeout_seconds))
+    except ImportError:
+        return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
+    except ConnectionError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:
+        return jsonify({"error": f"Błąd wykrywania: {exc}"}), 502
+
+    return jsonify(result)
+
+
 @app.route("/api/setup/save", methods=["POST"])
 def api_setup_save():
     if is_configured():
@@ -388,6 +424,52 @@ def api_discover_ebus():
     except Exception as exc:
         return jsonify({"error": f"Błąd wykrywania: {exc}"}), 502
     return jsonify({"topics": topics})
+
+
+# Jedna instancja procesu-wide - jeden nasłuch w tle naraz wystarcza dla
+# panelu administrowanego przez jedną osobę (patrz
+# bridge/ebus_client.py:BackgroundTopicDiscovery).
+_ebus_background_discovery = BackgroundTopicDiscovery()
+
+
+@app.route("/api/discover/ebus/start", methods=["POST"])
+def api_discover_ebus_start():
+    """Rozpoczyna nasłuch MQTT ebusd W TLE (domyślnie 5 minut) - w
+    odróżnieniu od /api/discover/ebus wyżej (blokujące ~4s), to żądanie
+    wraca NATYCHMIAST; wyniki odbiera się przez /api/discover/ebus/status
+    (odpytywane cyklicznie przez panel). Dłuższy nasłuch łapie też
+    rzadziej publikowane pola, których krótkie okno mogło nie zauważyć."""
+    payload = request.get_json(silent=True) or {}
+    ebus_cfg = config_raw.get("ebus", {})
+    mqtt_host = payload.get("mqtt_host") or ebus_cfg.get("mqtt_host")
+    mqtt_port = payload.get("mqtt_port") or ebus_cfg.get("mqtt_port", 1883)
+    if not mqtt_host:
+        return jsonify({"error": "Brak adresu brokera MQTT"}), 400
+    try:
+        duration_seconds = min(float(payload.get("duration_seconds") or 300), 600)
+    except (TypeError, ValueError):
+        duration_seconds = 300.0
+
+    try:
+        _ebus_background_discovery.start(mqtt_host, int(mqtt_port), duration_seconds=duration_seconds)
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except ConnectionError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:
+        return jsonify({"error": f"Błąd uruchamiania nasłuchu: {exc}"}), 502
+
+    return jsonify(_ebus_background_discovery.status())
+
+
+@app.route("/api/discover/ebus/status")
+def api_discover_ebus_status():
+    return jsonify(_ebus_background_discovery.status())
+
+
+@app.route("/api/discover/ebus/stop", methods=["POST"])
+def api_discover_ebus_stop():
+    return jsonify(_ebus_background_discovery.stop())
 
 
 @app.route("/api/discover/tuya", methods=["POST"])

@@ -149,10 +149,11 @@ class TestScanNetwork:
 class FakeCloud:
     """Symuluje tinytuya.Cloud na tyle, ile potrzebuje fetch_cloud_devices()."""
 
-    def __init__(self, devices=None, error=None, getdevices_raises=None, **kwargs):
+    def __init__(self, devices=None, error=None, getdevices_raises=None, getdevices_raw=None, **kwargs):
         self.error = error
         self._devices = devices if devices is not None else []
         self._raises = getdevices_raises
+        self.getdevices_raw = getdevices_raw
 
     def getdevices(self, *args, **kwargs):
         if self._raises:
@@ -230,5 +231,39 @@ class TestFetchCloudDevices:
 
     def test_no_devices_found_returns_empty_list(self, monkeypatch):
         monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[]))
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
+        assert fetch_cloud_devices("eu", "access_id", "access_secret") == []
+
+    def test_empty_result_with_success_false_raw_raises_clear_error(self, monkeypatch):
+        """Regresja dla realnego bugu w tinytuya: gdy odpowiedź Tuya Cloud na
+        listę urządzeń nie ma klucza 'result' (typowe dla błędnych danych
+        logowania/regionu/uprawnień), tinytuya.Cloud._get_all_devices()
+        cicho zostawia domyślne {'result': []} zamiast zgłosić błąd -
+        getdevices() zwraca wtedy pustą listę NIEODRÓŻNIALNĄ od legalnego
+        '0 urządzeń'. fetch_cloud_devices() musi to wykryć przez
+        getdevices_raw i zgłosić czytelny błąd zamiast cichej pustej listy."""
+        monkeypatch.setattr(
+            "bridge.tuya_local.tinytuya.Cloud",
+            lambda **kw: FakeCloud(devices=[], getdevices_raw={"success": False, "code": 1004, "msg": "sign invalid"}),
+        )
+        with pytest.raises(ConnectionError, match="sign invalid"):
+            fetch_cloud_devices("eu", "access_id", "access_secret")
+
+    def test_empty_result_without_success_false_flag_stays_empty_list(self, monkeypatch):
+        """Legalny przypadek '0 urządzeń w projekcie' (success nieustawione
+        na false w surowej odpowiedzi) NIE powinien być traktowany jak błąd."""
+        monkeypatch.setattr(
+            "bridge.tuya_local.tinytuya.Cloud",
+            lambda **kw: FakeCloud(devices=[], getdevices_raw={"success": True, "result": []}),
+        )
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
+        assert fetch_cloud_devices("eu", "access_id", "access_secret") == []
+
+    def test_empty_result_missing_raw_attribute_stays_empty_list(self, monkeypatch):
+        """getdevices_raw może nie istnieć wcale (np. starsza wersja
+        tinytuya) - brak atrybutu nie może wywalić importu."""
+        cloud = FakeCloud(devices=[])
+        del cloud.getdevices_raw
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: cloud)
         monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
         assert fetch_cloud_devices("eu", "access_id", "access_secret") == []
