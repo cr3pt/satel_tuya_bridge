@@ -8,6 +8,7 @@ import yaml
 from dashboard.setup import (
     build_config_dict, validate, build_automations_dict, validate_automations,
     build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
+    build_connections_patch, validate_connections, connections_to_form,
     draft_path_for, load_draft, save_draft, delete_draft,
 )
 
@@ -251,6 +252,205 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         dumped_tuya = yaml.safe_dump(build_tuya_devices_dict(form), allow_unicode=True, sort_keys=False)
         assert yaml.safe_load(dumped_satel)["partitions"] == {"Dom": 1}
         assert yaml.safe_load(dumped_tuya)["devices"]["d"]["ip"] == "1.2.3.4"
+
+
+class TestConnectionsBuilder:
+    """build_connections_patch/validate_connections/connections_to_form -
+    zakładka "Połączenia" panelu /config, jedyne miejsce do zmiany
+    host/port/kluczy/tematów MQTT PO pierwszej konfiguracji (patrz
+    dashboard/app.py: /api/config/connections). W przeciwieństwie do
+    build_config_dict (kreator) - patchuje ISTNIEJĄCY config.yaml, nie
+    buduje go od zera, więc testy skupiają się na tym, co jest ZACHOWANE
+    z `existing`, a co NADPISANE formularzem."""
+
+    EXISTING = {
+        "satel": {
+            "host": "192.168.1.10", "port": 7094, "integration_key": "stary_klucz", "partition": 1,
+            "virtual_inputs": {"port": 8888, "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}"},
+            "outputs": {}, "fields_file": "satel_fields.yaml",
+        },
+        "tuya": {"status_poll_interval_seconds": 30, "devices_file": "tuya_devices.yaml"},
+        "ebus": {"mqtt_host": "127.0.0.1", "mqtt_port": 1883, "sensors_file": "sensors.yaml"},
+        "boiler_output": {"mqtt": {"host": "127.0.0.1", "port": 1883, "topic_prefix": "home/boiler"},
+                           "tuya_virtual_device": {"device_id": ""}},
+        "notifications": {"ntfy_topic_url": "", "grace_seconds": 120},
+        # Pola spoza formularza połączeń - MUSZĄ przetrwać nietknięte.
+        "reguły_kamera_alarm": [{"source": "unifi_protect", "camera_id": "cam1", "action": "arm"}],
+        "boiler_rules": [{"some": "rule"}],
+        "maintenance": {"purge_enabled": True, "retention_days": 90},
+        "dashboard": {"auth": {"password_hash": "already-hashed"}},
+    }
+
+    def test_preserves_unrelated_sections(self):
+        form = {"satel": {"host": "10.0.0.5"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["reguły_kamera_alarm"] == self.EXISTING["reguły_kamera_alarm"]
+        assert patched["boiler_rules"] == self.EXISTING["boiler_rules"]
+        assert patched["maintenance"] == self.EXISTING["maintenance"]
+        assert patched["dashboard"] == self.EXISTING["dashboard"]
+
+    def test_updates_satel_host_and_port(self):
+        form = {"satel": {"host": "10.0.0.5", "port": "7095"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["satel"]["host"] == "10.0.0.5"
+        assert patched["satel"]["port"] == 7095
+
+    def test_blank_integration_key_keeps_existing_secret(self):
+        """Kluczowy przypadek: pusty klucz w formularzu (bo formularz NIGDY
+        nie dostaje prawdziwego sekretu z powrotem - patrz connections_to_form)
+        NIE MOŻE skasować już zapisanego klucza integracji."""
+        form = {"satel": {"host": "192.168.1.10", "integration_key": ""}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["satel"]["integration_key"] == "stary_klucz"
+
+    def test_non_blank_integration_key_overwrites(self):
+        form = {"satel": {"host": "192.168.1.10", "integration_key": "nowy_klucz"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["satel"]["integration_key"] == "nowy_klucz"
+
+    def test_ebus_topic_prefix_updates_boiler_output_mqtt(self):
+        form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1", "topic_prefix": "ebusd_state"}}
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["boiler_output"]["mqtt"]["topic_prefix"] == "ebusd_state"
+
+    def test_mqtt_publish_topics_default_to_satel_and_tuya(self):
+        form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["mqtt_publish"] == {"enabled": True, "topics": {"satel": "satel", "tuya": "tuya"}}
+
+    def test_mqtt_publish_topics_configurable(self):
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "mqtt_publish": {"enabled": True, "satel_topic": "alarm", "tuya_topic": "smart_home"},
+        }
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home"}
+
+    def test_mqtt_publish_can_be_disabled(self):
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "mqtt_publish": {"enabled": False},
+        }
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["mqtt_publish"]["enabled"] is False
+
+    def test_tuya_cloud_enabled_sets_cloud_section(self):
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya_cloud": {"enabled": True, "access_id": "id1", "access_key": "secret1"},
+        }
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["tuya"]["cloud"]["access_id"] == "id1"
+        assert patched["tuya"]["cloud"]["access_key"] == "secret1"
+
+    def test_tuya_cloud_blank_secret_keeps_existing(self):
+        existing = {**self.EXISTING, "tuya": {**self.EXISTING["tuya"], "cloud": {
+            "access_id": "id1", "access_key": "old_secret", "api_endpoint": "https://openapi.tuyaeu.com",
+            "mq_endpoint": "wss://mqe.tuyaeu.com:8285/", "camera_device_ids": ["cam1"],
+        }}}
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya_cloud": {"enabled": True, "access_id": "id1", "access_key": ""},
+        }
+        patched = build_connections_patch(form, existing)
+        assert patched["tuya"]["cloud"]["access_key"] == "old_secret"
+        assert patched["tuya"]["cloud"]["camera_device_ids"] == ["cam1"]
+
+    def test_tuya_cloud_disabled_removes_cloud_section(self):
+        existing = {**self.EXISTING, "tuya": {**self.EXISTING["tuya"], "cloud": {"access_id": "id1"}}}
+        form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"}, "tuya_cloud": {"enabled": False}}
+        patched = build_connections_patch(form, existing)
+        assert "cloud" not in patched["tuya"]
+
+    def test_home_assistant_enabled_defaults_mqtt_host_to_ebus(self):
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "home_assistant": {"enabled": True},
+        }
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["home_assistant"] == {
+            "enabled": True, "mqtt_host": "127.0.0.1", "mqtt_port": 1883,
+            "discovery_prefix": "homeassistant", "state_topic_prefix": "home/bridge",
+            "device_name": "Satel-Tuya-eBUS Bridge",
+        }
+
+    def test_home_assistant_disabled_stays_disabled(self):
+        form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["home_assistant"]["enabled"] is False
+
+    def test_result_is_yaml_serializable(self):
+        form = {
+            "satel": {"host": "192.168.1.10", "integration_key": "k"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya_cloud": {"enabled": True, "access_id": "id1", "access_key": "s1"},
+            "home_assistant": {"enabled": True},
+        }
+        patched = build_connections_patch(form, self.EXISTING)
+        dumped = yaml.safe_dump(patched, allow_unicode=True, sort_keys=False)
+        assert yaml.safe_load(dumped)["satel"]["host"] == "192.168.1.10"
+
+
+class TestValidateConnections:
+    def test_no_errors_when_complete(self):
+        form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        assert validate_connections(form) == []
+
+    def test_missing_satel_host_is_error(self):
+        errors = validate_connections({"satel": {}, "ebus": {"mqtt_host": "127.0.0.1"}})
+        assert any("Satel" in e for e in errors)
+
+    def test_missing_ebus_mqtt_host_is_error(self):
+        errors = validate_connections({"satel": {"host": "1.2.3.4"}, "ebus": {}})
+        assert any("eBUS" in e for e in errors)
+
+    def test_tuya_cloud_enabled_without_access_id_is_error(self):
+        form = {
+            "satel": {"host": "1.2.3.4"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya_cloud": {"enabled": True, "access_id": ""},
+        }
+        errors = validate_connections(form)
+        assert any("Tuya Cloud" in e for e in errors)
+
+
+class TestConnectionsToForm:
+    def test_never_exposes_secrets(self):
+        existing = {
+            "satel": {"host": "1.2.3.4", "integration_key": "sekret"},
+            "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya": {"cloud": {"access_id": "id1", "access_key": "sekretny_klucz"}},
+        }
+        form = connections_to_form(existing)
+        dumped = str(form)
+        assert "sekret" not in dumped
+        assert form["satel"]["integration_key_set"] is True
+        assert form["tuya_cloud"]["access_key_set"] is True
+
+    def test_reports_unset_secrets(self):
+        existing = {"satel": {"host": "1.2.3.4"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        form = connections_to_form(existing)
+        assert form["satel"]["integration_key_set"] is False
+        assert form["tuya_cloud"]["enabled"] is False
+
+    def test_roundtrip_with_build_connections_patch(self):
+        """connections_to_form(existing) -> uzupełnij formularz w
+        przeglądarce (bez zmiany sekretów, bo user zostawia je puste) ->
+        build_connections_patch -> te same wartości niesekretne."""
+        existing = TestConnectionsBuilder.EXISTING
+        form = connections_to_form(existing)
+        # Symulacja formularza po stronie przeglądarki: sekrety puste
+        # (użytkownik ich nie zmienił), reszta wypełniona z GET.
+        browser_form = {
+            "satel": {
+                "host": form["satel"]["host"], "port": str(form["satel"]["port"]),
+                "partition": str(form["satel"]["partition"]),
+                "virtual_inputs_port": str(form["satel"]["virtual_inputs_port"]),
+                "integration_key": "",
+            },
+            "ebus": {"mqtt_host": form["ebus"]["mqtt_host"], "mqtt_port": str(form["ebus"]["mqtt_port"])},
+        }
+        patched = build_connections_patch(browser_form, existing)
+        assert patched["satel"]["host"] == existing["satel"]["host"]
+        assert patched["satel"]["integration_key"] == existing["satel"]["integration_key"]
 
 
 @pytest.fixture

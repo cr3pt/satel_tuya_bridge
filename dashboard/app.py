@@ -32,6 +32,7 @@ from dashboard.setup import (
     CONFIG_HEADER, SENSORS_HEADER, AUTOMATIONS_HEADER, SATEL_FIELDS_HEADER, TUYA_DEVICES_HEADER,
     build_config_dict, validate, build_automations_dict, validate_automations,
     build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
+    build_connections_patch, validate_connections, connections_to_form,
     draft_path_for, load_draft, save_draft, delete_draft,
 )
 
@@ -436,6 +437,53 @@ def api_config_tuya_devices_post():
 
     return jsonify({
         "saved": len(tuya_devices_dict["devices"]),
+        "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
+                    "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
+    })
+
+
+@app.route("/api/config/connections", methods=["GET"])
+@require_auth()
+def api_config_connections_get():
+    """Zakładka "Połączenia" panelu ⚙ Ustawienia - jedyne miejsce, w
+    którym da się PO PIERWSZEJ KONFIGURACJI zmienić host/port/klucze/tematy
+    MQTT (kreator /setup jest celowo zablokowany po zapisie, patrz
+    api_setup_save - to była świadoma decyzja, żeby przypadkowe ponowne
+    wejście na /setup nigdy nie nadpisało całego config.yaml). Wymaga
+    hasła administratora NAWET do odczytu (w odróżnieniu od reszty
+    endpointów /api/config/*) - zwracane dane obejmują, czy klucz integracji
+    Satela / Tuya Cloud Access Secret SĄ ustawione, nigdy ich wartości."""
+    with open(config_path, "r", encoding="utf-8") as f:
+        current = yaml.safe_load(f) or {}
+    return jsonify(connections_to_form(current))
+
+
+@app.route("/api/config/connections", methods=["POST"])
+@require_auth()
+def api_config_connections_post():
+    """Nadpisuje TYLKO pola połączeń w config.yaml (patrz
+    dashboard/setup.py: build_connections_patch) - reszta pliku (reguły
+    kamer/alarmów, automatyka kotła, ustawienia konserwacji itd.) zostaje
+    nietknięta."""
+    form = request.get_json(silent=True)
+    if not isinstance(form, dict):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+    errors = validate_connections(form)
+    if errors:
+        return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        current = yaml.safe_load(f) or {}
+    new_config = build_connections_patch(form, current)
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(CONFIG_HEADER)
+        yaml.safe_dump(new_config, f, allow_unicode=True, sort_keys=False)
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+
+    return jsonify({
         "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
                     "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
     })

@@ -35,6 +35,7 @@ pełni edytowalny, to nie jest jednorazowy generator).
 """
 from __future__ import annotations
 
+import copy
 import json
 import pathlib
 
@@ -318,6 +319,186 @@ def _build_tuya_devices(form: dict) -> dict:
         }
         for d in form.get("tuya_devices", [])
         if d.get("name")
+    }
+
+
+def validate_connections(form: dict) -> list[str]:
+    """Waliduje formularz zakładki "Połączenia" panelu /config (host/klucze/
+    tematy MQTT już skonfigurowanej instalacji) - współdzielony wzorzec z
+    validate() (kreator), ale bez wymogu hasła (to ustawia się tylko raz,
+    w kreatorze, i panel /config go nie zmienia)."""
+    errors = []
+    satel = form.get("satel", {})
+    if not satel.get("host"):
+        errors.append("Satel: adres IP centrali/modułu ETHM jest wymagany")
+
+    ebus = form.get("ebus", {})
+    if not ebus.get("mqtt_host"):
+        errors.append("eBUS: adres brokera MQTT jest wymagany")
+
+    tuya_cloud = form.get("tuya_cloud", {})
+    if tuya_cloud.get("enabled") and not tuya_cloud.get("access_id"):
+        errors.append("Tuya Cloud: Access ID jest wymagany, jeśli integracja włączona")
+
+    ha = form.get("home_assistant", {})
+    if ha.get("enabled") and not (ha.get("mqtt_host") or ebus.get("mqtt_host")):
+        errors.append("Home Assistant: adres brokera MQTT jest wymagany, jeśli integracja włączona")
+
+    return errors
+
+
+def build_connections_patch(form: dict, existing: dict) -> dict:
+    """Buduje NOWY słownik config.yaml na bazie JUŻ ISTNIEJĄCEGO (`existing`)
+    - nadpisuje TYLKO pola połączeń (host/port/klucze/tematy MQTT per
+    integracja), zostawiając nietknięte wszystkie inne sekcje
+    (reguły_kamera_alarm, boiler_rules, alarm_rules, maintenance,
+    dashboard.auth, itd.). W przeciwieństwie do build_config_dict()
+    (kreator, buduje config.yaml OD ZERA) - to jedyny bezpieczny sposób na
+    "rekonfigurację" już działającej instalacji bez ryzyka skasowania
+    ręcznych zmian w config.yaml (stąd /setup zostaje zablokowany po
+    pierwszym zapisie - patrz CONFIG_HEADER i api_setup_save).
+
+    Pola-sekrety (klucz integracji Satela, Tuya Cloud Access Secret): pusta
+    wartość w formularzu = ZACHOWAJ dotychczasową (formularz w przeglądarce
+    nigdy nie dostaje prawdziwego sekretu z powrotem - patrz
+    connections_to_form - więc "nic nie wpisano" nie może oznaczać
+    "wyczyść")."""
+    config = copy.deepcopy(existing)
+    satel_form = form.get("satel", {})
+    ebus_form = form.get("ebus", {})
+
+    config.setdefault("satel", {})
+    config["satel"]["host"] = satel_form.get("host", "").strip()
+    config["satel"]["port"] = int(satel_form.get("port") or config["satel"].get("port") or 7094)
+    config["satel"]["partition"] = int(satel_form.get("partition") or config["satel"].get("partition") or 1)
+    if (satel_form.get("integration_key") or "").strip():
+        config["satel"]["integration_key"] = satel_form["integration_key"].strip()
+    else:
+        config["satel"].setdefault("integration_key", "")
+    config["satel"].setdefault("virtual_inputs", {})
+    config["satel"]["virtual_inputs"]["port"] = int(
+        satel_form.get("virtual_inputs_port") or config["satel"]["virtual_inputs"].get("port") or 8888
+    )
+    config["satel"]["virtual_inputs"].setdefault(
+        "url_template", "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
+    )
+    config["satel"].setdefault("outputs", {})
+    config["satel"].setdefault("fields_file", "satel_fields.yaml")
+
+    config.setdefault("ebus", {})
+    config["ebus"]["mqtt_host"] = ebus_form.get("mqtt_host", "").strip()
+    config["ebus"]["mqtt_port"] = int(ebus_form.get("mqtt_port") or config["ebus"].get("mqtt_port") or 1883)
+    config["ebus"].setdefault("sensors_file", "sensors.yaml")
+
+    config.setdefault("boiler_output", {})
+    config["boiler_output"].setdefault("mqtt", {})
+    config["boiler_output"]["mqtt"]["host"] = config["ebus"]["mqtt_host"]
+    config["boiler_output"]["mqtt"]["port"] = config["ebus"]["mqtt_port"]
+    config["boiler_output"]["mqtt"]["topic_prefix"] = (
+        (ebus_form.get("topic_prefix") or "").strip()
+        or config["boiler_output"]["mqtt"].get("topic_prefix", "home/boiler")
+    )
+    config["boiler_output"].setdefault("tuya_virtual_device", {"device_id": ""})
+
+    mqtt_publish_form = form.get("mqtt_publish", {})
+    config["mqtt_publish"] = {
+        "enabled": bool(mqtt_publish_form.get("enabled", True)),
+        "topics": {
+            "satel": (mqtt_publish_form.get("satel_topic") or "satel").strip(),
+            "tuya": (mqtt_publish_form.get("tuya_topic") or "tuya").strip(),
+        },
+    }
+
+    config.setdefault("tuya", {})
+    tuya_cloud_form = form.get("tuya_cloud", {})
+    if tuya_cloud_form.get("enabled") and (tuya_cloud_form.get("access_id") or "").strip():
+        existing_cloud = config["tuya"].get("cloud", {})
+        config["tuya"]["cloud"] = {
+            "access_id": tuya_cloud_form["access_id"].strip(),
+            "access_key": (tuya_cloud_form.get("access_key") or "").strip() or existing_cloud.get("access_key", ""),
+            "api_endpoint": (tuya_cloud_form.get("api_endpoint") or "").strip()
+                or existing_cloud.get("api_endpoint", "https://openapi.tuyaeu.com"),
+            "mq_endpoint": (tuya_cloud_form.get("mq_endpoint") or "").strip()
+                or existing_cloud.get("mq_endpoint", "wss://mqe.tuyaeu.com:8285/"),
+            "camera_device_ids": existing_cloud.get("camera_device_ids", []),
+        }
+    else:
+        config["tuya"].pop("cloud", None)
+    config["tuya"].setdefault("status_poll_interval_seconds", 30)
+    config["tuya"].setdefault("devices_file", "tuya_devices.yaml")
+
+    ha_form = form.get("home_assistant", {})
+    existing_ha = config.get("home_assistant", {})
+    if ha_form.get("enabled"):
+        config["home_assistant"] = {
+            "enabled": True,
+            "mqtt_host": (ha_form.get("mqtt_host") or "").strip() or config["ebus"]["mqtt_host"],
+            "mqtt_port": int(ha_form.get("mqtt_port") or existing_ha.get("mqtt_port") or 1883),
+            "discovery_prefix": existing_ha.get("discovery_prefix", "homeassistant"),
+            "state_topic_prefix": existing_ha.get("state_topic_prefix", "home/bridge"),
+            "device_name": existing_ha.get("device_name", "Satel-Tuya-eBUS Bridge"),
+        }
+    else:
+        config["home_assistant"] = {**existing_ha, "enabled": False}
+
+    notif_form = form.get("notifications", {})
+    config.setdefault("notifications", {})
+    config["notifications"]["ntfy_topic_url"] = (
+        notif_form.get("ntfy_topic_url", "") or ""
+    ).strip() or config["notifications"].get("ntfy_topic_url", "")
+    config["notifications"].setdefault("grace_seconds", 120)
+
+    return config
+
+
+def connections_to_form(existing: dict) -> dict:
+    """Odwrotność build_connections_patch - konwertuje AKTUALNY config.yaml
+    na kształt formularza zakładki "Połączenia" (GET /api/config/connections).
+    Sekretne pola (klucz integracji Satela, Tuya Cloud Access Secret) NIE są
+    tu NIGDY zwracane w jawnej postaci - tylko flaga `*_set`, czy są w ogóle
+    ustawione, żeby nie wyciekały przez GET do każdego w sieci LAN (w
+    odróżnieniu od np. local_key urządzeń Tuya w /api/config/tuya-devices -
+    tam ryzyko jest dużo mniejsze niż tu, bo klucz integracji Satela pozwala
+    rozbroić fizyczny system alarmowy)."""
+    satel = existing.get("satel", {})
+    ebus = existing.get("ebus", {})
+    tuya_cloud = existing.get("tuya", {}).get("cloud", {})
+    ha = existing.get("home_assistant", {})
+    mqtt_publish = existing.get("mqtt_publish", {})
+    boiler_mqtt = existing.get("boiler_output", {}).get("mqtt", {})
+    return {
+        "satel": {
+            "host": satel.get("host", ""),
+            "port": satel.get("port", 7094),
+            "partition": satel.get("partition", 1),
+            "virtual_inputs_port": satel.get("virtual_inputs", {}).get("port", 8888),
+            "integration_key_set": bool(satel.get("integration_key")),
+        },
+        "ebus": {
+            "mqtt_host": ebus.get("mqtt_host", ""),
+            "mqtt_port": ebus.get("mqtt_port", 1883),
+            "topic_prefix": boiler_mqtt.get("topic_prefix", "home/boiler"),
+        },
+        "mqtt_publish": {
+            "enabled": mqtt_publish.get("enabled", True),
+            "satel_topic": mqtt_publish.get("topics", {}).get("satel", "satel"),
+            "tuya_topic": mqtt_publish.get("topics", {}).get("tuya", "tuya"),
+        },
+        "tuya_cloud": {
+            "enabled": bool(tuya_cloud),
+            "access_id": tuya_cloud.get("access_id", ""),
+            "access_key_set": bool(tuya_cloud.get("access_key")),
+            "api_endpoint": tuya_cloud.get("api_endpoint", "https://openapi.tuyaeu.com"),
+            "mq_endpoint": tuya_cloud.get("mq_endpoint", "wss://mqe.tuyaeu.com:8285/"),
+        },
+        "home_assistant": {
+            "enabled": bool(ha.get("enabled")),
+            "mqtt_host": ha.get("mqtt_host", ""),
+            "mqtt_port": ha.get("mqtt_port", 1883),
+        },
+        "notifications": {
+            "ntfy_topic_url": existing.get("notifications", {}).get("ntfy_topic_url", ""),
+        },
     }
 
 

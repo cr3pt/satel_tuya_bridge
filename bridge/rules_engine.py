@@ -105,6 +105,24 @@ class RulesEngine:
                 notify_cfg=notify_cfg, grace_seconds=grace_seconds,
             )
 
+        # Publikacja stanu Satel/Tuya do MQTT pod skonfigurowalnym tematem
+        # PER INTEGRACJA - NIEZALEŻNIE od Home Assistant (ha_mqtt wyżej
+        # publikuje TYLKO gdy home_assistant.enabled: true, pod jednym
+        # wspólnym `state_topic_prefix`). eBUS ma już swój odpowiednik od
+        # dawna (boiler_output.mqtt.topic_prefix, patrz handle_boiler_value)
+        # - to jest analogiczny mechanizm dla Satela i Tuyi. Osobny klient
+        # paho-mqtt (nie dzielimy z ha_mqtt/ebus_client/boiler_output) -
+        # zgodnie z resztą kodu, patrz docstring ha_mqtt.py.
+        self.state_mqtt: HomeAssistantMqttBridge | None = None
+        mqtt_publish_cfg = config.raw.get("mqtt_publish", {})
+        self._satel_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("satel", "satel")
+        self._tuya_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("tuya", "tuya")
+        if mqtt_publish_cfg.get("enabled", True) and config.ebus.get("mqtt_host"):
+            self.state_mqtt = HomeAssistantMqttBridge(
+                {"mqtt_host": config.ebus["mqtt_host"], "mqtt_port": config.ebus.get("mqtt_port", 1883)},
+                entities=[], history=self.history, notify_cfg=notify_cfg, grace_seconds=grace_seconds,
+            )
+
     # ------------------------------------------------------------------
     # Ruch -> włączenie urządzenia Tuya na czas (LUB scena, LUB eskalacja
     # przy powtarzających się naruszeniach - patrz config.yaml)
@@ -380,6 +398,11 @@ class RulesEngine:
                             f"{self._ha_topic_prefix}/tuya/{device_name}/state",
                             "ON" if is_on else "OFF",
                         )
+                    if self.state_mqtt and is_on is not None:
+                        self.state_mqtt.publish_state(
+                            f"{self._tuya_mqtt_topic}/{device_name}/state",
+                            "ON" if is_on else "OFF",
+                        )
                     cfg = self.config.tuya["devices"][device_name]
                     if cfg.get("type") == "dimmer" and cfg.get("dimmer_dp") in dps:
                         lo, hi = cfg.get("dimmer_range", [10, 1000])
@@ -433,6 +456,11 @@ class RulesEngine:
                         f"{self._ha_topic_prefix}/satel/input/{zone_number}/state",
                         "ON" if violated else "OFF",
                     )
+                if self.state_mqtt:
+                    self.state_mqtt.publish_state(
+                        f"{self._satel_mqtt_topic}/input/{zone_number}/state",
+                        "ON" if violated else "OFF",
+                    )
                 if violated:
                     await self.handle_motion("satel_zone", zone_number)
 
@@ -446,6 +474,11 @@ class RulesEngine:
                 if self.ha_mqtt:
                     self.ha_mqtt.publish_state(
                         f"{self._ha_topic_prefix}/satel/output/{output_number}/state",
+                        "ON" if active else "OFF",
+                    )
+                if self.state_mqtt:
+                    self.state_mqtt.publish_state(
+                        f"{self._satel_mqtt_topic}/output/{output_number}/state",
                         "ON" if active else "OFF",
                     )
 
@@ -464,6 +497,11 @@ class RulesEngine:
                 if self.ha_mqtt:
                     self.ha_mqtt.publish_state(
                         f"{self._ha_topic_prefix}/satel/partition/{partition_number}/state",
+                        "ON" if armed else "OFF",
+                    )
+                if self.state_mqtt:
+                    self.state_mqtt.publish_state(
+                        f"{self._satel_mqtt_topic}/partition/{partition_number}/state",
                         "ON" if armed else "OFF",
                     )
 
@@ -539,5 +577,8 @@ class RulesEngine:
                 self.ha_mqtt.register_command_handler(output_topic, _make_output_handler(output_number))
 
             self.ha_mqtt.start()
+
+        if self.state_mqtt:
+            self.state_mqtt.start()
 
         logger.info("Silnik reguł uruchomiony i gotowy")
