@@ -2,7 +2,7 @@
 urządzeń (typowe dla tanich urządzeń WiFi w słabym zasięgu)."""
 import pytest
 
-from bridge.tuya_local import TuyaLocalController
+from bridge.tuya_local import TuyaLocalController, scan_network
 
 DEVICES_CFG = {
     "gniazdko_salon": {"id": "dev1", "ip": "192.168.1.50", "local_key": "key1", "type": "socket"},
@@ -114,3 +114,33 @@ async def test_get_all_statuses_marks_unreachable_devices_as_none(controller):
     result = await controller.get_all_statuses()
     assert result["gniazdko_salon"] is not None
     assert result["swiatlo_korytarz"] is None
+
+
+class TestScanNetwork:
+    """scan_network() - podpowiedź id/ip/version urządzeń Tuya w panelu
+    (/config), bez prawdziwej sieci LAN (tinytuya.deviceScan zamockowane)."""
+
+    def test_returns_id_ip_version_for_each_discovered_device(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.deviceScan", lambda **kw: {
+            "192.168.1.50": {"gwId": "dev1", "version": "3.4"},
+            "192.168.1.51": {"id": "dev2", "version": "3.3"},
+        })
+        devices = scan_network()
+        assert {"id": "dev1", "ip": "192.168.1.50", "version": "3.4"} in devices
+        assert {"id": "dev2", "ip": "192.168.1.51", "version": "3.3"} in devices
+
+    def test_no_devices_found_returns_empty_list(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.deviceScan", lambda **kw: {})
+        assert scan_network() == []
+
+    def test_maxretry_passed_through_to_tinytuya(self, monkeypatch):
+        captured = {}
+
+        def fake_scan(**kwargs):
+            captured.update(kwargs)
+            return {}
+
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.deviceScan", fake_scan)
+        scan_network(maxretry=3)
+        assert captured["maxretry"] == 3
+        assert captured["poll"] is False  # nie mamy local_key przy skanowaniu - nie próbujemy odpytać dps

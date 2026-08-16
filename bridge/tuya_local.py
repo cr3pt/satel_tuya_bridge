@@ -14,6 +14,28 @@ import tinytuya
 logger = logging.getLogger("bridge.tuya_local")
 
 
+def scan_network(maxretry: int = 1) -> list[dict]:
+    """Skanuje sieć LAN (broadcast UDP) w poszukiwaniu urządzeń Tuya i
+    zwraca listę {id, ip, version} dla znalezionych urządzeń - podpowiedź
+    do panelu (/config), żeby nie trzeba było ręcznie szukać adresu IP.
+
+    WAŻNE: broadcast Tuya NIE zawiera `local_key` (nie jest rozgłaszany ze
+    względów bezpieczeństwa) ani nazwy urządzenia - to wciąż trzeba
+    wyciągnąć osobno narzędziem `python -m tinytuya wizard` (patrz README).
+    Skan trwa ok. `tinytuya.SCANTIME` sekund na każde `maxretry` (domyślnie
+    ~18s) - synchroniczne i blokujące, celowo (wywoływane z endpointu
+    Flask, nie z głównej pętli bridge'a)."""
+    raw = tinytuya.deviceScan(verbose=False, maxretry=maxretry, poll=False)
+    devices = []
+    for ip, info in raw.items():
+        devices.append({
+            "id": info.get("gwId") or info.get("id") or "",
+            "ip": ip,
+            "version": info.get("version", ""),
+        })
+    return devices
+
+
 class TuyaLocalController:
     def __init__(self, devices_cfg: dict, retries: int = 2, retry_delay: float = 1.5):
         self.devices_cfg = devices_cfg

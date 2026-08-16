@@ -13,6 +13,8 @@ satel:
   port: 7094
   integration_key: "x"
   partitions: {{Dom: 1, Garaz: 2}}
+  monitored_zones: {{Salon: 12}}
+  monitored_outputs: {{Syrena: 1}}
   virtual_inputs:
     port: 8888
     url_template: "http://{{host}}:{{port}}/x"
@@ -257,3 +259,150 @@ class TestAutomationsEndpoint:
         client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
         after = (tmp_path / "config.yaml").read_text(encoding="utf-8")
         assert before == after
+
+
+class TestSatelFieldsEndpoint:
+    def test_get_satel_fields_no_auth_required(self, client):
+        assert client.get("/api/config/satel-fields").status_code == 200
+
+    def test_get_satel_fields_reads_inline_values_when_no_fields_file(self, client):
+        """CONFIG_TEMPLATE ma strefy/wyjścia/wejścia wpisane wprost - bez
+        satel_fields.yaml na dysku - i to musi działać (wsteczna zgodność,
+        patrz bridge/config.py)."""
+        data = client.get("/api/config/satel-fields").get_json()
+        assert {"name": "Dom", "number": 1} in data["partitions"]
+        assert {"name": "Salon", "number": 12} in data["monitored_zones"]
+        assert {"name": "Syrena", "number": 1} in data["monitored_outputs"]
+        assert {"name": "motion_hall", "number": 1, "key": "k"} in data["virtual_inputs"]
+
+    def test_post_satel_fields_without_auth_returns_401(self, client):
+        resp = client.post("/api/config/satel-fields", json={})
+        assert resp.status_code == 401
+
+    def test_post_satel_fields_with_correct_auth_saves(self, client):
+        payload = {
+            "partitions": [{"name": "Dom", "number": "1"}],
+            "monitored_zones": [{"name": "Kuchnia", "number": "20"}],
+            "monitored_outputs": [],
+            "virtual_inputs": [{"name": "vi1", "number": "3", "key": "K"}],
+        }
+        resp = client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json()["saved"]["monitored_zones"] == 1
+
+    def test_post_satel_fields_validates_incomplete_virtual_input(self, client):
+        payload = {"virtual_inputs": [{"name": "x", "number": "", "key": ""}]}
+        resp = client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 400
+
+    def test_saved_satel_fields_persist_and_are_readable(self, client, tmp_path):
+        payload = {
+            "partitions": [{"name": "Piwnica", "number": "9"}],
+            "monitored_zones": [], "monitored_outputs": [], "virtual_inputs": [],
+        }
+        client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        resp = client.get("/api/config/satel-fields")
+        assert {"name": "Piwnica", "number": 9} in resp.get_json()["partitions"]
+        assert (tmp_path / "satel_fields.yaml").exists()
+
+    def test_post_satel_fields_does_not_touch_config_yaml(self, client, tmp_path):
+        before = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+        client.post(
+            "/api/config/satel-fields",
+            json={"partitions": [{"name": "X", "number": "1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        after = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+        assert before == after
+
+
+class TestTuyaDevicesEndpoint:
+    def test_get_tuya_devices_no_auth_required(self, client):
+        assert client.get("/api/config/tuya-devices").status_code == 200
+
+    def test_get_tuya_devices_reads_inline_values_when_no_devices_file(self, client):
+        data = client.get("/api/config/tuya-devices").get_json()
+        assert any(d["name"] == "gniazdko" and d["ip"] == "1.2.3.4" for d in data["devices"])
+
+    def test_post_tuya_devices_without_auth_returns_401(self, client):
+        resp = client.post("/api/config/tuya-devices", json={"tuya_devices": []})
+        assert resp.status_code == 401
+
+    def test_post_tuya_devices_with_correct_auth_saves(self, client):
+        payload = {"tuya_devices": [
+            {"name": "nowe", "id": "d2", "ip": "1.2.3.5", "local_key": "k2", "type": "socket"},
+        ]}
+        resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json()["saved"] == 1
+
+    def test_post_tuya_devices_validates_incomplete_device(self, client):
+        payload = {"tuya_devices": [{"name": "x", "id": "", "ip": "1.2.3.4", "local_key": "k"}]}
+        resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 400
+
+    def test_saved_tuya_devices_persist_and_are_readable(self, client, tmp_path):
+        payload = {"tuya_devices": [
+            {"name": "trwale", "id": "d3", "ip": "1.2.3.6", "local_key": "k3", "type": "socket"},
+        ]}
+        client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        resp = client.get("/api/config/tuya-devices")
+        assert any(d["name"] == "trwale" for d in resp.get_json()["devices"])
+        assert (tmp_path / "tuya_devices.yaml").exists()
+
+    def test_post_tuya_devices_does_not_touch_config_yaml(self, client, tmp_path):
+        before = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+        client.post(
+            "/api/config/tuya-devices",
+            json={"tuya_devices": [{"name": "x", "id": "i", "ip": "1.2.3.4", "local_key": "k"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        after = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+        assert before == after
+
+
+class TestDiscoveryEndpoints:
+    """POST /api/discover/ebus i /api/discover/tuya - publiczne (tylko
+    odczyt sieci), wykrywanie samo w sobie zamockowane (bridge/ebus_client.py
+    i bridge/tuya_local.py mają własne testy jednostkowe z fake'ami -
+    tutaj sprawdzamy tylko routing/obsługę błędów na poziomie endpointu)."""
+
+    def test_discover_ebus_no_auth_required(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.discover_ebus_topics", lambda host, port: ["ebusd/bai/FlowTemp"])
+        resp = client.post("/api/discover/ebus", json={})
+        assert resp.status_code == 200
+        assert resp.get_json()["topics"] == ["ebusd/bai/FlowTemp"]
+
+    def test_discover_ebus_uses_configured_mqtt_host_by_default(self, client, monkeypatch):
+        captured = {}
+
+        def fake_discover(host, port):
+            captured["host"] = host
+            captured["port"] = port
+            return []
+
+        monkeypatch.setattr("dashboard.app.discover_ebus_topics", fake_discover)
+        client.post("/api/discover/ebus", json={})
+        assert captured["host"] == "127.0.0.1"
+
+    def test_discover_ebus_connection_error_returns_502(self, client, monkeypatch):
+        def raise_connection_error(host, port):
+            raise ConnectionError("nie udało się połączyć")
+
+        monkeypatch.setattr("dashboard.app.discover_ebus_topics", raise_connection_error)
+        resp = client.post("/api/discover/ebus", json={})
+        assert resp.status_code == 502
+
+    def test_discover_tuya_no_auth_required(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.scan_tuya_network", lambda: [{"id": "d1", "ip": "1.2.3.4", "version": "3.4"}])
+        resp = client.post("/api/discover/tuya", json={})
+        assert resp.status_code == 200
+        assert resp.get_json()["devices"] == [{"id": "d1", "ip": "1.2.3.4", "version": "3.4"}]
+
+    def test_discover_tuya_error_returns_502(self, client, monkeypatch):
+        def raise_error():
+            raise RuntimeError("skan padł")
+
+        monkeypatch.setattr("dashboard.app.scan_tuya_network", raise_error)
+        resp = client.post("/api/discover/tuya", json={})
+        assert resp.status_code == 502

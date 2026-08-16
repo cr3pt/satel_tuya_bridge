@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Callable
 
 import paho.mqtt.client as mqtt
@@ -24,6 +25,42 @@ import paho.mqtt.client as mqtt
 from .resilience import HealthReporter
 
 logger = logging.getLogger("bridge.ebus")
+
+
+def discover_topics(mqtt_host: str, mqtt_port: int = 1883, topic_prefix: str = "ebusd",
+                     timeout_seconds: float = 4.0) -> list[str]:
+    """Krótko nasłuchuje na `{topic_prefix}/#` i zwraca posortowaną listę
+    tematów, na które ebusd FAKTYCZNIE coś opublikował w tym czasie -
+    najprostszy sposób podpowiedzenia dostępnych pól w panelu (/config) bez
+    własnej integracji z komendą `find` ebusd (TCP/HTTP, nie zawsze
+    włączona). To tylko PODPOWIEDŹ: pola, które ebusd publikuje rzadziej niż
+    raz na `timeout_seconds`, mogą się nie pojawić - użytkownik może wtedy
+    dodać czujnik ręcznie (patrz README, sekcja "Jak znaleźć listę
+    dostępnych pól") albo spróbować wykrywania ponownie.
+
+    Synchroniczna i blokująca (na `timeout_seconds`) - celowo, wywoływana
+    z endpointu Flask (dashboard/app.py), nie z głównej pętli bridge'a."""
+    topics: set[str] = set()
+
+    def _on_message(client, userdata, msg) -> None:
+        topics.add(msg.topic)
+
+    client = mqtt.Client()
+    client.on_message = _on_message
+    try:
+        client.connect(mqtt_host, mqtt_port, keepalive=max(int(timeout_seconds) + 5, 10))
+    except OSError as exc:
+        raise ConnectionError(f"Nie udało się połączyć z brokerem MQTT {mqtt_host}:{mqtt_port}: {exc}") from exc
+
+    client.subscribe(f"{topic_prefix}/#")
+    client.loop_start()
+    try:
+        time.sleep(timeout_seconds)
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+    return sorted(topics)
 
 
 class EbusMqttListener:

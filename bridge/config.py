@@ -15,6 +15,18 @@ _AUTOMATIONS_DEFAULTS = {
 }
 
 
+def _resolve_path(config_dir: pathlib.Path, filename: str) -> pathlib.Path:
+    p = pathlib.Path(filename)
+    return p if p.is_absolute() else config_dir / p
+
+
+def _load_yaml_file(path: pathlib.Path) -> dict:
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
 @dataclass
 class BridgeConfig:
     raw: dict[str, Any]
@@ -30,6 +42,12 @@ class BridgeConfig:
     # istnieje, wartości brane są wprost z config.yaml (wstecznie zgodne
     # ze starszymi configami, gdzie te sekcje były wpisane bezpośrednio).
     automations_file: pathlib.Path = field(default=None)
+    # Tak samo - "pola" Satela (strefy/wyjścia/wejścia IP do monitorowania,
+    # partycje) i urządzenia Tuya, edytowalne z panelu /config bez ryzyka
+    # nadpisania reszty config.yaml. Połączenie (host/port/klucz/cloud)
+    # zostaje inline w config.yaml - to tylko NAZWANE POLA.
+    satel_fields_file: pathlib.Path = field(default=None)
+    tuya_devices_file: pathlib.Path = field(default=None)
 
     @classmethod
     def load(cls, path: str | pathlib.Path) -> "BridgeConfig":
@@ -47,11 +65,8 @@ class BridgeConfig:
         # nowo generowanych configach (kreator) już go tam nie ma wprost,
         # tylko w automations.yaml (albo dostaje domyślną pustą wartość
         # poniżej, jeśli nie ma go NIGDZIE).
-        automations_filename = data.get("automations_file", "automations.yaml")
-        automations_path = pathlib.Path(automations_filename)
-        if not automations_path.is_absolute():
-            automations_path = path.parent / automations_path
-        automations = cls._load_automations_file(automations_path)
+        automations_path = _resolve_path(path.parent, data.get("automations_file", "automations.yaml"))
+        automations = _load_yaml_file(automations_path)
         for key, default in _AUTOMATIONS_DEFAULTS.items():
             if key in automations:
                 data[key] = automations[key]
@@ -60,32 +75,42 @@ class BridgeConfig:
 
         cls._validate(data)
 
+        # Pola Satela (strefy/wyjścia/wejścia IP/partycje) - jeśli
+        # satel_fields.yaml istnieje, NADPISUJE wartości wpisane wprost w
+        # config.yaml (tak samo jak automations.yaml). "satel" jest już
+        # zwalidowane wyżej jako wymagany słownik.
+        satel_fields_path = _resolve_path(path.parent, data["satel"].get("fields_file", "satel_fields.yaml"))
+        satel_fields = _load_yaml_file(satel_fields_path)
+        for key in ("monitored_zones", "monitored_outputs", "partitions"):
+            if key in satel_fields:
+                data["satel"][key] = satel_fields[key]
+            else:
+                data["satel"].setdefault(key, {})
+        data["satel"].setdefault("virtual_inputs", {})
+        if "virtual_inputs" in satel_fields:
+            data["satel"]["virtual_inputs"]["inputs"] = satel_fields["virtual_inputs"]
+        else:
+            data["satel"]["virtual_inputs"].setdefault("inputs", {})
+
+        # Urządzenia Tuya - analogicznie, tuya_devices.yaml nadpisuje
+        # tuya.devices wpisane wprost w config.yaml, jeśli istnieje.
+        tuya_devices_path = _resolve_path(path.parent, data["tuya"].get("devices_file", "tuya_devices.yaml"))
+        tuya_devices_data = _load_yaml_file(tuya_devices_path)
+        if "devices" in tuya_devices_data:
+            data["tuya"]["devices"] = tuya_devices_data["devices"]
+        else:
+            data["tuya"].setdefault("devices", {})
+
         # Ścieżka do sensors.yaml - względna wobec katalogu config.yaml,
         # jeśli podana jako względna. Domyślnie "sensors.yaml" obok config.yaml.
-        sensors_filename = data.get("ebus", {}).get("sensors_file", "sensors.yaml")
-        sensors_path = pathlib.Path(sensors_filename)
-        if not sensors_path.is_absolute():
-            sensors_path = path.parent / sensors_path
+        sensors_path = _resolve_path(path.parent, data.get("ebus", {}).get("sensors_file", "sensors.yaml"))
+        sensors_content = _load_yaml_file(sensors_path)
+        data.setdefault("ebus", {})["sensors"] = sensors_content.get("sensors", [])
 
-        sensors = cls._load_sensors_file(sensors_path)
-        data.setdefault("ebus", {})["sensors"] = sensors
-
-        return cls(raw=data, sensors_file=sensors_path, automations_file=automations_path)
-
-    @staticmethod
-    def _load_sensors_file(sensors_path: pathlib.Path) -> list[dict]:
-        if not sensors_path.exists():
-            return []
-        with open(sensors_path, "r", encoding="utf-8") as f:
-            content = yaml.safe_load(f) or {}
-        return content.get("sensors", [])
-
-    @staticmethod
-    def _load_automations_file(automations_path: pathlib.Path) -> dict:
-        if not automations_path.exists():
-            return {}
-        with open(automations_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+        return cls(
+            raw=data, sensors_file=sensors_path, automations_file=automations_path,
+            satel_fields_file=satel_fields_path, tuya_devices_file=tuya_devices_path,
+        )
 
     @staticmethod
     def _validate(data: dict[str, Any]) -> None:
