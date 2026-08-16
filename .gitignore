@@ -1,6 +1,7 @@
 # Prawdziwa konfiguracja - zawiera poświadczenia, NIGDY nie commituj
 config.yaml
 sensors.yaml
+automations.yaml
 
 # Plik roboczy kreatora (postęp między krokami /setup) - może zawierać
 # poświadczenia wpisane, ale jeszcze nie zapisane do config.yaml

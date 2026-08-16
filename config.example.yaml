@@ -93,6 +93,14 @@ location:
   latitude: 52.23
   longitude: 21.01
 
+# UWAGA: "scenes", "reguły_ruchu" (kilka sekcji niżej) i "presence_simulation"
+# w PRAWDZIWYM config.yaml wygenerowanym przez kreator/panel NIE SĄ tutaj -
+# trafiają do osobnego pliku automations.yaml (analogicznie do sensors.yaml
+# dla czujników), edytowalnego z powrotem w przeglądarce w zakładce
+# "🎬 Automatyzacje" (/automations, wymaga hasła administratora) bez ryzyka
+# nadpisania reszty tego pliku. Wpisanie ich TUTAJ, bezpośrednio w
+# config.yaml, wciąż działa (wsteczna zgodność) - patrz bridge/config.py -
+# ale wtedy nie są edytowalne z panelu, dopóki nie powstanie automations.yaml.
 scenes:
   # Nazwane grupy akcji na wielu urządzeniach naraz - wywoływane przez
   # reguły_ruchu (pole "scene"), reguły_kamera_alarm, eskalację, albo

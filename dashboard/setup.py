@@ -1,5 +1,5 @@
-"""Kreator pierwszej konfiguracji - budowanie config.yaml/sensors.yaml
-z danych wypełnionych w formularzu webowym (/setup).
+"""Kreator pierwszej konfiguracji - budowanie config.yaml/sensors.yaml/
+automations.yaml z danych wypełnionych w formularzu webowym (/setup).
 
 Wieloetapowy kreator (/setup): każdy krok to osobna "strona" w
 templates/setup.html, przechodzona przyciskiem "Dalej". Po każdym takim
@@ -13,12 +13,22 @@ Tuya lokalnie, eBUS/MQTT, hasło panelu, powiadomienia, opcjonalnie Home
 Assistant/UniFi Protect/Tuya cloud) ORAZ bardziej zaawansowane rzeczy
 zbudowane na wspólnym fundamencie scen (bridge/scenes.py): sceny,
 harmonogramy czasowe (time_window) i eskalację przy powtarzających się
-naruszeniach - obie ostatnie jako pola reguł ruchu. Rzeczy, których
-kreator wciąż nie obsługuje (reguły_kamera_alarm, reguły_swiatlo_do_satela,
-boiler_rules, alarm_rules) dostają puste/domyślne wartości - dodaje się je
-później ręcznie w config.yaml (plik zostaje w pełni edytowalny, to nie
-jest jednorazowy generator) albo przez panel (/config - lista czujników
-eBUS).
+naruszeniach (obie ostatnie jako pola reguł ruchu).
+
+Sceny/reguły ruchu/symulacja obecności trafiają do OSOBNEGO pliku
+automations.yaml (nie do config.yaml) - dokładnie z tego samego powodu, dla
+którego czujniki eBUS trafiają do sensors.yaml: to jedyne pliki, które
+UI (kreator i panel /automations, patrz dashboard/app.py) wolno mu
+bezpiecznie nadpisywać w całości, bez ryzyka skasowania ręcznych zmian i
+komentarzy w config.yaml. Po pierwszej konfiguracji te trzy rzeczy da się
+w pełni edytować z powrotem w przeglądarce, w zabezpieczonym hasłem panelu
+/automations (funkcje build_automations_dict/validate_automations niżej) -
+nie tylko ręcznie w automations.yaml.
+
+Rzeczy, których panel WCIĄŻ nie obsługuje (reguły_kamera_alarm,
+reguły_swiatlo_do_satela, boiler_rules, alarm_rules) dostają puste/domyślne
+wartości w config.yaml - dodaje się je później ręcznie (plik zostaje w
+pełni edytowalny, to nie jest jednorazowy generator).
 """
 from __future__ import annotations
 
@@ -69,10 +79,21 @@ def validate(form: dict) -> list[str]:
         if not vi.get("name") or not vi.get("number") or not vi.get("key"):
             errors.append(f"Wirtualne wejście #{i + 1}: nazwa, numer i klucz z DLOADX są wymagane")
 
+    errors.extend(validate_automations(form))
+
+    return errors
+
+
+def validate_automations(form: dict) -> list[str]:
+    """Waliduje TYLKO część "automatyzacje" formularza (scenes/motion_rules/
+    presence_simulation) - używane zarówno przez kreator (`validate()`
+    wyżej), jak i samodzielnie przez panel /automations (dashboard/app.py),
+    który nie ma (i nie potrzebuje) reszty pól kreatora."""
     scene_names = {s.get("name", "").strip() for s in form.get("scenes", []) if s.get("name", "").strip()}
+    errors = []
     errors.extend(_validate_scenes(form.get("scenes", [])))
     errors.extend(_validate_motion_rules(form.get("motion_rules", []), scene_names))
-
+    errors.extend(_validate_presence_simulation(form.get("presence_simulation", {})))
     return errors
 
 
@@ -138,6 +159,28 @@ def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str
                 errors.append(f"{label}: eskalacja - wybierz scenę wywoływaną po przekroczeniu progu")
             elif escalated_scene not in scene_names:
                 errors.append(f"{label}: eskalacja - scena '{escalated_scene}' nie istnieje wśród zdefiniowanych scen")
+    return errors
+
+
+def _validate_presence_simulation(ps: dict) -> list[str]:
+    errors = []
+    if not ps or not ps.get("enabled"):
+        return errors
+
+    if not [d for d in ps.get("devices", []) if d]:
+        errors.append("Symulacja obecności: wybierz co najmniej jedno urządzenie Tuya")
+
+    window = ps.get("window") or {}
+    if window.get("enabled") and not (window.get("start") and window.get("end")):
+        errors.append("Symulacja obecności: harmonogram - podaj początek i koniec okna")
+
+    lo, hi = ps.get("min_interval_minutes"), ps.get("max_interval_minutes")
+    if lo and hi:
+        try:
+            if int(lo) > int(hi):
+                errors.append("Symulacja obecności: minimalny odstęp nie może być większy niż maksymalny")
+        except (TypeError, ValueError):
+            errors.append("Symulacja obecności: odstępy muszą być liczbami")
     return errors
 
 
@@ -207,6 +250,34 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
     return rules
 
 
+def _build_presence_simulation(form: dict) -> dict:
+    ps = form.get("presence_simulation") or {}
+    if not ps.get("enabled"):
+        return {"enabled": False}
+
+    built = {
+        "enabled": True,
+        "devices": [d for d in ps.get("devices", []) if d],
+        "min_interval_minutes": int(ps.get("min_interval_minutes") or 10),
+        "max_interval_minutes": int(ps.get("max_interval_minutes") or 40),
+    }
+    window = ps.get("window") or {}
+    if window.get("enabled") and window.get("start") and window.get("end"):
+        built["window"] = {"start": window["start"].strip(), "end": window["end"].strip()}
+    return built
+
+
+def build_automations_dict(form: dict) -> dict:
+    """Buduje zawartość automations.yaml (sceny/reguły ruchu/symulacja
+    obecności) - używane zarówno przez kreator (razem z build_config_dict),
+    jak i samodzielnie przez panel /automations przy każdym zapisie."""
+    return {
+        "scenes": _build_scenes(form.get("scenes", [])),
+        "reguły_ruchu": _build_motion_rules(form.get("motion_rules", [])),
+        "presence_simulation": _build_presence_simulation(form),
+    }
+
+
 def build_config_dict(form: dict) -> dict:
     """Buduje pełny słownik config.yaml z danych formularza. Pola spoza
     formularza (alarmy progowe, reguły kamer, automatyka kotła itd.) dostają
@@ -252,13 +323,16 @@ def build_config_dict(form: dict) -> dict:
             "status_poll_interval_seconds": 30,
             "devices": tuya_devices,
         },
-        "reguły_ruchu": _build_motion_rules(form.get("motion_rules", [])),
+        # Sceny/reguły ruchu/symulacja obecności NIE są tutaj - trafiają do
+        # osobnego automations.yaml (patrz build_automations_dict), które
+        # zapisuje api_setup_save() zaraz po tym pliku. "automations_file"
+        # to jedyny ślad tego w config.yaml - analogicznie do
+        # ebus.sensors_file dla sensors.yaml.
+        "automations_file": "automations.yaml",
         "reguły_swiatlo_do_satela": [],
         "reguły_kamera_alarm": [],
-        "scenes": _build_scenes(form.get("scenes", [])),
         "alarm_rules": [],
         "boiler_rules": [],
-        "presence_simulation": {"enabled": False},
         "ebus": {
             "mqtt_host": form["ebus"]["mqtt_host"],
             "mqtt_port": int(form["ebus"].get("mqtt_port", 1883)),
@@ -363,6 +437,8 @@ CONFIG_HEADER = (
     "# Wygenerowane przez kreator pierwszej konfiguracji (/setup).\n"
     "# Ten plik jest w pełni edytowalny ręcznie - kreator NIE URUCHOMI SIĘ\n"
     "# PONOWNIE, dopóki ten plik istnieje (żeby nie nadpisać Twoich zmian).\n"
+    "# Sceny/reguły ruchu/symulacja obecności są w automations.yaml, edytowalne\n"
+    "# też z panelu webowego (/automations, wymaga hasła administratora).\n"
     "# Pełny opis wszystkich pól, w tym tych pominiętych przez kreator\n"
     "# (reguły_kamera_alarm, alarmy progowe, automatyka kotła) - patrz\n"
     "# config.example.yaml.\n\n"
@@ -371,4 +447,13 @@ CONFIG_HEADER = (
 SENSORS_HEADER = (
     "# Lista czujników eBUS - dodaj je przez panel webowy (/config) po\n"
     "# uruchomieniu bridge'a, albo ręcznie - patrz sensors.example.yaml.\n\n"
+)
+
+AUTOMATIONS_HEADER = (
+    "# Sceny / reguły ruchu (harmonogram + eskalacja) / symulacja obecności.\n"
+    "# W pełni edytowalne z panelu webowego (/automations, wymaga hasła\n"
+    "# administratora) - każdy zapis stamtąd NADPISUJE cały ten plik, więc\n"
+    "# ręczne zmiany tutaj przetrwają tylko do następnego zapisu z panelu.\n"
+    "# Opis pól - patrz config.example.yaml (sekcje scenes/reguły_ruchu/\n"
+    "# presence_simulation) i README, sekcja \"Automatyzacje\".\n\n"
 )

@@ -32,7 +32,7 @@ pytest
 pytest --cov=bridge --cov=dashboard --cov-report=term-missing
 ```
 
-**200 testów, wszystkie przechodzą, pokrycie kodu ~73%.** Uczciwie o
+**224 testy, wszystkie przechodzą, pokrycie kodu ~74%.** Uczciwie o
 brakującym pokryciu: moduły będące cienkimi wrapperami na biblioteki
 zewnętrzne (`satel_client.py` - satel_integra, `ebus_client.py` -
 callbacki paho-mqtt, `tuya_cloud_events.py`/`unifi_protect_events.py` -
@@ -105,9 +105,17 @@ Cloud), jak i bardziej zaawansowane rzeczy zbudowane na scenach
 - **Eskalacja** - kilka naruszeń wejścia Satela w krótkim czasie wywołuje
   mocniejszą scenę zamiast zwykłej akcji.
 
-Rzeczy, których kreator wciąż nie obsługuje (reguły kamer, reguły
+Te trzy rzeczy trafiają do osobnego pliku `automations.yaml`, nie do
+`config.yaml` - i **zostają w pełni edytowalne PO zapisie**, z powrotem w
+przeglądarce, w zabezpieczonej hasłem zakładce **🎬 Automatyzacje**
+(`/automations`) - nie trzeba wracać do kreatora ani ręcznie do YAML-a,
+żeby dodać kolejną scenę czy regułę później. Symulacja obecności (patrz
+niżej) jest tam edytowalna od razu, mimo że kreator jej jeszcze nie zbiera.
+Szczegóły - sekcja "Automatyzacje" niżej.
+
+Rzeczy, których panel WCIĄŻ nie obsługuje (reguły kamer, reguły
 "światło Tuya → Satel", automatyka kotła, alarmy progowe) dostają puste
-wartości domyślne - dopisujesz je później ręcznie w `config.yaml` (który
+wartości domyślne w `config.yaml` - dopisujesz je później ręcznie (plik
 zostaje w pełni edytowalny - kreator nie uruchomi się drugi raz, dopóki
 plik istnieje, więc żadne Twoje ręczne zmiany nie zostaną nadpisane).
 
@@ -118,7 +126,12 @@ plik istnieje, więc żadne Twoje ręczne zmiany nie zostaną nadpisane).
    też edytować później z panelu webowego, patrz sekcja "eBUS / ebusd"
    niżej)
 3. Uzupełnij sekcje `satel`, `tuya`, reguły itd. w `config.yaml`
-   (komentarze w pliku tłumaczą każde pole).
+   (komentarze w pliku tłumaczą każde pole). Sceny/reguły ruchu/symulację
+   obecności możesz zostawić wpisane wprost w `config.yaml` tak jak w
+   przykładzie (`scenes`/`reguły_ruchu`/`presence_simulation`) - działa
+   bez zmian - albo od razu przenieść do osobnego `automations.yaml`
+   (patrz sekcja "Automatyzacje" niżej), jeśli chcesz mieć możliwość
+   edycji tych trzech rzeczy później z panelu (`/automations`).
 4. Local key urządzeń Tuya wyciągnij narzędziem:
    ```bash
    python -m tinytuya wizard
@@ -310,7 +323,11 @@ Uruchomienie (osobny proces od głównego bridge'a):
 python -m dashboard.app --config config.yaml --port 8090
 ```
 
-Panel dostępny pod `http://<adres-rpi>:8090/`.
+Panel dostępny pod `http://<adres-rpi>:8090/`. Dwie zakładki dostępne z
+górnego paska: **⚙ Ustawienia czujników** (`/config` - lista czujników
+eBUS) i **🎬 Automatyzacje** (`/automations` - sceny/reguły ruchu/
+harmonogramy/eskalacja/symulacja obecności, patrz sekcja "Automatyzacje"
+niżej) - obie odczytują bez hasła, zapis wymaga hasła administratora.
 
 ### Alarmy progowe
 
@@ -513,15 +530,47 @@ zabezpieczeń.
 
 Oprócz prostych reguł "ruch -> włącz urządzenie", bridge wspiera bardziej
 złożoną automatykę - wszystko zbudowane na jednym wspólnym fundamencie:
-**scenach** (`bridge/scenes.py`). Sceny, harmonogramy (`time_window`) i
-eskalację da się skonfigurować **przez kreator** (kroki "Sceny" i "Reguły
-ruchu"), nie tylko ręcznie w `config.yaml` - patrz sekcja "Konfiguracja"
-wyżej.
+**scenach** (`bridge/scenes.py`).
+
+**W pełni konfigurowalne z przeglądarki, bez dotykania YAML-a** - zakładka
+**🎬 Automatyzacje** (`/automations`, link z górnego paska panelu) pozwala
+dodawać/edytować/usuwać sceny, reguły ruchu (harmonogram + eskalacja) i
+symulację obecności. Odczyt jest otwarty, **zapis wymaga hasła
+administratora panelu** (tego samego z kroku "Hasło administratora panelu"
+w kreatorze - patrz sekcja "Bezpieczeństwo panelu" niżej). Alternatywnie:
+te same trzy rzeczy da się skonfigurować już **w kreatorze** przy
+pierwszym uruchomieniu (kroki "Sceny" i "Reguły ruchu"), albo ręcznie w
+pliku `automations.yaml` (patrz niżej) - wszystkie trzy drogi prowadzą do
+tego samego pliku.
+
+### Gdzie to jest zapisane: `automations.yaml`, nie `config.yaml`
+
+Sceny/reguły ruchu/symulacja obecności trafiają do **osobnego pliku**
+`automations.yaml` (obok `config.yaml`, ścieżka konfigurowalna polem
+`automations_file` w `config.yaml`) - z dokładnie tego samego powodu, dla
+którego czujniki eBUS mają swój `sensors.yaml`: to jedyne pliki, które
+UI (kreator i panel `/automations`) wolno mu bezpiecznie **nadpisać w
+całości** przy każdym zapisie, bez ryzyka skasowania Twoich ręcznych
+zmian/komentarzy w `config.yaml`. Format pliku - patrz
+`config.example.yaml` (sekcje `scenes`/`reguły_ruchu`/
+`presence_simulation`) i przykłady niżej.
+
+Configi sprzed tego podziału (gdzie te sekcje były wpisane bezpośrednio w
+`config.yaml`) wciąż działają bez zmian - `automations.yaml` jest
+całkowicie opcjonalny; jeśli nie istnieje, bridge czyta te sekcje wprost z
+`config.yaml` jak dawniej. Pierwszy zapis z panelu `/automations` tworzy
+plik i **od tej pory to on jest źródłem prawdy** dla tych trzech sekcji
+(wartości w `config.yaml`, jeśli tam nadal są, są wtedy ignorowane).
+
+**Zmiany z panelu/kreatora wchodzą w życie po restarcie procesu bridge'a**
+(samego panelu nie trzeba restartować - patrz "Jak działa uzbrajanie/
+rozbrajanie technicznie" niżej, ten sam mechanizm dwóch procesów).
 
 ### Sceny
 
 Nazwana grupa akcji na wielu urządzeniach naraz, wywoływana jednym
-zdarzeniem. Definiujesz w `config.yaml` (sekcja `scenes`):
+zdarzeniem. Definiujesz w panelu (`/automations`) albo ręcznie w
+`automations.yaml`:
 
 ```yaml
 scenes:
@@ -577,9 +626,19 @@ testem, że pojedyncze sporadyczne ruchy nie wywołują fałszywej eskalacji.
 ### Symulacja obecności
 
 Losowe włączanie/wyłączanie wybranych urządzeń Tuya w oknie czasowym -
-włączasz ręcznie na czas wyjazdu (`presence_simulation.enabled: true`).
+włączasz ręcznie na czas wyjazdu (`presence_simulation.enabled: true`,
+przełącznik w panelu `/automations` albo wprost w `automations.yaml`).
 Celowo NIEZALEŻNA od stanu uzbrojenia centrali - prostsze i bardziej
 przewidywalne niż automatyczne wiązanie z trybem alarmu.
+
+```yaml
+presence_simulation:
+  enabled: true
+  devices: [swiatlo_korytarz, gniazdko_salon]
+  window: {start: "sunset", end: "23:30"}   # opcjonalnie - bez okna aktywna cały czas
+  min_interval_minutes: 10
+  max_interval_minutes: 40
+```
 
 ### Automatyka wyzwalana danymi z kotła
 
@@ -686,6 +745,9 @@ nigdy do obrazu ani do warstw builda.
 satel_tuya_bridge/
   config.example.yaml       # wzór głównej konfiguracji (połączenia, poświadczenia)
   sensors.example.yaml      # wzór listy czujników eBUS (edytowalny z panelu, patrz /config)
+  # automations.yaml (sceny/reguły ruchu/symulacja obecności) NIE MA wzoru -
+  # tworzy go kreator albo pierwszy zapis z panelu /automations; format -
+  # patrz sekcje scenes/reguły_ruchu/presence_simulation w config.example.yaml
   requirements.txt
   Dockerfile                # jeden obraz dla bridge'a i panelu, patrz "Uruchomienie w Dockerze"
   docker-compose.yml         # usługi bridge/dashboard/(opcjonalnie) mosquitto
@@ -715,9 +777,10 @@ satel_tuya_bridge/
   dashboard/
     app.py                   # backend panelu (Flask + waitress)
     auth.py                   # autoryzacja - tylko akcje zmieniające stan
-    setup.py                   # logika kreatora pierwszej konfiguracji
+    setup.py                   # logika kreatora + budowanie config.yaml/automations.yaml
     templates/index.html     # frontend panelu (Chart.js, filtrowanie, sterowanie alarmem)
     templates/config.html    # edytor listy czujników eBUS (lista + przełączniki)
+    templates/automations.html # edytor scen/reguł ruchu/symulacji obecności (wymaga hasła do zapisu)
     templates/setup.html      # kreator pierwszej konfiguracji (krok po kroku, autozapis postępu)
   tests/                     # testy pytest (patrz sekcja "Testy automatyczne")
   .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.9/3.11/3.12

@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Automatyzacje - Panel Satel-Tuya-eBUS</title>
+<style>
+  :root {
+    --bg: #14161a; --card: #1d2026; --border: #2c3038;
+    --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
+    --danger: #e5484d; --ok: #3dd68c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 20px; max-width: 900px; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  .nav { margin-bottom: 16px; }
+  .nav a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
+  .hint code { background: #262a32; padding: 1px 5px; border-radius: 4px; }
+  .section {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px; margin-bottom: 18px;
+  }
+  .section-hint { color: var(--muted); font-size: 13px; margin: 4px 0 14px; line-height: 1.5; }
+  .field-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .field { flex: 1; min-width: 140px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input[type=text], input[type=password], input[type=number] {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; font-size: 14px; width: 100%;
+  }
+  select { background: #262a32; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; width: 100%; }
+  .repeatable-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+  .repeatable-row input, .repeatable-row select { flex: 1; min-width: 90px; }
+  .row-remove {
+    background: transparent; color: var(--danger); border: none; font-size: 16px;
+    cursor: pointer; padding: 4px 8px; flex-shrink: 0;
+  }
+  .add-row-btn {
+    background: #262a32; color: var(--text); border: 1px dashed var(--border);
+    border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-top: 4px;
+  }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .checkbox-row input { width: 17px; height: 17px; }
+  .checkbox-grid { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 8px 0 14px; }
+  .checkbox-grid label { display: flex; align-items: center; gap: 6px; font-size: 13.5px; }
+  .optional-content { display: none; margin-top: 10px; padding-left: 4px; }
+  .optional-content.show { display: block; }
+  .sub-card {
+    background: #171a1f; border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px; margin-bottom: 12px;
+  }
+  .sub-card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .sub-card-header input[type=text] { font-weight: 600; }
+  .action-row { background: #1d2129; border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+  .action-fields { display: flex; gap: 8px; flex: 2; flex-wrap: wrap; }
+  .action-fields input, .action-fields select { flex: 1; min-width: 100px; }
+  .empty-hint { color: var(--muted); font-size: 13px; font-style: italic; }
+  button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 10px 18px; font-size: 14px; cursor: pointer; font-weight: 500; }
+  button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
+  .save-bar { position: sticky; bottom: 0; background: var(--bg); padding: 16px 0; border-top: 1px solid var(--border); margin-top: 8px; }
+  #saveBtn { width: 100%; padding: 14px 24px; font-size: 15px; }
+  #saveMessage { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; display: none; }
+  #saveMessage.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  #saveMessage.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
+  #saveMessage ul { margin: 6px 0 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/config">⚙ Ustawienia czujników eBUS</a></div>
+<h1>🎬 Automatyzacje</h1>
+<div class="hint">
+  Sceny, reguły ruchu (harmonogram + eskalacja) i symulacja obecności -
+  zapisywane razem, w całości, do <code>automations.yaml</code>. Odczyt jest
+  otwarty, ale <strong>zapis wymaga hasła administratora panelu</strong>
+  (tego samego, które ustawiasz w kreatorze w kroku "Hasło administratora
+  panelu" - patrz README).
+  <br><strong>Zmiany wchodzą w życie dopiero po restarcie procesu bridge'a</strong>
+  (nie samego panelu).
+</div>
+
+<div class="section" id="scenesSection">
+  <h2>Sceny</h2>
+  <div class="section-hint">
+    Nazwana grupa akcji na wielu urządzeniach naraz, wywoływana jednym
+    zdarzeniem (np. przez regułę ruchu niżej, albo eskalację).
+  </div>
+  <div id="scenesContainer"></div>
+  <div id="scenesEmptyHint" class="empty-hint">Brak zdefiniowanych scen.</div>
+  <button type="button" class="secondary add-row-btn" id="addSceneBtn">+ Dodaj scenę</button>
+</div>
+
+<div class="section" id="rulesSection">
+  <h2>Reguły ruchu: harmonogramy i eskalacja</h2>
+  <div class="section-hint">
+    Naruszenie wejścia Satela → włącz urządzenie na czas (albo uruchom
+    scenę). Opcjonalnie: <b>harmonogram</b> - reguła aktywna tylko w
+    wybranych godzinach, oraz <b>eskalacja</b> - kilka naruszeń w krótkim
+    czasie wywołuje mocniejszą scenę. (Reguły dla ruchu z czujek Tuya PIR i
+    reguły kamer da się dodać tylko ręcznie w <code>config.yaml</code>.)
+  </div>
+  <div id="motionRulesContainer"></div>
+  <div id="rulesEmptyHint" class="empty-hint">Brak zdefiniowanych reguł ruchu.</div>
+  <button type="button" class="secondary add-row-btn" id="addMotionRuleBtn">+ Dodaj regułę</button>
+</div>
+
+<div class="section" id="presenceSection">
+  <h2>Symulacja obecności</h2>
+  <div class="section-hint">
+    Losowe włączanie/wyłączanie wybranych urządzeń Tuya w oknie czasowym -
+    włączasz na czas wyjazdu. Celowo NIEZALEŻNA od stanu uzbrojenia centrali.
+  </div>
+  <div class="checkbox-row"><input type="checkbox" id="presence_enabled"><label for="presence_enabled">Włączona</label></div>
+  <div class="optional-content" id="presenceContent">
+    <label style="font-size:13px; color: var(--muted); display:block; margin-bottom: 6px;">Urządzenia (losowo przełączane)</label>
+    <div class="checkbox-grid" id="presenceDevices"></div>
+
+    <div class="field-row">
+      <div class="field"><label>Min. odstęp (minuty)</label><input type="number" id="presence_min_interval" value="10"></div>
+      <div class="field"><label>Maks. odstęp (minuty)</label><input type="number" id="presence_max_interval" value="40"></div>
+    </div>
+
+    <div class="checkbox-row"><input type="checkbox" id="presence_window_enabled"><label for="presence_window_enabled">Ogranicz do okna czasowego (harmonogram)</label></div>
+    <div class="optional-content" id="presenceWindowContent">
+      <div class="field-row">
+        <div class="field"><label>Początek (HH:MM albo sunset/sunrise ± minuty)</label><input type="text" id="presence_window_start" placeholder="np. sunset"></div>
+        <div class="field"><label>Koniec</label><input type="text" id="presence_window_end" placeholder="np. 23:30"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="save-bar">
+  <button type="button" id="saveBtn">Zapisz automatyzacje</button>
+  <div id="saveMessage"></div>
+</div>
+
+<script>
+let context = { tuya_devices: [], virtual_inputs: [] };
+
+// Autoryzacja tylko dla zapisu (POST) - hasło trzymane WYŁĄCZNIE w pamięci
+// karty przeglądarki, nigdy w localStorage/sessionStorage (tak samo jak /config).
+let authHeader = null;
+
+async function authorizedFetch(url, options = {}) {
+  if (!authHeader) {
+    const pass = prompt('Zapis automatyzacji wymaga hasła administratora:');
+    if (pass === null) throw new Error('Anulowano');
+    authHeader = 'Basic ' + btoa(':' + pass);
+  }
+  const headers = Object.assign({}, options.headers, { 'Authorization': authHeader });
+  const resp = await fetch(url, Object.assign({}, options, { headers }));
+  if (resp.status === 401) authHeader = null;
+  return resp;
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ------------------------------------------------------------------
+// Sceny
+// ------------------------------------------------------------------
+const SCENE_ACTION_LABELS = {
+  tuya_on: 'Włącz urządzenie Tuya',
+  tuya_off: 'Wyłącz urządzenie Tuya',
+  tuya_on_for_duration: 'Włącz urządzenie Tuya na czas',
+  satel_output: 'Ustaw wyjście Satela',
+  satel_virtual_input: 'Wywołaj wirtualne wejście',
+  satel_arm: 'Uzbrój strefę(y)',
+  satel_disarm: 'Rozbrój strefę(y)',
+  delay: 'Opóźnienie (sekundy)',
+};
+const SCENE_ACTION_REQUIRED = {
+  tuya_on: ['device'], tuya_off: ['device'], tuya_on_for_duration: ['device', 'duration_seconds'],
+  satel_output: ['output_number'], satel_virtual_input: ['virtual_input'],
+  satel_arm: [], satel_disarm: [], delay: ['seconds'],
+};
+
+function deviceOptionsHtml(selected) {
+  if (context.tuya_devices.length === 0) {
+    return `<option value="">(brak urządzeń Tuya skonfigurowanych w config.yaml)</option>`;
+  }
+  return context.tuya_devices.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+}
+
+function getSceneNames() {
+  return Array.from(document.querySelectorAll('#scenesContainer .scene-name')).map(el => el.value.trim()).filter(Boolean);
+}
+function sceneOptionsHtml(selected) {
+  const names = getSceneNames();
+  const placeholder = `<option value="">${names.length ? '(wybierz scenę)' : '(brak scen - dodaj ją wyżej)'}</option>`;
+  return placeholder + names.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+}
+
+function refreshEmptyHints() {
+  document.getElementById('scenesEmptyHint').style.display =
+    document.querySelectorAll('#scenesContainer .sub-card').length ? 'none' : '';
+  document.getElementById('rulesEmptyHint').style.display =
+    document.querySelectorAll('#motionRulesContainer .sub-card').length ? 'none' : '';
+}
+
+function refreshDependentDropdowns() {
+  document.querySelectorAll('#scenesContainer .action-row').forEach(row => {
+    const sel = row.querySelector('.af-device');
+    if (sel) { const cur = sel.value; sel.innerHTML = deviceOptionsHtml(cur); sel.value = cur; }
+  });
+  document.querySelectorAll('#motionRulesContainer .sub-card').forEach(card => {
+    const deviceSel = card.querySelector('.mr-target-device');
+    const curDevice = deviceSel.value; deviceSel.innerHTML = deviceOptionsHtml(curDevice); deviceSel.value = curDevice;
+    const sceneSel = card.querySelector('.mr-scene');
+    const curScene = sceneSel.value; sceneSel.innerHTML = sceneOptionsHtml(curScene); sceneSel.value = curScene;
+    const escSel = card.querySelector('.mr-esc-scene');
+    const curEsc = escSel.value; escSel.innerHTML = sceneOptionsHtml(curEsc); escSel.value = curEsc;
+  });
+  refreshEmptyHints();
+}
+
+function renderActionFields(fieldsEl, type, initial) {
+  initial = initial || {};
+  if (type === 'tuya_on' || type === 'tuya_off' || type === 'tuya_on_for_duration') {
+    let html = `<select class="af-device">${deviceOptionsHtml(initial.device)}</select>`;
+    if (type === 'tuya_on_for_duration') {
+      html += `<input type="number" class="af-duration" placeholder="czas (s)" value="${initial.duration_seconds || ''}">`;
+    }
+    if (type !== 'tuya_off') {
+      html += `<input type="number" class="af-dimmer" placeholder="jasność % (opcjonalnie)" value="${initial.dimmer_level_percent ?? ''}">`;
+    }
+    fieldsEl.innerHTML = html;
+  } else if (type === 'satel_output') {
+    fieldsEl.innerHTML = `
+      <input type="number" class="af-output-number" placeholder="nr wyjścia" value="${initial.output_number ?? ''}">
+      <select class="af-state">
+        <option value="true" ${initial.state !== false ? 'selected' : ''}>włącz</option>
+        <option value="false" ${initial.state === false ? 'selected' : ''}>wyłącz</option>
+      </select>`;
+  } else if (type === 'satel_virtual_input') {
+    fieldsEl.innerHTML = `<input type="text" class="af-vinput" list="virtualInputsList" placeholder="nazwa wirtualnego wejścia" value="${escapeHtml(initial.virtual_input || '')}">`;
+  } else if (type === 'satel_arm') {
+    fieldsEl.innerHTML = `<input type="number" class="af-mode" placeholder="tryb (0 domyślny, opcjonalnie)" value="${initial.mode ?? ''}">`;
+  } else if (type === 'satel_disarm') {
+    fieldsEl.innerHTML = `<span style="color: var(--muted); font-size: 13px;">brak dodatkowych pól</span>`;
+  } else if (type === 'delay') {
+    fieldsEl.innerHTML = `<input type="number" step="0.1" class="af-seconds" placeholder="sekundy" value="${initial.seconds ?? ''}">`;
+  }
+}
+
+function addActionRow(actionsEl, initial) {
+  initial = initial || {};
+  const row = document.createElement('div');
+  row.className = 'action-row repeatable-row';
+  const type = initial.type || 'tuya_on';
+  row.innerHTML = `
+    <select class="action-type" style="max-width: 220px;">
+      ${Object.entries(SCENE_ACTION_LABELS).map(([v, l]) => `<option value="${v}" ${v === type ? 'selected' : ''}>${l}</option>`).join('')}
+    </select>
+    <span class="action-fields"></span>
+    <button type="button" class="row-remove">✕</button>`;
+  const fieldsEl = row.querySelector('.action-fields');
+  renderActionFields(fieldsEl, type, initial);
+  row.querySelector('.action-type').addEventListener('change', (e) => renderActionFields(fieldsEl, e.target.value));
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  actionsEl.appendChild(row);
+}
+
+function addSceneCard(initial) {
+  initial = initial || {};
+  const container = document.getElementById('scenesContainer');
+  const card = document.createElement('div');
+  card.className = 'sub-card';
+  card.innerHTML = `
+    <div class="sub-card-header">
+      <input type="text" class="scene-name" placeholder="nazwa sceny (np. wykryto_intruza)" style="flex:1;">
+      <button type="button" class="row-remove">✕ usuń scenę</button>
+    </div>
+    <div class="scene-actions"></div>
+    <button type="button" class="secondary add-row-btn add-action-btn">+ Dodaj akcję</button>`;
+  card.querySelector('.scene-name').value = initial.name || '';
+  card.querySelector('.scene-name').addEventListener('input', refreshDependentDropdowns);
+  card.querySelector('.row-remove').addEventListener('click', () => { card.remove(); refreshDependentDropdowns(); });
+  const actionsEl = card.querySelector('.scene-actions');
+  card.querySelector('.add-action-btn').addEventListener('click', () => addActionRow(actionsEl));
+  (initial.actions || []).forEach(a => addActionRow(actionsEl, a));
+  if (!initial.actions || initial.actions.length === 0) addActionRow(actionsEl);
+  container.appendChild(card);
+  refreshEmptyHints();
+}
+document.getElementById('addSceneBtn').addEventListener('click', () => { addSceneCard(); refreshDependentDropdowns(); });
+
+function collectScenes() {
+  return Array.from(document.querySelectorAll('#scenesContainer .sub-card')).map(card => ({
+    name: card.querySelector('.scene-name').value.trim(),
+    actions: Array.from(card.querySelectorAll('.action-row')).map(row => {
+      const type = row.querySelector('.action-type').value;
+      const f = row.querySelector('.action-fields');
+      const get = (cls) => { const el = f.querySelector(cls); return el ? el.value.trim() : ''; };
+      const action = { type };
+      if (type === 'tuya_on' || type === 'tuya_off' || type === 'tuya_on_for_duration') {
+        action.device = get('.af-device');
+        if (type === 'tuya_on_for_duration') action.duration_seconds = get('.af-duration');
+        if (type !== 'tuya_off') action.dimmer_level_percent = get('.af-dimmer');
+      } else if (type === 'satel_output') {
+        action.output_number = get('.af-output-number');
+        action.state = get('.af-state') !== 'false';
+      } else if (type === 'satel_virtual_input') {
+        action.virtual_input = get('.af-vinput');
+      } else if (type === 'satel_arm') {
+        action.mode = get('.af-mode');
+      } else if (type === 'delay') {
+        action.seconds = get('.af-seconds');
+      }
+      return action;
+    }),
+  }));
+}
+
+// ------------------------------------------------------------------
+// Reguły ruchu
+// ------------------------------------------------------------------
+function addMotionRuleCard(initial) {
+  initial = initial || {};
+  const window_ = initial.time_window || {};
+  const escalation = initial.escalation || {};
+  const actionKind = initial.scene ? 'scene' : 'device';
+  const container = document.getElementById('motionRulesContainer');
+  const card = document.createElement('div');
+  card.className = 'sub-card';
+  card.innerHTML = `
+    <div class="sub-card-header">
+      <b style="color: var(--muted); font-size: 13px;">Reguła ruchu</b>
+      <button type="button" class="row-remove">✕ usuń regułę</button>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Numer wejścia w Satelu (naruszenie wywoła regułę)</label>
+        <input type="number" class="mr-zone" value="${initial.zone_number ?? ''}"></div>
+      <div class="field"><label>Akcja</label>
+        <select class="mr-action-kind">
+          <option value="device" ${actionKind === 'device' ? 'selected' : ''}>Włącz urządzenie na czas</option>
+          <option value="scene" ${actionKind === 'scene' ? 'selected' : ''}>Uruchom scenę</option>
+        </select></div>
+    </div>
+    <div class="field-row mr-device-fields">
+      <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${deviceOptionsHtml(initial.target_device)}</select></div>
+      <div class="field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" value="${initial.duration_seconds ?? ''}"></div>
+      <div class="field"><label>Jasność % (ściemniacz, opcjonalnie)</label><input type="number" class="mr-dimmer" value="${initial.dimmer_level_percent ?? ''}"></div>
+    </div>
+    <div class="field-row mr-scene-fields">
+      <div class="field"><label>Scena</label><select class="mr-scene">${sceneOptionsHtml(initial.scene)}</select></div>
+    </div>
+
+    <div class="checkbox-row"><input type="checkbox" class="mr-window-enabled" ${window_.start ? 'checked' : ''}>
+      <label>Harmonogram - reguła aktywna tylko w oknie czasowym</label></div>
+    <div class="optional-content mr-window-fields ${window_.start ? 'show' : ''}">
+      <div class="field-row">
+        <div class="field"><label>Początek (HH:MM albo sunset/sunrise ± minuty)</label>
+          <input type="text" class="mr-window-start" placeholder="np. 22:00 albo sunset-15" value="${escapeHtml(window_.start || '')}"></div>
+        <div class="field"><label>Koniec</label>
+          <input type="text" class="mr-window-end" placeholder="np. 06:00" value="${escapeHtml(window_.end || '')}"></div>
+      </div>
+    </div>
+
+    <div class="checkbox-row"><input type="checkbox" class="mr-escalation-enabled" ${escalation.escalated_scene ? 'checked' : ''}>
+      <label>Eskalacja - powtarzające się naruszenia wywołują mocniejszą scenę</label></div>
+    <div class="optional-content mr-escalation-fields ${escalation.escalated_scene ? 'show' : ''}">
+      <div class="field-row">
+        <div class="field"><label>Próg (liczba naruszeń)</label><input type="number" class="mr-esc-threshold" value="${escalation.threshold_count ?? 3}"></div>
+        <div class="field"><label>W oknie (sekundy)</label><input type="number" class="mr-esc-window" value="${escalation.window_seconds ?? 120}"></div>
+        <div class="field"><label>Wywołaj scenę</label><select class="mr-esc-scene">${sceneOptionsHtml(escalation.escalated_scene)}</select></div>
+      </div>
+    </div>`;
+
+  const deviceFields = card.querySelector('.mr-device-fields');
+  const sceneFields = card.querySelector('.mr-scene-fields');
+  function syncActionKind() {
+    const kind = card.querySelector('.mr-action-kind').value;
+    deviceFields.style.display = kind === 'device' ? '' : 'none';
+    sceneFields.style.display = kind === 'scene' ? '' : 'none';
+  }
+  card.querySelector('.mr-action-kind').addEventListener('change', syncActionKind);
+  syncActionKind();
+
+  card.querySelector('.mr-window-enabled').addEventListener('change', (e) => {
+    card.querySelector('.mr-window-fields').classList.toggle('show', e.target.checked);
+  });
+  card.querySelector('.mr-escalation-enabled').addEventListener('change', (e) => {
+    card.querySelector('.mr-escalation-fields').classList.toggle('show', e.target.checked);
+  });
+  card.querySelector('.row-remove').addEventListener('click', () => { card.remove(); refreshEmptyHints(); });
+
+  container.appendChild(card);
+  refreshEmptyHints();
+}
+document.getElementById('addMotionRuleBtn').addEventListener('click', () => { addMotionRuleCard(); refreshDependentDropdowns(); });
+
+function collectMotionRules() {
+  return Array.from(document.querySelectorAll('#motionRulesContainer .sub-card')).map(card => {
+    const kind = card.querySelector('.mr-action-kind').value;
+    const rule = { zone_number: card.querySelector('.mr-zone').value.trim() };
+    if (kind === 'scene') {
+      rule.scene = card.querySelector('.mr-scene').value.trim();
+    } else {
+      rule.target_device = card.querySelector('.mr-target-device').value.trim();
+      rule.duration_seconds = card.querySelector('.mr-duration').value.trim();
+      rule.dimmer_level_percent = card.querySelector('.mr-dimmer').value.trim();
+    }
+    rule.time_window = {
+      enabled: card.querySelector('.mr-window-enabled').checked,
+      start: card.querySelector('.mr-window-start').value.trim(),
+      end: card.querySelector('.mr-window-end').value.trim(),
+    };
+    rule.escalation = {
+      enabled: card.querySelector('.mr-escalation-enabled').checked,
+      threshold_count: card.querySelector('.mr-esc-threshold').value.trim(),
+      window_seconds: card.querySelector('.mr-esc-window').value.trim(),
+      escalated_scene: card.querySelector('.mr-esc-scene').value.trim(),
+    };
+    return rule;
+  });
+}
+
+// ------------------------------------------------------------------
+// Symulacja obecności
+// ------------------------------------------------------------------
+function renderPresenceDevices(selectedDevices) {
+  const container = document.getElementById('presenceDevices');
+  if (context.tuya_devices.length === 0) {
+    container.innerHTML = `<span class="empty-hint">Brak urządzeń Tuya skonfigurowanych w config.yaml.</span>`;
+    return;
+  }
+  container.innerHTML = context.tuya_devices.map(name => `
+    <label><input type="checkbox" class="presence-device" value="${escapeHtml(name)}" ${selectedDevices.includes(name) ? 'checked' : ''}> ${escapeHtml(name)}</label>
+  `).join('');
+}
+
+function populatePresence(ps) {
+  ps = ps || {};
+  document.getElementById('presence_enabled').checked = !!ps.enabled;
+  document.getElementById('presenceContent').classList.toggle('show', !!ps.enabled);
+  renderPresenceDevices(ps.devices || []);
+  document.getElementById('presence_min_interval').value = ps.min_interval_minutes ?? 10;
+  document.getElementById('presence_max_interval').value = ps.max_interval_minutes ?? 40;
+  const window_ = ps.window || {};
+  document.getElementById('presence_window_enabled').checked = !!window_.start;
+  document.getElementById('presenceWindowContent').classList.toggle('show', !!window_.start);
+  document.getElementById('presence_window_start').value = window_.start || '';
+  document.getElementById('presence_window_end').value = window_.end || '';
+}
+
+document.getElementById('presence_enabled').addEventListener('change', (e) => {
+  document.getElementById('presenceContent').classList.toggle('show', e.target.checked);
+});
+document.getElementById('presence_window_enabled').addEventListener('change', (e) => {
+  document.getElementById('presenceWindowContent').classList.toggle('show', e.target.checked);
+});
+
+function collectPresence() {
+  return {
+    enabled: document.getElementById('presence_enabled').checked,
+    devices: Array.from(document.querySelectorAll('.presence-device:checked')).map(el => el.value),
+    min_interval_minutes: document.getElementById('presence_min_interval').value.trim(),
+    max_interval_minutes: document.getElementById('presence_max_interval').value.trim(),
+    window: {
+      enabled: document.getElementById('presence_window_enabled').checked,
+      start: document.getElementById('presence_window_start').value.trim(),
+      end: document.getElementById('presence_window_end').value.trim(),
+    },
+  };
+}
+
+// ------------------------------------------------------------------
+// Wczytanie / zapis
+// ------------------------------------------------------------------
+async function loadAll() {
+  context = await (await fetch('/api/config/automation-context')).json();
+
+  let list = document.getElementById('virtualInputsList');
+  if (!list) {
+    list = document.createElement('datalist');
+    list.id = 'virtualInputsList';
+    document.body.appendChild(list);
+  }
+  list.innerHTML = context.virtual_inputs.map(n => `<option value="${escapeHtml(n)}">`).join('');
+
+  const data = await (await fetch('/api/config/automations')).json();
+  (data.scenes || []).forEach(s => addSceneCard(s));
+  (data.motion_rules || []).forEach(r => addMotionRuleCard(r));
+  populatePresence(data.presence_simulation);
+  refreshDependentDropdowns();
+}
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  const msgEl = document.getElementById('saveMessage');
+  msgEl.className = '';
+  msgEl.style.display = '';
+
+  const payload = {
+    scenes: collectScenes(),
+    motion_rules: collectMotionRules(),
+    presence_simulation: collectPresence(),
+  };
+
+  try {
+    const resp = await authorizedFetch('/api/config/automations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      msgEl.className = 'error';
+      msgEl.innerHTML = '❌ ' + (data.error || 'Błąd zapisu') +
+        (data.details ? '<ul>' + data.details.map(d => `<li>${escapeHtml(d)}</li>`).join('') + '</ul>' : '');
+    } else {
+      msgEl.className = 'ok';
+      msgEl.textContent = `✅ Zapisano (${data.saved.scenes} scen, ${data.saved.motion_rules} reguł ruchu). ${data.message}`;
+    }
+  } catch (e) {
+    msgEl.className = 'error';
+    msgEl.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  }
+});
+
+loadAll();
+</script>
+</body>
+</html>

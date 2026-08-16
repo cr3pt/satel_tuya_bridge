@@ -6,7 +6,8 @@ import pytest
 import yaml
 
 from dashboard.setup import (
-    build_config_dict, validate, draft_path_for, load_draft, save_draft, delete_draft,
+    build_config_dict, validate, build_automations_dict, validate_automations,
+    draft_path_for, load_draft, save_draft, delete_draft,
 )
 
 
@@ -96,10 +97,19 @@ class TestBuildConfigDict:
 
     def test_advanced_sections_get_empty_safe_defaults(self):
         config = build_config_dict(VALID_FORM)
-        assert config["reguły_ruchu"] == []
-        assert config["scenes"] == []
         assert config["alarm_rules"] == []
-        assert config["presence_simulation"] == {"enabled": False}
+        assert config["automations_file"] == "automations.yaml"
+        # Sceny/reguły_ruchu/presence_simulation NIE są tutaj - patrz
+        # build_automations_dict (automations.yaml), testowane osobno niżej.
+        assert "scenes" not in config
+        assert "reguły_ruchu" not in config
+        assert "presence_simulation" not in config
+
+    def test_automations_dict_has_empty_safe_defaults(self):
+        automations = build_automations_dict(VALID_FORM)
+        assert automations["reguły_ruchu"] == []
+        assert automations["scenes"] == []
+        assert automations["presence_simulation"] == {"enabled": False}
 
     def test_location_omitted_when_not_provided(self):
         config = build_config_dict(VALID_FORM)
@@ -333,10 +343,74 @@ class TestValidationAdvanced:
         assert any("Wirtualne wejście" in e for e in errors)
 
 
+class TestPresenceSimulation:
+    """presence_simulation nie jest częścią formularza kreatora, ale JEST
+    częścią panelu /automations - build_automations_dict/validate_automations
+    muszą obsłużyć ten sam kształt danych, co scenesy/reguły ruchu."""
+
+    def test_disabled_presence_needs_no_fields(self):
+        form = {"presence_simulation": {"enabled": False}}
+        assert validate_automations(form) == []
+        assert build_automations_dict(form)["presence_simulation"] == {"enabled": False}
+
+    def test_enabled_presence_without_devices_is_error(self):
+        form = {"presence_simulation": {"enabled": True, "devices": []}}
+        errors = validate_automations(form)
+        assert any("wybierz co najmniej jedno urządzenie" in e for e in errors)
+
+    def test_enabled_presence_with_devices_builds_correctly(self):
+        form = {"presence_simulation": {
+            "enabled": True, "devices": ["gniazdko_salon", "swiatlo_korytarz"],
+            "min_interval_minutes": "5", "max_interval_minutes": "15",
+        }}
+        assert validate_automations(form) == []
+        built = build_automations_dict(form)["presence_simulation"]
+        assert built == {
+            "enabled": True, "devices": ["gniazdko_salon", "swiatlo_korytarz"],
+            "min_interval_minutes": 5, "max_interval_minutes": 15,
+        }
+
+    def test_presence_window_included_when_enabled_and_complete(self):
+        form = {"presence_simulation": {
+            "enabled": True, "devices": ["x"],
+            "window": {"enabled": True, "start": "sunset", "end": "23:30"},
+        }}
+        built = build_automations_dict(form)["presence_simulation"]
+        assert built["window"] == {"start": "sunset", "end": "23:30"}
+
+    def test_presence_window_omitted_when_disabled(self):
+        form = {"presence_simulation": {
+            "enabled": True, "devices": ["x"],
+            "window": {"enabled": False, "start": "sunset", "end": "23:30"},
+        }}
+        built = build_automations_dict(form)["presence_simulation"]
+        assert "window" not in built
+
+    def test_incomplete_presence_window_is_error(self):
+        form = {"presence_simulation": {
+            "enabled": True, "devices": ["x"], "window": {"enabled": True, "start": "sunset", "end": ""},
+        }}
+        errors = validate_automations(form)
+        assert any("harmonogram" in e for e in errors)
+
+    def test_min_interval_greater_than_max_is_error(self):
+        form = {"presence_simulation": {
+            "enabled": True, "devices": ["x"], "min_interval_minutes": "60", "max_interval_minutes": "10",
+        }}
+        errors = validate_automations(form)
+        assert any("minimalny odstęp nie może być większy" in e for e in errors)
+
+    def test_default_intervals_when_not_provided(self):
+        form = {"presence_simulation": {"enabled": True, "devices": ["x"]}}
+        built = build_automations_dict(form)["presence_simulation"]
+        assert built["min_interval_minutes"] == 10
+        assert built["max_interval_minutes"] == 40
+
+
 class TestBuildConfigDictAdvanced:
     def test_scenes_built_with_typed_fields(self):
-        config = build_config_dict(FORM_WITH_ADVANCED)
-        scenes = config["scenes"]
+        automations = build_automations_dict(FORM_WITH_ADVANCED)
+        scenes = automations["scenes"]
         assert len(scenes) == 1
         assert scenes[0]["name"] == "wykryto_intruza"
         actions = scenes[0]["actions"]
@@ -346,8 +420,8 @@ class TestBuildConfigDictAdvanced:
         assert actions[3] == {"type": "satel_virtual_input", "virtual_input": "motion_hall_camera"}
 
     def test_motion_rules_built_with_harmonogram_and_escalation(self):
-        config = build_config_dict(FORM_WITH_ADVANCED)
-        rules = config["reguły_ruchu"]
+        automations = build_automations_dict(FORM_WITH_ADVANCED)
+        rules = automations["reguły_ruchu"]
         assert len(rules) == 1
         rule = rules[0]
         assert rule["source"] == "satel_zone"
@@ -363,8 +437,8 @@ class TestBuildConfigDictAdvanced:
         form = {**FORM_WITH_ADVANCED, "motion_rules": [
             {"zone_number": "14", "scene": "wykryto_intruza", "time_window": {}, "escalation": {}},
         ]}
-        config = build_config_dict(form)
-        rule = config["reguły_ruchu"][0]
+        automations = build_automations_dict(form)
+        rule = automations["reguły_ruchu"][0]
         assert rule["scene"] == "wykryto_intruza"
         assert "target_device" not in rule
         assert "time_window" not in rule
@@ -383,25 +457,29 @@ class TestBuildConfigDictAdvanced:
             "escalation": {"enabled": False, "threshold_count": "3", "window_seconds": "120", "escalated_scene": "x"},
         }
         form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
-        config = build_config_dict(form)
-        built = config["reguły_ruchu"][0]
+        automations = build_automations_dict(form)
+        built = automations["reguły_ruchu"][0]
         assert "time_window" not in built
         assert "escalation" not in built
 
     def test_advanced_result_is_yaml_serializable(self):
         config = build_config_dict(FORM_WITH_ADVANCED)
+        automations = build_automations_dict(FORM_WITH_ADVANCED)
         dumped = yaml.safe_dump(config, allow_unicode=True, sort_keys=False)
+        dumped_automations = yaml.safe_dump(automations, allow_unicode=True, sort_keys=False)
         reloaded = yaml.safe_load(dumped)
-        assert reloaded["scenes"][0]["name"] == "wykryto_intruza"
+        reloaded_automations = yaml.safe_load(dumped_automations)
+        assert reloaded["satel"]["host"] == "192.168.1.10"
+        assert reloaded_automations["scenes"][0]["name"] == "wykryto_intruza"
 
     def test_saved_advanced_config_is_loadable_and_runs_scene_runner(self):
-        """Sprawdza integrację end-to-end: config z kreatora (sceny +
-        reguła z harmonogramem/eskalacją) da się wczytać przez BridgeConfig
-        i podać wprost do SceneRunner bez żadnych transformacji."""
+        """Sprawdza integrację end-to-end: automations.yaml z kreatora
+        (sceny + reguła z harmonogramem/eskalacją) da się podać wprost do
+        SceneRunner bez żadnych transformacji."""
         from bridge.scenes import SceneRunner
 
-        config = build_config_dict(FORM_WITH_ADVANCED)
-        dumped = yaml.safe_dump(config, allow_unicode=True, sort_keys=False)
+        automations = build_automations_dict(FORM_WITH_ADVANCED)
+        dumped = yaml.safe_dump(automations, allow_unicode=True, sort_keys=False)
         reloaded = yaml.safe_load(dumped)
         runner = SceneRunner(reloaded["scenes"], tuya=None, satel=None, satel_virtual_inputs=None)
         assert runner.exists("wykryto_intruza")

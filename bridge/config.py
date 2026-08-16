@@ -8,6 +8,13 @@ from typing import Any
 import yaml
 
 
+_AUTOMATIONS_DEFAULTS = {
+    "scenes": [],
+    "reguły_ruchu": [],
+    "presence_simulation": {"enabled": False},
+}
+
+
 @dataclass
 class BridgeConfig:
     raw: dict[str, Any]
@@ -17,6 +24,12 @@ class BridgeConfig:
     # config.yaml zostaje w pełni ręcznie edytowalny, z komentarzami,
     # bez ryzyka, że zapis z UI je wykasuje.
     sensors_file: pathlib.Path = field(default=None)
+    # Analogicznie - sceny/reguły ruchu (harmonogram+eskalacja)/symulacja
+    # obecności trzymane OSOBNO, żeby panel /automations mógł je edytować
+    # bezpiecznie (patrz dashboard/app.py). Plik opcjonalny: jeśli nie
+    # istnieje, wartości brane są wprost z config.yaml (wstecznie zgodne
+    # ze starszymi configami, gdzie te sekcje były wpisane bezpośrednio).
+    automations_file: pathlib.Path = field(default=None)
 
     @classmethod
     def load(cls, path: str | pathlib.Path) -> "BridgeConfig":
@@ -28,6 +41,23 @@ class BridgeConfig:
             )
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
+
+        # Wczytanie automations.yaml MUSI nastąpić PRZED _validate() -
+        # "reguły_ruchu" jest wymagane jako klucz najwyższego poziomu, a w
+        # nowo generowanych configach (kreator) już go tam nie ma wprost,
+        # tylko w automations.yaml (albo dostaje domyślną pustą wartość
+        # poniżej, jeśli nie ma go NIGDZIE).
+        automations_filename = data.get("automations_file", "automations.yaml")
+        automations_path = pathlib.Path(automations_filename)
+        if not automations_path.is_absolute():
+            automations_path = path.parent / automations_path
+        automations = cls._load_automations_file(automations_path)
+        for key, default in _AUTOMATIONS_DEFAULTS.items():
+            if key in automations:
+                data[key] = automations[key]
+            else:
+                data.setdefault(key, default)
+
         cls._validate(data)
 
         # Ścieżka do sensors.yaml - względna wobec katalogu config.yaml,
@@ -40,7 +70,7 @@ class BridgeConfig:
         sensors = cls._load_sensors_file(sensors_path)
         data.setdefault("ebus", {})["sensors"] = sensors
 
-        return cls(raw=data, sensors_file=sensors_path)
+        return cls(raw=data, sensors_file=sensors_path, automations_file=automations_path)
 
     @staticmethod
     def _load_sensors_file(sensors_path: pathlib.Path) -> list[dict]:
@@ -49,6 +79,13 @@ class BridgeConfig:
         with open(sensors_path, "r", encoding="utf-8") as f:
             content = yaml.safe_load(f) or {}
         return content.get("sensors", [])
+
+    @staticmethod
+    def _load_automations_file(automations_path: pathlib.Path) -> dict:
+        if not automations_path.exists():
+            return {}
+        with open(automations_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
 
     @staticmethod
     def _validate(data: dict[str, Any]) -> None:
