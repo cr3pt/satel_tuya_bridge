@@ -1,17 +1,46 @@
 """Kreator pierwszej konfiguracji - budowanie config.yaml/sensors.yaml
 z danych wypełnionych w formularzu webowym (/setup).
 
-Pokrywa PODSTAWOWĄ konfigurację potrzebną do uruchomienia bridge'a
-(Satel, Tuya lokalnie, eBUS/MQTT, hasło panelu, powiadomienia,
-opcjonalnie Home Assistant/UniFi Protect/Tuya cloud). Rzeczy bardziej
-zaawansowane (sceny, harmonogramy, eskalacja, automatyka kotła, alarmy
-progowe) dostają puste/domyślne wartości - dodaje się je później ręcznie
-w config.yaml (plik zostaje w pełni edytowalny, to nie jest jednorazowy
-generator) albo przez panel (/config - lista czujników eBUS).
+Wieloetapowy kreator (/setup): każdy krok to osobna "strona" w
+templates/setup.html, przechodzona przyciskiem "Dalej". Po każdym takim
+kliknięciu cały dotychczasowy stan formularza trafia do pliku roboczego
+(patrz save_draft/load_draft niżej) - dzięki temu konfigurację da się
+przerwać i wznowić później (np. inna sesja przeglądarki), zanim finalny
+config.yaml w ogóle powstanie.
+
+Pokrywa PODSTAWOWĄ konfigurację potrzebną do uruchomienia bridge'a (Satel,
+Tuya lokalnie, eBUS/MQTT, hasło panelu, powiadomienia, opcjonalnie Home
+Assistant/UniFi Protect/Tuya cloud) ORAZ bardziej zaawansowane rzeczy
+zbudowane na wspólnym fundamencie scen (bridge/scenes.py): sceny,
+harmonogramy czasowe (time_window) i eskalację przy powtarzających się
+naruszeniach - obie ostatnie jako pola reguł ruchu. Rzeczy, których
+kreator wciąż nie obsługuje (reguły_kamera_alarm, reguły_swiatlo_do_satela,
+boiler_rules, alarm_rules) dostają puste/domyślne wartości - dodaje się je
+później ręcznie w config.yaml (plik zostaje w pełni edytowalny, to nie
+jest jednorazowy generator) albo przez panel (/config - lista czujników
+eBUS).
 """
 from __future__ import annotations
 
+import json
+import pathlib
+
 from werkzeug.security import generate_password_hash
+
+DRAFT_FILENAME = ".setup_draft.json"
+
+# Typy akcji scen obsługiwane przez SceneRunner (bridge/scenes.py) i pola,
+# które KAŻDA z nich wymaga - używane do walidacji formularza kreatora.
+SCENE_ACTION_REQUIRED_FIELDS = {
+    "tuya_on": ["device"],
+    "tuya_off": ["device"],
+    "tuya_on_for_duration": ["device", "duration_seconds"],
+    "satel_output": ["output_number"],
+    "satel_virtual_input": ["virtual_input"],
+    "satel_arm": [],
+    "satel_disarm": [],
+    "delay": ["seconds"],
+}
 
 
 def validate(form: dict) -> list[str]:
@@ -36,14 +65,153 @@ def validate(form: dict) -> list[str]:
         if not device.get("name") or not device.get("id") or not device.get("ip") or not device.get("local_key"):
             errors.append(f"Urządzenie Tuya #{i + 1}: nazwa, ID, adres IP i local_key są wymagane")
 
+    for i, vi in enumerate(form.get("virtual_inputs", [])):
+        if not vi.get("name") or not vi.get("number") or not vi.get("key"):
+            errors.append(f"Wirtualne wejście #{i + 1}: nazwa, numer i klucz z DLOADX są wymagane")
+
+    scene_names = {s.get("name", "").strip() for s in form.get("scenes", []) if s.get("name", "").strip()}
+    errors.extend(_validate_scenes(form.get("scenes", [])))
+    errors.extend(_validate_motion_rules(form.get("motion_rules", []), scene_names))
+
     return errors
+
+
+def _validate_scenes(scenes: list[dict]) -> list[str]:
+    errors = []
+    seen_names = set()
+    for i, scene in enumerate(scenes):
+        label = f"Scena #{i + 1}"
+        name = (scene.get("name") or "").strip()
+        if not name:
+            errors.append(f"{label}: nazwa jest wymagana")
+        elif name in seen_names:
+            errors.append(f"{label}: nazwa '{name}' powtarza się - nazwy scen muszą być unikalne")
+        else:
+            seen_names.add(name)
+
+        actions = scene.get("actions", [])
+        if not actions:
+            errors.append(f"{label} ('{name or '?'}'): musi mieć co najmniej jedną akcję")
+        for j, action in enumerate(actions):
+            action_label = f"{label} ('{name or '?'}'), akcja #{j + 1}"
+            action_type = action.get("type")
+            if action_type not in SCENE_ACTION_REQUIRED_FIELDS:
+                errors.append(f"{action_label}: nieznany typ akcji '{action_type}'")
+                continue
+            for field in SCENE_ACTION_REQUIRED_FIELDS[action_type]:
+                if action.get(field) in (None, ""):
+                    errors.append(f"{action_label} ({action_type}): pole '{field}' jest wymagane")
+    return errors
+
+
+def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str]:
+    errors = []
+    for i, rule in enumerate(rules):
+        label = f"Reguła ruchu #{i + 1}"
+        if not rule.get("zone_number"):
+            errors.append(f"{label}: numer wejścia Satela jest wymagany")
+
+        uses_scene = bool((rule.get("scene") or "").strip())
+        if uses_scene:
+            scene_name = rule["scene"].strip()
+            if scene_name not in scene_names:
+                errors.append(f"{label}: wybrana scena '{scene_name}' nie istnieje wśród zdefiniowanych scen")
+        else:
+            if not rule.get("target_device"):
+                errors.append(f"{label}: wybierz urządzenie docelowe albo scenę")
+            if not rule.get("duration_seconds"):
+                errors.append(f"{label}: czas włączenia (sekundy) jest wymagany")
+
+        window = rule.get("time_window") or {}
+        if window.get("enabled"):
+            if not window.get("start") or not window.get("end"):
+                errors.append(f"{label}: harmonogram - podaj początek i koniec okna")
+
+        escalation = rule.get("escalation") or {}
+        if escalation.get("enabled"):
+            if not escalation.get("threshold_count"):
+                errors.append(f"{label}: eskalacja - liczba naruszeń jest wymagana")
+            if not escalation.get("window_seconds"):
+                errors.append(f"{label}: eskalacja - okno czasowe (sekundy) jest wymagane")
+            escalated_scene = (escalation.get("escalated_scene") or "").strip()
+            if not escalated_scene:
+                errors.append(f"{label}: eskalacja - wybierz scenę wywoływaną po przekroczeniu progu")
+            elif escalated_scene not in scene_names:
+                errors.append(f"{label}: eskalacja - scena '{escalated_scene}' nie istnieje wśród zdefiniowanych scen")
+    return errors
+
+
+def _build_scene_action(action: dict) -> dict:
+    action_type = action["type"]
+    built = {"type": action_type}
+    if action_type in ("tuya_on", "tuya_off", "tuya_on_for_duration"):
+        built["device"] = action["device"]
+        if action_type != "tuya_off" and action.get("dimmer_level_percent") not in (None, ""):
+            built["dimmer_level_percent"] = int(action["dimmer_level_percent"])
+        if action_type == "tuya_on_for_duration":
+            built["duration_seconds"] = int(action["duration_seconds"])
+    elif action_type == "satel_output":
+        built["output_number"] = int(action["output_number"])
+        built["state"] = bool(action.get("state", True))
+    elif action_type == "satel_virtual_input":
+        built["virtual_input"] = action["virtual_input"]
+    elif action_type == "satel_arm":
+        if action.get("mode") not in (None, ""):
+            built["mode"] = int(action["mode"])
+    elif action_type == "delay":
+        built["seconds"] = float(action["seconds"])
+    return built
+
+
+def _build_scenes(scenes_form: list[dict]) -> list[dict]:
+    return [
+        {
+            "name": scene["name"].strip(),
+            "actions": [_build_scene_action(a) for a in scene.get("actions", [])],
+        }
+        for scene in scenes_form
+        if (scene.get("name") or "").strip()
+    ]
+
+
+def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
+    rules = []
+    for rule in rules_form:
+        if not rule.get("zone_number"):
+            continue
+        built = {"source": "satel_zone", "zone_number": int(rule["zone_number"])}
+
+        scene_name = (rule.get("scene") or "").strip()
+        if scene_name:
+            built["scene"] = scene_name
+        else:
+            built["target_device"] = rule["target_device"]
+            built["duration_seconds"] = int(rule["duration_seconds"])
+            built["dimmer_level_percent"] = (
+                int(rule["dimmer_level_percent"]) if rule.get("dimmer_level_percent") not in (None, "") else None
+            )
+
+        window = rule.get("time_window") or {}
+        if window.get("enabled") and window.get("start") and window.get("end"):
+            built["time_window"] = {"start": window["start"].strip(), "end": window["end"].strip()}
+
+        escalation = rule.get("escalation") or {}
+        if escalation.get("enabled") and escalation.get("escalated_scene"):
+            built["escalation"] = {
+                "threshold_count": int(escalation["threshold_count"]),
+                "window_seconds": int(escalation["window_seconds"]),
+                "escalated_scene": escalation["escalated_scene"].strip(),
+            }
+
+        rules.append(built)
+    return rules
 
 
 def build_config_dict(form: dict) -> dict:
     """Buduje pełny słownik config.yaml z danych formularza. Pola spoza
-    formularza (sceny, alarmy progowe, itd.) dostają bezpieczne, puste
-    wartości domyślne - użytkownik dopisze je później ręcznie, jeśli
-    będzie chciał (patrz docstring modułu i README)."""
+    formularza (alarmy progowe, reguły kamer, automatyka kotła itd.) dostają
+    bezpieczne, puste wartości domyślne - użytkownik dopisze je później
+    ręcznie, jeśli będzie chciał (patrz docstring modułu i README)."""
     satel_form = form.get("satel", {})
     tuya_devices = {
         d["name"]: {
@@ -58,6 +226,11 @@ def build_config_dict(form: dict) -> dict:
     partitions = {p["name"]: int(p["number"]) for p in form.get("partitions", []) if p.get("name")}
     monitored_zones = {z["name"]: int(z["number"]) for z in form.get("monitored_zones", []) if z.get("name")}
     monitored_outputs = {o["name"]: int(o["number"]) for o in form.get("monitored_outputs", []) if o.get("name")}
+    virtual_inputs = {
+        vi["name"]: {"number": int(vi["number"]), "key": vi["key"]}
+        for vi in form.get("virtual_inputs", [])
+        if vi.get("name")
+    }
 
     config = {
         "satel": {
@@ -68,7 +241,7 @@ def build_config_dict(form: dict) -> dict:
             "virtual_inputs": {
                 "port": int(satel_form.get("virtual_inputs_port", 8888)),
                 "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}",
-                "inputs": {},
+                "inputs": virtual_inputs,
             },
             "outputs": {},
             "monitored_zones": monitored_zones,
@@ -79,10 +252,10 @@ def build_config_dict(form: dict) -> dict:
             "status_poll_interval_seconds": 30,
             "devices": tuya_devices,
         },
-        "reguły_ruchu": [],
+        "reguły_ruchu": _build_motion_rules(form.get("motion_rules", [])),
         "reguły_swiatlo_do_satela": [],
         "reguły_kamera_alarm": [],
-        "scenes": [],
+        "scenes": _build_scenes(form.get("scenes", [])),
         "alarm_rules": [],
         "boiler_rules": [],
         "presence_simulation": {"enabled": False},
@@ -151,12 +324,48 @@ def build_config_dict(form: dict) -> dict:
     return config
 
 
+def draft_path_for(config_path: pathlib.Path) -> pathlib.Path:
+    """Ścieżka do pliku roboczego kreatora - obok docelowego config.yaml,
+    ale z kropką na początku (ukryty, nigdy nie mylony z prawdziwą
+    konfiguracją)."""
+    return config_path.parent / DRAFT_FILENAME
+
+
+def load_draft(path: pathlib.Path) -> dict:
+    """Wczytuje zapisany wcześniej stan formularza. Zwraca pusty słownik,
+    jeśli pliku nie ma albo jest uszkodzony (np. przerwany zapis) - kreator
+    ma wtedy po prostu zacząć od kroku 1, zamiast się wywalić."""
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_draft(path: pathlib.Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Zapis przez plik tymczasowy + atomowa podmiana - żeby przerwany zapis
+    # (np. utrata zasilania RPi) nie zostawił uszkodzonego/pustego pliku
+    # roboczego, przez który load_draft zgubiłoby dotychczasowy postęp.
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(path)
+
+
+def delete_draft(path: pathlib.Path) -> None:
+    path.unlink(missing_ok=True)
+
+
 CONFIG_HEADER = (
     "# Wygenerowane przez kreator pierwszej konfiguracji (/setup).\n"
     "# Ten plik jest w pełni edytowalny ręcznie - kreator NIE URUCHOMI SIĘ\n"
     "# PONOWNIE, dopóki ten plik istnieje (żeby nie nadpisać Twoich zmian).\n"
     "# Pełny opis wszystkich pól, w tym tych pominiętych przez kreator\n"
-    "# (sceny, harmonogramy, eskalacja, alarmy progowe) - patrz config.example.yaml.\n\n"
+    "# (reguły_kamera_alarm, alarmy progowe, automatyka kotła) - patrz\n"
+    "# config.example.yaml.\n\n"
 )
 
 SENSORS_HEADER = (

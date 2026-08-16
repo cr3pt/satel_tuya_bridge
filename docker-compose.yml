@@ -1,0 +1,70 @@
+# Uruchomienie całości w Dockerze: dwa kontenery (bridge + panel webowy)
+# z JEDNEGO obrazu (Dockerfile), plus opcjonalny broker MQTT dla eBUS.
+# Pełna instrukcja: README.md, sekcja "Uruchomienie w Dockerze".
+#
+# Przed pierwszym startem:
+#   mkdir -p data && sudo chown 1000:1000 data
+#
+# Start:
+#   docker compose up -d --build
+#   -> otwórz http://<adres-hosta>:8090/setup i przejdź kreator
+#      (tak samo jak przy uruchomieniu bez Dockera - config.yaml
+#      wyląduje w ./data/config.yaml na hoście)
+#
+# Restart bridge'a po ręcznej zmianie ./data/config.yaml:
+#   docker compose restart bridge
+
+services:
+  bridge:
+    build: .
+    image: satel-tuya-bridge:latest
+    container_name: satel-tuya-bridge
+    working_dir: /config
+    command: ["python", "/app/main.py", "--config", "config.yaml"]
+    volumes:
+      - ./data:/config
+    environment:
+      - TZ=Europe/Warsaw
+    restart: unless-stopped
+    # Centrala Satel i urządzenia Tuya są lokalnymi urządzeniami LAN, do
+    # których bridge łączy się WYCHODZĄCO (adres skonfigurowany w
+    # config.yaml) - domyślna sieć mostkowana Dockera to obsługuje bez
+    # dodatkowej konfiguracji. Jeśli w Twojej sieci coś tego wymaga (np.
+    # discovery po multicaście), odkomentuj poniższą linię (tylko Linux):
+    # network_mode: host
+
+  dashboard:
+    build: .
+    image: satel-tuya-bridge:latest
+    container_name: satel-tuya-dashboard
+    working_dir: /config
+    command: ["python", "-m", "dashboard.app", "--config", "config.yaml", "--host", "0.0.0.0", "--port", "8090"]
+    volumes:
+      - ./data:/config
+    environment:
+      - TZ=Europe/Warsaw
+    ports:
+      - "8090:8090"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Opcjonalny lokalny broker MQTT - włącz TYLKO jeśli nie masz już
+  # brokera, na którym publikuje ebusd (najczęściej ebusd/mosquitto
+  # działają już bezpośrednio na RPi, poza Dockerem - wtedy w config.yaml
+  # wskaż `ebus.mqtt_host` na adres LAN hosta, NIE na tę usługę).
+  # Domyślnie WYŁĄCZONY - uruchom przez: docker compose --profile broker up -d
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: satel-tuya-mosquitto
+    profiles: ["broker"]
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./data/mosquitto-data:/mosquitto/data
+    restart: unless-stopped

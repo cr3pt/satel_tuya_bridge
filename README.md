@@ -32,7 +32,7 @@ pytest
 pytest --cov=bridge --cov=dashboard --cov-report=term-missing
 ```
 
-**169 testów, wszystkie przechodzą, pokrycie kodu ~71%.** Uczciwie o
+**200 testów, wszystkie przechodzą, pokrycie kodu ~73%.** Uczciwie o
 brakującym pokryciu: moduły będące cienkimi wrapperami na biblioteki
 zewnętrzne (`satel_client.py` - satel_integra, `ebus_client.py` -
 callbacki paho-mqtt, `tuya_cloud_events.py`/`unifi_protect_events.py` -
@@ -63,6 +63,9 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Alternatywa bez instalowania Pythona/zależności ręcznie - patrz sekcja
+"Uruchomienie w Dockerze" niżej.
+
 ## Konfiguracja
 
 Dwie drogi - wybierz wygodniejszą:
@@ -70,8 +73,9 @@ Dwie drogi - wybierz wygodniejszą:
 ### A) Kreator w przeglądarce (zalecane na start)
 
 Jeśli `config.yaml` jeszcze nie istnieje, panel **automatycznie
-przekierowuje** na `/setup` przy pierwszym wejściu - kreator krok po
-kroku z przyciskami otwierającymi w nowej karcie strony, których
+przekierowuje** na `/setup` przy pierwszym wejściu - kreator **podzielony
+na etapy** (przyciski Wstecz/Dalej, jeden logicznie spójny temat na
+stronę), z przyciskami otwierającymi w nowej karcie strony, których
 potrzebujesz (developer.tuya.com, ntfy.sh). Wystarczy:
 
 ```bash
@@ -83,13 +87,29 @@ kreatora. Po zapisaniu panel jest **od razu gotowy** (bez restartu
 dashboardu) - zostaje tylko uruchomić główny proces bridge'a (dokładna
 komenda pojawi się na ekranie po zapisie).
 
-Kreator pokrywa podstawy (Satel, Tuya lokalnie, eBUS/MQTT, hasło panelu,
-powiadomienia, opcjonalnie Home Assistant/UniFi Protect/Tuya Cloud).
-Rzeczy bardziej zaawansowane (sceny, harmonogramy, eskalacja, automatyka
-kotła, alarmy progowe) dostają puste wartości domyślne - dopisujesz je
-później ręcznie w `config.yaml` (który zostaje w pełni edytowalny -
-kreator nie uruchomi się drugi raz, dopóki plik istnieje, więc żadne
-Twoje ręczne zmiany nie zostaną nadpisane).
+**Postęp zapisuje się automatycznie po każdym kliknięciu "Dalej"** (w
+pliku roboczym `.setup_draft.json` obok `config.yaml`) - kreator da się
+bezpiecznie przerwać w dowolnym momencie i wrócić do niego później,
+nawet z innej karty/przeglądarki w tej samej sieci. Plik roboczy znika
+automatycznie po ostatecznym zapisie (albo ręcznie, przyciskiem "Zacznij
+od nowa").
+
+Kreator pokrywa zarówno podstawy (Satel, Tuya lokalnie, eBUS/MQTT, hasło
+panelu, powiadomienia, opcjonalnie Home Assistant/UniFi Protect/Tuya
+Cloud), jak i bardziej zaawansowane rzeczy zbudowane na scenach
+(`bridge/scenes.py`, patrz sekcja "Automatyzacje" niżej):
+
+- **Sceny** - nazwane grupy akcji na wielu urządzeniach naraz.
+- **Harmonogramy** (`time_window`) - reguła ruchu aktywna tylko w
+  wybranych godzinach albo względem wschodu/zachodu słońca.
+- **Eskalacja** - kilka naruszeń wejścia Satela w krótkim czasie wywołuje
+  mocniejszą scenę zamiast zwykłej akcji.
+
+Rzeczy, których kreator wciąż nie obsługuje (reguły kamer, reguły
+"światło Tuya → Satel", automatyka kotła, alarmy progowe) dostają puste
+wartości domyślne - dopisujesz je później ręcznie w `config.yaml` (który
+zostaje w pełni edytowalny - kreator nie uruchomi się drugi raz, dopóki
+plik istnieje, więc żadne Twoje ręczne zmiany nie zostaną nadpisane).
 
 ### B) Ręczna edycja plików
 
@@ -353,6 +373,30 @@ ryzyko; jeśli wystawiasz panel poza LAN (np. przez przekierowanie portów
 na routerze), postaw przed nim reverse proxy z HTTPS (Caddy/nginx) albo
 używaj VPN (WireGuard/Tailscale) zamiast wystawiać port bezpośrednio.
 
+#### A komunikacja z centralą Satel - czy jest szyfrowana kluczem?
+
+**Nie.** `satel.integration_key` w `config.yaml` (ten sam, który wpisujesz
+w kreatorze) to **hasło protokołu integracji** - autoryzuje polecenia
+(uzbrojenie/rozbrojenie, sterowanie wyjściem), ale **nie jest kluczem
+szyfrowania transmisji**. Biblioteka `satel_integra`, z której korzysta
+ten bridge (ta sama, której używa integracja Satela w Home Assistant),
+**nie implementuje** opcjonalnego szyfrowania AES komunikacji TCP, jakie
+oferuje protokół integracji części central/modułów ETHM (ustawianego
+osobno w DLOADX, innym kluczem niż hasło integracji) - cała komunikacja
+z centralą (port 7094) i wywołania wirtualnych wejść IP (port z sekcji
+`virtual_inputs`) idą **czystym tekstem** po sieci LAN.
+
+W praktyce, w zaufanej, odizolowanej sieci domowej to zwykle akceptowalne
+ryzyko (dokładnie ta sama klasa kompromisu co Basic Auth panelu wyżej).
+Jeśli jednak centrala/RPi są w sieci współdzielonej z niezaufanymi
+urządzeniami, albo zależy Ci na dodatkowej warstwie ochrony:
+- odizoluj VLAN-em urządzenia automatyki domowej od reszty sieci,
+- **nie** wystawiaj portu centrali (7094) ani portu wejść IP na świat -
+  jeśli potrzebujesz zdalnego dostępu, użyj VPN (WireGuard/Tailscale) do
+  całej podsieci, a nie przekierowania portu,
+- rozważ zgłoszenie/wsparcie szyfrowania w `satel_integra` upstream, jeśli
+  Twoja centrala i tak wymaga go po stronie DLOADX.
+
 ## Odporność na awarie (reconnect, backoff, health-check)
 
 RPi Zero W zwykle łączy się przez WiFi - chwilowe zerwania sieci, restart
@@ -469,7 +513,10 @@ zabezpieczeń.
 
 Oprócz prostych reguł "ruch -> włącz urządzenie", bridge wspiera bardziej
 złożoną automatykę - wszystko zbudowane na jednym wspólnym fundamencie:
-**scenach** (`bridge/scenes.py`).
+**scenach** (`bridge/scenes.py`). Sceny, harmonogramy (`time_window`) i
+eskalację da się skonfigurować **przez kreator** (kroki "Sceny" i "Reguły
+ruchu"), nie tylko ręcznie w `config.yaml` - patrz sekcja "Konfiguracja"
+wyżej.
 
 ### Sceny
 
@@ -571,6 +618,68 @@ journalctl -u satel-tuya-bridge -f
 Analogicznie dla panelu webowego (drugi plik `.service`, np.
 `satel-tuya-dashboard.service`, `ExecStart=... python -m dashboard.app --config config.yaml --port 8090`).
 
+## Uruchomienie w Dockerze
+
+Alternatywa dla instalacji przez `venv`/systemd wyżej - jeden obraz
+(`Dockerfile`), dwa kontenery z `docker-compose.yml` (bridge + panel
+webowy), dzielące wspólny wolumen na dane (`config.yaml`, `sensors.yaml`,
+baza SQLite, backupy). Działa tak samo na RPi (arm64/armv7) jak na
+amd64 - `python:3.11-slim` ma gotowe obrazy dla obu architektur.
+
+### Pierwsze uruchomienie
+
+```bash
+mkdir -p data
+sudo chown 1000:1000 data   # kontener działa jako UID 1000 (nie root)
+
+docker compose up -d --build
+```
+
+Otwórz `http://<adres-hosta>:8090/setup` w przeglądarce i przejdź kreator
+dokładnie tak samo, jak przy uruchomieniu bez Dockera - `config.yaml`,
+`sensors.yaml` i baza SQLite wylądują w `./data/` na hoście (a nie w
+kontenerze), więc przetrwają przebudowę/aktualizację obrazu i są dostępne
+do ręcznej edycji z hosta. Po zapisaniu w kreatorze kontener `bridge`
+trzeba zrestartować, żeby wczytał świeżo zapisaną konfigurację:
+
+```bash
+docker compose restart bridge
+```
+
+### Co jest w środku
+
+- **`bridge`** - główny proces (`main.py`), bez portów - łączy się
+  wychodząco z centralą Satel, urządzeniami Tuya, brokerem MQTT itd.
+- **`dashboard`** - panel webowy (`dashboard/app.py`), port `8090`
+  wystawiony na hosta, z `healthcheck` opartym o `/healthz`.
+- **`mosquitto`** *(opcjonalny, profil `broker`)* - lokalny broker MQTT
+  **tylko** jeśli nie masz już takiego, na którym publikuje `ebusd`.
+  `ebusd` sam wymaga fizycznego dostępu do adaptera eBUS (USB/szeregowy)
+  i **nie jest** tu kontenerowany - zwykle działa bezpośrednio na hoście
+  (RPi) albo osobnym urządzeniu; w `config.yaml` (`ebus.mqtt_host`)
+  wskaż adres LAN tego, co faktycznie działa. Włączenie:
+  ```bash
+  docker compose --profile broker up -d
+  ```
+
+### Sieć LAN (Satel, Tuya)
+
+Domyślnie kontenery używają zwykłej sieci mostkowanej Dockera -
+połączenia WYCHODZĄCE do centrali Satel i urządzeń Tuya (skonfigurowanych
+po adresie IP w `config.yaml`) działają bez dodatkowej konfiguracji. Jeśli
+coś w Twojej sieci tego wymaga (np. discovery po multicaście), w
+`docker-compose.yml` przy usłudze `bridge` odkomentuj `network_mode: host`
+(tylko Linux).
+
+### Bezpieczeństwo obrazu
+
+Kontener działa jako **użytkownik bez uprawnień roota** (UID 1000) -
+stąd wymóg `chown` katalogu `data/` przed pierwszym uruchomieniem
+(inaczej Docker utworzy go jako root i kontener nie będzie mógł zapisać
+`config.yaml`). Sekrety (klucz integracji Satela, local_key urządzeń
+Tuya, hasła) trafiają wyłącznie do zamontowanego `./data/config.yaml` -
+nigdy do obrazu ani do warstw builda.
+
 ## Struktura projektu
 
 ```
@@ -578,6 +687,10 @@ satel_tuya_bridge/
   config.example.yaml       # wzór głównej konfiguracji (połączenia, poświadczenia)
   sensors.example.yaml      # wzór listy czujników eBUS (edytowalny z panelu, patrz /config)
   requirements.txt
+  Dockerfile                # jeden obraz dla bridge'a i panelu, patrz "Uruchomienie w Dockerze"
+  docker-compose.yml         # usługi bridge/dashboard/(opcjonalnie) mosquitto
+  .dockerignore
+  docker/mosquitto.conf      # minimalny config opcjonalnego brokera MQTT (profil "broker")
   main.py                   # punkt wejścia głównego bridge'a
   bridge/
     config.py               # loader YAML
@@ -605,8 +718,8 @@ satel_tuya_bridge/
     setup.py                   # logika kreatora pierwszej konfiguracji
     templates/index.html     # frontend panelu (Chart.js, filtrowanie, sterowanie alarmem)
     templates/config.html    # edytor listy czujników eBUS (lista + przełączniki)
-    templates/setup.html      # kreator pierwszej konfiguracji (krok po kroku)
-  tests/                     # testy pytest (126 testów, patrz sekcja "Testy automatyczne")
+    templates/setup.html      # kreator pierwszej konfiguracji (krok po kroku, autozapis postępu)
+  tests/                     # testy pytest (patrz sekcja "Testy automatyczne")
   .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.9/3.11/3.12
   maintenance.py              # CLI do rotacji/backupu bazy (do crona, patrz sekcja "Rotacja i backup bazy")
 ```

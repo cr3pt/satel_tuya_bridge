@@ -2,6 +2,14 @@
 config.yaml
 sensors.yaml
 
+# Plik roboczy kreatora (postęp między krokami /setup) - może zawierać
+# poświadczenia wpisane, ale jeszcze nie zapisane do config.yaml
+.setup_draft.json
+.setup_draft.json.tmp
+
+# Dane zamontowane w Dockerze (docker-compose.yml: ./data:/config)
+data/
+
 # Baza danych historii
 *.db
 *.db-journal

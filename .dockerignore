@@ -1,0 +1,22 @@
+.git
+.github
+.gitignore
+.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+.coverage
+coverage.xml
+htmlcov
+tests
+venv
+.venv
+
+# Prawdziwa konfiguracja i dane - w Dockerze trafiają przez wolumen
+# (./data:/config), nie przez obraz.
+config.yaml
+sensors.yaml
+*.db
+*.db-journal
+backups/
+data/
