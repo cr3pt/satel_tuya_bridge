@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from typing import Callable
 
@@ -61,6 +62,88 @@ def discover_topics(mqtt_host: str, mqtt_port: int = 1883, topic_prefix: str = "
         client.disconnect()
 
     return sorted(topics)
+
+
+class BackgroundTopicDiscovery:
+    """Nasłuch tematów MQTT ebusd W TLE, przez znacznie dłuższy czas (do
+    kilku minut) niż discover_topics() wyżej - ten krótki (~4s), blokujący
+    nasłuch bywa za krótki, żeby złapać rzadziej publikowane pola (patrz
+    komentarz w discover_topics()). Do panelu (/config), gdzie użytkownik
+    klika "Rozpocznij nasłuch" i dostaje wynik od razu (żądanie HTTP NIE
+    czeka na koniec) - dalej odpytuje `status()` (patrz
+    dashboard/app.py: /api/discover/ebus/status), a wykryte tematy
+    przybywają na bieżąco, w miarę jak ebusd je publikuje.
+
+    Własny wątek (nie asyncio) - Flask/waitress i tak obsługuje żądania w
+    wątkach, a paho-mqtt ma już wbudowaną obsługę wątkową
+    (loop_start/loop_stop), więc to naturalne dopasowanie. Jedna instancja
+    obsługuje JEDEN nasłuch naraz (wystarczające dla panelu administrowanego
+    przez jedną osobę na raz) - kolejne `start()` w trakcie trwającego
+    nasłuchu rzuca RuntimeError."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._client: mqtt.Client | None = None
+        self._topics: set[str] = set()
+        self._running = False
+        self._started_at: float | None = None
+        self._duration_seconds: float = 0.0
+        self._timer: threading.Timer | None = None
+
+    def start(self, mqtt_host: str, mqtt_port: int = 1883, topic_prefix: str = "ebusd",
+              duration_seconds: float = 300.0) -> None:
+        with self._lock:
+            if self._running:
+                raise RuntimeError("Nasłuch już trwa - poczekaj na koniec albo zatrzymaj go najpierw")
+
+            def _on_message(client, userdata, msg) -> None:
+                with self._lock:
+                    self._topics.add(msg.topic)
+
+            client = mqtt.Client()
+            client.on_message = _on_message
+            try:
+                client.connect(mqtt_host, mqtt_port, keepalive=max(int(duration_seconds) + 30, 60))
+            except OSError as exc:
+                raise ConnectionError(f"Nie udało się połączyć z brokerem MQTT {mqtt_host}:{mqtt_port}: {exc}") from exc
+
+            client.subscribe(f"{topic_prefix}/#")
+            client.loop_start()
+
+            self._topics = set()
+            self._client = client
+            self._running = True
+            self._started_at = time.time()
+            self._duration_seconds = duration_seconds
+
+            timer = threading.Timer(duration_seconds, self._stop_internal)
+            timer.daemon = True
+            timer.start()
+            self._timer = timer
+
+    def _stop_internal(self) -> None:
+        with self._lock:
+            if self._client is not None:
+                self._client.loop_stop()
+                self._client.disconnect()
+                self._client = None
+            self._running = False
+
+    def stop(self) -> dict:
+        if self._timer is not None:
+            self._timer.cancel()
+        self._stop_internal()
+        return self.status()
+
+    def status(self) -> dict:
+        with self._lock:
+            elapsed = (time.time() - self._started_at) if self._started_at is not None else 0.0
+            return {
+                "running": self._running,
+                "topics": sorted(self._topics),
+                "elapsed_seconds": round(elapsed, 1),
+                "duration_seconds": self._duration_seconds,
+            }
 
 
 class EbusMqttListener:

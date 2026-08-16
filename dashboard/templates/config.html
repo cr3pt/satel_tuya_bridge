@@ -190,8 +190,17 @@
   </div>
 
   <div class="discover-row">
-    <button type="button" class="secondary" id="discoverEbusBtn">🔍 Wykryj czujniki (nasłuchuj ~4s)</button>
+    <button type="button" class="secondary" id="discoverEbusBtn">🔍 Rozpocznij nasłuch (5 min, w tle)</button>
+    <button type="button" class="secondary" id="stopEbusDiscoverBtn" style="display:none;">⏹ Zatrzymaj teraz</button>
     <span class="discover-status" id="ebusDiscoverStatus"></span>
+  </div>
+  <div class="section-hint" style="margin: -8px 0 12px;">
+    Nasłuch działa w tle do 5 minut, wykryte czujniki dopisują się na
+    bieżąco jako nowe wiersze niżej (nie trzeba czekać na koniec) - dłuższy
+    nasłuch łapie też pola, które <code>ebusd</code> publikuje rzadziej.
+    Zamknięcie/odświeżenie tej strony NIE zatrzymuje nasłuchu w tle - wróć
+    tu później i sprawdź wynik, albo zatrzymaj go od razu przyciskiem
+    "Zatrzymaj teraz".
   </div>
 
   <table>
@@ -563,42 +572,94 @@ document.getElementById('saveSensorsBtn').addEventListener('click', async () => 
   }
 });
 
+// Nasłuch MQTT ebusd W TLE (do 5 minut) - żądanie start zwraca się od
+// razu, dalej odpytujemy /api/discover/ebus/status co 2s i dopisujemy
+// nowo wykryte tematy na bieżąco (nie czekamy na koniec 5 minut, żeby
+// zobaczyć pierwsze wyniki).
+let ebusDiscoveryPoll = null;
+
+function applyEbusDiscoveryStatus(data) {
+  const existingTopics = new Set(
+    Array.from(document.querySelectorAll('#sensorRows .f-topic')).map(el => el.value.trim())
+  );
+  let added = 0;
+  (data.topics || []).forEach(topic => {
+    if (existingTopics.has(topic)) return;
+    existingTopics.add(topic);
+    const suggestedName = topic.split('/').slice(1).join('_') || topic;
+    const row = makeSensorRow({
+      name: suggestedName, label: labelFromTopic(topic), mqtt_topic: topic,
+      targets: { history: true, mqtt_publish: false, tuya_virtual_device: false, tuya_dp: '' },
+    });
+    document.getElementById('sensorRows').appendChild(row);
+    added++;
+  });
+  if (added) regroupSensorRows();
+
+  const status = document.getElementById('ebusDiscoverStatus');
+  const remaining = Math.max(0, Math.round((data.duration_seconds || 0) - (data.elapsed_seconds || 0)));
+  status.textContent = data.running
+    ? `Nasłuchuję... ${(data.topics || []).length} tematów znalezionych dotąd, jeszcze ok. ${remaining}s.`
+    : `Zakończono nasłuch. Znaleziono łącznie ${(data.topics || []).length} tematów (sprawdź nazwy/etykiety przed zapisem).`;
+}
+
+async function pollEbusDiscoveryStatus() {
+  const resp = await fetch('/api/discover/ebus/status');
+  const data = await resp.json();
+  applyEbusDiscoveryStatus(data);
+  if (!data.running) {
+    clearInterval(ebusDiscoveryPoll);
+    ebusDiscoveryPoll = null;
+    document.getElementById('discoverEbusBtn').disabled = false;
+    document.getElementById('stopEbusDiscoverBtn').style.display = 'none';
+  }
+}
+
 document.getElementById('discoverEbusBtn').addEventListener('click', async () => {
   const btn = document.getElementById('discoverEbusBtn');
+  const stopBtn = document.getElementById('stopEbusDiscoverBtn');
   const status = document.getElementById('ebusDiscoverStatus');
   btn.disabled = true;
-  status.textContent = 'Nasłuchuję ~4s...';
+  status.textContent = 'Uruchamiam nasłuch...';
   try {
-    const resp = await fetch('/api/discover/ebus', { method: 'POST' });
+    const resp = await fetch('/api/discover/ebus/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ duration_seconds: 300 }),
+    });
     const data = await resp.json();
     if (!resp.ok) {
-      status.textContent = '❌ ' + (data.error || 'Błąd wykrywania');
+      status.textContent = '❌ ' + (data.error || 'Błąd uruchamiania nasłuchu');
+      btn.disabled = false;
       return;
     }
-    const existingTopics = new Set(
-      Array.from(document.querySelectorAll('#sensorRows .f-topic')).map(el => el.value.trim())
-    );
-    let added = 0;
-    (data.topics || []).forEach(topic => {
-      if (existingTopics.has(topic)) return;
-      const suggestedName = topic.split('/').slice(1).join('_') || topic;
-      const row = makeSensorRow({
-        name: suggestedName, label: labelFromTopic(topic), mqtt_topic: topic,
-        targets: { history: true, mqtt_publish: false, tuya_virtual_device: false, tuya_dp: '' },
-      });
-      document.getElementById('sensorRows').appendChild(row);
-      added++;
-    });
-    if (added) regroupSensorRows();
-    status.textContent = added
-      ? `Znaleziono ${data.topics.length} tematów, dodano ${added} nowych wierszy pogrupowanych wg obwodu (sprawdź nazwy/etykiety przed zapisem).`
-      : `Nie znaleziono nowych tematów (${data.topics.length} już na liście albo ebusd nic nie opublikował w tym czasie - spróbuj ponownie).`;
+    stopBtn.style.display = '';
+    applyEbusDiscoveryStatus(data);
+    if (ebusDiscoveryPoll) clearInterval(ebusDiscoveryPoll);
+    ebusDiscoveryPoll = setInterval(pollEbusDiscoveryStatus, 2000);
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
-  } finally {
     btn.disabled = false;
   }
 });
+
+document.getElementById('stopEbusDiscoverBtn').addEventListener('click', async () => {
+  await fetch('/api/discover/ebus/stop', { method: 'POST' });
+  await pollEbusDiscoveryStatus();
+});
+
+// Jeśli nasłuch już trwa w tle (np. odświeżono stronę w trakcie), wykryj
+// to od razu przy wczytaniu strony i wznów odpytywanie zamiast czekać na
+// kolejne kliknięcie przycisku.
+(async () => {
+  const status = await (await fetch('/api/discover/ebus/status')).json();
+  if (status.running) {
+    document.getElementById('discoverEbusBtn').disabled = true;
+    document.getElementById('stopEbusDiscoverBtn').style.display = '';
+    applyEbusDiscoveryStatus(status);
+    ebusDiscoveryPoll = setInterval(pollEbusDiscoveryStatus, 2000);
+  }
+})();
 
 // ------------------------------------------------------------------
 // Satel - strefy/wyjścia/wejścia IP/partycje

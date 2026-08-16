@@ -1,13 +1,15 @@
 """Testy dla bridge/ebus_client.py - discover_topics() (podpowiedź
-dostępnych pól eBUS w panelu /config) oraz EbusMqttListener.update_sensors()
+dostępnych pól eBUS w panelu /config), EbusMqttListener.update_sensors()
 (przeładowanie listy czujników bez zrywania połączenia MQTT, patrz
-RulesEngine.reload_config w bridge/rules_engine.py), bez prawdziwego
-brokera MQTT."""
+RulesEngine.reload_config w bridge/rules_engine.py) oraz
+BackgroundTopicDiscovery (nasłuch w tle przez kilka minut, patrz
+dashboard/app.py: /api/discover/ebus/start), bez prawdziwego brokera MQTT."""
+import time
 from types import SimpleNamespace
 
 import pytest
 
-from bridge.ebus_client import discover_topics, EbusMqttListener
+from bridge.ebus_client import discover_topics, EbusMqttListener, BackgroundTopicDiscovery
 
 
 class FakeMqttClient:
@@ -175,3 +177,141 @@ class TestEbusMqttListenerUpdateSensors:
         listener.update_sensors({"mqtt_host": "127.0.0.1", "sensors": [{"name": "a", "mqtt_topic": "ebusd/a"}]})
 
         assert fake.subscribed == []
+
+
+class FakeMqttClientBg:
+    """Symuluje paho.mqtt.client.Client na tyle, ile potrzebuje
+    BackgroundTopicDiscovery - connect (synchroniczne, nie connect_async)/
+    subscribe/loop_start/loop_stop/disconnect, plus ręczne 'dostarczanie'
+    wiadomości przez wywołanie on_message (żeby test nie musiał czekać na
+    prawdziwy wątek sieciowy paho)."""
+
+    def __init__(self):
+        self.on_message = None
+        self.connected_to = None
+        self.subscribed_topic = None
+        self.loop_started = False
+        self.loop_stopped = False
+        self.disconnected = False
+
+    def connect(self, host, port, keepalive=60):
+        self.connected_to = (host, port)
+
+    def subscribe(self, topic):
+        self.subscribed_topic = topic
+
+    def loop_start(self):
+        self.loop_started = True
+
+    def loop_stop(self):
+        self.loop_stopped = True
+
+    def disconnect(self):
+        self.disconnected = True
+
+
+class TestBackgroundTopicDiscovery:
+    """Nasłuch tematów MQTT ebusd W TLE (do kilku minut) - patrz
+    dashboard/app.py: /api/discover/ebus/start|status|stop."""
+
+    def test_start_connects_and_subscribes(self, monkeypatch):
+        fake = FakeMqttClientBg()
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+
+        discovery = BackgroundTopicDiscovery()
+        discovery.start("127.0.0.1", 1883, duration_seconds=10)
+
+        assert fake.connected_to == ("127.0.0.1", 1883)
+        assert fake.subscribed_topic == "ebusd/#"
+        assert fake.loop_started is True
+        discovery.stop()
+
+    def test_status_reports_running_immediately_after_start(self, monkeypatch):
+        fake = FakeMqttClientBg()
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+
+        discovery = BackgroundTopicDiscovery()
+        discovery.start("127.0.0.1", 1883, duration_seconds=10)
+
+        status = discovery.status()
+        assert status["running"] is True
+        assert status["topics"] == []
+        assert status["duration_seconds"] == 10
+        discovery.stop()
+
+    def test_incoming_messages_accumulate_in_status(self, monkeypatch):
+        fake = FakeMqttClientBg()
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+
+        discovery = BackgroundTopicDiscovery()
+        discovery.start("127.0.0.1", 1883, duration_seconds=10)
+
+        fake.on_message(fake, None, SimpleNamespace(topic="ebusd/bm/FlowTemp"))
+        fake.on_message(fake, None, SimpleNamespace(topic="ebusd/fha/FlowTemp"))
+        fake.on_message(fake, None, SimpleNamespace(topic="ebusd/bm/FlowTemp"))  # duplikat
+
+        status = discovery.status()
+        assert status["topics"] == ["ebusd/bm/FlowTemp", "ebusd/fha/FlowTemp"]
+        discovery.stop()
+
+    def test_stop_disconnects_and_marks_not_running(self, monkeypatch):
+        fake = FakeMqttClientBg()
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+
+        discovery = BackgroundTopicDiscovery()
+        discovery.start("127.0.0.1", 1883, duration_seconds=10)
+        status = discovery.stop()
+
+        assert fake.loop_stopped is True
+        assert fake.disconnected is True
+        assert status["running"] is False
+
+    def test_starting_twice_while_running_raises(self, monkeypatch):
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: FakeMqttClientBg())
+
+        discovery = BackgroundTopicDiscovery()
+        discovery.start("127.0.0.1", 1883, duration_seconds=10)
+        with pytest.raises(RuntimeError):
+            discovery.start("127.0.0.1", 1883, duration_seconds=10)
+        discovery.stop()
+
+    def test_connection_failure_raises_connection_error(self, monkeypatch):
+        class FailingClient:
+            def connect(self, *args, **kwargs):
+                raise OSError("connection refused")
+
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: FailingClient())
+
+        discovery = BackgroundTopicDiscovery()
+        with pytest.raises(ConnectionError, match="127.0.0.1"):
+            discovery.start("127.0.0.1", 1883, duration_seconds=10)
+        # nie powinno zostać zablokowane w stanie "running" po nieudanym connect
+        assert discovery.status()["running"] is False
+
+    def test_auto_stops_after_duration_elapses(self, monkeypatch):
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: FakeMqttClientBg())
+
+        discovery = BackgroundTopicDiscovery()
+        discovery.start("127.0.0.1", 1883, duration_seconds=0.05)
+        assert discovery.status()["running"] is True
+
+        # Duży margines celowo (nie testujemy precyzji timingu, tylko że
+        # AUTOMATYCZNIE się zatrzymuje) - żeby nie było migotliwe pod
+        # obciążeniem (wiele testów w tym pliku tworzy własne wątki tuż
+        # wcześniej).
+        deadline = time.time() + 5.0
+        while time.time() < deadline and discovery.status()["running"]:
+            time.sleep(0.05)
+        assert discovery.status()["running"] is False
+
+    def test_new_discovery_clears_previous_topics(self, monkeypatch):
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: FakeMqttClientBg())
+
+        discovery = BackgroundTopicDiscovery()
+        discovery.start("127.0.0.1", 1883, duration_seconds=10)
+        discovery._topics.add("ebusd/stale/Topic")
+        discovery.stop()
+
+        discovery.start("127.0.0.1", 1883, duration_seconds=10)
+        assert discovery.status()["topics"] == []
+        discovery.stop()

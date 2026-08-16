@@ -559,6 +559,92 @@ class TestDiscoveryEndpoints:
         assert resp.status_code == 502
 
 
+class TestBackgroundEbusDiscoveryEndpoints:
+    """/api/discover/ebus/start|status|stop - nasłuch MQTT ebusd W TLE (do
+    kilku minut), w odróżnieniu od /api/discover/ebus (blokujące ~4s).
+    Logika samego nasłuchu ma własne testy w test_ebus_client.py - tutaj
+    tylko routing/obsługa błędów na poziomie endpointu (podmieniamy metody
+    singletona _ebus_background_discovery na fake'i)."""
+
+    def test_start_no_auth_required(self, client, monkeypatch):
+        import dashboard.app as app_module
+
+        monkeypatch.setattr(app_module._ebus_background_discovery, "start", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            app_module._ebus_background_discovery, "status",
+            lambda: {"running": True, "topics": [], "elapsed_seconds": 0, "duration_seconds": 300},
+        )
+        resp = client.post("/api/discover/ebus/start", json={})
+        assert resp.status_code == 200
+        assert resp.get_json()["running"] is True
+
+    def test_start_uses_configured_mqtt_host_by_default(self, client, monkeypatch):
+        import dashboard.app as app_module
+
+        captured = {}
+        monkeypatch.setattr(
+            app_module._ebus_background_discovery, "start",
+            lambda host, port, duration_seconds=300.0: captured.update(host=host, port=port),
+        )
+        monkeypatch.setattr(app_module._ebus_background_discovery, "status", lambda: {})
+        client.post("/api/discover/ebus/start", json={})
+        assert captured["host"] == "127.0.0.1"
+
+    def test_start_connection_error_returns_502(self, client, monkeypatch):
+        import dashboard.app as app_module
+
+        def raise_connection_error(*a, **kw):
+            raise ConnectionError("nie udało się połączyć")
+
+        monkeypatch.setattr(app_module._ebus_background_discovery, "start", raise_connection_error)
+        resp = client.post("/api/discover/ebus/start", json={})
+        assert resp.status_code == 502
+
+    def test_start_while_already_running_returns_409(self, client, monkeypatch):
+        import dashboard.app as app_module
+
+        def raise_running(*a, **kw):
+            raise RuntimeError("Nasłuch już trwa")
+
+        monkeypatch.setattr(app_module._ebus_background_discovery, "start", raise_running)
+        resp = client.post("/api/discover/ebus/start", json={})
+        assert resp.status_code == 409
+
+    def test_duration_seconds_is_capped(self, client, monkeypatch):
+        import dashboard.app as app_module
+
+        captured = {}
+        monkeypatch.setattr(
+            app_module._ebus_background_discovery, "start",
+            lambda host, port, duration_seconds=300.0: captured.update(duration_seconds=duration_seconds),
+        )
+        monkeypatch.setattr(app_module._ebus_background_discovery, "status", lambda: {})
+        client.post("/api/discover/ebus/start", json={"duration_seconds": 99999})
+        assert captured["duration_seconds"] == 600
+
+    def test_status_no_auth_required(self, client, monkeypatch):
+        import dashboard.app as app_module
+
+        monkeypatch.setattr(
+            app_module._ebus_background_discovery, "status",
+            lambda: {"running": True, "topics": ["ebusd/bai/FlowTemp"], "elapsed_seconds": 5, "duration_seconds": 300},
+        )
+        resp = client.get("/api/discover/ebus/status")
+        assert resp.status_code == 200
+        assert resp.get_json()["topics"] == ["ebusd/bai/FlowTemp"]
+
+    def test_stop_no_auth_required(self, client, monkeypatch):
+        import dashboard.app as app_module
+
+        monkeypatch.setattr(
+            app_module._ebus_background_discovery, "stop",
+            lambda: {"running": False, "topics": [], "elapsed_seconds": 5, "duration_seconds": 300},
+        )
+        resp = client.post("/api/discover/ebus/stop")
+        assert resp.status_code == 200
+        assert resp.get_json()["running"] is False
+
+
 class TestSatelConnectionTestEndpoint:
     def test_no_auth_required(self, client, monkeypatch):
         async def fake_test_connection(host, port):
@@ -590,6 +676,56 @@ class TestSatelConnectionTestEndpoint:
         monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
         client.post("/api/setup/test-satel-connection", json={"host": "192.168.1.10"})
         assert captured["port"] == 7094
+
+
+class TestSatelDiscoveryEndpoint:
+    """/api/discover/satel - wykrywanie best-effort aktywnych stref/wyjść
+    w kroku 1 kreatora (patrz bridge/satel_client.py:
+    discover_active_zones_and_outputs)."""
+
+    def test_no_auth_required(self, client, monkeypatch):
+        async def fake_discover(host, port, timeout_seconds=30.0):
+            return {"zones": [12], "outputs": [3]}
+
+        monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
+        resp = client.post("/api/discover/satel", json={"host": "192.168.1.10", "port": 7094})
+        assert resp.status_code == 200
+        assert resp.get_json() == {"zones": [12], "outputs": [3]}
+
+    def test_missing_host_returns_400(self, client):
+        resp = client.post("/api/discover/satel", json={})
+        assert resp.status_code == 400
+
+    def test_connection_error_returns_502(self, client, monkeypatch):
+        async def fake_discover(host, port, timeout_seconds=30.0):
+            raise ConnectionError(f"Nie udało się połączyć z {host}:{port}")
+
+        monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
+        resp = client.post("/api/discover/satel", json={"host": "10.0.0.5", "port": 7094})
+        assert resp.status_code == 502
+        assert "10.0.0.5" in resp.get_json()["error"]
+
+    def test_timeout_seconds_is_capped(self, client, monkeypatch):
+        captured = {}
+
+        async def fake_discover(host, port, timeout_seconds=30.0):
+            captured["timeout_seconds"] = timeout_seconds
+            return {"zones": [], "outputs": []}
+
+        monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
+        client.post("/api/discover/satel", json={"host": "192.168.1.10", "timeout_seconds": 99999})
+        assert captured["timeout_seconds"] == 120
+
+    def test_default_timeout_used_when_omitted(self, client, monkeypatch):
+        captured = {}
+
+        async def fake_discover(host, port, timeout_seconds=30.0):
+            captured["timeout_seconds"] = timeout_seconds
+            return {"zones": [], "outputs": []}
+
+        monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
+        client.post("/api/discover/satel", json={"host": "192.168.1.10"})
+        assert captured["timeout_seconds"] == 30.0
 
 
 class TestTuyaCloudDiscoveryEndpoint:

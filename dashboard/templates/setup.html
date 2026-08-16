@@ -139,10 +139,27 @@
   #resultBox.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); }
   #resultBox ul { margin: 8px 0 0; padding-left: 20px; }
   #resultBox code { background: #262a32; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-top: 4px; }
+  .debug-panel {
+    background: #0e1013; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 16px; font-size: 12px;
+  }
+  .debug-panel-header { color: var(--muted); margin-bottom: 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .debug-entries { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .debug-entry { background: #171a1f; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .debug-entry-head { color: var(--muted); margin-bottom: 4px; }
+  .debug-entry-head b { color: var(--text); }
+  .debug-status { font-weight: 600; }
+  .debug-status.ok { color: var(--ok); }
+  .debug-status.error { color: var(--danger); }
+  .debug-entry-body { margin-top: 4px; }
+  .debug-entry-body pre {
+    background: #0e1a14; border-radius: 4px; padding: 6px 8px; margin: 4px 0 0;
+    overflow-x: auto; font-size: 11px; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
+  }
 </style>
 </head>
 <body>
-<h1>🧙 Kreator konfiguracji</h1>
+<h1>🧙 Kreator konfiguracji <button type="button" id="debugToggleBtn" class="secondary" style="font-size: 12px; padding: 5px 10px; vertical-align: middle; margin-left: 8px;">🐛 Pokaż debug</button></h1>
 <div class="intro">
   Pierwsza konfiguracja bridge'a Satel-Tuya-eBUS - podzielona na etapy.
   Po każdym kliknięciu <b>Dalej</b> postęp zapisuje się automatycznie na
@@ -150,6 +167,15 @@
   później (nawet z innego urządzenia w tej samej sieci). To, czego kreator
   nie obsługuje (reguły kamer, alarmy progowe, automatyka kotła), da się
   dopisać ręcznie w <code>config.yaml</code> albo przez panel po zapisie.
+</div>
+
+<div id="debugPanel" class="debug-panel" style="display:none;">
+  <div class="debug-panel-header">
+    🐛 Debug - komunikacja sieciowa dla akcji w tym kroku (testy połączenia,
+    wykrywanie, import, zapis). Hasła/klucze/sekrety zawsze ukryte.
+    <button type="button" id="debugClearBtn" class="secondary" style="font-size: 11px; padding: 3px 8px;">Wyczyść</button>
+  </div>
+  <div id="debugEntries" class="debug-entries">Brak zdarzeń jeszcze - wykonaj jakąś akcję (np. "Testuj połączenie").</div>
 </div>
 
 <div id="resumeBanner" class="resume-banner" style="display:none;">
@@ -194,6 +220,22 @@
       sieci domowej, użyj VPN (WireGuard/Tailscale) albo izolowanego
       VLAN-u zamiast wystawiać port na świat. Szczegóły w README, sekcja
       "Bezpieczeństwo".
+    </div>
+
+    <div class="discover-row">
+      <button type="button" class="secondary" id="discoverSatelBtn">🔍 Wykryj aktywne strefy/wyjścia (nasłuchuj 30s)</button>
+      <span class="discover-status" id="satelDiscoverStatus"></span>
+    </div>
+    <div class="step-hint" style="margin: -6px 0 14px;">
+      Protokół integracji Satela NIE udostępnia pełnej listy skonfigurowanych
+      stref/wyjść wraz z nazwami (ograniczenie protokołu, nie dało się tego
+      obejść) - to, co REALNIE można zrobić: nasłuchiwać przez 30 sekund i
+      zanotować numery, które w tym czasie ZMIENIĄ STAN. <b>Podczas nasłuchu
+      przejdź przez pilnowane pomieszczenia</b> (otwórz/zamknij drzwi i okna,
+      wywołaj czujki ruchu) - wykryte numery trafią jako nowe wiersze niżej
+      (dopisz im nazwy). Strefy, które nie zmienią stanu w tym oknie, nie
+      zostaną wykryte - dodaj je ręcznie, jeśli znasz ich numer z DLOADX.
+      Nie wymaga klucza integracji (jak "Testuj połączenie" wyżej).
     </div>
 
     <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">Strefy (do uzbrajania/rozbrajania z panelu)</label>
@@ -253,9 +295,9 @@
         Wymaga projektu w Tuya IoT Platform z podpiętą aplikacją (Tuya Smart /
         Smart Life) - gdzie znaleźć Access ID/Secret i jak założyć projekt,
         jeśli go nie masz, patrz krok 7 ("Integracje opcjonalne").
-        Pobranie działa jednorazowo (nie zapisujemy tych poświadczeń) -
-        jeśli chcesz też integrację kamer Tuya Cloud, wpisz te same dane
-        ponownie w kroku 7.
+        <b>Te same dane wykorzystasz też do integracji kamer Tuya Cloud w
+        kroku 7</b> - wpisane tu, przenoszą się tam automatycznie (i
+        odwrotnie), nie trzeba wpisywać ich dwa razy.
       </div>
       <div class="field-row">
         <div class="field"><label>Region</label>
@@ -272,6 +314,7 @@
         <div class="field"><label>Access ID</label><input type="text" id="tuya_cloud_import_id"></div>
         <div class="field"><label>Access Secret</label><input type="password" id="tuya_cloud_import_key"></div>
       </div>
+      <div class="warn-box" id="tuyaCloudRegionWarning" style="display:none;"></div>
       <div class="discover-row">
         <button type="button" id="fetchTuyaCloudBtn">☁ Pobierz urządzenia</button>
         <span class="discover-status" id="tuyaCloudImportStatus"></span>
@@ -372,8 +415,9 @@ sudo systemctl enable --now mosquitto</pre>
         Secret).
         <br><br>
         <b>Nie masz jeszcze projektu?</b> Załóż go raz (te same
-        poświadczenia wykorzystasz też w kroku 2, jeśli importowałeś stamtąd
-        urządzenia Tuya):
+        poświadczenia wykorzystasz też w kroku 2 do importu urządzeń - pola
+        niżej i w kroku 2 są zsynchronizowane, wpisz je tylko raz w
+        którymkolwiek miejscu):
         <ol style="margin: 6px 0 0; padding-left: 20px;">
           <li>Zarejestruj się/zaloguj na developer.tuya.com (darmowe konto).</li>
           <li><b>Cloud → Create Cloud Project</b> - dowolna nazwa, region jak
@@ -479,6 +523,84 @@ const TOTAL_STEPS = 10;
 let currentStep = 1;
 
 // ------------------------------------------------------------------
+// Tryb debugowania - "🐛 Pokaż debug" ujawnia dziennik komunikacji
+// sieciowej (żądanie/odpowiedź) dla akcji w kreatorze (test połączenia,
+// wykrywanie stref/czujników, import z Tuya Cloud, skan sieci, zapis) -
+// przydatne, żeby zobaczyć DOKŁADNIE co poszło nie tak, bez zaglądania do
+// logów serwera/konsoli przeglądarki. Hasła/klucze/sekrety są ZAWSZE
+// ukryte (patrz redactForDebug) - panel pokazuje tylko to, co i tak widać
+// w devtoolsach przeglądarki (Network), tylko zebrane w jednym miejscu i
+// bez surowych nagłówków/ciasteczek.
+// ------------------------------------------------------------------
+let debugEntries = [];
+const DEBUG_REDACT_KEYS = new Set([
+  'password', 'admin_password', 'admin_password_confirm', 'access_key',
+  'access_secret', 'integration_key', 'key', 'tuya_cloud_import_key',
+]);
+
+function redactForDebug(value) {
+  if (Array.isArray(value)) return value.map(redactForDebug);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = DEBUG_REDACT_KEYS.has(k) ? (v ? '••••••••' : v) : redactForDebug(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function renderDebugPanel() {
+  const panel = document.getElementById('debugEntries');
+  if (document.getElementById('debugPanel').style.display === 'none') return;
+  if (debugEntries.length === 0) {
+    panel.textContent = 'Brak zdarzeń jeszcze - wykonaj jakąś akcję (np. "Testuj połączenie").';
+    return;
+  }
+  panel.innerHTML = debugEntries.slice().reverse().map(e => `
+    <div class="debug-entry">
+      <div class="debug-entry-head">${e.time} · <b>${escapeHtml(e.label)}</b> · ${e.method} ${escapeHtml(e.url)} &rarr; <span class="debug-status ${e.ok ? 'ok' : 'error'}">${e.status}</span></div>
+      ${e.request ? `<div class="debug-entry-body"><b>Żądanie:</b><pre>${escapeHtml(JSON.stringify(e.request, null, 2))}</pre></div>` : ''}
+      <div class="debug-entry-body"><b>Odpowiedź:</b><pre>${escapeHtml(JSON.stringify(e.response, null, 2))}</pre></div>
+    </div>`).join('');
+}
+
+async function debugFetch(label, url, options = {}) {
+  const method = options.method || 'GET';
+  let requestBody = null;
+  if (options.body) {
+    try { requestBody = redactForDebug(JSON.parse(options.body)); } catch (e) { requestBody = String(options.body); }
+  }
+  const time = new Date().toLocaleTimeString('pl-PL');
+  let resp, responseBody;
+  try {
+    resp = await fetch(url, options);
+    responseBody = await resp.clone().json().catch(() => null);
+  } catch (e) {
+    debugEntries.push({ time, label, method, url, ok: false, status: 'błąd sieci', request: requestBody, response: String(e) });
+    if (debugEntries.length > 50) debugEntries.shift();
+    renderDebugPanel();
+    throw e;
+  }
+  debugEntries.push({ time, label, method, url, ok: resp.ok, status: resp.status, request: requestBody, response: responseBody });
+  if (debugEntries.length > 50) debugEntries.shift();
+  renderDebugPanel();
+  return resp;
+}
+
+document.getElementById('debugToggleBtn').addEventListener('click', () => {
+  const panel = document.getElementById('debugPanel');
+  const showing = panel.style.display !== 'none';
+  panel.style.display = showing ? 'none' : '';
+  document.getElementById('debugToggleBtn').textContent = showing ? '🐛 Pokaż debug' : '🐛 Ukryj debug';
+  if (!showing) renderDebugPanel();
+});
+document.getElementById('debugClearBtn').addEventListener('click', () => {
+  debugEntries = [];
+  renderDebugPanel();
+});
+
+// ------------------------------------------------------------------
 // Sekcje typu "nazwa + numer" (strefy, wejścia, wyjścia)
 // ------------------------------------------------------------------
 function addNameNumberRow(containerId, initial) {
@@ -549,13 +671,58 @@ document.getElementById('testSatelConnectionBtn').addEventListener('click', asyn
   btn.disabled = true;
   status.textContent = 'Łączę...';
   try {
-    const resp = await fetch('/api/setup/test-satel-connection', {
+    const resp = await debugFetch('Testuj połączenie (Satel)', '/api/setup/test-satel-connection', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ host, port }),
     });
     const data = await resp.json();
     status.textContent = (resp.ok ? '✅ ' : '❌ ') + (data.message || data.error);
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('discoverSatelBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('discoverSatelBtn');
+  const status = document.getElementById('satelDiscoverStatus');
+  const host = document.getElementById('satel_host').value.trim();
+  const port = document.getElementById('satel_port').value;
+  if (!host) {
+    status.textContent = '❌ Podaj najpierw adres IP centrali';
+    return;
+  }
+  btn.disabled = true;
+  status.textContent = 'Nasłuchuję 30s - przejdź teraz przez pilnowane pomieszczenia...';
+  try {
+    const resp = await debugFetch('Wykryj strefy/wyjścia (Satel)', '/api/discover/satel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, port, timeout_seconds: 30 }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = '❌ ' + (data.error || 'Błąd wykrywania');
+      return;
+    }
+    const existingZones = new Set(collectNameNumberRows('zonesRows').map(z => String(z.number)));
+    const existingOutputs = new Set(collectNameNumberRows('outputsRows').map(o => String(o.number)));
+    let added = 0;
+    (data.zones || []).forEach(number => {
+      if (existingZones.has(String(number))) return;
+      addNameNumberRow('zonesRows', { name: `Wejście ${number}`, number });
+      added++;
+    });
+    (data.outputs || []).forEach(number => {
+      if (existingOutputs.has(String(number))) return;
+      addNameNumberRow('outputsRows', { name: `Wyjście ${number}`, number });
+      added++;
+    });
+    status.textContent = added
+      ? `Wykryto aktywność na ${added} numerach - dodano jako nowe wiersze niżej, nadaj im właściwe nazwy przed zapisem.`
+      : 'Nie wykryto żadnej aktywności - żadna czujka/wyjście nie zmieniły stanu podczas nasłuchu. Spróbuj ponownie i fizycznie wyzwól interesujące Cię strefy w tym oknie.';
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
   } finally {
@@ -648,7 +815,7 @@ document.getElementById('scanTuyaLanBtn').addEventListener('click', async () => 
   btn.disabled = true;
   status.textContent = 'Skanuję sieć (do ok. 18s)...';
   try {
-    const resp = await fetch('/api/discover/tuya', { method: 'POST' });
+    const resp = await debugFetch('Skanuj sieć (Tuya LAN)', '/api/discover/tuya', { method: 'POST' });
     const data = await resp.json();
     if (!resp.ok) { status.textContent = '❌ ' + (data.error || 'Błąd skanowania'); return; }
     let added = 0;
@@ -678,7 +845,7 @@ document.getElementById('fetchTuyaCloudBtn').addEventListener('click', async () 
   btn.disabled = true;
   status.textContent = 'Pobieram listę urządzeń...';
   try {
-    const resp = await fetch('/api/discover/tuya-cloud', {
+    const resp = await debugFetch('Pobierz urządzenia (Tuya Cloud)', '/api/discover/tuya-cloud', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_region, access_id, access_key }),
@@ -697,6 +864,58 @@ document.getElementById('fetchTuyaCloudBtn').addEventListener('click', async () 
     btn.disabled = false;
   }
 });
+
+// ------------------------------------------------------------------
+// Tuya Cloud: te same poświadczenia (Access ID/Secret) są potrzebne w
+// DWÓCH miejscach kreatora - import urządzeń (krok 2) i integracja
+// kamer/wirtualnego urządzenia (krok 7) - zamiast pytać dwa razy,
+// synchronizujemy pola na bieżąco w OBIE strony (wpisanie w
+// którymkolwiek miejscu wypełnia drugie).
+// ------------------------------------------------------------------
+[
+  ['tuya_cloud_import_id', 'tuya_access_id'],
+  ['tuya_cloud_import_key', 'tuya_access_key'],
+].forEach(([idA, idB]) => {
+  const elA = document.getElementById(idA);
+  const elB = document.getElementById(idB);
+  elA.addEventListener('input', () => { if (elB.value !== elA.value) elB.value = elA.value; });
+  elB.addEventListener('input', () => { if (elA.value !== elB.value) elA.value = elB.value; });
+});
+
+// Endpointy API/Pulsar zależą od regionu Tuya Cloud - wyprowadzane z
+// jedynego selektora regionu w kreatorze (krok 2, dotyczy też integracji
+// z kroku 7, patrz collectFormData). Hosty API potwierdzone wprost ze
+// źródeł tinytuya (Cloud.setregion) - hosty Pulsar/Message Service (mqe.*)
+// są pewne TYLKO dla głównych regionów (eu/us/cn/in, ten sam wzorzec co w
+// config.example.yaml); dla us-e/eu-w/sg NIE zgadujemy nieudokumentowanej
+// nazwy hosta - zostaje domyślny (UE) z wyraźnym ostrzeżeniem, żeby
+// zweryfikować go w developer.tuya.com (Cloud -> projekt -> Message
+// Service pokazuje faktyczny adres subskrypcji).
+const TUYA_REGION_ENDPOINTS = {
+  'eu':   { api: 'https://openapi.tuyaeu.com',        mq: 'wss://mqe.tuyaeu.com:8285/' },
+  'us':   { api: 'https://openapi.tuyaus.com',         mq: 'wss://mqe.tuyaus.com:8285/' },
+  'cn':   { api: 'https://openapi.tuyacn.com',         mq: 'wss://mqe.tuyacn.com:8285/' },
+  'in':   { api: 'https://openapi.tuyain.com',         mq: 'wss://mqe.tuyain.com:8285/' },
+  'us-e': { api: 'https://openapi-ueaz.tuyaus.com' },
+  'eu-w': { api: 'https://openapi-weaz.tuyaeu.com' },
+  'sg':   { api: 'https://openapi-sg.iotbing.com' },
+};
+
+function tuyaCloudRegionWarning() {
+  const region = document.getElementById('tuya_cloud_import_region').value;
+  const el = document.getElementById('tuyaCloudRegionWarning');
+  const known = TUYA_REGION_ENDPOINTS[region];
+  if (known && known.mq) {
+    el.style.display = 'none';
+  } else {
+    el.style.display = '';
+    el.textContent = '⚠ Adres serwera Pulsar (powiadomienia kamer) dla tego regionu nie jest ' +
+      'pewny - jeśli włączysz integrację Tuya Cloud w kroku 7 i kamery nie będą działać, ' +
+      'sprawdź faktyczny adres w developer.tuya.com (Cloud → Twój projekt → Message Service) ' +
+      'i popraw go ręcznie po zapisie w zakładce 🔌 Połączenia (panel /config).';
+  }
+}
+document.getElementById('tuya_cloud_import_region').addEventListener('change', tuyaCloudRegionWarning);
 
 function getTuyaDeviceNames() {
   return Array.from(document.querySelectorAll('#tuyaDevicesRows .td-name'))
@@ -1035,11 +1254,19 @@ function collectFormData() {
       username: document.getElementById('unifi_username').value.trim(),
       password: document.getElementById('unifi_password').value,
     },
-    tuya_cloud: {
-      enabled: document.getElementById('tuya_cloud_enabled').checked,
-      access_id: document.getElementById('tuya_cloud_enabled').checked ? document.getElementById('tuya_access_id').value.trim() : '',
-      access_key: document.getElementById('tuya_access_key').value,
-    },
+    tuya_cloud: (() => {
+      const region = document.getElementById('tuya_cloud_import_region').value;
+      const endpoints = TUYA_REGION_ENDPOINTS[region] || {};
+      return {
+        enabled: document.getElementById('tuya_cloud_enabled').checked,
+        access_id: document.getElementById('tuya_cloud_enabled').checked ? document.getElementById('tuya_access_id').value.trim() : '',
+        access_key: document.getElementById('tuya_access_key').value,
+        // Wyprowadzone z JEDYNEGO selektora regionu w kreatorze (krok 2) -
+        // patrz TUYA_REGION_ENDPOINTS i tuyaCloudRegionWarning() wyżej.
+        api_endpoint: endpoints.api || '',
+        mq_endpoint: endpoints.mq || '',
+      };
+    })(),
     scenes: collectScenes(),
     motion_rules: collectMotionRules(),
   };
@@ -1279,7 +1506,7 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
   saveBtn.disabled = true;
   saveBtn.textContent = 'Zapisywanie...';
   try {
-    const resp = await fetch('/api/setup/save', {
+    const resp = await debugFetch('Zapisz konfigurację', '/api/setup/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),

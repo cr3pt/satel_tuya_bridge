@@ -86,6 +86,30 @@ def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> lis
     if not isinstance(result, list):
         raise ConnectionError("Nieoczekiwana odpowiedź z Tuya Cloud")
 
+    if not result:
+        # UWAGA - prawdziwy bug w tinytuya, nie w naszym kodzie: jeśli
+        # odpowiedź Tuya Cloud na żądanie listy urządzeń nie ma klucza
+        # 'result' (typowe dla błędów logowania/podpisu/regionu/uprawnień -
+        # Tuya wtedy zwraca {"success": false, "code": ..., "msg": ...} BEZ
+        # 'result'), tinytuya.Cloud._get_all_devices() cicho zostawia
+        # domyślne {'result': []} zamiast zgłosić błąd - getdevices() więc
+        # zwraca pustą listę NIEODRÓŻNIALNĄ od legalnego "0 urządzeń w
+        # projekcie". Sprawdzamy surową odpowiedź (cloud.getdevices_raw,
+        # ustawianą przez getdevices() tuż przed budową listy) pod kątem
+        # jawnego success=false, żeby nie pokazywać mylącego "0 urządzeń"
+        # przy faktycznym błędzie logowania.
+        raw = getattr(cloud, "getdevices_raw", None)
+        if isinstance(raw, dict) and raw.get("success") is False:
+            message = raw.get("msg") or f"kod błędu {raw.get('code', '?')}"
+            raise ConnectionError(
+                f"Tuya Cloud zwrócił błąd zamiast listy urządzeń: {message}. Sprawdź: "
+                "(1) Access ID/Access Secret (bez spacji na początku/końcu), "
+                "(2) czy wybrany region odpowiada Data Center Twojego konta w apce "
+                "Tuya Smart/Smart Life (niedopasowanie regionu to częsta przyczyna "
+                "tego błędu mimo poprawnych kluczy), (3) czy w projekcie na "
+                "developer.tuya.com wykonano Devices → Link Tuya App Account."
+            )
+
     try:
         lan_devices = {d["id"]: d for d in scan_network(maxretry=1) if d.get("id")}
     except Exception:
