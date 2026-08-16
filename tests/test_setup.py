@@ -7,6 +7,7 @@ import yaml
 
 from dashboard.setup import (
     build_config_dict, validate, build_automations_dict, validate_automations,
+    build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
     draft_path_for, load_draft, save_draft, delete_draft,
 )
 
@@ -66,28 +67,40 @@ class TestBuildConfigDict:
         assert config["satel"]["port"] == 7094
         assert config["satel"]["integration_key"] == "klucz123"
 
-    def test_partitions_and_zones_converted_to_int(self):
+    def test_satel_config_has_fields_file_marker_not_inline_fields(self):
         config = build_config_dict(VALID_FORM)
-        assert config["satel"]["partitions"] == {"Dom": 1}
-        assert config["satel"]["monitored_zones"] == {"Salon": 12}
+        assert config["satel"]["fields_file"] == "satel_fields.yaml"
+        assert "partitions" not in config["satel"]
+        assert "monitored_zones" not in config["satel"]
+        assert "inputs" not in config["satel"]["virtual_inputs"]
+
+    def test_tuya_config_has_devices_file_marker_not_inline_devices(self):
+        config = build_config_dict(VALID_FORM)
+        assert config["tuya"]["devices_file"] == "tuya_devices.yaml"
+        assert "devices" not in config["tuya"]
+
+    def test_partitions_and_zones_converted_to_int(self):
+        satel_fields = build_satel_fields_dict(VALID_FORM)
+        assert satel_fields["partitions"] == {"Dom": 1}
+        assert satel_fields["monitored_zones"] == {"Salon": 12}
 
     def test_empty_partitions_defaults_to_dom_1(self):
         form = {**VALID_FORM, "partitions": []}
-        config = build_config_dict(form)
-        assert config["satel"]["partitions"] == {"Dom": 1}
+        satel_fields = build_satel_fields_dict(form)
+        assert satel_fields["partitions"] == {"Dom": 1}
 
     def test_tuya_devices_structure(self):
-        config = build_config_dict(VALID_FORM)
-        assert "gniazdko_salon" in config["tuya"]["devices"]
-        assert config["tuya"]["devices"]["gniazdko_salon"]["ip"] == "192.168.1.50"
+        tuya_devices = build_tuya_devices_dict(VALID_FORM)
+        assert "gniazdko_salon" in tuya_devices["devices"]
+        assert tuya_devices["devices"]["gniazdko_salon"]["ip"] == "192.168.1.50"
 
     def test_dimmer_device_gets_dp_fields(self):
         form = {**VALID_FORM, "tuya_devices": [
             {"name": "d", "id": "x", "ip": "1.2.3.4", "local_key": "k", "type": "dimmer", "dimmer_dp": "3"},
         ]}
-        config = build_config_dict(form)
-        assert config["tuya"]["devices"]["d"]["dimmer_dp"] == "3"
-        assert "dimmer_range" in config["tuya"]["devices"]["d"]
+        tuya_devices = build_tuya_devices_dict(form)
+        assert tuya_devices["devices"]["d"]["dimmer_dp"] == "3"
+        assert "dimmer_range" in tuya_devices["devices"]["d"]
 
     def test_password_is_hashed_not_plaintext(self):
         config = build_config_dict(VALID_FORM)
@@ -147,6 +160,97 @@ class TestBuildConfigDict:
         dumped = yaml.safe_dump(config, allow_unicode=True, sort_keys=False)
         reloaded = yaml.safe_load(dumped)
         assert reloaded["satel"]["host"] == "192.168.1.10"
+
+
+class TestSatelFieldsAndTuyaDevicesBuilders:
+    """build_satel_fields_dict/build_tuya_devices_dict i ich walidatory -
+    współdzielone przez kreator i panel /config (patrz dashboard/app.py:
+    /api/config/satel-fields, /api/config/tuya-devices)."""
+
+    def test_build_satel_fields_shape(self):
+        form = {
+            "partitions": [{"name": "Dom", "number": "1"}, {"name": "Garaz", "number": "2"}],
+            "monitored_zones": [{"name": "Salon", "number": "12"}],
+            "monitored_outputs": [{"name": "Syrena", "number": "1"}],
+            "virtual_inputs": [{"name": "motion_hall_camera", "number": "17", "key": "KLUCZ17"}],
+        }
+        fields = build_satel_fields_dict(form)
+        assert fields == {
+            "partitions": {"Dom": 1, "Garaz": 2},
+            "monitored_zones": {"Salon": 12},
+            "monitored_outputs": {"Syrena": 1},
+            "virtual_inputs": {"motion_hall_camera": {"number": 17, "key": "KLUCZ17"}},
+        }
+
+    def test_build_satel_fields_partitions_default_to_dom_1_when_empty(self):
+        fields = build_satel_fields_dict({"partitions": []})
+        assert fields["partitions"] == {"Dom": 1}
+
+    def test_build_satel_fields_rows_missing_number_are_skipped(self):
+        form = {"monitored_zones": [{"name": "Salon", "number": ""}, {"name": "", "number": "5"}]}
+        fields = build_satel_fields_dict(form)
+        assert fields["monitored_zones"] == {}
+
+    def test_build_satel_fields_defaults_when_form_empty(self):
+        fields = build_satel_fields_dict({})
+        assert fields == {
+            "partitions": {"Dom": 1}, "monitored_zones": {}, "monitored_outputs": {}, "virtual_inputs": {},
+        }
+
+    def test_validate_satel_fields_no_errors_when_complete(self):
+        form = {"virtual_inputs": [{"name": "x", "number": "1", "key": "k"}]}
+        assert validate_satel_fields(form) == []
+
+    def test_validate_satel_fields_incomplete_virtual_input_is_error(self):
+        form = {"virtual_inputs": [{"name": "x", "number": "", "key": "k"}]}
+        errors = validate_satel_fields(form)
+        assert any("Wirtualne wejście" in e for e in errors)
+
+    def test_validate_satel_fields_does_not_require_zone_number_pairs(self):
+        """Niepełne wiersze stref/wyjść/partycji nie są błędem - po prostu
+        pomijane przy zapisie (patrz build_satel_fields_dict)."""
+        form = {"monitored_zones": [{"name": "x", "number": ""}]}
+        assert validate_satel_fields(form) == []
+
+    def test_build_tuya_devices_shape(self):
+        form = {"tuya_devices": [
+            {"name": "gniazdko", "id": "d1", "ip": "1.2.3.4", "local_key": "k", "type": "socket"},
+        ]}
+        devices = build_tuya_devices_dict(form)
+        assert devices == {"devices": {
+            "gniazdko": {"id": "d1", "ip": "1.2.3.4", "local_key": "k", "version": 3.4, "type": "socket"},
+        }}
+
+    def test_build_tuya_devices_dimmer_gets_extra_fields(self):
+        form = {"tuya_devices": [
+            {"name": "d", "id": "x", "ip": "1.2.3.4", "local_key": "k", "type": "dimmer", "dimmer_dp": "3"},
+        ]}
+        devices = build_tuya_devices_dict(form)
+        assert devices["devices"]["d"]["dimmer_dp"] == "3"
+        assert devices["devices"]["d"]["dimmer_range"] == [10, 1000]
+
+    def test_build_tuya_devices_empty_form(self):
+        assert build_tuya_devices_dict({}) == {"devices": {}}
+
+    def test_validate_tuya_devices_no_errors_when_complete(self):
+        form = {"tuya_devices": [{"name": "x", "id": "i", "ip": "1.2.3.4", "local_key": "k"}]}
+        assert validate_tuya_devices(form) == []
+
+    def test_validate_tuya_devices_incomplete_is_error(self):
+        form = {"tuya_devices": [{"name": "x", "id": "", "ip": "1.2.3.4", "local_key": "k"}]}
+        errors = validate_tuya_devices(form)
+        assert any("Tuya" in e for e in errors)
+
+    def test_satel_fields_and_tuya_devices_are_yaml_serializable(self):
+        form = {
+            "partitions": [{"name": "Dom", "number": "1"}],
+            "virtual_inputs": [{"name": "x", "number": "1", "key": "k"}],
+            "tuya_devices": [{"name": "d", "id": "i", "ip": "1.2.3.4", "local_key": "k"}],
+        }
+        dumped_satel = yaml.safe_dump(build_satel_fields_dict(form), allow_unicode=True, sort_keys=False)
+        dumped_tuya = yaml.safe_dump(build_tuya_devices_dict(form), allow_unicode=True, sort_keys=False)
+        assert yaml.safe_load(dumped_satel)["partitions"] == {"Dom": 1}
+        assert yaml.safe_load(dumped_tuya)["devices"]["d"]["ip"] == "1.2.3.4"
 
 
 @pytest.fixture
@@ -444,9 +548,9 @@ class TestBuildConfigDictAdvanced:
         assert "time_window" not in rule
         assert "escalation" not in rule
 
-    def test_virtual_inputs_built_into_satel_config(self):
-        config = build_config_dict(FORM_WITH_ADVANCED)
-        assert config["satel"]["virtual_inputs"]["inputs"] == {
+    def test_virtual_inputs_built_into_satel_fields(self):
+        satel_fields = build_satel_fields_dict(FORM_WITH_ADVANCED)
+        assert satel_fields["virtual_inputs"] == {
             "motion_hall_camera": {"number": 17, "key": "KLUCZ17"},
         }
 

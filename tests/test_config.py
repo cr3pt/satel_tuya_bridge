@@ -139,3 +139,100 @@ scenes:
         config = BridgeConfig.load(tmp_path / "config.yaml")
         assert config.raw["scenes"][0]["name"] == "x"
         assert config.automations_file == tmp_path / "custom_automations.yaml"
+
+
+SATEL_FIELDS_YAML = """
+monitored_zones:
+  Salon: 12
+monitored_outputs:
+  Syrena: 1
+partitions:
+  Dom: 1
+  Garaz: 2
+virtual_inputs:
+  motion_hall_camera:
+    number: 17
+    key: KLUCZ17
+"""
+
+TUYA_DEVICES_YAML = """
+devices:
+  gniazdko_salon:
+    id: dev1
+    ip: 192.168.1.50
+    local_key: key1
+    version: 3.4
+    type: socket
+"""
+
+
+class TestSatelFieldsAndTuyaDevicesFiles:
+    """Strefy/wyjścia/wejścia IP/partycje Satela i urządzenia Tuya - też
+    wczytywane z osobnych plików (satel_fields.yaml / tuya_devices.yaml),
+    z tego samego powodu co automations.yaml/sensors.yaml: panel /config
+    może je bezpiecznie nadpisywać w całości."""
+
+    def test_satel_fields_file_overrides_inline_values(self, config_dir):
+        (config_dir / "satel_fields.yaml").write_text(SATEL_FIELDS_YAML, encoding="utf-8")
+        config = BridgeConfig.load(config_dir / "config.yaml")
+        assert config.raw["satel"]["monitored_zones"] == {"Salon": 12}
+        assert config.raw["satel"]["monitored_outputs"] == {"Syrena": 1}
+        assert config.raw["satel"]["partitions"] == {"Dom": 1, "Garaz": 2}
+        assert config.raw["satel"]["virtual_inputs"]["inputs"] == {
+            "motion_hall_camera": {"number": 17, "key": "KLUCZ17"},
+        }
+        assert config.satel_fields_file == config_dir / "satel_fields.yaml"
+
+    def test_tuya_devices_file_overrides_inline_values(self, config_dir):
+        (config_dir / "tuya_devices.yaml").write_text(TUYA_DEVICES_YAML, encoding="utf-8")
+        config = BridgeConfig.load(config_dir / "config.yaml")
+        assert config.raw["tuya"]["devices"]["gniazdko_salon"]["ip"] == "192.168.1.50"
+        assert config.tuya_devices_file == config_dir / "tuya_devices.yaml"
+
+    def test_missing_satel_fields_and_tuya_devices_files_default_to_empty(self, config_dir):
+        config = BridgeConfig.load(config_dir / "config.yaml")
+        assert config.raw["satel"]["monitored_zones"] == {}
+        assert config.raw["satel"]["monitored_outputs"] == {}
+        assert config.raw["satel"]["partitions"] == {}
+        assert config.raw["satel"]["virtual_inputs"]["inputs"] == {}
+        assert config.raw["tuya"]["devices"] == {}
+
+    def test_inline_values_used_when_satel_fields_file_missing(self, tmp_path):
+        """Wsteczna zgodność - configi z polami wpisanymi wprost w
+        config.yaml (jak generował stary kreator) wciąż działają."""
+        inline_config = MINIMAL_CONFIG.replace(
+            'inputs: {}', 'inputs: {motion_hall_camera: {number: 17, key: "K"}}',
+        ).replace(
+            'integration_key: "x"\n',
+            'integration_key: "x"\n  partitions: {Dom: 1}\n  monitored_zones: {Salon: 12}\n',
+        )
+        (tmp_path / "config.yaml").write_text(inline_config, encoding="utf-8")
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+        assert config.raw["satel"]["partitions"] == {"Dom": 1}
+        assert config.raw["satel"]["monitored_zones"] == {"Salon": 12}
+        assert config.raw["satel"]["virtual_inputs"]["inputs"]["motion_hall_camera"]["number"] == 17
+
+    def test_inline_tuya_devices_used_when_file_missing(self, tmp_path):
+        inline_config = MINIMAL_CONFIG.replace(
+            "tuya:\n  devices: {}",
+            'tuya:\n  devices: {gniazdko: {id: "d1", ip: "1.2.3.4", local_key: "k", version: 3.4, type: socket}}',
+        )
+        (tmp_path / "config.yaml").write_text(inline_config, encoding="utf-8")
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+        assert config.raw["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"
+
+    def test_custom_satel_fields_and_tuya_devices_file_paths(self, tmp_path):
+        config_text = MINIMAL_CONFIG.replace(
+            'integration_key: "x"\n', 'integration_key: "x"\n  fields_file: custom_satel.yaml\n',
+        ).replace("tuya:\n  devices: {}", "tuya:\n  devices: {}\n  devices_file: custom_tuya.yaml")
+        (tmp_path / "config.yaml").write_text(config_text, encoding="utf-8")
+        (tmp_path / "custom_satel.yaml").write_text("partitions: {Dom: 1}\n", encoding="utf-8")
+        (tmp_path / "custom_tuya.yaml").write_text(
+            'devices: {x: {id: "i", ip: "1.2.3.4", local_key: "k", version: 3.4, type: socket}}\n',
+            encoding="utf-8",
+        )
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+        assert config.raw["satel"]["partitions"] == {"Dom": 1}
+        assert config.raw["tuya"]["devices"]["x"]["ip"] == "1.2.3.4"
+        assert config.satel_fields_file == tmp_path / "custom_satel.yaml"
+        assert config.tuya_devices_file == tmp_path / "custom_tuya.yaml"

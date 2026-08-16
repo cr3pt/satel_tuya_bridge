@@ -22,11 +22,14 @@ import yaml
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 from bridge.config import BridgeConfig
+from bridge.ebus_client import discover_topics as discover_ebus_topics
 from bridge.history_store import HistoryStore
+from bridge.tuya_local import scan_network as scan_tuya_network
 from dashboard.auth import AuthGuard, require_auth
 from dashboard.setup import (
-    CONFIG_HEADER, SENSORS_HEADER, AUTOMATIONS_HEADER,
+    CONFIG_HEADER, SENSORS_HEADER, AUTOMATIONS_HEADER, SATEL_FIELDS_HEADER, TUYA_DEVICES_HEADER,
     build_config_dict, validate, build_automations_dict, validate_automations,
+    build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
     draft_path_for, load_draft, save_draft, delete_draft,
 )
 
@@ -34,6 +37,8 @@ app = Flask(__name__)
 history: HistoryStore | None = None  # ustawiane w create_app()
 sensors_file_path = None  # ustawiane w create_app() - ścieżka do sensors.yaml
 automations_file_path = None  # ustawiane w create_app() - ścieżka do automations.yaml
+satel_fields_file_path = None  # ustawiane w create_app() - ścieżka do satel_fields.yaml
+tuya_devices_file_path = None  # ustawiane w create_app() - ścieżka do tuya_devices.yaml
 auth_guard: AuthGuard | None = None  # ustawiane w create_app()
 satel_partitions_cfg: dict = {}  # nazwa -> numer strefy, ustawiane w create_app()
 config_raw: dict = {}  # ostatnio wczytany config.raw (do odczytu automatyzacji/kontekstu), ustawiane w create_app()
@@ -49,15 +54,37 @@ def is_configured() -> bool:
 
 
 def create_app(config: BridgeConfig) -> Flask:
-    global history, sensors_file_path, automations_file_path, auth_guard, satel_partitions_cfg, config_raw
+    global history, sensors_file_path, automations_file_path, satel_fields_file_path, tuya_devices_file_path
+    global auth_guard, satel_partitions_cfg, config_raw
     db_path = config.raw.get("dashboard", {}).get("db_path", "bridge_history.db")
     history = HistoryStore(db_path)
     sensors_file_path = config.sensors_file
     automations_file_path = config.automations_file
+    satel_fields_file_path = config.satel_fields_file
+    tuya_devices_file_path = config.tuya_devices_file
     auth_guard = AuthGuard(config.raw.get("dashboard", {}).get("auth"))
     satel_partitions_cfg = config.satel.get("partitions", {"Dom": config.satel.get("partition", 1)})
     config_raw = config.raw
     return app
+
+
+def _dict_to_name_number_rows(d: dict) -> list[dict]:
+    return [{"name": name, "number": number} for name, number in d.items()]
+
+
+def _virtual_inputs_to_rows(inputs: dict) -> list[dict]:
+    return [{"name": name, "number": v.get("number"), "key": v.get("key")} for name, v in inputs.items()]
+
+
+def _tuya_devices_to_rows(devices: dict) -> list[dict]:
+    return [
+        {
+            "name": name, "id": cfg.get("id", ""), "ip": cfg.get("ip", ""),
+            "local_key": cfg.get("local_key", ""), "type": cfg.get("type", "socket"),
+            "dimmer_dp": cfg.get("dimmer_dp", ""),
+        }
+        for name, cfg in devices.items()
+    ]
 
 
 @app.before_request
@@ -126,6 +153,8 @@ def api_setup_save():
 
     config_dict = build_config_dict(form)
     automations_dict = build_automations_dict(form)
+    satel_fields_dict = build_satel_fields_dict(form)
+    tuya_devices_dict = build_tuya_devices_dict(form)
 
     with open(config_path, "w", encoding="utf-8") as f:
         f.write(CONFIG_HEADER)
@@ -140,6 +169,16 @@ def api_setup_save():
     with open(automations_path, "w", encoding="utf-8") as f:
         f.write(AUTOMATIONS_HEADER)
         yaml.safe_dump(automations_dict, f, allow_unicode=True, sort_keys=False)
+
+    satel_fields_path = config_path.parent / config_dict["satel"]["fields_file"]
+    with open(satel_fields_path, "w", encoding="utf-8") as f:
+        f.write(SATEL_FIELDS_HEADER)
+        yaml.safe_dump(satel_fields_dict, f, allow_unicode=True, sort_keys=False)
+
+    tuya_devices_path = config_path.parent / config_dict["tuya"]["devices_file"]
+    with open(tuya_devices_path, "w", encoding="utf-8") as f:
+        f.write(TUYA_DEVICES_HEADER)
+        yaml.safe_dump(tuya_devices_dict, f, allow_unicode=True, sort_keys=False)
 
     # Konfiguracja jest już kompletna i zapisana - plik roboczy kreatora
     # (postęp między krokami) nie jest już potrzebny.
@@ -157,7 +196,7 @@ def api_setup_save():
                     "(panel sam się już przeładował i jest gotowy).",
         "next_steps": [
             "python main.py --config " + str(config_path),
-            "Dodaj czujniki kotła eBUS w zakładce ⚙ Ustawienia czujników",
+            "Dodaj czujniki kotła eBUS, strefy/wyjścia Satela i urządzenia Tuya w zakładce ⚙ Ustawienia",
             "Dodaj/edytuj sceny, harmonogramy, eskalację i symulację obecności w zakładce 🎬 Automatyzacje",
         ],
     })
@@ -217,6 +256,121 @@ def api_config_sensors_post():
 
     return jsonify({
         "saved": len(cleaned),
+        "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
+                    "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
+    })
+
+
+@app.route("/api/discover/ebus", methods=["POST"])
+def api_discover_ebus():
+    """Krótkie (kilka sekund) nasłuchiwanie na MQTT ebusd - podpowiedź
+    tematów/pól do dodania jako czujnik w /config (patrz przycisk "Wykryj
+    czujniki"). Publiczny - to tylko podgląd sieci, nic nie zmienia.
+
+    UCZCIWIE: to najprostsza możliwa heurystyka (kto faktycznie opublikował
+    coś w krótkim oknie czasowym), NIE pełna lista pól dostępnych w ebusd -
+    rzadziej publikowane pola mogą się nie pojawić. Można kliknąć ponownie
+    albo dodać czujnik ręcznie (patrz README)."""
+    payload = request.get_json(silent=True) or {}
+    ebus_cfg = config_raw.get("ebus", {})
+    mqtt_host = payload.get("mqtt_host") or ebus_cfg.get("mqtt_host")
+    mqtt_port = payload.get("mqtt_port") or ebus_cfg.get("mqtt_port", 1883)
+    if not mqtt_host:
+        return jsonify({"error": "Brak adresu brokera MQTT"}), 400
+    try:
+        topics = discover_ebus_topics(mqtt_host, int(mqtt_port))
+    except ConnectionError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:
+        return jsonify({"error": f"Błąd wykrywania: {exc}"}), 502
+    return jsonify({"topics": topics})
+
+
+@app.route("/api/discover/tuya", methods=["POST"])
+def api_discover_tuya():
+    """Skanowanie sieci LAN (broadcast UDP) w poszukiwaniu urządzeń Tuya -
+    podpowiedź id/ip/version do panelu /config. Publiczny - tylko odczyt.
+
+    UWAGA: NIE zwraca `local_key` (nie jest rozgłaszany ze względów
+    bezpieczeństwa) - trzeba go osobno wyciągnąć narzędziem
+    `python -m tinytuya wizard` (patrz README). Skan trwa ok. 18 sekund."""
+    try:
+        devices = scan_tuya_network()
+    except Exception as exc:
+        return jsonify({"error": f"Błąd skanowania: {exc}"}), 502
+    return jsonify({"devices": devices})
+
+
+@app.route("/api/config/satel-fields", methods=["GET"])
+def api_config_satel_fields_get():
+    satel = config_raw.get("satel", {})
+    return jsonify({
+        "partitions": _dict_to_name_number_rows(satel.get("partitions", {})),
+        "monitored_zones": _dict_to_name_number_rows(satel.get("monitored_zones", {})),
+        "monitored_outputs": _dict_to_name_number_rows(satel.get("monitored_outputs", {})),
+        "virtual_inputs": _virtual_inputs_to_rows(satel.get("virtual_inputs", {}).get("inputs", {})),
+    })
+
+
+@app.route("/api/config/satel-fields", methods=["POST"])
+@require_auth()
+def api_config_satel_fields_post():
+    """Nadpisuje CAŁĄ zawartość satel_fields.yaml (strefy/wyjścia/wejścia
+    IP/partycje) przesłanym formularzem - ten sam kształt danych, jaki
+    zbiera kreator w kroku "Centrala Satel Integra" (patrz dashboard/setup.py:
+    validate_satel_fields/build_satel_fields_dict)."""
+    form = request.get_json(silent=True)
+    if not isinstance(form, dict):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+    errors = validate_satel_fields(form)
+    if errors:
+        return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+    satel_fields_dict = build_satel_fields_dict(form)
+    with open(satel_fields_file_path, "w", encoding="utf-8") as f:
+        f.write(SATEL_FIELDS_HEADER)
+        yaml.safe_dump(satel_fields_dict, f, allow_unicode=True, sort_keys=False)
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+
+    return jsonify({
+        "saved": {k: len(v) if isinstance(v, dict) else v for k, v in satel_fields_dict.items()},
+        "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
+                    "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
+    })
+
+
+@app.route("/api/config/tuya-devices", methods=["GET"])
+def api_config_tuya_devices_get():
+    return jsonify({"devices": _tuya_devices_to_rows(config_raw.get("tuya", {}).get("devices", {}))})
+
+
+@app.route("/api/config/tuya-devices", methods=["POST"])
+@require_auth()
+def api_config_tuya_devices_post():
+    """Nadpisuje CAŁĄ zawartość tuya_devices.yaml przesłanym formularzem -
+    ten sam kształt danych, jaki zbiera kreator w kroku "Urządzenia Tuya"
+    (patrz dashboard/setup.py: validate_tuya_devices/build_tuya_devices_dict)."""
+    form = request.get_json(silent=True)
+    if not isinstance(form, dict):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+    errors = validate_tuya_devices(form)
+    if errors:
+        return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+    tuya_devices_dict = build_tuya_devices_dict(form)
+    with open(tuya_devices_file_path, "w", encoding="utf-8") as f:
+        f.write(TUYA_DEVICES_HEADER)
+        yaml.safe_dump(tuya_devices_dict, f, allow_unicode=True, sort_keys=False)
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+
+    return jsonify({
+        "saved": len(tuya_devices_dict["devices"]),
         "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
                     "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
     })

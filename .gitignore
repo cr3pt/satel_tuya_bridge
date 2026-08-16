@@ -2,6 +2,8 @@
 config.yaml
 sensors.yaml
 automations.yaml
+satel_fields.yaml
+tuya_devices.yaml
 
 # Plik roboczy kreatora (postęp między krokami /setup) - może zawierać
 # poświadczenia wpisane, ale jeszcze nie zapisane do config.yaml

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ustawienia czujników - Panel Satel-Tuya-eBUS</title>
+<title>Ustawienia - Panel Satel-Tuya-eBUS</title>
 <style>
   :root {
     --bg: #14161a; --card: #1d2026; --border: #2c3038;
@@ -14,26 +14,29 @@
   body {
     background: var(--bg); color: var(--text); margin: 0;
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-    padding: 20px;
+    padding: 20px; max-width: 900px; margin-left: auto; margin-right: auto;
   }
   h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
   .nav { margin-bottom: 16px; }
   .nav a { color: var(--accent); text-decoration: none; font-size: 13px; }
   .hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
   .hint code { background: #262a32; padding: 1px 5px; border-radius: 4px; }
-  .card {
+  .section-hint { color: var(--muted); font-size: 13px; margin: 4px 0 14px; line-height: 1.5; }
+  .card, .section {
     background: var(--card); border: 1px solid var(--border);
-    border-radius: 8px; padding: 16px; margin-bottom: 16px;
+    border-radius: 10px; padding: 18px; margin-bottom: 18px;
   }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   th { color: var(--muted); font-weight: 500; font-size: 12px; }
-  input[type=text] {
+  input[type=text], input[type=password], input[type=number] {
     background: #262a32; color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 100%;
   }
-  input[type=text]:disabled { opacity: 0.4; }
+  input:disabled { opacity: 0.4; }
   input[type=checkbox] { width: 17px; height: 17px; cursor: pointer; }
+  select { background: #262a32; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; width: 100%; font-size: 13px; }
   .col-check { text-align: center; width: 70px; }
   .col-actions { width: 40px; text-align: center; }
   button {
@@ -45,26 +48,52 @@
     background: transparent; color: var(--danger); border: none;
     font-size: 16px; padding: 2px 6px; cursor: pointer;
   }
-  .actions-bar { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
-  #saveMessage { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; display: none; }
-  #saveMessage.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
-  #saveMessage.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .actions-bar { display: flex; gap: 10px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+  .msg-box { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; display: none; }
+  .msg-box.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  .msg-box.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
+  .repeatable-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+  .repeatable-row input, .repeatable-row select { flex: 1; min-width: 90px; }
+  .row-remove { background: transparent; color: var(--danger); border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; flex-shrink: 0; }
+  .add-row-btn { background: #262a32; color: var(--text); border: 1px dashed var(--border); border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-top: 4px; }
+  .field-group { margin-bottom: 18px; }
+  .field-group:last-child { margin-bottom: 0; }
+  .field-group > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .discover-status { font-size: 12.5px; color: var(--muted); }
+  .candidate-badge { background: #2c2413; color: #e8d6ae; border: 1px solid var(--warn, #e6a23c); border-radius: 4px; padding: 1px 6px; font-size: 11px; margin-left: 6px; }
 </style>
 </head>
 <body>
 <div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/automations">🎬 Automatyzacje</a></div>
-<h1>Ustawienia czujników eBUS</h1>
+<h1>⚙ Ustawienia</h1>
 <div class="hint">
-  Dla każdego czujnika wybierz, dokąd ma trafiać: <strong>Historia</strong>
-  (wykres i status w panelu), <strong>MQTT</strong> (publikacja dalej, np.
-  do Home Assistant) i <strong>Tuya</strong> (wirtualne urządzenie w
-  aplikacji Tuya - wymaga wcześniejszej konfiguracji, patrz README).
-  Nazwy tematów MQTT znajdziesz komendą <code>ebusctl find -d</code> na RPi.
-  <br><strong>Zmiany wchodzą w życie dopiero po restarcie procesu bridge'a</strong>
+  Czujniki eBUS, pola Satela (strefy/wyjścia/wejścia IP/partycje) i
+  urządzenia Tuya - w pełni wyklikiwane, bez edycji YAML-a. Przyciski
+  "Wykryj"/"Skanuj" podpowiadają, co jest widoczne w sieci - domyślnie
+  nic nie jest jeszcze dodane, dopiero uzupełnienie wiersza i zapis
+  włącza dane pole. <strong>Odczyt jest otwarty, zapis wymaga hasła
+  administratora</strong> panelu (patrz kreator, krok "Hasło administratora
+  panelu"). <strong>Zmiany wchodzą w życie po restarcie procesu bridge'a</strong>
   (nie samego panelu).
 </div>
 
-<div class="card">
+<!-- ============================== eBUS ============================== -->
+<div class="section" id="ebusSection">
+  <h2>Czujniki eBUS (kocioł)</h2>
+  <div class="section-hint">
+    Dla każdego czujnika wybierz, dokąd ma trafiać: <strong>Historia</strong>
+    (wykres i status w panelu), <strong>MQTT</strong> (publikacja dalej, np.
+    do Home Assistant) i <strong>Tuya</strong> (wirtualne urządzenie w
+    aplikacji Tuya - wymaga wcześniejszej konfiguracji, patrz README).
+  </div>
+
+  <div class="discover-row">
+    <button type="button" class="secondary" id="discoverEbusBtn">🔍 Wykryj czujniki (nasłuchuj ~4s)</button>
+    <span class="discover-status" id="ebusDiscoverStatus"></span>
+  </div>
+
   <table>
     <thead>
       <tr>
@@ -81,14 +110,76 @@
     <tbody id="sensorRows"></tbody>
   </table>
   <div class="actions-bar">
-    <button class="secondary" id="addRowBtn" type="button">+ Dodaj czujnik</button>
-    <button id="saveBtn" type="button">Zapisz</button>
+    <button class="secondary" id="addSensorRowBtn" type="button">+ Dodaj czujnik</button>
+    <button id="saveSensorsBtn" type="button">Zapisz czujniki</button>
   </div>
-  <div id="saveMessage"></div>
+  <div id="sensorsMsg" class="msg-box"></div>
+</div>
+
+<!-- ============================== Satel ============================== -->
+<div class="section" id="satelSection">
+  <h2>Satel - strefy, wyjścia, wejścia IP, partycje</h2>
+  <div class="section-hint">
+    Bez przycisku "Wykryj" - protokół integracji Satela nie udostępnia listy
+    skonfigurowanych stref/wyjść (tylko bieżący stan already-znanych
+    numerów), więc numer i nazwę trzeba przepisać z DLOADX ręcznie. Numery
+    muszą pokrywać się z rzeczywistą konfiguracją centrali.
+  </div>
+
+  <div class="field-group">
+    <label>Strefy (do uzbrajania/rozbrajania z panelu)</label>
+    <div id="partitionsRows"></div>
+    <button type="button" class="add-row-btn" id="addPartitionBtn">+ Dodaj strefę</button>
+  </div>
+
+  <div class="field-group">
+    <label>Monitorowane wejścia (czujki)</label>
+    <div id="zonesRows"></div>
+    <button type="button" class="add-row-btn" id="addZoneBtn">+ Dodaj wejście</button>
+  </div>
+
+  <div class="field-group">
+    <label>Monitorowane wyjścia</label>
+    <div id="outputsRows"></div>
+    <button type="button" class="add-row-btn" id="addOutputBtn">+ Dodaj wyjście</button>
+  </div>
+
+  <div class="field-group">
+    <label>Wirtualne wejścia IP (do scen/reguł ruchu - zakładka 🎬 Automatyzacje)</label>
+    <div id="virtualInputsRows"></div>
+    <button type="button" class="add-row-btn" id="addVirtualInputBtn">+ Dodaj wirtualne wejście</button>
+  </div>
+
+  <div class="actions-bar">
+    <button id="saveSatelBtn" type="button">Zapisz pola Satela</button>
+  </div>
+  <div id="satelMsg" class="msg-box"></div>
+</div>
+
+<!-- ============================== Tuya ============================== -->
+<div class="section" id="tuyaSection">
+  <h2>Urządzenia Tuya (lokalnie)</h2>
+  <div class="section-hint">
+    <code>local_key</code> każdego urządzenia wyciągasz narzędziem
+    <code>python -m tinytuya wizard</code> w konsoli (jednorazowe logowanie
+    do konta Tuya) - skanowanie sieci poniżej podpowie tylko ID i adres IP,
+    <strong>local_key nie jest rozgłaszany</strong> ze względów bezpieczeństwa.
+  </div>
+
+  <div class="discover-row">
+    <button type="button" class="secondary" id="discoverTuyaBtn">🔍 Skanuj sieć (do ok. 18s)</button>
+    <span class="discover-status" id="tuyaDiscoverStatus"></span>
+  </div>
+
+  <div id="tuyaDevicesRows"></div>
+  <div class="actions-bar">
+    <button class="secondary" id="addTuyaDeviceBtn" type="button">+ Dodaj urządzenie</button>
+    <button id="saveTuyaBtn" type="button">Zapisz urządzenia Tuya</button>
+  </div>
+  <div id="tuyaMsg" class="msg-box"></div>
 </div>
 
 <script>
-let sensors = [];
 // Autoryzacja tylko dla zapisu (POST) - hasło trzymane WYŁĄCZNIE w pamięci
 // karty przeglądarki, nigdy w localStorage/sessionStorage.
 let authHeader = null;
@@ -101,13 +192,21 @@ async function authorizedFetch(url, options = {}) {
   }
   const headers = Object.assign({}, options.headers, { 'Authorization': authHeader });
   const resp = await fetch(url, Object.assign({}, options, { headers }));
-  if (resp.status === 401) {
-    authHeader = null;
-  }
+  if (resp.status === 401) authHeader = null;
   return resp;
 }
 
-function makeRow(sensor = null) {
+function showMsg(elId, ok, text) {
+  const el = document.getElementById(elId);
+  el.className = 'msg-box ' + (ok ? 'ok' : 'error');
+  el.style.display = '';
+  el.textContent = (ok ? '✅ ' : '❌ ') + text;
+}
+
+// ------------------------------------------------------------------
+// eBUS czujniki
+// ------------------------------------------------------------------
+function makeSensorRow(sensor) {
   const s = sensor || {
     name: "", label: "", mqtt_topic: "",
     targets: { history: true, mqtt_publish: false, tuya_virtual_device: false, tuya_dp: "" },
@@ -131,13 +230,13 @@ function makeRow(sensor = null) {
 }
 
 async function loadSensors() {
-  sensors = await (await fetch('/api/config/sensors')).json();
+  const sensors = await (await fetch('/api/config/sensors')).json();
   const tbody = document.getElementById('sensorRows');
   tbody.innerHTML = '';
-  sensors.forEach(s => tbody.appendChild(makeRow(s)));
+  sensors.forEach(s => tbody.appendChild(makeSensorRow(s)));
 }
 
-function collectRows() {
+function collectSensorRows() {
   return Array.from(document.querySelectorAll('#sensorRows tr')).map(tr => ({
     name: tr.querySelector('.f-name').value.trim(),
     label: tr.querySelector('.f-label').value.trim(),
@@ -151,35 +250,253 @@ function collectRows() {
   }));
 }
 
-document.getElementById('addRowBtn').addEventListener('click', () => {
-  document.getElementById('sensorRows').appendChild(makeRow());
+document.getElementById('addSensorRowBtn').addEventListener('click', () => {
+  document.getElementById('sensorRows').appendChild(makeSensorRow());
 });
 
-document.getElementById('saveBtn').addEventListener('click', async () => {
-  const msgEl = document.getElementById('saveMessage');
-  msgEl.className = '';
-  msgEl.style.display = 'none';
+document.getElementById('saveSensorsBtn').addEventListener('click', async () => {
   try {
     const resp = await authorizedFetch('/api/config/sensors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(collectRows()),
+      body: JSON.stringify(collectSensorRows()),
+    });
+    const data = await resp.json();
+    if (!resp.ok) showMsg('sensorsMsg', false, data.error || 'Błąd zapisu');
+    else showMsg('sensorsMsg', true, `Zapisano ${data.saved} czujników. ${data.message}`);
+  } catch (e) {
+    showMsg('sensorsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+document.getElementById('discoverEbusBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('discoverEbusBtn');
+  const status = document.getElementById('ebusDiscoverStatus');
+  btn.disabled = true;
+  status.textContent = 'Nasłuchuję ~4s...';
+  try {
+    const resp = await fetch('/api/discover/ebus', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = '❌ ' + (data.error || 'Błąd wykrywania');
+      return;
+    }
+    const existingTopics = new Set(
+      Array.from(document.querySelectorAll('#sensorRows .f-topic')).map(el => el.value.trim())
+    );
+    let added = 0;
+    (data.topics || []).forEach(topic => {
+      if (existingTopics.has(topic)) return;
+      const suggestedName = topic.split('/').slice(1).join('_') || topic;
+      const row = makeSensorRow({
+        name: suggestedName, label: '', mqtt_topic: topic,
+        targets: { history: true, mqtt_publish: false, tuya_virtual_device: false, tuya_dp: '' },
+      });
+      document.getElementById('sensorRows').appendChild(row);
+      added++;
+    });
+    status.textContent = added
+      ? `Znaleziono ${data.topics.length} tematów, dodano ${added} nowych wierszy (sprawdź nazwy przed zapisem).`
+      : `Nie znaleziono nowych tematów (${data.topics.length} już na liście albo ebusd nic nie opublikował w tym czasie - spróbuj ponownie).`;
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ------------------------------------------------------------------
+// Satel - strefy/wyjścia/wejścia IP/partycje
+// ------------------------------------------------------------------
+function addNameNumberRow(containerId, initial) {
+  const container = document.getElementById(containerId);
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. Salon)" class="row-name">
+    <input type="number" placeholder="numer" class="row-number" style="max-width: 90px;">
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.row-name').value = initial.name ?? '';
+    row.querySelector('.row-number').value = initial.number ?? '';
+  }
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+document.getElementById('addPartitionBtn').addEventListener('click', () => addNameNumberRow('partitionsRows'));
+document.getElementById('addZoneBtn').addEventListener('click', () => addNameNumberRow('zonesRows'));
+document.getElementById('addOutputBtn').addEventListener('click', () => addNameNumberRow('outputsRows'));
+
+function collectNameNumberRows(containerId) {
+  return Array.from(document.querySelectorAll(`#${containerId} .repeatable-row`))
+    .map(row => ({ name: row.querySelector('.row-name').value.trim(), number: row.querySelector('.row-number').value }))
+    .filter(r => r.name && r.number);
+}
+
+function addVirtualInputRow(initial) {
+  const container = document.getElementById('virtualInputsRows');
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. motion_hall_camera)" class="vi-name">
+    <input type="number" placeholder="numer wejścia" class="vi-number" style="max-width: 120px;">
+    <input type="text" placeholder="klucz z DLOADX" class="vi-key">
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.vi-name').value = initial.name ?? '';
+    row.querySelector('.vi-number').value = initial.number ?? '';
+    row.querySelector('.vi-key').value = initial.key ?? '';
+  }
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+document.getElementById('addVirtualInputBtn').addEventListener('click', () => addVirtualInputRow());
+
+function collectVirtualInputs() {
+  return Array.from(document.querySelectorAll('#virtualInputsRows .repeatable-row')).map(row => ({
+    name: row.querySelector('.vi-name').value.trim(),
+    number: row.querySelector('.vi-number').value,
+    key: row.querySelector('.vi-key').value.trim(),
+  })).filter(v => v.name || v.number || v.key);
+}
+
+async function loadSatelFields() {
+  const data = await (await fetch('/api/config/satel-fields')).json();
+  (data.partitions || []).forEach(p => addNameNumberRow('partitionsRows', p));
+  (data.monitored_zones || []).forEach(z => addNameNumberRow('zonesRows', z));
+  (data.monitored_outputs || []).forEach(o => addNameNumberRow('outputsRows', o));
+  (data.virtual_inputs || []).forEach(v => addVirtualInputRow(v));
+}
+
+document.getElementById('saveSatelBtn').addEventListener('click', async () => {
+  const payload = {
+    partitions: collectNameNumberRows('partitionsRows'),
+    monitored_zones: collectNameNumberRows('zonesRows'),
+    monitored_outputs: collectNameNumberRows('outputsRows'),
+    virtual_inputs: collectVirtualInputs(),
+  };
+  try {
+    const resp = await authorizedFetch('/api/config/satel-fields', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     });
     const data = await resp.json();
     if (!resp.ok) {
-      msgEl.className = 'error';
-      msgEl.textContent = '❌ ' + (data.error || 'Błąd zapisu');
+      const details = data.details ? ' - ' + data.details.join('; ') : '';
+      showMsg('satelMsg', false, (data.error || 'Błąd zapisu') + details);
     } else {
-      msgEl.className = 'ok';
-      msgEl.textContent = `✅ Zapisano ${data.saved} czujników. ${data.message}`;
+      showMsg('satelMsg', true, data.message);
     }
   } catch (e) {
-    msgEl.className = 'error';
-    msgEl.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+    showMsg('satelMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+// ------------------------------------------------------------------
+// Tuya - urządzenia
+// ------------------------------------------------------------------
+function addTuyaDeviceRow(initial) {
+  const container = document.getElementById('tuyaDevicesRows');
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. gniazdko_salon)" class="td-name">
+    <input type="text" placeholder="device id" class="td-id">
+    <input type="text" placeholder="adres IP" class="td-ip">
+    <input type="text" placeholder="local key" class="td-key">
+    <select class="td-type">
+      <option value="socket">gniazdko/przełącznik</option>
+      <option value="dimmer">ściemniacz</option>
+    </select>
+    <input type="text" placeholder="DP jasności (tylko ściemniacz)" class="td-dp" style="display:none;">
+    <button type="button" class="row-remove">✕</button>`;
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  row.querySelector('.td-type').addEventListener('change', (e) => {
+    row.querySelector('.td-dp').style.display = e.target.value === 'dimmer' ? '' : 'none';
+  });
+  if (initial) {
+    row.querySelector('.td-name').value = initial.name || '';
+    row.querySelector('.td-id').value = initial.id || '';
+    row.querySelector('.td-ip').value = initial.ip || '';
+    row.querySelector('.td-key').value = initial.local_key || '';
+    row.querySelector('.td-type').value = initial.type || 'socket';
+    row.querySelector('.td-dp').value = initial.dimmer_dp || '';
+    row.querySelector('.td-dp').style.display = initial.type === 'dimmer' ? '' : 'none';
+  }
+  container.appendChild(row);
+}
+document.getElementById('addTuyaDeviceBtn').addEventListener('click', () => addTuyaDeviceRow());
+
+function collectTuyaDevices() {
+  return Array.from(document.querySelectorAll('#tuyaDevicesRows .repeatable-row')).map(row => ({
+    name: row.querySelector('.td-name').value.trim(),
+    id: row.querySelector('.td-id').value.trim(),
+    ip: row.querySelector('.td-ip').value.trim(),
+    local_key: row.querySelector('.td-key').value.trim(),
+    type: row.querySelector('.td-type').value,
+    dimmer_dp: row.querySelector('.td-dp').value.trim(),
+  })).filter(d => d.name || d.id || d.ip || d.local_key);
+}
+
+async function loadTuyaDevices() {
+  const data = await (await fetch('/api/config/tuya-devices')).json();
+  (data.devices || []).forEach(d => addTuyaDeviceRow(d));
+}
+
+document.getElementById('saveTuyaBtn').addEventListener('click', async () => {
+  try {
+    const resp = await authorizedFetch('/api/config/tuya-devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tuya_devices: collectTuyaDevices() }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const details = data.details ? ' - ' + data.details.join('; ') : '';
+      showMsg('tuyaMsg', false, (data.error || 'Błąd zapisu') + details);
+    } else {
+      showMsg('tuyaMsg', true, `Zapisano ${data.saved} urządzeń. ${data.message}`);
+    }
+  } catch (e) {
+    showMsg('tuyaMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+document.getElementById('discoverTuyaBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('discoverTuyaBtn');
+  const status = document.getElementById('tuyaDiscoverStatus');
+  btn.disabled = true;
+  status.textContent = 'Skanuję sieć (do ok. 18s)...';
+  try {
+    const resp = await fetch('/api/discover/tuya', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = '❌ ' + (data.error || 'Błąd skanowania');
+      return;
+    }
+    const existingIds = new Set(
+      Array.from(document.querySelectorAll('#tuyaDevicesRows .td-id')).map(el => el.value.trim())
+    );
+    let added = 0;
+    (data.devices || []).forEach(dev => {
+      if (!dev.id || existingIds.has(dev.id)) return;
+      addTuyaDeviceRow({ name: '', id: dev.id, ip: dev.ip, local_key: '', type: 'socket', dimmer_dp: '' });
+      added++;
+    });
+    status.textContent = added
+      ? `Znaleziono ${data.devices.length} urządzeń, dodano ${added} nowych wierszy - uzupełnij nazwę i local_key przed zapisem.`
+      : `Nie znaleziono nowych urządzeń (${data.devices.length} już na liście albo żadne nie odpowiedziało na skan).`;
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
   }
 });
 
 loadSensors();
+loadSatelFields();
+loadTuyaDevices();
 </script>
 </body>
 </html>

@@ -32,7 +32,7 @@ pytest
 pytest --cov=bridge --cov=dashboard --cov-report=term-missing
 ```
 
-**224 testy, wszystkie przechodzą, pokrycie kodu ~74%.** Uczciwie o
+**273 testy, wszystkie przechodzą, pokrycie kodu ~76%.** Uczciwie o
 brakującym pokryciu: moduły będące cienkimi wrapperami na biblioteki
 zewnętrzne (`satel_client.py` - satel_integra, `ebus_client.py` -
 callbacki paho-mqtt, `tuya_cloud_events.py`/`unifi_protect_events.py` -
@@ -127,11 +127,12 @@ plik istnieje, więc żadne Twoje ręczne zmiany nie zostaną nadpisane).
    niżej)
 3. Uzupełnij sekcje `satel`, `tuya`, reguły itd. w `config.yaml`
    (komentarze w pliku tłumaczą każde pole). Sceny/reguły ruchu/symulację
-   obecności możesz zostawić wpisane wprost w `config.yaml` tak jak w
-   przykładzie (`scenes`/`reguły_ruchu`/`presence_simulation`) - działa
-   bez zmian - albo od razu przenieść do osobnego `automations.yaml`
-   (patrz sekcja "Automatyzacje" niżej), jeśli chcesz mieć możliwość
-   edycji tych trzech rzeczy później z panelu (`/automations`).
+   obecności, strefy/wyjścia/wejścia IP/partycje Satela i urządzenia Tuya
+   możesz zostawić wpisane wprost w `config.yaml` tak jak w przykładzie -
+   działa bez zmian - albo od razu przenieść do osobnych plików
+   (`automations.yaml`/`satel_fields.yaml`/`tuya_devices.yaml`, patrz
+   sekcje "Automatyzacje" i "Panel webowy" niżej), jeśli chcesz mieć
+   możliwość edycji tych rzeczy później z panelu (`/automations`, `/config`).
 4. Local key urządzeń Tuya wyciągnij narzędziem:
    ```bash
    python -m tinytuya wizard
@@ -168,6 +169,12 @@ Format to `circuit pole = wartość`. Żeby dowiedzieć się, na jakim temacie
 MQTT dane pole jest publikowane, sprawdź konfigurację MQTT ebusd (domyślnie
 `<mqtttopic>/<circuit>/<pole>`, np. `ebusd/bai/FlowTemp`) albo podsłuchaj
 ruch bezpośrednio: `mosquitto_sub -h 127.0.0.1 -t 'ebusd/#' -v`.
+
+Dokładnie to ostatnie (krótkie podsłuchanie ruchu MQTT) robi automatycznie
+przycisk **"🔍 Wykryj czujniki"** w zakładce ⚙ Ustawienia (`/config`) -
+wygodna podpowiedź w przeglądarce zamiast SSH + `mosquitto_sub`, ale wciąż
+tylko podpowiedź (pola rzadziej publikowane niż raz na ~4s mogą się nie
+pojawić) - `ebusctl find -d` daje pełniejszy, ale ręczny obraz.
 
 ### Jak wybrać, co dokąd trafia
 
@@ -324,10 +331,40 @@ python -m dashboard.app --config config.yaml --port 8090
 ```
 
 Panel dostępny pod `http://<adres-rpi>:8090/`. Dwie zakładki dostępne z
-górnego paska: **⚙ Ustawienia czujników** (`/config` - lista czujników
-eBUS) i **🎬 Automatyzacje** (`/automations` - sceny/reguły ruchu/
-harmonogramy/eskalacja/symulacja obecności, patrz sekcja "Automatyzacje"
-niżej) - obie odczytują bez hasła, zapis wymaga hasła administratora.
+górnego paska: **⚙ Ustawienia** (`/config` - czujniki eBUS, pola Satela,
+urządzenia Tuya, patrz niżej) i **🎬 Automatyzacje** (`/automations` -
+sceny/reguły ruchu/harmonogramy/eskalacja/symulacja obecności, patrz
+sekcja "Automatyzacje" niżej) - obie odczytują bez hasła, zapis wymaga
+hasła administratora.
+
+### Zakładka ⚙ Ustawienia - eBUS, Satel, Tuya bez edycji YAML-a
+
+Trzy sekcje na jednej stronie (`/config`), każda z własnym przyciskiem
+zapisu (osobny plik na sekcję - patrz "Automatyzacje" niżej po wyjaśnienie
+tego wzorca):
+
+- **Czujniki eBUS** (`sensors.yaml`) - jak dotychczas, plus przycisk
+  **"🔍 Wykryj czujniki"**: nasłuchuje ok. 4 sekundy na skonfigurowanym
+  brokerze MQTT (`ebus.mqtt_host`) i dopisuje wiersz dla każdego tematu, na
+  który `ebusd` w tym czasie coś opublikował - **to podpowiedź, nie pełna
+  lista pól** (rzadziej publikowane pola mogą się nie pojawić za pierwszym
+  razem - kliknij ponownie albo dodaj ręcznie, patrz "Jak znaleźć listę
+  dostępnych pól" niżej).
+- **Satel - strefy/wyjścia/wejścia IP/partycje** (`satel_fields.yaml`) -
+  **bez przycisku wykrywania**: protokół integracji Satela nie udostępnia
+  listy skonfigurowanych stref/wyjść (tylko bieżący stan już znanych
+  numerów), więc nazwę i numer trzeba przepisać z DLOADX ręcznie, tak jak
+  w kreatorze.
+- **Urządzenia Tuya** (`tuya_devices.yaml`) - przycisk
+  **"🔍 Skanuj sieć"** wywołuje broadcast UDP w LAN (`tinytuya.deviceScan`,
+  ok. 18 sekund) i podpowiada ID + adres IP znalezionych urządzeń. **Nie
+  podpowiada `local_key`** - Tuya świadomie go nie rozgłasza, trzeba go
+  wyciągnąć osobno (`python -m tinytuya wizard`).
+
+Każde pole zaczyna jako **nieaktywne** (nie ma go w konfiguracji), dopóki
+nie uzupełnisz wiersza (po odkryciu albo ręcznie) i nie klikniesz "Zapisz"
+dla danej sekcji - odkrycie samo w sobie niczego nie włącza ani nie
+zapisuje.
 
 ### Alarmy progowe
 
@@ -555,6 +592,14 @@ zmian/komentarzy w `config.yaml`. Format pliku - patrz
 `config.example.yaml` (sekcje `scenes`/`reguły_ruchu`/
 `presence_simulation`) i przykłady niżej.
 
+Ten sam wzorzec (osobny plik, konfigurowalna ścieżka, panel może go
+bezpiecznie nadpisać w całości) obowiązuje też dla pól edytowanych w
+zakładce ⚙ Ustawienia (patrz sekcja "Panel webowy" wyżej):
+`satel_fields.yaml` (`satel.fields_file`) dla stref/wyjść/wejść IP/
+partycji, `tuya_devices.yaml` (`tuya.devices_file`) dla urządzeń Tuya.
+Wszystkie cztery pliki są opcjonalne - jeśli nie istnieją, wartości brane
+są wprost z `config.yaml` (wsteczna zgodność).
+
 Configi sprzed tego podziału (gdzie te sekcje były wpisane bezpośrednio w
 `config.yaml`) wciąż działają bez zmian - `automations.yaml` jest
 całkowicie opcjonalny; jeśli nie istnieje, bridge czyta te sekcje wprost z
@@ -745,9 +790,11 @@ nigdy do obrazu ani do warstw builda.
 satel_tuya_bridge/
   config.example.yaml       # wzór głównej konfiguracji (połączenia, poświadczenia)
   sensors.example.yaml      # wzór listy czujników eBUS (edytowalny z panelu, patrz /config)
-  # automations.yaml (sceny/reguły ruchu/symulacja obecności) NIE MA wzoru -
-  # tworzy go kreator albo pierwszy zapis z panelu /automations; format -
-  # patrz sekcje scenes/reguły_ruchu/presence_simulation w config.example.yaml
+  # automations.yaml (sceny/reguły ruchu/symulacja obecności), satel_fields.yaml
+  # (strefy/wyjścia/wejścia IP/partycje) i tuya_devices.yaml (urządzenia Tuya)
+  # NIE MAJĄ wzoru - tworzy je kreator albo pierwszy zapis z panelu
+  # (/automations, /config); format pól - patrz odpowiednie sekcje w
+  # config.example.yaml (scenes/reguły_ruchu/presence_simulation/satel/tuya)
   requirements.txt
   Dockerfile                # jeden obraz dla bridge'a i panelu, patrz "Uruchomienie w Dockerze"
   docker-compose.yml         # usługi bridge/dashboard/(opcjonalnie) mosquitto
@@ -757,10 +804,10 @@ satel_tuya_bridge/
   bridge/
     config.py               # loader YAML
     satel_client.py         # protokół integracji + wirtualne wejścia IP
-    tuya_local.py            # sterowanie lokalne (tinytuya)
+    tuya_local.py            # sterowanie lokalne (tinytuya) + scan_network() (podpowiedź do /config)
     tuya_cloud_events.py     # ruch z kamer Tuya (Pulsar, wymaga chmury)
     unifi_protect_events.py  # ruch z kamer UniFi Protect
-    ebus_client.py           # odczyt danych z ebusd (MQTT)
+    ebus_client.py           # odczyt danych z ebusd (MQTT) + discover_topics() (podpowiedź do /config)
     boiler_output.py         # publikacja danych kotła (MQTT / Tuya virtual device)
     history_store.py         # baza SQLite (odczyty + zdarzenia + alarmy + statusy)
     alarms.py                # silnik alarmów progowych + powiadomienia ntfy
@@ -777,9 +824,9 @@ satel_tuya_bridge/
   dashboard/
     app.py                   # backend panelu (Flask + waitress)
     auth.py                   # autoryzacja - tylko akcje zmieniające stan
-    setup.py                   # logika kreatora + budowanie config.yaml/automations.yaml
+    setup.py                   # logika kreatora + budowanie config.yaml i towarzyszy
     templates/index.html     # frontend panelu (Chart.js, filtrowanie, sterowanie alarmem)
-    templates/config.html    # edytor listy czujników eBUS (lista + przełączniki)
+    templates/config.html    # edytor czujników eBUS / pól Satela / urządzeń Tuya (+ przyciski wykrywania)
     templates/automations.html # edytor scen/reguł ruchu/symulacji obecności (wymaga hasła do zapisu)
     templates/setup.html      # kreator pierwszej konfiguracji (krok po kroku, autozapis postępu)
   tests/                     # testy pytest (patrz sekcja "Testy automatyczne")

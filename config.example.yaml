@@ -16,6 +16,14 @@ satel:
   # Skonfigurowane w DLOADX -> zakładka "Wejścia IP".
   # UWAGA: ETHM-1 Plus NIE zwraca standardowego kodu HTTP 200 dla tych
   # zapytań - klient musi to tolerować (patrz satel_client.py).
+  # UWAGA: "inputs" niżej, "monitored_zones"/"monitored_outputs"/"partitions"
+  # poniżej i "tuya.devices" kilka linii dalej w PRAWDZIWYM config.yaml
+  # wygenerowanym przez kreator/panel NIE SĄ tutaj - trafiają do osobnych
+  # plików satel_fields.yaml i tuya_devices.yaml (analogicznie do
+  # sensors.yaml/automations.yaml), edytowalnych z powrotem w przeglądarce
+  # w zakładce "⚙ Ustawienia" (/config, wymaga hasła administratora do
+  # zapisu). Wpisanie ich TUTAJ, bezpośrednio w config.yaml, wciąż działa
+  # (wsteczna zgodność) - patrz bridge/config.py.
   virtual_inputs:
     port: 8888              # port TCP/IP ustawiony w DLOADX dla wejść IP
     # Dokładny format URL/parametrów (klucz, numer wejścia) skopiuj z
@@ -58,7 +66,9 @@ tuya:
   status_poll_interval_seconds: 30
 
   # Lokalne sterowanie (tinytuya) - gniazdka, włączniki, ściemniacze.
-  # local_key wyciągasz raz narzędziem: `python -m tinytuya wizard`
+  # local_key wyciągasz raz narzędziem: `python -m tinytuya wizard` (albo
+  # przyciskiem "Skanuj sieć" w zakładce ⚙ Ustawienia - podpowie ID i IP,
+  # ale NIE local_key, patrz README).
   devices:
     gniazdko_salon:
       id: "bf1234567890abcdef"

@@ -1,5 +1,6 @@
-"""Kreator pierwszej konfiguracji - budowanie config.yaml/sensors.yaml/
-automations.yaml z danych wypełnionych w formularzu webowym (/setup).
+"""Kreator pierwszej konfiguracji - budowanie config.yaml i jego towarzyszy
+(sensors.yaml/automations.yaml/satel_fields.yaml/tuya_devices.yaml) z danych
+wypełnionych w formularzu webowym (/setup).
 
 Wieloetapowy kreator (/setup): każdy krok to osobna "strona" w
 templates/setup.html, przechodzona przyciskiem "Dalej". Po każdym takim
@@ -15,15 +16,17 @@ zbudowane na wspólnym fundamencie scen (bridge/scenes.py): sceny,
 harmonogramy czasowe (time_window) i eskalację przy powtarzających się
 naruszeniach (obie ostatnie jako pola reguł ruchu).
 
-Sceny/reguły ruchu/symulacja obecności trafiają do OSOBNEGO pliku
-automations.yaml (nie do config.yaml) - dokładnie z tego samego powodu, dla
-którego czujniki eBUS trafiają do sensors.yaml: to jedyne pliki, które
-UI (kreator i panel /automations, patrz dashboard/app.py) wolno mu
-bezpiecznie nadpisywać w całości, bez ryzyka skasowania ręcznych zmian i
-komentarzy w config.yaml. Po pierwszej konfiguracji te trzy rzeczy da się
-w pełni edytować z powrotem w przeglądarce, w zabezpieczonym hasłem panelu
-/automations (funkcje build_automations_dict/validate_automations niżej) -
-nie tylko ręcznie w automations.yaml.
+Cztery rodzaje "pól" - czujniki eBUS, sceny/reguły ruchu/symulacja
+obecności, strefy/wyjścia/wejścia IP/partycje Satela, urządzenia Tuya -
+trafiają do OSOBNYCH plików (odpowiednio sensors.yaml/automations.yaml/
+satel_fields.yaml/tuya_devices.yaml), NIE do config.yaml: to jedyne pliki,
+które UI (kreator i panele /config, /automations - patrz dashboard/app.py)
+wolno mu bezpiecznie nadpisywać w całości, bez ryzyka skasowania ręcznych
+zmian i komentarzy w config.yaml. Po pierwszej konfiguracji wszystkie
+cztery da się w pełni edytować z powrotem w przeglądarce, w zabezpieczonych
+hasłem panelach - żadne z nich nie wymagają ręcznej edycji YAML-a (choć to
+wciąż działa, patrz bridge/config.py - wsteczna zgodność ze starszymi
+configami).
 
 Rzeczy, których panel WCIĄŻ nie obsługuje (reguły_kamera_alarm,
 reguły_swiatlo_do_satela, boiler_rules, alarm_rules) dostają puste/domyślne
@@ -71,16 +74,34 @@ def validate(form: dict) -> list[str]:
     if len(password) < 8:
         errors.append("Hasło panelu: minimum 8 znaków")
 
-    for i, device in enumerate(form.get("tuya_devices", [])):
-        if not device.get("name") or not device.get("id") or not device.get("ip") or not device.get("local_key"):
-            errors.append(f"Urządzenie Tuya #{i + 1}: nazwa, ID, adres IP i local_key są wymagane")
+    errors.extend(validate_satel_fields(form))
+    errors.extend(validate_tuya_devices(form))
+    errors.extend(validate_automations(form))
 
+    return errors
+
+
+def validate_satel_fields(form: dict) -> list[str]:
+    """Waliduje TYLKO "pola" Satela (wirtualne wejścia IP - jedyne z nich
+    wymagające kompletu danych, żeby scenom/regułom było do czego się
+    odwołać). Strefy/wyjścia/partycje nie mają twardej walidacji - niepełny
+    wiersz (brakująca nazwa albo numer) jest po prostu pomijany przy
+    zapisie (patrz _build_monitored_zones/_build_monitored_outputs/
+    _build_partitions). Współdzielone przez kreator i panel /config."""
+    errors = []
     for i, vi in enumerate(form.get("virtual_inputs", [])):
         if not vi.get("name") or not vi.get("number") or not vi.get("key"):
             errors.append(f"Wirtualne wejście #{i + 1}: nazwa, numer i klucz z DLOADX są wymagane")
+    return errors
 
-    errors.extend(validate_automations(form))
 
+def validate_tuya_devices(form: dict) -> list[str]:
+    """Waliduje TYLKO urządzenia Tuya - współdzielone przez kreator i panel
+    /config (patrz validate_satel_fields wyżej - ten sam wzorzec)."""
+    errors = []
+    for i, device in enumerate(form.get("tuya_devices", [])):
+        if not device.get("name") or not device.get("id") or not device.get("ip") or not device.get("local_key"):
+            errors.append(f"Urządzenie Tuya #{i + 1}: nazwa, ID, adres IP i local_key są wymagane")
     return errors
 
 
@@ -267,6 +288,57 @@ def _build_presence_simulation(form: dict) -> dict:
     return built
 
 
+def _build_partitions(form: dict) -> dict:
+    partitions = {p["name"]: int(p["number"]) for p in form.get("partitions", []) if p.get("name") and p.get("number")}
+    return partitions or {"Dom": 1}
+
+
+def _build_monitored_zones(form: dict) -> dict:
+    return {z["name"]: int(z["number"]) for z in form.get("monitored_zones", []) if z.get("name") and z.get("number")}
+
+
+def _build_monitored_outputs(form: dict) -> dict:
+    return {o["name"]: int(o["number"]) for o in form.get("monitored_outputs", []) if o.get("name") and o.get("number")}
+
+
+def _build_virtual_inputs(form: dict) -> dict:
+    return {
+        vi["name"]: {"number": int(vi["number"]), "key": vi["key"]}
+        for vi in form.get("virtual_inputs", [])
+        if vi.get("name")
+    }
+
+
+def _build_tuya_devices(form: dict) -> dict:
+    return {
+        d["name"]: {
+            "id": d["id"], "ip": d["ip"], "local_key": d["local_key"],
+            "version": float(d.get("version", 3.4)), "type": d.get("type", "socket"),
+            **({"dimmer_dp": d["dimmer_dp"], "dimmer_range": [10, 1000]} if d.get("type") == "dimmer" else {}),
+        }
+        for d in form.get("tuya_devices", [])
+        if d.get("name")
+    }
+
+
+def build_satel_fields_dict(form: dict) -> dict:
+    """Buduje zawartość satel_fields.yaml (strefy/wyjścia/wejścia IP/
+    partycje) - używane zarówno przez kreator (razem z build_config_dict),
+    jak i samodzielnie przez panel /config przy każdym zapisie."""
+    return {
+        "monitored_zones": _build_monitored_zones(form),
+        "monitored_outputs": _build_monitored_outputs(form),
+        "partitions": _build_partitions(form),
+        "virtual_inputs": _build_virtual_inputs(form),
+    }
+
+
+def build_tuya_devices_dict(form: dict) -> dict:
+    """Buduje zawartość tuya_devices.yaml - analogicznie do
+    build_satel_fields_dict wyżej."""
+    return {"devices": _build_tuya_devices(form)}
+
+
 def build_automations_dict(form: dict) -> dict:
     """Buduje zawartość automations.yaml (sceny/reguły ruchu/symulacja
     obecności) - używane zarówno przez kreator (razem z build_config_dict),
@@ -284,24 +356,6 @@ def build_config_dict(form: dict) -> dict:
     bezpieczne, puste wartości domyślne - użytkownik dopisze je później
     ręcznie, jeśli będzie chciał (patrz docstring modułu i README)."""
     satel_form = form.get("satel", {})
-    tuya_devices = {
-        d["name"]: {
-            "id": d["id"], "ip": d["ip"], "local_key": d["local_key"],
-            "version": float(d.get("version", 3.4)), "type": d.get("type", "socket"),
-            **({"dimmer_dp": d["dimmer_dp"], "dimmer_range": [10, 1000]} if d.get("type") == "dimmer" else {}),
-        }
-        for d in form.get("tuya_devices", [])
-        if d.get("name")
-    }
-
-    partitions = {p["name"]: int(p["number"]) for p in form.get("partitions", []) if p.get("name")}
-    monitored_zones = {z["name"]: int(z["number"]) for z in form.get("monitored_zones", []) if z.get("name")}
-    monitored_outputs = {o["name"]: int(o["number"]) for o in form.get("monitored_outputs", []) if o.get("name")}
-    virtual_inputs = {
-        vi["name"]: {"number": int(vi["number"]), "key": vi["key"]}
-        for vi in form.get("virtual_inputs", [])
-        if vi.get("name")
-    }
 
     config = {
         "satel": {
@@ -312,16 +366,21 @@ def build_config_dict(form: dict) -> dict:
             "virtual_inputs": {
                 "port": int(satel_form.get("virtual_inputs_port", 8888)),
                 "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}",
-                "inputs": virtual_inputs,
             },
             "outputs": {},
-            "monitored_zones": monitored_zones,
-            "monitored_outputs": monitored_outputs,
-            "partitions": partitions or {"Dom": 1},
+            # Strefy/wyjścia/wejścia IP/partycje NIE są tutaj - trafiają do
+            # osobnego satel_fields.yaml (patrz build_satel_fields_dict),
+            # które zapisuje api_setup_save() zaraz po tym pliku.
+            # "fields_file" to jedyny ślad tego w config.yaml - analogicznie
+            # do ebus.sensors_file dla sensors.yaml.
+            "fields_file": "satel_fields.yaml",
         },
         "tuya": {
             "status_poll_interval_seconds": 30,
-            "devices": tuya_devices,
+            # Urządzenia Tuya NIE są tutaj - trafiają do osobnego
+            # tuya_devices.yaml (patrz build_tuya_devices_dict), analogicznie
+            # do satel.fields_file wyżej.
+            "devices_file": "tuya_devices.yaml",
         },
         # Sceny/reguły ruchu/symulacja obecności NIE są tutaj - trafiają do
         # osobnego automations.yaml (patrz build_automations_dict), które
@@ -437,8 +496,10 @@ CONFIG_HEADER = (
     "# Wygenerowane przez kreator pierwszej konfiguracji (/setup).\n"
     "# Ten plik jest w pełni edytowalny ręcznie - kreator NIE URUCHOMI SIĘ\n"
     "# PONOWNIE, dopóki ten plik istnieje (żeby nie nadpisać Twoich zmian).\n"
-    "# Sceny/reguły ruchu/symulacja obecności są w automations.yaml, edytowalne\n"
-    "# też z panelu webowego (/automations, wymaga hasła administratora).\n"
+    "# Strefy/wyjścia/wejścia IP/partycje Satela są w satel_fields.yaml,\n"
+    "# urządzenia Tuya w tuya_devices.yaml, sceny/reguły ruchu/symulacja\n"
+    "# obecności w automations.yaml - wszystkie edytowalne z panelu webowego\n"
+    "# (/config, /automations - wymaga hasła administratora do zapisu).\n"
     "# Pełny opis wszystkich pól, w tym tych pominiętych przez kreator\n"
     "# (reguły_kamera_alarm, alarmy progowe, automatyka kotła) - patrz\n"
     "# config.example.yaml.\n\n"
@@ -456,4 +517,20 @@ AUTOMATIONS_HEADER = (
     "# ręczne zmiany tutaj przetrwają tylko do następnego zapisu z panelu.\n"
     "# Opis pól - patrz config.example.yaml (sekcje scenes/reguły_ruchu/\n"
     "# presence_simulation) i README, sekcja \"Automatyzacje\".\n\n"
+)
+
+SATEL_FIELDS_HEADER = (
+    "# Strefy / wyjścia / wejścia IP / partycje Satela - w pełni edytowalne\n"
+    "# z panelu webowego (/config, wymaga hasła administratora do zapisu) -\n"
+    "# każdy zapis stamtąd NADPISUJE cały ten plik. Połączenie z centralą\n"
+    "# (host/port/klucz integracji) zostaje w config.yaml.\n"
+    "# Opis pól - patrz config.example.yaml (sekcja satel).\n\n"
+)
+
+TUYA_DEVICES_HEADER = (
+    "# Urządzenia Tuya (lokalnie) - w pełni edytowalne z panelu webowego\n"
+    "# (/config, wymaga hasła administratora do zapisu) - każdy zapis\n"
+    "# stamtąd NADPISUJE cały ten plik. Konto/chmura Tuya (jeśli używana)\n"
+    "# zostaje w config.yaml (sekcja tuya.cloud).\n"
+    "# Opis pól - patrz config.example.yaml (sekcja tuya.devices).\n\n"
 )
