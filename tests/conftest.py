@@ -1,6 +1,7 @@
 """Wspólne fixtures pytest dla całego zestawu testów."""
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -49,10 +50,21 @@ class FakeTuya:
 
 class FakeSatel:
     """Fałszywy SatelIntegraClient - zapisuje wywołania zamiast łączyć się
-    z prawdziwą centralą."""
+    z prawdziwą centralą. Ma też atrybuty/metody potrzebne przez
+    RulesEngine.start() (register_*_callback/run_forever/monitored_*),
+    żeby dało się przetestować faktyczne rejestrowanie i wywoływanie
+    callbacków (patrz tests/test_rules_engine.py: TestAlarmStatusCallback) -
+    bez tego testy musiałyby albo pomijać start() w całości, albo łączyć
+    się z prawdziwą centralą."""
 
     def __init__(self):
         self.calls: list[tuple] = []
+        self.monitored_zones: dict = {}
+        self.monitored_outputs: dict = {}
+        self.armed_partition_numbers: set[int] = set()
+        self._zone_cb = None
+        self._output_cb = None
+        self._alarm_status_cb = None
 
     async def set_output(self, number, state):
         self.calls.append(("output", number, state))
@@ -62,6 +74,18 @@ class FakeSatel:
 
     async def disarm(self, partitions=None):
         self.calls.append(("disarm", partitions))
+
+    def register_zone_callback(self, callback):
+        self._zone_cb = callback
+
+    def register_output_callback(self, callback):
+        self._output_cb = callback
+
+    def register_alarm_status_callback(self, callback):
+        self._alarm_status_cb = callback
+
+    async def run_forever(self):
+        await asyncio.sleep(999)  # symuluje żywe, trwające połączenie
 
 
 class FakeVirtualInputs:

@@ -49,7 +49,7 @@ class RulesEngine:
         # zerwaniach WiFi. Konfigurowalne globalnie (notifications.grace_seconds).
         grace_seconds = (notify_cfg or {}).get("grace_seconds", 120)
 
-        self.tuya = TuyaLocalController(config.tuya["devices"])
+        self.tuya = TuyaLocalController(config.tuya["devices"], config.tuya.get("zigbee_gateways"))
         self.satel_virtual_inputs = SatelVirtualInputTrigger(
             config.satel["host"], config.satel["virtual_inputs"]
         )
@@ -389,7 +389,7 @@ class RulesEngine:
 
         # Tuya lokalne - bezpieczne do podmiany w całości: TuyaLocalController
         # nie trzyma żywego połączenia (tylko krótkie żądania per komenda).
-        self.tuya = TuyaLocalController(new_config.tuya["devices"])
+        self.tuya = TuyaLocalController(new_config.tuya["devices"], new_config.tuya.get("zigbee_gateways"))
 
         # Satel - etykiety/numery monitorowanych stref/wyjść/wejść IP,
         # AKTUALIZOWANE na już istniejącym obiekcie klienta (NIE tworzymy
@@ -532,6 +532,40 @@ class RulesEngine:
         for name, number in self.config.satel.get("partitions", {}).items():
             self.history.set_status(f"satel_partition:{number}", "satel_partition", "nieznany", label=name)
 
+    async def _handle_alarm_status_change(self) -> None:
+        """Callback rejestrowany przez SatelIntegraClient.register_alarm_status_callback
+        (patrz start() niżej) - odświeża status uzbrojenia WSZYSTKICH
+        skonfigurowanych stref w panelu/MQTT.
+
+        WAŻNE: satel_integra woła ten callback BEZ ŻADNYCH argumentów - to
+        tylko powiadomienie "coś się zmieniło" (uzbrojenie ALBO rozłączenie,
+        patrz register_alarm_status_callback w satel_client.py), nie niesie
+        samego stanu. Aktualny stan trzeba więc odczytać osobno z
+        self.satel.armed_partition_numbers, dla WSZYSTKICH skonfigurowanych
+        stref (nie tylko tej, która się akurat zmieniła - nie wiemy, która
+        to była). Wydzielone jako osobna metoda (nie domknięcie wewnątrz
+        start()) celowo - da się przetestować wprost, bez uruchamiania
+        całego start() (żywe połączenia MQTT/zadania w tle)."""
+        armed_numbers = self.satel.armed_partition_numbers
+        partition_name_by_number = {v: k for k, v in self.config.satel.get("partitions", {}).items()}
+        for partition_number in self.config.satel.get("partitions", {}).values():
+            armed = partition_number in armed_numbers
+            self.history.set_status(
+                f"satel_partition:{partition_number}", "satel_partition",
+                "uzbrojona" if armed else "rozbrojona",
+                label=partition_name_by_number.get(partition_number, f"strefa {partition_number}"),
+            )
+            if self.ha_mqtt:
+                self.ha_mqtt.publish_state(
+                    f"{self._ha_topic_prefix}/satel/partition/{partition_number}/state",
+                    "ON" if armed else "OFF",
+                )
+            if self.state_mqtt:
+                self.state_mqtt.publish_state(
+                    f"{self._satel_mqtt_topic}/partition/{partition_number}/state",
+                    "ON" if armed else "OFF",
+                )
+
     # ------------------------------------------------------------------
     async def start(self) -> None:
         self.history.write_event("system", detail={"message": "Bridge uruchomiony"})
@@ -590,31 +624,9 @@ class RulesEngine:
                         "ON" if active else "OFF",
                     )
 
-        async def _on_alarm_status_change(partition_states: dict) -> None:
-            # Kształt `partition_states` zależy od wersji biblioteki
-            # satel_integra - zakładamy {numer_strefy: bool_uzbrojona},
-            # zweryfikuj przy pierwszym użyciu z realną centralą.
-            partition_name_by_number = {v: k for k, v in self.config.satel.get("partitions", {}).items()}
-            for partition_number, armed in partition_states.items():
-                self.history.set_status(
-                    f"satel_partition:{partition_number}", "satel_partition",
-                    "uzbrojona" if armed else "rozbrojona",
-                    label=partition_name_by_number.get(partition_number, f"strefa {partition_number}"),
-                )
-                if self.ha_mqtt:
-                    self.ha_mqtt.publish_state(
-                        f"{self._ha_topic_prefix}/satel/partition/{partition_number}/state",
-                        "ON" if armed else "OFF",
-                    )
-                if self.state_mqtt:
-                    self.state_mqtt.publish_state(
-                        f"{self._satel_mqtt_topic}/partition/{partition_number}/state",
-                        "ON" if armed else "OFF",
-                    )
-
         self.satel.register_zone_callback(_on_zone_change)
         self.satel.register_output_callback(_on_output_change)
-        self.satel.register_alarm_status_callback(_on_alarm_status_change)
+        self.satel.register_alarm_status_callback(self._handle_alarm_status_change)
 
         # Wszystkie długożyjące połączenia jako nadzorowane zadania w tle -
         # każde samo się podnosi po awarii (patrz bridge/resilience.py).

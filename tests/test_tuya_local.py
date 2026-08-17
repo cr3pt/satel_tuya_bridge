@@ -172,7 +172,23 @@ class TestFetchCloudDevices:
         ]))
         monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
         devices = fetch_cloud_devices("eu", "access_id", "access_secret")
-        assert devices == [{"id": "d1", "name": "Gniazdko", "local_key": "localkey1", "ip": "", "version": ""}]
+        assert devices == [{
+            "id": "d1", "name": "Gniazdko", "local_key": "localkey1", "ip": "", "version": "",
+            "gateway_id": "", "node_id": "",
+        }]
+
+    def test_surfaces_gateway_id_and_node_id_for_zigbee_sub_devices(self, monkeypatch):
+        """Tuya Cloud dokłada gateway_id/node_id tylko dla podurządzeń
+        Zigbee (patrz tinytuya Cloud.py: filter_devices/_update_device_list)
+        - panel (/config) używa tego jako podpowiedzi, żeby dopasować
+        sub-device do lokalnie nazwanej bramki."""
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
+            {"id": "sub1", "name": "Lampka Zigbee", "key": "", "gateway_id": "gw1", "node_id": "0011"},
+        ]))
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
+        devices = fetch_cloud_devices("eu", "access_id", "access_secret")
+        assert devices[0]["gateway_id"] == "gw1"
+        assert devices[0]["node_id"] == "0011"
 
     def test_cross_references_lan_scan_by_id_for_ip(self, monkeypatch):
         monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
@@ -267,3 +283,67 @@ class TestFetchCloudDevices:
         monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: cloud)
         monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
         assert fetch_cloud_devices("eu", "access_id", "access_secret") == []
+
+
+class TestZigbeeGateways:
+    """Bramki Zigbee (Tuya) - czujniki/przełączniki Zigbee NIE łączą się
+    bezpośrednio z WiFi, idą przez połączenie bramki (tinytuya:
+    Device(cid=..., parent=<obiekt bramki>) - biblioteka sama kieruje ruch
+    przez sesję TCP bramki, patrz XenonDevice.__init__/_send_receive)."""
+
+    GATEWAYS_CFG = {
+        "brama_salon": {"id": "gw1", "ip": "192.168.1.60", "local_key": "gwkey", "version": 3.4},
+    }
+
+    def test_gateway_device_created_from_cfg(self):
+        ctrl = TuyaLocalController({}, self.GATEWAYS_CFG)
+        assert "brama_salon" in ctrl._gateways
+        assert ctrl._gateways["brama_salon"].id == "gw1"
+
+    def test_sub_device_gets_cid_parent_and_zigbee_dev_type(self):
+        devices_cfg = {
+            "lampka": {"id": "sub1", "gateway": "brama_salon", "cid": "node1", "type": "socket"},
+        }
+        ctrl = TuyaLocalController(devices_cfg, self.GATEWAYS_CFG)
+        dev = ctrl._devices["lampka"]
+        assert dev.cid == "node1"
+        assert dev.parent is ctrl._gateways["brama_salon"]
+        assert dev.dev_type == "zigbee"
+
+    def test_sub_device_cid_defaults_to_device_id_when_not_given(self):
+        devices_cfg = {"lampka": {"id": "sub1", "gateway": "brama_salon", "type": "socket"}}
+        ctrl = TuyaLocalController(devices_cfg, self.GATEWAYS_CFG)
+        assert ctrl._devices["lampka"].cid == "sub1"
+
+    def test_sub_device_inherits_gateway_protocol_version(self):
+        """tinytuya ustawia to samo automatycznie w XenonDevice.__init__
+        (XenonDevice.set_version(self, self.parent.version)) - test
+        potwierdza, że faktycznie tak konstruujemy dziecko (parent=gateway),
+        a nie osobno z niezależną wersją."""
+        devices_cfg = {"lampka": {"id": "sub1", "gateway": "brama_salon", "type": "socket"}}
+        ctrl = TuyaLocalController(devices_cfg, self.GATEWAYS_CFG)
+        assert ctrl._devices["lampka"].version == ctrl._gateways["brama_salon"].version
+
+    def test_device_without_gateway_field_is_a_plain_wifi_outlet(self):
+        ctrl = TuyaLocalController(DEVICES_CFG, self.GATEWAYS_CFG)
+        assert ctrl._devices["gniazdko_salon"].cid is None
+        assert ctrl._devices["gniazdko_salon"].parent is None
+
+    def test_dangling_gateway_reference_is_skipped_not_crashed(self):
+        """Literówka w nazwie bramki (albo bramka jeszcze nie zapisana) nie
+        może wywalić całego bridge'a przy starcie - reszta urządzeń musi
+        dalej działać, ten jeden wiersz zostaje po prostu pominięty."""
+        devices_cfg = {
+            "lampka": {"id": "sub1", "gateway": "brama_nieistniejaca", "type": "socket"},
+            "gniazdko_salon": DEVICES_CFG["gniazdko_salon"],
+        }
+        ctrl = TuyaLocalController(devices_cfg, self.GATEWAYS_CFG)
+        assert "lampka" not in ctrl._devices
+        assert "gniazdko_salon" in ctrl._devices
+
+    def test_zigbee_gateways_cfg_defaults_to_empty_when_omitted(self):
+        """Wsteczna zgodność - konstruktor wywoływany bez drugiego argumentu
+        (jak przed dodaniem obsługi Zigbee) musi dalej działać."""
+        ctrl = TuyaLocalController(DEVICES_CFG)
+        assert ctrl._gateways == {}
+        assert set(ctrl._devices) == set(DEVICES_CFG)

@@ -117,8 +117,21 @@ def _tuya_devices_to_rows(devices: dict) -> list[dict]:
             "name": name, "id": cfg.get("id", ""), "ip": cfg.get("ip", ""),
             "local_key": cfg.get("local_key", ""), "type": cfg.get("type", "socket"),
             "dimmer_dp": cfg.get("dimmer_dp", ""),
+            # Podurządzenie Zigbee bramki (patrz TuyaLocalController) - puste
+            # dla zwykłych urządzeń WiFi, które mają własne ip/local_key wyżej.
+            "gateway": cfg.get("gateway", ""), "cid": cfg.get("cid", ""),
         }
         for name, cfg in devices.items()
+    ]
+
+
+def _zigbee_gateways_to_rows(gateways: dict) -> list[dict]:
+    return [
+        {
+            "name": name, "id": cfg.get("id", ""), "ip": cfg.get("ip", ""),
+            "local_key": cfg.get("local_key", ""), "version": cfg.get("version", 3.4),
+        }
+        for name, cfg in gateways.items()
     ]
 
 
@@ -567,7 +580,10 @@ def api_config_satel_fields_post():
 
 @app.route("/api/config/tuya-devices", methods=["GET"])
 def api_config_tuya_devices_get():
-    return jsonify({"devices": _tuya_devices_to_rows(config_raw.get("tuya", {}).get("devices", {}))})
+    return jsonify({
+        "devices": _tuya_devices_to_rows(config_raw.get("tuya", {}).get("devices", {})),
+        "zigbee_gateways": _zigbee_gateways_to_rows(config_raw.get("tuya", {}).get("zigbee_gateways", {})),
+    })
 
 
 @app.route("/api/config/tuya-devices", methods=["POST"])

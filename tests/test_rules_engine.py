@@ -20,6 +20,9 @@ satel:
     url_template: "http://{{host}}:{{port}}/x"
     inputs:
       test_input: {{number: 1, key: "k"}}
+  partitions:
+    Dom: 1
+    Garaz: 2
 tuya:
   devices:
     gniazdko_salon: {{id: "d1", ip: "1.2.3.4", local_key: "k", type: "socket"}}
@@ -350,3 +353,33 @@ class TestStateMqttPublisher:
         engine = self._build_engine(tmp_path)
         assert engine.ha_mqtt is None
         assert engine.state_mqtt is not None
+
+
+class TestAlarmStatusCallback:
+    """Regresja dla zgłoszonego z prawdziwej centrali błędu: '_on_alarm_status_change()
+    missing 1 required positional argument: partition_states'. satel_integra
+    woła callback zarejestrowany przez register_alarm_status_callback BEZ
+    ŻADNYCH argumentów (patrz satel_client.py:register_alarm_status_callback
+    i AsyncSatel._armed()/_read_data()/_update_status()) - to tylko
+    powiadomienie "coś się zmieniło", nie niesie samego stanu.
+    RulesEngine._handle_alarm_status_change() musi więc dać się wywołać BEZ
+    ARGUMENTÓW i samodzielnie odczytać stan z self.satel.armed_partition_numbers
+    (patrz CONFIG_TEMPLATE wyżej - satel.partitions: {{Dom: 1, Garaz: 2}})."""
+
+    async def test_callback_accepts_no_arguments(self, engine, fake_satel):
+        fake_satel.armed_partition_numbers = {1}
+        await engine._handle_alarm_status_change()  # nie powinno rzucić TypeError
+
+    async def test_updates_status_for_all_configured_partitions(self, engine, fake_satel):
+        fake_satel.armed_partition_numbers = {1}
+        await engine._handle_alarm_status_change()
+        statuses = {s["label"]: s["value"] for s in engine.history.get_status("satel_partition")}
+        assert statuses["Dom"] == "uzbrojona"
+        assert statuses["Garaz"] == "rozbrojona"
+
+    async def test_no_armed_partitions_marks_all_disarmed(self, engine, fake_satel):
+        fake_satel.armed_partition_numbers = set()
+        await engine._handle_alarm_status_change()
+        statuses = {s["label"]: s["value"] for s in engine.history.get_status("satel_partition")}
+        assert statuses["Dom"] == "rozbrojona"
+        assert statuses["Garaz"] == "rozbrojona"
