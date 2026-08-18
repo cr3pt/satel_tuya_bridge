@@ -33,7 +33,7 @@ from dashboard.setup import (
     CONFIG_HEADER, SENSORS_HEADER, AUTOMATIONS_HEADER, SATEL_FIELDS_HEADER, TUYA_DEVICES_HEADER,
     build_config_dict, validate, build_automations_dict, validate_automations,
     build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
-    build_connections_patch, validate_connections, connections_to_form,
+    build_connections_patch, validate_connections, connections_to_form, list_plugins,
     draft_path_for, load_draft, save_draft, delete_draft,
 )
 
@@ -657,6 +657,102 @@ def api_config_connections_post():
         "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
                     "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
     })
+
+
+# Które z przełączalnych wtyczek (patrz PLUGIN_DEFS w dashboard/setup.py)
+# żyją w config.yaml (zakładka 🔌 Połączenia, wymaga pełnego restartu) a
+# które w automations.yaml (zakładka 🎬 Automatyzacje, podłapywane na
+# żywo przez RulesEngine.reload_config() - patrz też komentarz w
+# _build_presence_simulation w setup.py o jednym wyjątku).
+_CONNECTIONS_PLUGIN_IDS = {"tuya_cloud", "home_assistant", "mqtt_publish"}
+_AUTOMATIONS_PLUGIN_IDS = {"presence_simulation"}
+
+
+@app.route("/plugins")
+def plugins_page():
+    return render_template("plugins.html")
+
+
+@app.route("/api/plugins", methods=["GET"])
+def api_plugins_get():
+    """Przegląd wszystkich integracji (zakładka 🧩 Wtyczki) - publiczny,
+    zwraca tylko stan włączenia/skonfigurowania, żadnych sekretów (patrz
+    list_plugins w dashboard/setup.py)."""
+    return jsonify(list_plugins(config_raw))
+
+
+@app.route("/api/plugins", methods=["POST"])
+@require_auth()
+def api_plugins_post():
+    """Przełącza WYŁĄCZNIE pole "enabled" wskazanych wtyczek (patrz
+    _CONNECTIONS_PLUGIN_IDS/_AUTOMATIONS_PLUGIN_IDS wyżej) - reszta
+    ustawień danej integracji (host/klucze/urządzenia/itd.) zostaje
+    nietknięta. Do PEŁNEJ konfiguracji (np. pierwsze podanie poświadczeń
+    Tuya Cloud) wciąż trzeba przejść do właściwej zakładki (🔌 Połączenia /
+    🎬 Automatyzacje) - to przełącznik, nie edytor."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Nieprawidłowe dane"}), 400
+
+    unknown = set(body) - _CONNECTIONS_PLUGIN_IDS - _AUTOMATIONS_PLUGIN_IDS
+    if unknown:
+        return jsonify({"error": f"Nieznane/nieprzełączalne wtyczki: {', '.join(sorted(unknown))}"}), 400
+
+    saved = {}
+
+    connections_body = {k: v for k, v in body.items() if k in _CONNECTIONS_PLUGIN_IDS}
+    if connections_body:
+        with open(config_path, "r", encoding="utf-8") as f:
+            current = yaml.safe_load(f) or {}
+        form = connections_to_form(current)
+        for plugin_id, patch in connections_body.items():
+            form.setdefault(plugin_id, {})["enabled"] = bool((patch or {}).get("enabled"))
+
+        errors = validate_connections(form)
+        if errors:
+            return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+        new_config = build_connections_patch(form, current)
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.write(CONFIG_HEADER)
+            yaml.safe_dump(new_config, f, allow_unicode=True, sort_keys=False)
+        saved.update(connections_body)
+
+    automations_body = {k: v for k, v in body.items() if k in _AUTOMATIONS_PLUGIN_IDS}
+    if automations_body:
+        form = {
+            "scenes": config_raw.get("scenes", []),
+            "motion_rules": config_raw.get("reguły_ruchu", []),
+            "presence_simulation": dict(config_raw.get("presence_simulation", {})),
+        }
+        if "presence_simulation" in automations_body:
+            form["presence_simulation"]["enabled"] = bool(
+                (automations_body["presence_simulation"] or {}).get("enabled")
+            )
+
+        errors = validate_automations(form)
+        if errors:
+            return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+        automations_dict = build_automations_dict(form)
+        with open(automations_file_path, "w", encoding="utf-8") as f:
+            f.write(AUTOMATIONS_HEADER)
+            yaml.safe_dump(automations_dict, f, allow_unicode=True, sort_keys=False)
+        saved.update(automations_body)
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+    if automations_body:
+        _enqueue_bridge_reload()
+
+    message = "Zapisano."
+    if connections_body:
+        message += (" Zmiany dla " + ", ".join(sorted(connections_body)) + " wymagają pełnego restartu "
+                    "procesu bridge'a (np. `sudo systemctl restart satel-tuya-bridge`).")
+    if automations_body:
+        message += " Zmiany dla symulacji obecności zadziałają w ciągu ok. 1-2s, bez restartu."
+
+    return jsonify({"saved": saved, "message": message})
 
 
 @app.route("/automations")
