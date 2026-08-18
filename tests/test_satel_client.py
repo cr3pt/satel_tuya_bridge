@@ -345,8 +345,8 @@ class TestRunForeverKeepAlive:
 
 class FakeAsyncSatelInitialStatus(FakeAsyncSatelKeepAlive):
     """Jak FakeAsyncSatelKeepAlive, ale dodatkowo przechwytuje surowe dane
-    wysłane przez _send_data() - do testu dopytywania o początkowy stan
-    wejść/wyjść zaraz po (re)połączeniu (patrz _request_initial_status())."""
+    wysłane przez _send_data() - do testu cyklicznego dopytywania o stan
+    wejść/wyjść (patrz _periodic_status_sync())."""
 
     def __init__(self, host, port, loop):
         super().__init__(host, port, loop)
@@ -356,8 +356,16 @@ class FakeAsyncSatelInitialStatus(FakeAsyncSatelKeepAlive):
     async def _send_data(self, data):
         self.sent_queries.append(bytes(data))
 
+    async def monitor_status(self, alarm_status_callback=None, zone_changed_callback=None,
+                              output_changed_callback=None):
+        # W odróżnieniu od FakeAsyncSatelKeepAlive (kończy się po 0.05s) -
+        # tu połączenie ma "żyć" wystarczająco długo, żeby zaobserwować
+        # WIELE cykli _periodic_status_sync(), nie tylko pierwsze zapytanie.
+        self.monitor_status_called = True
+        await asyncio.sleep(999)
 
-class TestRequestInitialStatus:
+
+class TestPeriodicStatusSync:
     async def test_queries_zones_and_outputs_after_connect(self, monkeypatch):
         """Regresja/funkcja: biblioteka satel_integra wywołuje
         zone_changed_callback/output_changed_callback TYLKO przy faktycznej
@@ -417,6 +425,71 @@ class TestRequestInitialStatus:
 
         assert fakes, "AsyncSatel nigdy nie zostało utworzone"
         assert fakes[0].sent_queries == []
+
+    async def test_queries_repeat_periodically_not_just_once(self, monkeypatch):
+        """Zgłoszone z prawdziwej centrali: zmiana stanu WYJŚCIA nie zawsze
+        dociera jako broadcast (0x17) - samo jednorazowe dopytanie zaraz po
+        połączeniu nie wystarcza do "ciągłej" synchronizacji panelu/MQTT,
+        trzeba dopytywać cyklicznie przez cały czas życia połączenia."""
+        import satel_integra.satel_integra as satel_module
+        from satel_integra.satel_integra import generate_query
+
+        fakes = []
+
+        def fake_ctor(host, port, loop, monitored_zones=None, monitored_outputs=None):
+            fake = FakeAsyncSatelInitialStatus(host, port, loop)
+            fakes.append(fake)
+            return fake
+
+        monkeypatch.setattr(satel_module, "AsyncSatel", fake_ctor)
+
+        client = SatelIntegraClient(
+            "127.0.0.1", 7094, "key",
+            monitored_zones={"Hol": 12}, monitored_outputs={"Brama": 3},
+        )
+        client._initial_status_delay_seconds = 0.01
+        client._status_sync_interval_seconds = 0.02
+
+        task = asyncio.create_task(client.run_forever())
+        await asyncio.sleep(0.11)  # ok. 5 cykli po 0.02s + pierwsze opóźnienie
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert fakes, "AsyncSatel nigdy nie zostało utworzone"
+        zone_queries = [q for q in fakes[0].sent_queries if q == bytes(generate_query(b'\x00'))]
+        output_queries = [q for q in fakes[0].sent_queries if q == bytes(generate_query(b'\x17'))]
+        assert len(zone_queries) >= 2, "dopytanie powinno się powtarzać, nie tylko raz po połączeniu"
+        assert len(output_queries) >= 2
+
+    async def test_stops_when_superseded_by_reconnect(self):
+        """Zadanie NIE może żyć wiecznie po utracie aktualności - jeśli
+        connect() (re)połączenia tworzy NOWY obiekt AsyncSatel, stare
+        zadanie cyklicznej synchronizacji musi się samo zakończyć (inaczej
+        dwa zadania wysyłałyby zapytania równolegle bez końca)."""
+        from satel_integra.satel_integra import generate_query
+
+        client = SatelIntegraClient("127.0.0.1", 7094, "key", monitored_zones={"Hol": 12})
+        old_fake = FakeAsyncSatelInitialStatus("127.0.0.1", 7094, None)
+        client._client = old_fake
+        client._initial_status_delay_seconds = 0.01
+        client._status_sync_interval_seconds = 0.02
+
+        task = asyncio.create_task(client._periodic_status_sync(generate_query))
+        await asyncio.sleep(0.07)  # kilka cykli na "starym" połączeniu
+        count_before_swap = len(old_fake.sent_queries)
+        assert count_before_swap > 0
+
+        new_fake = FakeAsyncSatelInitialStatus("127.0.0.1", 7094, None)
+        client._client = new_fake  # symuluje reconnect - nowy obiekt AsyncSatel
+
+        await asyncio.sleep(0.07)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert len(old_fake.sent_queries) == count_before_swap, "stare zadanie powinno przestać wysyłać"
+        assert new_fake.sent_queries == [], "stare zadanie nie powinno zacząć wysyłać na nowym obiekcie"
 
 
 class TestArmedPartitionNumbers:
