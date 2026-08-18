@@ -37,6 +37,8 @@ from dashboard.setup import (
     build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
     build_connections_patch, validate_connections, connections_to_form, list_plugins,
     draft_path_for, load_draft, save_draft, delete_draft,
+    dict_to_name_number_rows, zones_to_rows, virtual_inputs_to_rows,
+    tuya_devices_to_rows, zigbee_gateways_to_rows,
 )
 
 app = Flask(__name__)
@@ -98,43 +100,12 @@ def _enqueue_bridge_reload() -> None:
     history.enqueue_command("reload_config", {})
 
 
-def _dict_to_name_number_rows(d: dict) -> list[dict]:
-    return [{"name": name, "number": number} for name, number in d.items()]
-
-
-def _zones_to_rows(numbers: dict, types: dict) -> list[dict]:
-    """Jak _dict_to_name_number_rows, ale dokłada opcjonalny "type" (rodzaj
-    czujki/wyjścia - patrz SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES w setup.py) do
-    edycji w /config i wyświetlania ikon w panelu głównym."""
-    return [{"name": name, "number": number, "type": types.get(name, "")} for name, number in numbers.items()]
-
-
-def _virtual_inputs_to_rows(inputs: dict) -> list[dict]:
-    return [{"name": name, "number": v.get("number"), "key": v.get("key")} for name, v in inputs.items()]
-
-
-def _tuya_devices_to_rows(devices: dict) -> list[dict]:
-    return [
-        {
-            "name": name, "id": cfg.get("id", ""), "ip": cfg.get("ip", ""),
-            "local_key": cfg.get("local_key", ""), "type": cfg.get("type", "socket"),
-            "dimmer_dp": cfg.get("dimmer_dp", ""),
-            # Podurządzenie Zigbee bramki (patrz TuyaLocalController) - puste
-            # dla zwykłych urządzeń WiFi, które mają własne ip/local_key wyżej.
-            "gateway": cfg.get("gateway", ""), "cid": cfg.get("cid", ""),
-        }
-        for name, cfg in devices.items()
-    ]
-
-
-def _zigbee_gateways_to_rows(gateways: dict) -> list[dict]:
-    return [
-        {
-            "name": name, "id": cfg.get("id", ""), "ip": cfg.get("ip", ""),
-            "local_key": cfg.get("local_key", ""), "version": cfg.get("version", 3.4),
-        }
-        for name, cfg in gateways.items()
-    ]
+# _dict_to_name_number_rows/_zones_to_rows/_virtual_inputs_to_rows/
+# _tuya_devices_to_rows/_zigbee_gateways_to_rows przeniesione do
+# dashboard/setup.py (patrz import wyżej) - żeby plugins/satel/routes.py i
+# plugins/tuya/routes.py mogły z nich korzystać bez importowania tego
+# modułu (dashboard.app), co dałoby cykl importów (ten moduł rejestruje
+# blueprinty tych wtyczek).
 
 
 @app.before_request
@@ -169,8 +140,9 @@ def api_login():
     pole formularza w templates/login.html, NIGDY prompt()), token sesji
     wraca w ciasteczku HttpOnly. Rate-limiting po IP jak reszta AuthGuard."""
     payload = request.get_json(silent=True) or {}
+    username = payload.get("username", "")
     password = payload.get("password", "")
-    ok, message = auth_guard.check_password(password)
+    ok, message = auth_guard.check_password(username, password)
     if not ok:
         return jsonify({"error": message}), 401
 
@@ -195,7 +167,15 @@ def api_auth_status():
     """Do pokazania stanu (Zaloguj/Wyloguj) w nawigacji paneli - publiczny,
     nic nie ujawnia poza tym, czy TA przeglądarka ma ważną sesję."""
     logged_in = auth_guard.check_session(request.cookies.get(SESSION_COOKIE_NAME))
-    return jsonify({"logged_in": logged_in, "configured": auth_guard.configured})
+    return jsonify({
+        "logged_in": logged_in,
+        "configured": auth_guard.configured,
+        # Nazwa użytkownika NIE jest sekretem (jak samo hasło) - bezpieczna
+        # do pokazania w nawigacji ("Zalogowano jako <username>") ZAWSZE,
+        # nie tylko po zalogowaniu - ułatwia użytkownikowi przypomnienie
+        # sobie loginu przed próbą logowania.
+        "username": auth_guard.username,
+    })
 
 
 @app.route("/setup")
@@ -547,10 +527,10 @@ def api_discover_tuya_cloud():
 def api_config_satel_fields_get():
     satel = config_raw.get("satel", {})
     return jsonify({
-        "partitions": _dict_to_name_number_rows(satel.get("partitions", {})),
-        "monitored_zones": _zones_to_rows(satel.get("monitored_zones", {}), satel.get("zone_types", {})),
-        "monitored_outputs": _zones_to_rows(satel.get("monitored_outputs", {}), satel.get("output_types", {})),
-        "virtual_inputs": _virtual_inputs_to_rows(satel.get("virtual_inputs", {}).get("inputs", {})),
+        "partitions": dict_to_name_number_rows(satel.get("partitions", {})),
+        "monitored_zones": zones_to_rows(satel.get("monitored_zones", {}), satel.get("zone_types", {})),
+        "monitored_outputs": zones_to_rows(satel.get("monitored_outputs", {}), satel.get("output_types", {})),
+        "virtual_inputs": virtual_inputs_to_rows(satel.get("virtual_inputs", {}).get("inputs", {})),
         # Mapy nazwa -> rodzaj, osobno (obok wierszy wyżej) - wygodne dla
         # panelu głównego (index.html), który dopasowuje typ do statusu po
         # etykiecie (status.label), bez potrzeby osobnego zapytania.
@@ -592,8 +572,8 @@ def api_config_satel_fields_post():
 @app.route("/api/config/tuya-devices", methods=["GET"])
 def api_config_tuya_devices_get():
     return jsonify({
-        "devices": _tuya_devices_to_rows(config_raw.get("tuya", {}).get("devices", {})),
-        "zigbee_gateways": _zigbee_gateways_to_rows(config_raw.get("tuya", {}).get("zigbee_gateways", {})),
+        "devices": tuya_devices_to_rows(config_raw.get("tuya", {}).get("devices", {})),
+        "zigbee_gateways": zigbee_gateways_to_rows(config_raw.get("tuya", {}).get("zigbee_gateways", {})),
     })
 
 
@@ -1010,7 +990,10 @@ def main() -> None:
             f"Otwórz http://{args.host if args.host != '0.0.0.0' else '<adres-rpi>'}:{args.port}/setup w przeglądarce."
         )
 
-    serve(app, host=args.host, port=args.port, threads=2)
+    # threads=8 (nie 2) - uruchamiane w Dockerze, gdzie zasoby nie są tak
+    # ciasne jak na gołym RPi Zero W; kilku administratorów/kart przeglądarki
+    # może pracować na panelu równocześnie bez kolejkowania żądań.
+    serve(app, host=args.host, port=args.port, threads=8)
 
 
 if __name__ == "__main__":

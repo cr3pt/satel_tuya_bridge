@@ -737,15 +737,32 @@ Panel jest **celowo** podzielony na dwie strefy:
   `/automations`) oraz uzbrajanie/rozbrajanie stref alarmowych z panelu
   głównego.
 
-#### Konfiguracja hasła
+#### Konfiguracja konta administratora (nazwa użytkownika + hasło)
+
+Ustawiane normalnie RAZ w kreatorze (`/setup`, krok "Hasło administratora
+panelu") - nazwa użytkownika (domyślnie `admin`, dowolna) i hasło (min. 8
+znaków). Ręcznie (bez kreatora, np. edytując `config.yaml` wprost):
 
 ```bash
 python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('TWOJE_HASLO'))"
 ```
 
-Wynik wklej do `config.yaml` -> `dashboard.auth.password_hash`. Dopóki
-pole jest puste, akcje zmieniające stan są **zablokowane** (nie ma trybu
+Wynik wklej do `config.yaml` -> `dashboard.auth.password_hash`, nazwę
+użytkownika do `dashboard.auth.username` (jawnym tekstem - to NIE jest
+sekret, tylko identyfikator, jak login, nie hasło). Dopóki `password_hash`
+jest puste, akcje zmieniające stan są **zablokowane** (nie ma trybu
 "otwartego na wszystko" przez pomyłkę - brak hasła = brak zapisu).
+`username` bez ustawionej wartości domyślnie to `admin` (dotyczy też
+configów sprzed dodania tego pola - aktualizacja pakietu nikogo nie
+wylogowuje/blokuje).
+
+**Uczciwie o obecnym braku**: zmiana nazwy użytkownika/hasła PO pierwszej
+konfiguracji wymaga ręcznej edycji `config.yaml` (wygeneruj nowy hash jak
+wyżej) i restartu panelu - w przeciwieństwie do reszty ustawień (Satel/
+Tuya/eBUS), zakładka 🔌 Połączenia świadomie NIE oferuje do tego formularza
+(zmiana własnego hasła administratora bez potwierdzenia bieżącego hasła to
+osobna, większa funkcja bezpieczeństwa - do zrobienia w kolejnej rundzie,
+jeśli będzie potrzebna).
 
 Ochrona przed brute-force: po `max_failed_attempts` (domyślnie 5)
 nieudanych próbach z tego samego adresu IP, dalsze próby są odrzucane
@@ -754,9 +771,10 @@ dopóki blokada nie wygaśnie. Sprawdzone testem.
 
 #### Jak to działa w przeglądarce - logowanie sesyjne (`/login`)
 
-Prawdziwe logowanie, nie okienko `prompt()`: strona `/login` ma
+Prawdziwe logowanie, nie okienko `prompt()`: strona `/login` ma pole nazwy
+użytkownika (podpowiedziane automatycznie - nie jest sekretem) i
 zamaskowane pole hasła (`<input type=password>`, jak wszędzie indziej w
-sieci) - wpisujesz hasło RAZ, serwer wystawia losowy token sesji w
+sieci) - wpisujesz dane logowania RAZ, serwer wystawia losowy token sesji w
 ciasteczku **`HttpOnly`** (niedostępnym dla JavaScriptu na stronie -
 ochrona przed odczytaniem go przez ewentualny złośliwy skrypt/XSS).
 Dalsze żądania z panelu **nie wysyłają już hasła w ogóle** - tylko ten

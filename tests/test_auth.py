@@ -7,7 +7,8 @@ from werkzeug.security import generate_password_hash
 from dashboard.auth import AuthGuard, SESSION_COOKIE_NAME
 
 
-def _fake_request(password: str | None, ip: str = "127.0.0.1", session_token: str | None = None):
+def _fake_request(password: str | None, ip: str = "127.0.0.1", session_token: str | None = None,
+                   username: str = "admin"):
     req = MagicMock()
     req.remote_addr = ip
     req.cookies = {SESSION_COOKIE_NAME: session_token} if session_token else {}
@@ -15,6 +16,7 @@ def _fake_request(password: str | None, ip: str = "127.0.0.1", session_token: st
         req.authorization = None
     else:
         auth = MagicMock()
+        auth.username = username
         auth.password = password
         req.authorization = auth
     return req
@@ -41,7 +43,7 @@ class TestAuthGuardBasics:
         with patch("dashboard.auth.request", _fake_request("złe_hasło")):
             ok, msg = guard.check()
         assert ok is False
-        assert "Nieprawidłowe" in msg
+        assert "Nieprawidłow" in msg
 
     def test_missing_auth_header_fails(self):
         pw_hash = generate_password_hash("sekret123")
@@ -49,6 +51,48 @@ class TestAuthGuardBasics:
         with patch("dashboard.auth.request", _fake_request(None)):
             ok, msg = guard.check()
         assert ok is False
+
+
+class TestUsernameHandling:
+    """AuthGuard.username - nazwa użytkownika ustawiana raz w kreatorze
+    (/setup), przechowywana jawnym tekstem w config.yaml (NIE jest sekretem
+    - jak login, nie hasło). Domyślnie "admin" dla configów sprzed tej
+    zmiany (brak pola dashboard.auth.username), żeby aktualizacja pakietu
+    nie zablokowała istniejących instalacji."""
+
+    def test_defaults_to_admin_when_not_configured(self):
+        guard = AuthGuard({"password_hash": generate_password_hash("sekret123")})
+        assert guard.username == "admin"
+
+    def test_uses_configured_username(self):
+        guard = AuthGuard({"username": "szef", "password_hash": generate_password_hash("sekret123")})
+        assert guard.username == "szef"
+
+    def test_basic_auth_wrong_username_fails_even_with_correct_password(self):
+        guard = AuthGuard({"username": "szef", "password_hash": generate_password_hash("sekret123")})
+        with patch("dashboard.auth.request", _fake_request("sekret123", username="ktoinny")):
+            ok, msg = guard.check()
+        assert ok is False
+        assert "Nieprawidłowa nazwa użytkownika" in msg
+
+    def test_basic_auth_correct_username_and_password_succeeds(self):
+        guard = AuthGuard({"username": "szef", "password_hash": generate_password_hash("sekret123")})
+        with patch("dashboard.auth.request", _fake_request("sekret123", username="szef")):
+            ok, _ = guard.check()
+        assert ok is True
+
+    def test_check_password_wrong_username_fails_even_with_correct_password(self):
+        guard = AuthGuard({"username": "szef", "password_hash": generate_password_hash("sekret123")})
+        with patch("dashboard.auth.request", _fake_request(None, ip="127.0.0.1")):
+            ok, msg = guard.check_password("ktoinny", "sekret123")
+        assert ok is False
+        assert "Nieprawidłowa nazwa użytkownika" in msg
+
+    def test_check_password_correct_username_and_password_succeeds(self):
+        guard = AuthGuard({"username": "szef", "password_hash": generate_password_hash("sekret123")})
+        with patch("dashboard.auth.request", _fake_request(None, ip="127.0.0.1")):
+            ok, _ = guard.check_password("szef", "sekret123")
+        assert ok is True
 
 
 class TestBruteForceProtection:
@@ -108,29 +152,29 @@ class TestSessionLogin:
     def test_check_password_succeeds_with_correct_password(self):
         guard = AuthGuard({"password_hash": generate_password_hash("sekret123")})
         with patch("dashboard.auth.request", _fake_request(None, ip="127.0.0.1")):
-            ok, _ = guard.check_password("sekret123")
+            ok, _ = guard.check_password("admin", "sekret123")
         assert ok is True
 
     def test_check_password_fails_with_wrong_password(self):
         guard = AuthGuard({"password_hash": generate_password_hash("sekret123")})
         with patch("dashboard.auth.request", _fake_request(None, ip="127.0.0.1")):
-            ok, msg = guard.check_password("złe")
+            ok, msg = guard.check_password("admin", "złe")
         assert ok is False
-        assert "Nieprawidłowe" in msg
+        assert "Nieprawidłow" in msg
 
     def test_check_password_respects_lockout(self):
         guard = AuthGuard({"password_hash": generate_password_hash("sekret123"), "max_failed_attempts": 2, "lockout_seconds": 300})
         with patch("dashboard.auth.request", _fake_request(None, ip="127.0.0.1")):
-            guard.check_password("złe")
-            guard.check_password("złe")
-            ok, msg = guard.check_password("sekret123")
+            guard.check_password("admin", "złe")
+            guard.check_password("admin", "złe")
+            ok, msg = guard.check_password("admin", "sekret123")
         assert ok is False
         assert "Zbyt wiele" in msg
 
     def test_check_password_fails_when_unconfigured(self):
         guard = AuthGuard(None)
         with patch("dashboard.auth.request", _fake_request(None, ip="127.0.0.1")):
-            ok, msg = guard.check_password("cokolwiek")
+            ok, msg = guard.check_password("admin", "cokolwiek")
         assert ok is False
         assert "hasła administratora" in msg
 

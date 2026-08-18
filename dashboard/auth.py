@@ -3,9 +3,12 @@ COŚ ZMIENIAJĄ (zapis konfiguracji czujników, uzbrajanie/rozbrajanie stref).
 Zwykłe przeglądanie panelu (historia, statusy, dziennik zdarzeń) zostaje
 otwarte - to był świadomy wybór, nie przez zapomnienie.
 
-Pojedyncze hasło administratora (nie ma potrzeby wielu kont w domowym
-systemie), trzymane jako hash (werkzeug - ta sama biblioteka, której i tak
-używa Flask, więc zero nowej zależności). Dwa sposoby zalogowania:
+Pojedyncze konto administratora (nazwa użytkownika + hasło, nie ma potrzeby
+wielu kont w domowym systemie) - hasło trzymane jako hash (werkzeug - ta
+sama biblioteka, której i tak używa Flask, więc zero nowej zależności),
+nazwa użytkownika jawnym tekstem w config.yaml (nie jest sekretem, tylko
+identyfikatorem - jak login, nie hasło). Oba ustawiane raz w kreatorze
+(/setup) przy pierwszej konfiguracji. Dwa sposoby zalogowania:
 
 1. **Sesja przez `/login`** (używana przez panel webowy) - hasło wpisujesz
    RAZ w prawdziwym, zamaskowanym polu formularza (`<input type=password>`,
@@ -48,6 +51,7 @@ SESSION_TTL_SECONDS = 12 * 3600  # 12h - wystarczająco długo na jedną "sesję
 
 class AuthGuard:
     def __init__(self, auth_cfg: dict | None):
+        self.username = (auth_cfg or {}).get("username") or "admin"
         self.password_hash = (auth_cfg or {}).get("password_hash")
         self.max_attempts = (auth_cfg or {}).get("max_failed_attempts", 5)
         self.lockout_seconds = (auth_cfg or {}).get("lockout_seconds", 300)
@@ -78,9 +82,14 @@ class AuthGuard:
         self._failed_attempts.pop(ip, None)
 
     # -- logowanie sesyjne (/login, /api/login, /api/logout) ------------
-    def check_password(self, password: str) -> tuple[bool, str]:
-        """Sprawdza hasło wprost (nie z nagłówka Basic Auth) - używane przez
-        POST /api/login. Ten sam rate-limiting po IP co reszta metod."""
+    def check_password(self, username: str, password: str) -> tuple[bool, str]:
+        """Sprawdza login+hasło wprost (nie z nagłówka Basic Auth) - używane
+        przez POST /api/login. Ten sam rate-limiting po IP co reszta metod.
+
+        Nazwa użytkownika NIE jest sekretem (jak hasło) - porównanie wprost
+        (`!=`) wystarcza, timing attack na samą nazwę nic tu nie ujawnia,
+        bo i tak trzeba jeszcze trafić hasło (sprawdzane przez
+        check_password_hash, które JEST odporne na timing attack)."""
         if not self.configured:
             return False, (
                 "Panel nie ma skonfigurowanego hasła administratora "
@@ -93,10 +102,10 @@ class AuthGuard:
             logger.warning("Zablokowano próbę logowania z %s - zbyt wiele nieudanych prób", ip)
             return False, f"Zbyt wiele nieudanych prób - spróbuj ponownie za maks. {self.lockout_seconds}s"
 
-        if not password or not check_password_hash(self.password_hash, password):
+        if username != self.username or not password or not check_password_hash(self.password_hash, password):
             self._record_failure(ip)
             logger.warning("Nieudana próba logowania z %s", ip)
-            return False, "Nieprawidłowe hasło"
+            return False, "Nieprawidłowa nazwa użytkownika lub hasło"
 
         self._record_success(ip)
         return True, ""
@@ -151,10 +160,10 @@ class AuthGuard:
         if not auth or not auth.password:
             return False, "Wymagana autoryzacja"
 
-        if not check_password_hash(self.password_hash, auth.password):
+        if auth.username != self.username or not check_password_hash(self.password_hash, auth.password):
             self._record_failure(ip)
             logger.warning("Nieudana próba logowania z %s", ip)
-            return False, "Nieprawidłowe hasło"
+            return False, "Nieprawidłowa nazwa użytkownika lub hasło"
 
         self._record_success(ip)
         return True, ""

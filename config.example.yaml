@@ -272,10 +272,13 @@ dashboard:
   db_path: "bridge_history.db"
 
   auth:
-    # Hasło administratora chroniące TYLKO akcje, które coś zmieniają:
+    # Konto administratora chroniące TYLKO akcje, które coś zmieniają:
     # zapis konfiguracji czujników (/config) oraz uzbrajanie/rozbrajanie
     # stref. Samo przeglądanie panelu (historia, statusy, dziennik
-    # zdarzeń) zostaje otwarte - to świadomy wybór.
+    # zdarzeń) zostaje otwarte - to świadomy wybór. Oba pola ustawia się
+    # normalnie raz w kreatorze (/setup) - ręczna edycja poniżej to tylko
+    # dla ręcznie pisanego config.yaml (bez kreatora).
+    username: "admin"   # NIE jest sekretem (jak login, nie hasło) - jawny tekst
     #
     # Wygeneruj hash hasła (nigdy nie wpisuj hasła jawnym tekstem):
     #   python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('TWOJE_HASLO'))"

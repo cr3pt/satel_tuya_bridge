@@ -22,6 +22,7 @@ VALID_FORM = {
         {"name": "gniazdko_salon", "id": "dev1", "ip": "192.168.1.50", "local_key": "key1", "type": "socket"},
     ],
     "ebus": {"mqtt_host": "127.0.0.1", "mqtt_port": "1883"},
+    "admin_username": "admin",
     "admin_password": "bardzo_bezpieczne_haslo",
     "notifications": {"ntfy_topic_url": ""},
     "location": {"latitude": "", "longitude": ""},
@@ -49,6 +50,11 @@ class TestValidation:
         form = {**VALID_FORM, "admin_password": "krotkie"}
         errors = validate(form)
         assert any("Hasło" in e for e in errors)
+
+    def test_missing_admin_username_is_error(self):
+        form = {**VALID_FORM, "admin_username": ""}
+        errors = validate(form)
+        assert any("użytkownika" in e for e in errors)
 
     def test_missing_mqtt_host_is_error(self):
         form = {**VALID_FORM, "ebus": {"mqtt_host": "", "mqtt_port": "1883"}}
@@ -108,6 +114,18 @@ class TestBuildConfigDict:
         stored = config["dashboard"]["auth"]["password_hash"]
         assert stored != VALID_FORM["admin_password"]
         assert stored.startswith("scrypt:") or stored.startswith("pbkdf2:")
+
+    def test_username_is_stored_as_plaintext(self):
+        """W odróżnieniu od hasła, nazwa użytkownika NIE jest sekretem (jak
+        login) - zapisywana jawnym tekstem, nie hashowana."""
+        form = {**VALID_FORM, "admin_username": "szef"}
+        config = build_config_dict(form)
+        assert config["dashboard"]["auth"]["username"] == "szef"
+
+    def test_missing_admin_username_defaults_to_admin(self):
+        form = {**VALID_FORM, "admin_username": ""}
+        config = build_config_dict(form)
+        assert config["dashboard"]["auth"]["username"] == "admin"
 
     def test_advanced_sections_get_empty_safe_defaults(self):
         config = build_config_dict(VALID_FORM)

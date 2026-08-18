@@ -43,8 +43,11 @@ dashboard:
 """
 
 
-def _basic_auth_header(password: str) -> dict:
-    token = base64.b64encode(f":{password}".encode()).decode()
+def _basic_auth_header(password: str, username: str = "admin") -> dict:
+    # CONFIG_TEMPLATE wyżej nie ustawia dashboard.auth.username, więc
+    # AuthGuard domyślnie używa "admin" (patrz dashboard/auth.py) - stąd
+    # domyślna wartość tu, bez zmiany wszystkich dotychczasowych wywołań.
+    token = base64.b64encode(f"{username}:{password}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
 
 
@@ -113,19 +116,23 @@ class TestSessionAuthEndpoints:
     def test_auth_status_when_not_logged_in(self, client):
         resp = client.get("/api/auth/status")
         assert resp.status_code == 200
-        assert resp.get_json() == {"logged_in": False, "configured": True}
+        assert resp.get_json() == {"logged_in": False, "configured": True, "username": "admin"}
 
     def test_login_with_correct_password_sets_session_cookie(self, client):
-        resp = client.post("/api/login", json={"password": "test_haslo_123"})
+        resp = client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
         assert resp.status_code == 200
         assert "stb_session" in resp.headers.get("Set-Cookie", "")
 
     def test_login_with_wrong_password_returns_401(self, client):
-        resp = client.post("/api/login", json={"password": "złe hasło"})
+        resp = client.post("/api/login", json={"username": "admin", "password": "złe hasło"})
+        assert resp.status_code == 401
+
+    def test_login_with_wrong_username_returns_401(self, client):
+        resp = client.post("/api/login", json={"username": "ktoinny", "password": "test_haslo_123"})
         assert resp.status_code == 401
 
     def test_auth_status_true_after_login(self, client):
-        client.post("/api/login", json={"password": "test_haslo_123"})
+        client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
         resp = client.get("/api/auth/status")
         assert resp.get_json()["logged_in"] is True
 
@@ -134,12 +141,12 @@ class TestSessionAuthEndpoints:
         żadnego nagłówka Authorization - sam token w ciasteczku wystarcza
         (klient testowy Flask trzyma ciasteczka między żądaniami jak
         prawdziwa przeglądarka)."""
-        client.post("/api/login", json={"password": "test_haslo_123"})
+        client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
         resp = client.post("/api/config/sensors", json=[])
         assert resp.status_code == 200
 
     def test_logout_clears_session(self, client):
-        client.post("/api/login", json={"password": "test_haslo_123"})
+        client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
         client.post("/api/logout")
         resp = client.get("/api/auth/status")
         assert resp.get_json()["logged_in"] is False
