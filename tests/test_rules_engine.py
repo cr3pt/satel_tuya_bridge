@@ -409,3 +409,41 @@ class TestAlarmStatusCallback:
         statuses = {s["label"]: s["value"] for s in engine.history.get_status("satel_partition")}
         assert statuses["Dom"] == "rozbrojona"
         assert statuses["Garaz"] == "rozbrojona"
+
+
+class TestAlarmStatusDebounce:
+    """_on_alarm_status_change() - to on (nie _handle_alarm_status_change
+    bezpośrednio) jest rejestrowany jako właściwy callback (patrz start()
+    w rules_engine.py). Centrala wysyła stan każdej strefy jako osobną
+    ramkę, więc jedna zmiana potrafi wywołać kilka powiadomień pod rząd -
+    _on_alarm_status_change() odbija (debounce'uje) je w jedno odświeżenie,
+    tak samo jak integracja Home Assistant (PARTITION_UPDATE_DEBOUNCE_DELAY
+    w homeassistant/components/satel_integra/coordinator.py)."""
+
+    async def test_does_not_apply_immediately(self, engine, fake_satel):
+        fake_satel.armed_partition_numbers = {1}
+        await engine._on_alarm_status_change()
+        # Debounce w toku (0.15s) - _handle_alarm_status_change() jeszcze
+        # nie zdążyło nic zapisać do historii.
+        assert engine.history.get_status("satel_partition") == []
+
+    async def test_applies_after_debounce_delay(self, engine, fake_satel):
+        fake_satel.armed_partition_numbers = {1}
+        await engine._on_alarm_status_change()
+        await asyncio.sleep(0.25)  # dłużej niż debounce (0.15s)
+        statuses = {s["label"]: s["value"] for s in engine.history.get_status("satel_partition")}
+        assert statuses["Dom"] == "uzbrojona"
+
+    async def test_burst_of_calls_applies_only_the_final_state(self, engine, fake_satel):
+        fake_satel.armed_partition_numbers = {1}
+        await engine._on_alarm_status_change()
+        fake_satel.armed_partition_numbers = set()
+        await engine._on_alarm_status_change()
+        fake_satel.armed_partition_numbers = {1, 2}
+        await engine._on_alarm_status_change()
+
+        await asyncio.sleep(0.25)
+
+        statuses = {s["label"]: s["value"] for s in engine.history.get_status("satel_partition")}
+        assert statuses["Dom"] == "uzbrojona"
+        assert statuses["Garaz"] == "uzbrojona"

@@ -13,12 +13,22 @@ kilka miejsc wymaga uzupełnienia danymi specyficznymi dla Twojej instalacji
   w `config.example.yaml`) - skopiuj rzeczywisty adres/parametry z zakładki
   "Wejścia IP" w DLOADX po skonfigurowaniu konkretnego wejścia. Firmware może
   różnić się formatem zapytania między wersjami.
-- **Dokładne metody biblioteki `satel_integra`** (`bridge/satel_client.py`) -
-  nazwy metod (`set_output`, `arm`, `disarm`, `monitor_status`) mogą się
-  nieznacznie różnić w zależności od wersji zainstalowanego pakietu -
-  sprawdź `pip show satel-integra` i ewentualnie dopasuj do przykładów w
-  repozytorium biblioteki (używa jej też integracja Satel w Home Assistant -
-  dobre źródło aktualnych przykładów użycia).
+- **Wersja biblioteki `satel_integra`** (`bridge/satel_client.py`) - nasz
+  kod jest napisany pod STARE, prywatne API pakietu (linia 0.3.x: konstruktor
+  `AsyncSatel(host, port, loop, ...)`, `monitor_status()`, `keep_alive()`,
+  `generate_query()`, atrybuty `_zone_changed_callback`/... ustawiane
+  bezpośrednio). `requirements.txt` celowo przypina `<1.0.0` - pakiet
+  `satel-integra` 1.0.0+ (wymaga Python 3.12+, więc na obrazie `python:3.11-slim`
+  z Dockerfile w tym repo `pip` go i tak nie wybierze) to KOMPLETNIE
+  PRZEPISANE API: inny konstruktor (bez `loop`, `integration_key` na
+  starcie), `register_callbacks()`/`start(enable_monitoring=True)` zamiast
+  `monitor_status()`, brak `generate_query()`. **To jest właśnie wersja,
+  której obecnie używa integracja Satel w Home Assistant** (patrz
+  `homeassistant/components/satel_integra/client.py`) - jej źródła są dobrym
+  odniesieniem architektonicznym (patrz niżej), ale NIE nadają się jako
+  bezpośredni przykład wywołań metod dla tego repo, bo to inne, niekompatybilne
+  API. Jeśli kiedyś zajdzie potrzeba przejścia na 1.0.0+, to pełne
+  przepisanie `satel_client.py`, nie drobna poprawka.
 - **Format wiadomości Pulsar dla kamer Tuya** (`bridge/tuya_cloud_events.py`) -
   różni się między modelami kamer, zweryfikuj w zakładce "Cloud Debugging"
   na developer.tuya.com dla swoich urządzeń.

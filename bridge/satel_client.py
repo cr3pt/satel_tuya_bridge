@@ -326,11 +326,55 @@ class SatelIntegraClient:
         logger.info("Wysłano komendę uzbrojenia stref %s (tryb %s)", partitions, mode)
 
     async def disarm(self, partitions: list[int] | None = None) -> None:
+        """Rozbraja strefy. Jeśli którakolwiek z nich jest akurat w stanie
+        TRIGGERED/TRIGGERED_FIRE (alarm), po rozbrojeniu wysyła też komendę
+        'wyczyść pamięć alarmu' (0x85) - tak samo jak integracja Home
+        Assistant (homeassistant/components/satel_integra/alarm_control_panel.py:
+        async_alarm_disarm() robi clear_alarm() z 1s opóźnieniem po disarm()).
+        BEZ TEGO: centrala Satel trzyma "pamięć alarmu" jako OSOBNĄ flagę od
+        stanu uzbrojenia strefy - zwykłe rozbrojenie jej NIE czyści, więc
+        partition_states (a za tym armed_partition_numbers/panel/MQTT) mogłoby
+        dalej pokazywać TRIGGERED mimo że strefa jest już rozbrojona."""
         if self._client is None:
             raise RuntimeError("Klient Satel nie jest połączony")
         partitions = partitions or [self.partition]
+        clear_alarm_necessary = bool(self.triggered_partition_numbers & set(partitions))
         await self._client.disarm(self.integration_key, partitions)
         logger.info("Wysłano komendę rozbrojenia stref %s", partitions)
+        if clear_alarm_necessary:
+            await asyncio.sleep(1)
+            await self._client.clear_alarm(self.integration_key, partitions)
+            logger.info("Wyczyszczono pamięć alarmu dla stref %s", partitions)
+
+    def _schedule(self, coro) -> None:
+        """Planuje wykonanie korutyny jako osobne zadanie w tle i loguje
+        wyjątek, jeśli zadanie się nim zakończy (żeby błąd w callbacku nie
+        przepadł bez śladu - domyślny handler asyncio dla nieodebranych
+        wyjątków w zadaniach jest łatwo przeoczyć w logach).
+
+        WAŻNE, dlaczego to w ogóle istnieje: biblioteka satel_integra woła
+        `_zone_changed_callback`/`_output_changed_callback`/
+        `_alarm_status_callback` SYNCHRONICZNIE, jako zwykłe wywołanie
+        funkcji (`self._zone_changed_callback(status)`, patrz
+        satel_integra/satel_integra.py: _zone_violated()/_output_changed()/
+        _armed()) - nie czeka na żaden `await`. Nasze callbacki
+        (_on_zone_change/_on_output_change/_handle_alarm_status_change w
+        RulesEngine) są `async def`, bo robią I/O (zapis do historii,
+        publikacja MQTT). Wywołanie korutyny BEZ await tylko tworzy obiekt
+        korutyny i go odrzuca - CIAŁO FUNKCJI NIGDY SIĘ NIE WYKONUJE (żaden
+        wyjątek, tylko ciche "coroutine was never awaited" w logach) - stąd
+        rejestrujemy tu SYNCHRONICZNY trampolinowy wrapper, który sam
+        planuje korutynę przez asyncio.ensure_future(), zamiast przekazywać
+        korutynę bibliotece wprost. Integracja Home Assistant tego problemu
+        nie ma, bo jej callbacki (zones_update_callback/... w coordinator.py)
+        są zwykłymi synchronicznymi metodami (@callback), nie korutynami."""
+        task = asyncio.ensure_future(coro)
+
+        def _log_exception(t: "asyncio.Task") -> None:
+            if not t.cancelled() and t.exception() is not None:
+                logger.error("Błąd w callbacku Satela", exc_info=t.exception())
+
+        task.add_done_callback(_log_exception)
 
     def register_zone_callback(self, callback: Callable[[dict], Awaitable[None]]) -> None:
         """Rejestruje callback wywoływany przy zmianie stanu wejść (np. do
@@ -340,16 +384,24 @@ class SatelIntegraClient:
 
         UWAGA: nazwa atrybutu callbacku (`_zone_changed_callback`) jest
         prywatna w bibliotece - jeśli po aktualizacji pakietu przestanie
-        działać, sprawdź aktualne API w satel_integra/satel_integra.py."""
-        self._zone_cb = callback
+        działać, sprawdź aktualne API w satel_integra/satel_integra.py.
+        Patrz też komentarz w _schedule() - callback biblioteki jest
+        SYNCHRONICZNY, więc `callback` (korutyna) jest tu opakowana."""
+        def _sync_wrapper(status: dict) -> None:
+            self._schedule(callback(status))
+
+        self._zone_cb = _sync_wrapper
         if self._client is not None:
-            self._client._zone_changed_callback = callback
+            self._client._zone_changed_callback = _sync_wrapper
 
     def register_output_callback(self, callback: Callable[[dict], Awaitable[None]]) -> None:
         """Analogicznie do register_zone_callback, ale dla wyjść."""
-        self._output_cb = callback
+        def _sync_wrapper(status: dict) -> None:
+            self._schedule(callback(status))
+
+        self._output_cb = _sync_wrapper
         if self._client is not None:
-            self._client._output_changed_callback = callback
+            self._client._output_changed_callback = _sync_wrapper
 
     def register_alarm_status_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Callback wywoływany przy zmianie stanu uzbrojenia stref (widoczny
@@ -362,10 +414,14 @@ class SatelIntegraClient:
         `self._alarm_status_callback()` (patrz _armed()/_read_data()/
         _update_status() w satel_integra.py), samo bieżące partition_states
         trzeba odczytać z armed_partition_numbers niżej. Nazwa atrybutu jak
-        wyżej - prywatna w bibliotece, zweryfikuj przy aktualizacji pakietu."""
-        self._alarm_status_cb = callback
+        wyżej - prywatna w bibliotece, zweryfikuj przy aktualizacji pakietu.
+        Patrz też komentarz w _schedule() - synchroniczny wrapper jak wyżej."""
+        def _sync_wrapper() -> None:
+            self._schedule(callback())
+
+        self._alarm_status_cb = _sync_wrapper
         if self._client is not None:
-            self._client._alarm_status_callback = callback
+            self._client._alarm_status_callback = _sync_wrapper
 
     @property
     def violated_zones(self) -> list[int]:
@@ -391,6 +447,22 @@ class SatelIntegraClient:
         numbers: set[int] = set()
         for partitions in self._client.partition_states.values():
             numbers.update(partitions)
+        return numbers
+
+    @property
+    def triggered_partition_numbers(self) -> set[int]:
+        """Numery stref aktualnie w stanie TRIGGERED/TRIGGERED_FIRE (alarm
+        wzbudzony) - patrz disarm() wyżej, gdzie służy do decyzji, czy po
+        rozbrojeniu trzeba też wyczyścić pamięć alarmu (clear_alarm).
+        Import odroczony jak gdzie indziej w tym pliku - dzięki temu ta
+        właściwość działa też, gdy `partition_states` zostało nadpisane
+        bezpośrednio w teście, bez przechodzenia przez connect()."""
+        if self._client is None:
+            return set()
+        from satel_integra.satel_integra import AlarmState  # type: ignore
+        numbers: set[int] = set()
+        for state in (AlarmState.TRIGGERED, AlarmState.TRIGGERED_FIRE):
+            numbers.update(self._client.partition_states.get(state, []))
         return numbers
 
     @property
