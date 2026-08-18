@@ -526,10 +526,16 @@ tego wzorca):
   razem - kliknij ponownie albo dodaj ręcznie, patrz "Jak znaleźć listę
   dostępnych pól" niżej).
 - **Satel - strefy/wyjścia/wejścia IP/partycje** (`satel_fields.yaml`) -
-  **bez przycisku wykrywania**: protokół integracji Satela nie udostępnia
-  listy skonfigurowanych stref/wyjść (tylko bieżący stan już znanych
-  numerów), więc nazwę i numer trzeba przepisać z DLOADX ręcznie, tak jak
-  w kreatorze. Każda strefa/wyjście ma dodatkowo **opcjonalny "rodzaj"**
+  przycisk **"🔍 Wykryj aktywne strefy/wyjścia"** (jak w kreatorze): protokół
+  integracji Satela nie udostępnia listy WSZYSTKICH skonfigurowanych
+  stref/wyjść wraz z nazwami (ograniczenie protokołu, nie da się tego
+  obejść), więc przycisk nasłuchuje 30 sekund i notuje numery, które w tym
+  czasie FIZYCZNIE zmienią stan (otwórz/zamknij drzwi i okna, wywołaj
+  czujki ruchu, załącz wyjście) - dodaje je jako nowe wiersze niżej, nadaj
+  im nazwę i zapisz. Strefy, które nie zmienią stanu w tym oknie, trzeba
+  dodać ręcznie (numer z DLOADX) - host/port centrali brane są automatycznie
+  z zapisanego już `config.yaml` (nie trzeba ich przepisywać z zakładki
+  "Połączenia"). Każda strefa/wyjście ma dodatkowo **opcjonalny "rodzaj"**
   (np. drzwi/okno/ruch/dym/zalanie/wibracja/sabotaż dla wejść, syrena/
   przekaźnik/oświetlenie/brama/ogrzewanie dla wyjść) - czysto opisowy,
   dokłada tylko ikonę i etykietę rodzaju na panelu głównym (zielone
@@ -541,12 +547,28 @@ tego wzorca):
   wyciągnąć osobno (`python -m tinytuya wizard`). Sekcja **"🐝 Bramki
   Zigbee"** w tym samym panelu pozwala dodać czujniki/przełączniki Zigbee
   podpięte pod bramkę Tuya (np. Tuya Zigbee Gateway/Hub) - patrz "Urządzenia
-  Zigbee przez bramkę Tuya" niżej.
+  Zigbee przez bramkę Tuya" niżej. Każde skonfigurowane urządzenie od razu
+  dostaje kartę na stronie głównej (nie dopiero po pierwszym udanym
+  odpytaniu) - jeśli akurat nie odpowiada (zły `local_key`/IP/wersja
+  protokołu, urządzenie offline), karta zostaje widoczna z wartością
+  "niedostępne" zamiast całkiem zniknąć, więc od razu widać, że urządzenie
+  JEST skonfigurowane, tylko coś jest z nim nie tak.
 
 Każde pole zaczyna jako **nieaktywne** (nie ma go w konfiguracji), dopóki
 nie uzupełnisz wiersza (po odkryciu albo ręcznie) i nie klikniesz "Zapisz"
 dla danej sekcji - odkrycie samo w sobie niczego nie włącza ani nie
 zapisuje.
+
+Zakładka **🔌 Połączenia** ma dodatkowo przycisk **"🔄 Zrestartuj bridge i
+panel teraz"** - w odróżnieniu od reszty tej strony (patrz wyżej: zmiany
+wchodzą w życie automatycznie bez restartu), zmiany host/port/kluczy/
+brokerów MQTT w TEJ zakładce wymagają pełnego restartu procesu (żywe
+połączenia TCP nie są odtwarzane w locie). Przycisk restartuje OBA
+kontenery Dockera (`docker-compose.yml` ma dla obu `restart: unless-stopped`
+- proces po prostu kończy się, Docker sam go podnosi ponownie) - bez
+potrzeby dostępu do konsoli/SSH. Uruchomienie bez Dockera (`python main.py`
+w tle/systemd) NIE ma tego automatycznego podniesienia - proces po prostu
+się zakończy, trzeba go wystartować ręcznie/przez systemd.
 
 Czujniki eBUS są dodatkowo **pogrupowane w tabeli wg drugiego segmentu
 tematu MQTT** (np. `ebusd/bm/FlowTemp` i `ebusd/fha/FlowTemp` trafiają do
@@ -774,13 +796,18 @@ używaj VPN (WireGuard/Tailscale) zamiast wystawiać port bezpośrednio.
 **Nie.** `satel.integration_key` w `config.yaml` (ten sam, który wpisujesz
 w kreatorze) to **hasło protokołu integracji** - autoryzuje polecenia
 (uzbrojenie/rozbrojenie, sterowanie wyjściem), ale **nie jest kluczem
-szyfrowania transmisji**. Biblioteka `satel_integra`, z której korzysta
-ten bridge (ta sama, której używa integracja Satela w Home Assistant),
+szyfrowania transmisji**. Biblioteka `satel_integra` w wersji, na której
+oparty jest ten bridge (0.3.x - patrz wyjaśnienie w `requirements.txt`
+i sekcji "Status tego kodu" wyżej, dlaczego jest to celowo przypięte),
 **nie implementuje** opcjonalnego szyfrowania AES komunikacji TCP, jakie
 oferuje protokół integracji części central/modułów ETHM (ustawianego
 osobno w DLOADX, innym kluczem niż hasło integracji) - cała komunikacja
 z centralą (port 7094) i wywołania wirtualnych wejść IP (port z sekcji
-`virtual_inputs`) idą **czystym tekstem** po sieci LAN.
+`virtual_inputs`) idą **czystym tekstem** po sieci LAN. UWAGA: nowsza
+wersja tej biblioteki (1.0.0+, obecnie używana przez integrację Satela w
+Home Assistant) OBSŁUGUJE już to szyfrowanie - ale to inne, niekompatybilne
+API (patrz wyżej), więc przejście na nią to pełne przepisanie
+`satel_client.py`, nie prosta aktualizacja pakietu.
 
 W praktyce, w zaufanej, odizolowanej sieci domowej to zwykle akceptowalne
 ryzyko (dokładnie ta sama klasa kompromisu co Basic Auth panelu wyżej).
@@ -792,6 +819,43 @@ urządzeniami, albo zależy Ci na dodatkowej warstwie ochrony:
   całej podsieci, a nie przekierowania portu,
 - rozważ zgłoszenie/wsparcie szyfrowania w `satel_integra` upstream, jeśli
   Twoja centrala i tak wymaga go po stronie DLOADX.
+
+#### A uzbrajam/rozbrajam z panelu, nic się nie dzieje na centrali (ale stan wyświetla się poprawnie)
+
+Do wersji z tej rundy poprawek `arm()`/`disarm()`/`set_output()` w
+`satel_client.py` uznawały samo WYSŁANIE bajtów po sieci za sukces -
+biblioteka `satel_integra` NIE czeka sama na potwierdzenie z centrali
+(ramka 0xEF "command result"). Błędny `satel.integration_key` albo
+odrzucenie komendy przez centralę kończyło się więc CISZĄ porażką: w
+logach/panelu komenda wyglądała na wykonaną, a fizycznie nic się nie
+działo - podczas gdy ODCZYT stanu (broadcast/cykliczny poll) działał
+poprawnie, bo w ogóle nie przechodzi przez to potwierdzenie. Teraz
+`_send_and_confirm()` w `satel_client.py` czeka na odpowiedź centrali i
+rzuca czytelny błąd (widoczny w statusie komendy w panelu), jeśli centrala
+odrzuci polecenie albo nie odpowie w 5s - jeśli dalej nic się nie dzieje,
+sprawdź w logach dokładny komunikat błędu.
+
+#### A w logach widzę "Got exception: N bytes read... Most likely the other side has disconnected!" zaraz po "Starting monitor_status loop"
+
+Centrala Satel Integra **obsługuje tylko JEDNEGO klienta integracji
+naraz** (port 7094). Ten dokładny wzorzec w logach (udane połączenie TCP,
+a zaraz potem zerwanie przy pierwszej wysłanej komendzie) oznacza
+najczęściej, że coś INNEGO już zajmuje ten slot:
+- DLOADX/GUARDX ma otwarte połączenie do tej samej centrali z innego
+  komputera,
+- działa więcej niż jedna instancja tego bridge'a jednocześnie (np.
+  uruchomiony bare-metal I w Dockerze naraz, albo dwa kontenery po
+  nieudanym restarcie),
+- inna integracja (np. równolegle testowany Home Assistant) łączy się do
+  tej samej centrali.
+
+`bridge/satel_client.py` ma od tej rundy poprawek watchdog wykrywający
+dokładnie ten scenariusz (biblioteka inaczej ponawiałaby połączenie w
+nieskończoność WEWNĄTRZ siebie, a `system_health` w panelu dalej
+pokazywałby "połączono") - w logach zobaczysz wtedy dodatkowo ostrzeżenie
+`Satel: centrala zerwała połączenie zaraz po nawiązaniu...` z tą samą
+podpowiedzią. Zamknij DLOADX/GUARDX i upewnij się, że działa dokładnie
+jedna instancja bridge'a, zanim spróbujesz ponownie.
 
 ## Odporność na awarie (reconnect, backoff, health-check)
 

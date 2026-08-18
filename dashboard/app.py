@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import pathlib
+import threading
 import time
 
 import yaml
@@ -265,11 +267,20 @@ def api_discover_satel():
     gdziekolwiek indziej - to NIE jest pełny import konfiguracji, tylko
     numery, które fizycznie zmienią stan podczas nasłuchu."""
     payload = request.get_json(silent=True) or {}
-    host = (payload.get("host") or "").strip()
+    satel_cfg = config_raw.get("satel", {})
+    # Domyślnie host/port z JUŻ ZAPISANEGO config.yaml (tak samo jak
+    # api_discover_ebus niżej dla mqtt_host) - dzięki temu zakładka
+    # ⚙ Ustawienia może wołać ten endpoint BEZ znajomości hasła
+    # administratora (host/port nie są sekretem, w odróżnieniu od klucza
+    # integracji - patrz api_config_connections_get) i bez przepisywania ich
+    # w JS z osobnej, zablokowanej hasłem zakładki "Połączenia". Kreator
+    # (/setup, PRZED zapisaniem config.yaml) wciąż podaje je wprost w ciele
+    # żądania, bo `satel_cfg` jest wtedy puste.
+    host = (payload.get("host") or satel_cfg.get("host") or "").strip()
     if not host:
         return jsonify({"error": "Brak adresu IP centrali"}), 400
     try:
-        port = int(payload.get("port") or 7094)
+        port = int(payload.get("port") or satel_cfg.get("port") or 7094)
     except (TypeError, ValueError):
         return jsonify({"error": "Nieprawidłowy port"}), 400
     try:
@@ -926,6 +937,42 @@ def api_command_status(command_id: int):
     if cmd is None:
         return jsonify({"error": "Nie znaleziono komendy"}), 404
     return jsonify(cmd)
+
+
+@app.route("/api/system/restart", methods=["POST"])
+@require_auth()
+def api_system_restart():
+    """Pełny restart CAŁEGO bridge'a (obu kontenerów Dockera - bridge +
+    panel), nie tylko reload_config() (który celowo NIE dotyka żywych
+    połączeń sieciowych, patrz RulesEngine.reload_config). Przydatny gdy
+    trzeba naprawdę zerwać i odtworzyć połączenie z centralą Satel/Tuya
+    (np. po zmianie hosta/portu/kluczy w zakładce "Połączenia", albo gdy
+    połączenie utknęło w złym stanie).
+
+    Docker Compose ma dla obu serwisów `restart: unless-stopped` (patrz
+    docker-compose.yml) - więc zwykłe zakończenie procesu wystarcza,
+    Docker sam podniesie kontener ponownie. Bridge (osobny proces/kontener)
+    dostaje polecenie przez tę samą kolejkę komend co uzbrojenie/reload
+    (panel nie ma bezpośredniego dostępu do jego procesu) - PANEL restartuje
+    się sam, bezpośrednio, bo to ten sam proces, który obsługuje to żądanie."""
+    command_id = history.enqueue_command("restart_process", {})
+    history.write_event("system", source="dashboard", detail={"message": "Zlecono pełny restart bridge'a (panel + bridge)"})
+
+    def _restart_dashboard() -> None:
+        os._exit(0)
+
+    # Krótkie opóźnienie na osobnym wątku - dajemy Flaskowi/waitressowi
+    # chwilę na dosłanie odpowiedzi JSON do przeglądarki, zanim ten proces
+    # zniknie (os._exit() jest natychmiastowy, nie da szansy na "dokończ
+    # bieżące żądanie" jak zwykły sys.exit()).
+    threading.Timer(0.5, _restart_dashboard).start()
+
+    return jsonify({
+        "command_id": command_id,
+        "message": "Restartuję panel i bridge - Docker podniesie oba kontenery ponownie "
+                   "(restart: unless-stopped) w ciągu kilku-kilkunastu sekund. Ta strona "
+                   "przestanie odpowiadać na chwilę.",
+    })
 
 
 @app.route("/healthz")
