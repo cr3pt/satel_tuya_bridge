@@ -305,6 +305,13 @@ class TestAutomationContextEndpoint:
         assert data["tuya_devices"] == ["gniazdko"]
         assert data["virtual_inputs"] == ["motion_hall"]
 
+    def test_context_returns_satel_partitions_for_scene_action_ui(self, client):
+        """Zakładka /automations potrzebuje nazwanych stref, żeby akcje
+        'Uzbrój strefę(y)'/'Rozbrój strefę(y)' w edytorze scen mogły dać
+        wybrać KTÓRE strefy, zamiast zawsze dotykać tylko domyślnej."""
+        data = client.get("/api/config/automation-context").get_json()
+        assert data["satel_partitions"] == {"Dom": 1, "Garaz": 2}  # z CONFIG_TEMPLATE
+
 
 class TestAutomationsEndpoint:
     def test_automations_page_loads(self, client):

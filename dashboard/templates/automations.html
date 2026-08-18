@@ -141,7 +141,7 @@
 </div>
 
 <script>
-let context = { tuya_devices: [], virtual_inputs: [] };
+let context = { tuya_devices: [], virtual_inputs: [], satel_partitions: {} };
 
 // Autoryzacja tylko dla zapisu (POST) - sesja przez /login (ciasteczko
 // HttpOnly, tak samo jak /config - patrz dashboard/auth.py).
@@ -261,10 +261,27 @@ function renderActionFields(fieldsEl, type, initial) {
       </select>`;
   } else if (type === 'satel_virtual_input') {
     fieldsEl.innerHTML = `<input type="text" class="af-vinput" list="virtualInputsList" placeholder="nazwa wirtualnego wejścia" value="${escapeHtml(initial.virtual_input || '')}">`;
-  } else if (type === 'satel_arm') {
-    fieldsEl.innerHTML = `<input type="number" class="af-mode" placeholder="tryb (0 domyślny, opcjonalnie)" value="${initial.mode ?? ''}">`;
-  } else if (type === 'satel_disarm') {
-    fieldsEl.innerHTML = `<span style="color: var(--muted); font-size: 13px;">brak dodatkowych pól</span>`;
+  } else if (type === 'satel_arm' || type === 'satel_disarm') {
+    const initialPartitions = (initial.partitions || []).map(String);
+    const partitionEntries = Object.entries(context.satel_partitions || {});
+    const checkboxesHtml = partitionEntries.length
+      ? partitionEntries.map(([name, number]) => `
+          <label style="display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-weight: normal;">
+            <input type="checkbox" class="af-partition" value="${number}" ${initialPartitions.includes(String(number)) ? 'checked' : ''}>
+            ${escapeHtml(name)}
+          </label>`).join('')
+      : '<span style="color: var(--muted); font-size: 12.5px;">(brak nazwanych stref w config.yaml - patrz zakładka Wtyczki)</span>';
+    const modeHtml = type === 'satel_arm'
+      ? `<input type="number" class="af-mode" placeholder="tryb (0 domyślny, opcjonalnie)" value="${initial.mode ?? ''}" style="max-width: 220px;">`
+      : '';
+    fieldsEl.innerHTML = `
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        ${modeHtml}
+        <div>
+          <span style="color: var(--muted); font-size: 12.5px; margin-right: 6px;">Strefy (puste = domyślna, patrz podpowiedź):</span>
+          ${checkboxesHtml}
+        </div>
+      </div>`;
   } else if (type === 'delay') {
     fieldsEl.innerHTML = `<input type="number" step="0.1" class="af-seconds" placeholder="sekundy" value="${initial.seconds ?? ''}">`;
   }
@@ -329,8 +346,10 @@ function collectScenes() {
         action.state = get('.af-state') !== 'false';
       } else if (type === 'satel_virtual_input') {
         action.virtual_input = get('.af-vinput');
-      } else if (type === 'satel_arm') {
-        action.mode = get('.af-mode');
+      } else if (type === 'satel_arm' || type === 'satel_disarm') {
+        if (type === 'satel_arm') action.mode = get('.af-mode');
+        const checked = Array.from(f.querySelectorAll('.af-partition:checked')).map(cb => cb.value);
+        if (checked.length) action.partitions = checked;
       } else if (type === 'delay') {
         action.seconds = get('.af-seconds');
       }

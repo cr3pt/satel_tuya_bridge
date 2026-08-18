@@ -108,6 +108,40 @@ def _enqueue_bridge_reload() -> None:
 # blueprinty tych wtyczek).
 
 
+def _reload_bridge_config_from_disk() -> None:
+    """Ponownie wczytuje config.yaml do TEGO procesu (panel) - używane przez
+    wtyczki po zapisie własnych plików (satel_fields.yaml/tuya_devices.yaml/
+    itd.), żeby np. `config_raw` widziane przez inne endpointy od razu
+    odzwierciedlało zmianę, bez czekania na restart panelu."""
+    create_app(BridgeConfig.load(config_path))
+
+
+# Rejestracja routingu wtyczek z WŁASNĄ stroną konfiguracji (plugins/<id>/) -
+# patrz plugins/__init__.py po wyjaśnienie wzorca wstrzykiwania zależności
+# zamiast `import dashboard.app` (cykl importów + duplikat modułu pod
+# `python -m dashboard.app`). Jinja musi dodatkowo umieć znaleźć szablony
+# leżące w plugins/<id>/templates/ (nie w domyślnym templates/ tego
+# modułu) - stąd ChoiceLoader niżej.
+from jinja2 import ChoiceLoader, FileSystemLoader
+import plugins as _plugins
+
+_plugin_metas = _plugins.register_all(
+    app,
+    require_auth=require_auth,
+    get_auth_guard=lambda: auth_guard,
+    get_config_raw=lambda: config_raw,
+    get_satel_fields_path=lambda: satel_fields_file_path,
+    get_config_path=lambda: config_path,
+    reload_bridge_config=_reload_bridge_config_from_disk,
+    enqueue_bridge_reload=_enqueue_bridge_reload,
+)
+app.jinja_loader = ChoiceLoader([
+    app.jinja_loader,
+    FileSystemLoader([str(pathlib.Path(__file__).resolve().parent.parent / "plugins" / meta.id / "templates")
+                       for meta in _plugin_metas]),
+])
+
+
 @app.before_request
 def _redirect_to_setup_if_unconfigured():
     if request.endpoint in _SETUP_EXEMPT_ENDPOINTS:
@@ -779,13 +813,15 @@ def automations_page():
 @app.route("/api/config/automation-context", methods=["GET"])
 def api_config_automation_context():
     """Dane pomocnicze do budowania formularza w /automations - nazwy
-    urządzeń Tuya i wirtualnych wejść Satela już skonfigurowanych w
-    config.yaml (te dwie rzeczy panel /automations tylko ODCZYTUJE, nie
-    edytuje - edycja urządzeń/wejść zostaje ręczna w config.yaml, patrz
-    README). Publiczny - same nazwy nie są wrażliwe (bez local_key/kluczy)."""
+    urządzeń Tuya, wirtualnych wejść i stref Satela już skonfigurowanych w
+    config.yaml (panel /automations tylko ODCZYTUJE te rzeczy, nie edytuje
+    - edycja urządzeń/wejść/stref zostaje ręczna w config.yaml/zakładce
+    Wtyczki, patrz README). Publiczny - same nazwy nie są wrażliwe (bez
+    local_key/kluczy)."""
     tuya_devices = list(config_raw.get("tuya", {}).get("devices", {}).keys())
     virtual_inputs = list(config_raw.get("satel", {}).get("virtual_inputs", {}).get("inputs", {}).keys())
-    return jsonify({"tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs})
+    satel_partitions = config_raw.get("satel", {}).get("partitions", {})
+    return jsonify({"tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs, "satel_partitions": satel_partitions})
 
 
 @app.route("/api/config/automations", methods=["GET"])

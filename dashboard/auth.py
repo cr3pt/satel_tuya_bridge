@@ -169,10 +169,11 @@ class AuthGuard:
         return True, ""
 
 
-def require_auth(guard_attr: str = "auth_guard"):
+def require_auth(guard_attr: str = "auth_guard", get_guard=None):
     """Dekorator dla endpointów Flask, które ZMIENIAJĄ stan (config,
-    uzbrojenie/rozbrojenie). `guard_attr` to nazwa zmiennej globalnej w
-    module wywołującym (dashboard/app.py), przez którą dekorator dostaje
+    uzbrojenie/rozbrojenie). Domyślnie (`get_guard=None`) `guard_attr` to
+    nazwa zmiennej globalnej w module, w którym fizycznie zdefiniowana jest
+    dekorowana funkcja (dashboard/app.py), przez którą dekorator dostaje
     się do skonfigurowanego AuthGuard.
 
     CELOWO czyta ją z `fn.__globals__` (globalne zmienne modułu, w którym
@@ -182,11 +183,18 @@ def require_auth(guard_attr: str = "auth_guard"):
     żądania tworzyłby DRUGĄ, osobną kopię modułu pod inną nazwą w
     sys.modules - z własnymi, nigdy nie zainicjowanymi zmiennymi globalnymi
     (auth_guard zawsze None, mimo poprawnie skonfigurowanego hasła) - stąd
-    fn.__globals__ zamiast dodatkowego importu."""
+    fn.__globals__ zamiast dodatkowego importu.
+
+    `get_guard` (callable bez argumentów, zwracające AuthGuard) to WYJŚCIE
+    z tego samego problemu dla wtyczek (plugins/<id>/routes.py) - tam
+    dekorowana funkcja jest zdefiniowana we WŁASNYM module wtyczki, którego
+    `__globals__` nie ma (i nie powinien mieć) zmiennej `auth_guard` -
+    dashboard/app.py przekazuje wtedy `get_guard=lambda: auth_guard` przy
+    rejestracji (patrz plugins/__init__.py)."""
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            guard: AuthGuard = fn.__globals__[guard_attr]
+            guard: AuthGuard = get_guard() if get_guard is not None else fn.__globals__[guard_attr]
             ok, message = guard.check()
             if not ok:
                 response = jsonify({"error": message})

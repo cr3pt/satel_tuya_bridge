@@ -248,7 +248,7 @@ class RulesEngine:
             elif action == "output":
                 await self.satel.set_output(rule["output_number"], True)
             elif action == "arm":
-                await self.satel.arm(rule.get("arm_mode", 0))
+                await self.satel.arm(rule.get("arm_mode", 0), rule.get("partitions"))
             logger.info("Reguła kamery: %s(%s) -> %s", source, camera_id, action)
             self.history.write_event(
                 "camera_alarm", source=f"{source}:{camera_id}", detail={"action": action},

@@ -249,6 +249,13 @@ def _build_scene_action(action: dict) -> dict:
     elif action_type == "satel_arm":
         if action.get("mode") not in (None, ""):
             built["mode"] = int(action["mode"])
+        if action.get("partitions"):
+            built["partitions"] = [int(p) for p in action["partitions"]]
+    elif action_type == "satel_disarm":
+        # Opcjonalne - patrz komentarz w bridge/scenes.py: gdy pominięte,
+        # dotyka domyślnej (jedynej) strefy skonfigurowanej dla instalacji.
+        if action.get("partitions"):
+            built["partitions"] = [int(p) for p in action["partitions"]]
     elif action_type == "delay":
         built["seconds"] = float(action["seconds"])
     return built

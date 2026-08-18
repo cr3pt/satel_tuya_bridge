@@ -849,6 +849,33 @@ class TestBuildConfigDictAdvanced:
         assert actions[2] == {"type": "delay", "seconds": 2.0}
         assert actions[3] == {"type": "satel_virtual_input", "virtual_input": "motion_hall_camera"}
 
+    def test_arm_disarm_actions_capture_explicit_partitions(self):
+        """Regresja: sceny wcześniej nie miały żadnego sposobu na wskazanie,
+        KTÓRE strefy uzbroić/rozbroić - zawsze dotykały tylko domyślnej
+        (patrz bridge/scenes.py). `partitions` jest opcjonalne (pominięte =
+        stare zachowanie), ale gdy podane, musi przejść przez build w
+        całości, jako liczby całkowite (nie stringi z formularza)."""
+        form = {**VALID_FORM, "scenes": [
+            {
+                "name": "wyjscie_z_domu",
+                "actions": [
+                    {"type": "satel_arm", "mode": "0", "partitions": ["1", "2"]},
+                    {"type": "satel_disarm", "partitions": ["2"]},
+                ],
+            },
+        ]}
+        actions = build_automations_dict(form)["scenes"][0]["actions"]
+        assert actions[0] == {"type": "satel_arm", "mode": 0, "partitions": [1, 2]}
+        assert actions[1] == {"type": "satel_disarm", "partitions": [2]}
+
+    def test_arm_disarm_actions_omit_partitions_when_not_given(self):
+        form = {**VALID_FORM, "scenes": [
+            {"name": "s", "actions": [{"type": "satel_arm"}, {"type": "satel_disarm"}]},
+        ]}
+        actions = build_automations_dict(form)["scenes"][0]["actions"]
+        assert actions[0] == {"type": "satel_arm"}
+        assert actions[1] == {"type": "satel_disarm"}
+
     def test_motion_rules_built_with_harmonogram_and_escalation(self):
         automations = build_automations_dict(FORM_WITH_ADVANCED)
         rules = automations["reguły_ruchu"]

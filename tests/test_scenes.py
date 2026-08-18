@@ -29,6 +29,13 @@ SCENES_CFG = [
             {"type": "satel_disarm"},
         ],
     },
+    {
+        "name": "arm_disarm_specific_partitions",
+        "actions": [
+            {"type": "satel_arm", "mode": 0, "partitions": [1, 2]},
+            {"type": "satel_disarm", "partitions": [2]},
+        ],
+    },
 ]
 
 
@@ -60,6 +67,16 @@ async def test_unknown_scene_does_not_raise(runner):
 async def test_arm_disarm_actions(runner, fake_satel):
     await runner.run("arm_disarm_test")
     assert fake_satel.calls == [("arm", 1, None), ("disarm", None)]
+
+
+async def test_arm_disarm_passes_explicit_partitions(runner, fake_satel):
+    """Regresja: sceny wcześniej NIGDY nie przekazywały `partitions` do
+    arm()/disarm(), więc zawsze dotykały tylko domyślnej (jedynej) strefy
+    (SatelIntegraClient.partition) - nawet gdy instalacja miała kilka
+    nazwanych stref skonfigurowanych. Patrz też komentarz w
+    bridge/scenes.py."""
+    await runner.run("arm_disarm_specific_partitions")
+    assert fake_satel.calls == [("arm", 0, [1, 2]), ("disarm", [2])]
 
 
 async def test_scene_logs_event_to_history(runner, history):
