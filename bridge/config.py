@@ -114,6 +114,17 @@ class BridgeConfig:
             data["tuya"]["devices"] = tuya_devices_data["devices"]
         else:
             data["tuya"].setdefault("devices", {})
+        # Bramki Zigbee (Tuya) - urządzenia w tuya.devices mogą wskazywać na
+        # nie przez pole "gateway" (patrz TuyaLocalController), zamiast
+        # własnego ip/local_key. Osobna mapa (nie zagnieżdżona w devices),
+        # analogicznie do zone_types/output_types wyżej - ten sam wzorzec
+        # nadpisywania co "devices" powyżej (tuya_devices.yaml nadpisuje
+        # tylko, jeśli faktycznie zawiera ten klucz, inaczej zostaje wartość
+        # wpisana wprost w config.yaml, jeśli taka jest).
+        if "zigbee_gateways" in tuya_devices_data:
+            data["tuya"]["zigbee_gateways"] = tuya_devices_data["zigbee_gateways"]
+        else:
+            data["tuya"].setdefault("zigbee_gateways", {})
 
         # Ścieżka do sensors.yaml - względna wobec katalogu config.yaml,
         # jeśli podana jako względna. Domyślnie "sensors.yaml" obok config.yaml.

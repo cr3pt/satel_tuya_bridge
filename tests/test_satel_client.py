@@ -417,3 +417,34 @@ class TestRequestInitialStatus:
 
         assert fakes, "AsyncSatel nigdy nie zostało utworzone"
         assert fakes[0].sent_queries == []
+
+
+class TestArmedPartitionNumbers:
+    """SatelIntegraClient.armed_partition_numbers - odczyt na żądanie
+    (nie push) bieżącego stanu uzbrojenia, potrzebny bo
+    register_alarm_status_callback woła callback BEZ ŻADNYCH argumentów
+    (patrz RulesEngine._handle_alarm_status_change w rules_engine.py -
+    regresja dla zgłoszonego 'missing 1 required positional argument:
+    partition_states')."""
+
+    def test_empty_when_not_connected(self):
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+        assert client.armed_partition_numbers == set()
+
+    def test_unions_partitions_across_all_alarm_states(self):
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+
+        class FakeClient:
+            partition_states = {"mode_a": [1, 2], "mode_b": [2, 3]}
+
+        client._client = FakeClient()
+        assert client.armed_partition_numbers == {1, 2, 3}
+
+    def test_empty_partition_states_gives_empty_set(self):
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+
+        class FakeClient:
+            partition_states = {}
+
+        client._client = FakeClient()
+        assert client.armed_partition_numbers == set()

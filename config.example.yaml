@@ -84,6 +84,28 @@ tuya:
       type: dimmer
       dimmer_dp: "3"           # data point ściemniacza (zwykle "2" lub "3")
       dimmer_range: [10, 1000] # zakres wartości DP u producenta (sprawdź!)
+    # Urządzenie Zigbee PODPIĘTE POD BRAMKĘ (patrz zigbee_gateways niżej) -
+    # BEZ własnego ip/local_key/version, ruch idzie przez połączenie bramki
+    # (tinytuya: Device(cid=..., parent=<bramka>)). "gateway" to nazwa z
+    # zigbee_gateways (klucz mapy, nie id urządzenia). "cid" (alias:
+    # node_id) domyślnie = "id", jeśli podurządzenie go nie ma osobno -
+    # oba znajdziesz tym samym `python -m tinytuya wizard`, patrz README
+    # ("Urządzenia Zigbee przez bramkę Tuya").
+    czujka_okno_salon:
+      id: "bfzigbeesub1234567"
+      gateway: brama_salon
+      cid: "0011223344556677"
+      type: socket
+
+  # Bramki Zigbee (Tuya) - same są zwykłymi urządzeniami WiFi (własny
+  # id/ip/local_key jak wyżej), przez które chodzi ruch do podpiętych pod
+  # nie czujników/przełączników Zigbee (patrz "gateway" w devices wyżej).
+  zigbee_gateways:
+    brama_salon:
+      id: "bfgateway0987654321"
+      ip: "192.168.1.55"
+      local_key: "zzzzzzzzzzzzzzzz"
+      version: 3.4
 
   # Detekcja ruchu z kamer Tuya - WYMAGA konta Tuya IoT Developer
   # (developer.tuya.com), utworzonego projektu chmurowego, powiązania

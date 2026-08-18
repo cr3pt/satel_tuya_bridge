@@ -528,7 +528,10 @@ tego wzorca):
   **"🔍 Skanuj sieć"** wywołuje broadcast UDP w LAN (`tinytuya.deviceScan`,
   ok. 18 sekund) i podpowiada ID + adres IP znalezionych urządzeń. **Nie
   podpowiada `local_key`** - Tuya świadomie go nie rozgłasza, trzeba go
-  wyciągnąć osobno (`python -m tinytuya wizard`).
+  wyciągnąć osobno (`python -m tinytuya wizard`). Sekcja **"🐝 Bramki
+  Zigbee"** w tym samym panelu pozwala dodać czujniki/przełączniki Zigbee
+  podpięte pod bramkę Tuya (np. Tuya Zigbee Gateway/Hub) - patrz "Urządzenia
+  Zigbee przez bramkę Tuya" niżej.
 
 Każde pole zaczyna jako **nieaktywne** (nie ma go w konfiguracji), dopóki
 nie uzupełnisz wiersza (po odkryciu albo ręcznie) i nie klikniesz "Zapisz"
@@ -544,6 +547,40 @@ czujniki" nadaje też od razu czytelną etykietę wyprowadzoną z tematu (np.
 `FlowTemp` -> "Flow Temp") zamiast zostawiać ją pustą - stąd każdy nowo
 wykryty wiersz ma inną etykietę widoczną od razu, nie tylko ten sam szary
 placeholder.
+
+### Urządzenia Zigbee przez bramkę Tuya
+
+Czujniki/przełączniki Zigbee (np. czujki drzwi/okna, PIR, gniazdka Zigbee)
+**nie łączą się bezpośrednio z WiFi** - komunikują się przez bramkę (np.
+Tuya Zigbee Gateway/Hub, także niektóre routery Wi-Fi z wbudowaną bramką
+Zigbee sprzedawane pod marką Tuya/Smart Life). Bridge obsługuje je lokalnie
+(bez chmury) tak samo jak zwykłe urządzenia WiFi Tuya, przez tę samą bramkę
+- ruch idzie przez jej połączenie TCP (biblioteka `tinytuya`, ten sam
+mechanizm co Home Assistant).
+
+**Jak dodać (zakładka ⚙ Ustawienia → Urządzenia Tuya):**
+
+1. W sekcji **"🐝 Bramki Zigbee"** dodaj samą bramkę - potrzebuje własnego
+   `id`/adresu IP/`local_key`, dokładnie tak jak zwykłe urządzenie WiFi
+   wyżej (wyciągnij je tym samym `python -m tinytuya wizard` albo skanem
+   sieci - bramka JEST urządzeniem WiFi, w odróżnieniu od podpiętych pod
+   nią czujników).
+2. Dodaj urządzenie w zwykłej sekcji **"Urządzenia Tuya"**, ale zamiast
+   adresu IP/`local_key` wpisz w polu **"bramka Zigbee"** nazwę bramki z
+   kroku 1 - pola IP/local_key znikają (nie są potrzebne, ruch idzie przez
+   bramkę) i pojawia się pole **cid/node_id** (opcjonalne - domyślnie takie
+   samo jak ID urządzenia).
+3. ID podurządzenia i `node_id` (jeśli różni się od ID) znajdziesz tym
+   samym `python -m tinytuya wizard` - dla podurządzeń Zigbee wypisuje je
+   jako osobne wpisy z polem `node_id`, oraz `gateway_id` wskazującym na
+   bramkę - albo w projekcie na developer.tuya.com (Tuya Cloud, ta sama
+   ścieżka co import zwykłych urządzeń, patrz krok 2 kreatora wyżej).
+
+Zapisane podurządzenie działa dalej jak każde inne urządzenie Tuya w tym
+projekcie - reguły ruchu, sceny, harmonogramy, symulacja obecności,
+publikacja stanu do MQTT/Home Assistant (patrz sekcje wyżej) - nie trzeba
+niczego konfigurować inaczej tylko dlatego, że urządzenie jest po Zigbee, a
+nie po WiFi.
 
 ### Zmiany działają od razu - bez restartu Dockera
 

@@ -286,6 +286,24 @@
     <button id="saveTuyaBtn" type="button">Zapisz urządzenia Tuya</button>
   </div>
   <div id="tuyaMsg" class="msg-box"></div>
+
+  <div class="field-group" style="margin-top: 22px;">
+    <label>🐝 Bramki Zigbee (Tuya)</label>
+    <div class="section-hint" style="margin: 0 0 10px;">
+      Czujniki/przełączniki Zigbee NIE łączą się bezpośrednio z WiFi - idą
+      przez bramkę (np. Tuya Zigbee Gateway/Hub). Dodaj tu bramkę (ma
+      własne <code>id</code>/adres IP/<code>local_key</code>, tak jak
+      zwykłe urządzenie WiFi wyżej), a potem w urządzeniu powyżej wpisz jej
+      nazwę w polu "bramka Zigbee" zamiast adresu IP/local_key - id i
+      node_id podurządzenia znajdziesz tym samym narzędziem
+      <code>python -m tinytuya wizard</code> (dla podurządzeń Zigbee
+      wypisuje je osobno, z polem <code>node_id</code>) albo w projekcie na
+      developer.tuya.com.
+    </div>
+    <datalist id="zigbeeGatewayNames"></datalist>
+    <div id="zigbeeGatewaysRows"></div>
+    <button type="button" class="add-row-btn" id="addZigbeeGatewayBtn">+ Dodaj bramkę Zigbee</button>
+  </div>
 </div>
 
 <script>
@@ -804,6 +822,8 @@ function addTuyaDeviceRow(initial) {
   row.innerHTML = `
     <input type="text" placeholder="nazwa (np. gniazdko_salon)" class="td-name">
     <input type="text" placeholder="device id" class="td-id">
+    <input type="text" placeholder="bramka Zigbee (puste = zwykłe WiFi)" class="td-gateway" list="zigbeeGatewayNames" style="max-width:210px;">
+    <input type="text" placeholder="cid/node_id (opcjonalnie)" class="td-cid" style="max-width:170px; display:none;">
     <input type="text" placeholder="adres IP" class="td-ip">
     <input type="text" placeholder="local key" class="td-key">
     <select class="td-type">
@@ -816,15 +836,32 @@ function addTuyaDeviceRow(initial) {
   row.querySelector('.td-type').addEventListener('change', (e) => {
     row.querySelector('.td-dp').style.display = e.target.value === 'dimmer' ? '' : 'none';
   });
+  // Podurządzenie Zigbee (wpisana bramka) NIE ma własnego ip/local_key -
+  // idą przez połączenie bramki (patrz TuyaLocalController) - więc chowamy
+  // te pola i pokazujemy zamiast nich cid/node_id.
+  const gatewayInput = row.querySelector('.td-gateway');
+  const cidInput = row.querySelector('.td-cid');
+  const ipInput = row.querySelector('.td-ip');
+  const keyInput = row.querySelector('.td-key');
+  function applyGatewayState() {
+    const hasGateway = gatewayInput.value.trim() !== '';
+    cidInput.style.display = hasGateway ? '' : 'none';
+    ipInput.style.display = hasGateway ? 'none' : '';
+    keyInput.style.display = hasGateway ? 'none' : '';
+  }
+  gatewayInput.addEventListener('input', applyGatewayState);
   if (initial) {
     row.querySelector('.td-name').value = initial.name || '';
     row.querySelector('.td-id').value = initial.id || '';
+    gatewayInput.value = initial.gateway || '';
+    cidInput.value = initial.cid || '';
     row.querySelector('.td-ip').value = initial.ip || '';
     row.querySelector('.td-key').value = initial.local_key || '';
     row.querySelector('.td-type').value = initial.type || 'socket';
     row.querySelector('.td-dp').value = initial.dimmer_dp || '';
     row.querySelector('.td-dp').style.display = initial.type === 'dimmer' ? '' : 'none';
   }
+  applyGatewayState();
   container.appendChild(row);
 }
 document.getElementById('addTuyaDeviceBtn').addEventListener('click', () => addTuyaDeviceRow());
@@ -833,15 +870,65 @@ function collectTuyaDevices() {
   return Array.from(document.querySelectorAll('#tuyaDevicesRows .repeatable-row')).map(row => ({
     name: row.querySelector('.td-name').value.trim(),
     id: row.querySelector('.td-id').value.trim(),
+    gateway: row.querySelector('.td-gateway').value.trim(),
+    cid: row.querySelector('.td-cid').value.trim(),
     ip: row.querySelector('.td-ip').value.trim(),
     local_key: row.querySelector('.td-key').value.trim(),
     type: row.querySelector('.td-type').value,
     dimmer_dp: row.querySelector('.td-dp').value.trim(),
-  })).filter(d => d.name || d.id || d.ip || d.local_key);
+  })).filter(d => d.name || d.id || d.ip || d.local_key || d.gateway);
+}
+
+// ------------------------------------------------------------------
+// Tuya - bramki Zigbee
+// ------------------------------------------------------------------
+function addZigbeeGatewayRow(initial) {
+  const container = document.getElementById('zigbeeGatewaysRows');
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa bramki (np. brama_zigbee_salon)" class="zg-name">
+    <input type="text" placeholder="device id bramki" class="zg-id">
+    <input type="text" placeholder="adres IP" class="zg-ip">
+    <input type="text" placeholder="local key" class="zg-key">
+    <input type="number" placeholder="wersja (np. 3.4)" class="zg-version" step="0.1" style="max-width:110px;">
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.zg-name').value = initial.name || '';
+    row.querySelector('.zg-id').value = initial.id || '';
+    row.querySelector('.zg-ip').value = initial.ip || '';
+    row.querySelector('.zg-key').value = initial.local_key || '';
+    row.querySelector('.zg-version').value = initial.version || 3.4;
+  }
+  row.querySelector('.row-remove').addEventListener('click', () => { row.remove(); refreshZigbeeGatewayNamesDatalist(); });
+  row.querySelector('.zg-name').addEventListener('input', refreshZigbeeGatewayNamesDatalist);
+  container.appendChild(row);
+  refreshZigbeeGatewayNamesDatalist();
+}
+document.getElementById('addZigbeeGatewayBtn').addEventListener('click', () => addZigbeeGatewayRow());
+
+function collectZigbeeGateways() {
+  return Array.from(document.querySelectorAll('#zigbeeGatewaysRows .repeatable-row')).map(row => ({
+    name: row.querySelector('.zg-name').value.trim(),
+    id: row.querySelector('.zg-id').value.trim(),
+    ip: row.querySelector('.zg-ip').value.trim(),
+    local_key: row.querySelector('.zg-key').value.trim(),
+    version: row.querySelector('.zg-version').value || 3.4,
+  })).filter(g => g.name || g.id || g.ip || g.local_key);
+}
+
+// Lista nazw bramek jako <datalist> dla pola "bramka Zigbee" przy każdym
+// urządzeniu - podpowiedź, nie sztywny <select> (nazwy bramek to zwykły
+// wolny tekst wpisywany wyżej, może się zmienić w dowolnej chwili).
+function refreshZigbeeGatewayNamesDatalist() {
+  const names = Array.from(document.querySelectorAll('#zigbeeGatewaysRows .zg-name'))
+    .map(el => el.value.trim()).filter(Boolean);
+  document.getElementById('zigbeeGatewayNames').innerHTML = names.map(n => `<option value="${n}">`).join('');
 }
 
 async function loadTuyaDevices() {
   const data = await (await fetch('/api/config/tuya-devices')).json();
+  (data.zigbee_gateways || []).forEach(g => addZigbeeGatewayRow(g));
   (data.devices || []).forEach(d => addTuyaDeviceRow(d));
 }
 
@@ -850,7 +937,7 @@ document.getElementById('saveTuyaBtn').addEventListener('click', async () => {
     const resp = await authorizedFetch('/api/config/tuya-devices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tuya_devices: collectTuyaDevices() }),
+      body: JSON.stringify({ tuya_devices: collectTuyaDevices(), zigbee_gateways: collectZigbeeGateways() }),
     });
     const data = await resp.json();
     if (!resp.ok) {

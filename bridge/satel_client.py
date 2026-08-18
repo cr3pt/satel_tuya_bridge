@@ -321,10 +321,18 @@ class SatelIntegraClient:
         if self._client is not None:
             self._client._output_changed_callback = callback
 
-    def register_alarm_status_callback(self, callback: Callable[[dict], Awaitable[None]]) -> None:
+    def register_alarm_status_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Callback wywoływany przy zmianie stanu uzbrojenia stref (widoczny
-        w panelu jako 'Strefy Satel'). Nazwa atrybutu jak wyżej - prywatna
-        w bibliotece, zweryfikuj przy aktualizacji pakietu."""
+        w panelu jako 'Strefy Satel') - oraz przy rozłączeniu (biblioteka
+        używa go też jako powiadomienia "coś się zmieniło, sprawdź stan
+        połączenia", patrz _read_data()/_update_status() w satel_integra.py).
+
+        UWAGA: w odróżnieniu od register_zone_callback/register_output_callback
+        callback NIE dostaje żadnego argumentu - biblioteka woła go jako
+        `self._alarm_status_callback()` (patrz _armed()/_read_data()/
+        _update_status() w satel_integra.py), samo bieżące partition_states
+        trzeba odczytać z armed_partition_numbers niżej. Nazwa atrybutu jak
+        wyżej - prywatna w bibliotece, zweryfikuj przy aktualizacji pakietu."""
         self._alarm_status_cb = callback
         if self._client is not None:
             self._client._alarm_status_callback = callback
@@ -336,6 +344,24 @@ class SatelIntegraClient:
     @property
     def violated_outputs(self) -> list[int]:
         return list(self._client.violated_outputs) if self._client else []
+
+    @property
+    def armed_partition_numbers(self) -> set[int]:
+        """Numery stref aktualnie uzbrojonych (w DOWOLNYM trybie - pełny,
+        nocny/dzienny, z zawieszonymi czujkami, czas na wejście/wyjście,
+        alarm - wszystkie to warianty "uzbrojona" z punktu widzenia panelu).
+        AsyncSatel.partition_states to {AlarmState: [numery_stref]} -
+        nadpisywane na bieżąco przy każdym komunikacie 0x0A/0x2A/... (patrz
+        _armed() w satel_integra.py), więc suma po wszystkich trybach zawsze
+        odzwierciedla aktualny stan - callback rejestrowany przez
+        register_alarm_status_callback dostaje tylko powiadomienie "coś się
+        zmieniło", nie sam stan."""
+        if self._client is None:
+            return set()
+        numbers: set[int] = set()
+        for partitions in self._client.partition_states.values():
+            numbers.update(partitions)
+        return numbers
 
     @property
     def is_connected(self) -> bool:

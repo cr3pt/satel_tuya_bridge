@@ -97,12 +97,34 @@ def validate_satel_fields(form: dict) -> list[str]:
 
 
 def validate_tuya_devices(form: dict) -> list[str]:
-    """Waliduje TYLKO urządzenia Tuya - współdzielone przez kreator i panel
-    /config (patrz validate_satel_fields wyżej - ten sam wzorzec)."""
+    """Waliduje urządzenia Tuya ORAZ bramki Zigbee - współdzielone przez
+    kreator i panel /config (patrz validate_satel_fields wyżej - ten sam
+    wzorzec). Urządzenie WSKAZUJĄCE bramkę (pole "gateway" - podurządzenie
+    Zigbee) nie ma własnego ip/local_key (tinytuya kieruje ruch przez
+    połączenie bramki, patrz bridge/tuya_local.py) - wymaga za to, żeby
+    wskazana bramka faktycznie istniała wśród zdefiniowanych niżej."""
     errors = []
+    gateway_names = {
+        g["name"].strip() for g in form.get("zigbee_gateways", [])
+        if g.get("name") and g.get("id") and g.get("ip") and g.get("local_key")
+    }
     for i, device in enumerate(form.get("tuya_devices", [])):
-        if not device.get("name") or not device.get("id") or not device.get("ip") or not device.get("local_key"):
-            errors.append(f"Urządzenie Tuya #{i + 1}: nazwa, ID, adres IP i local_key są wymagane")
+        label = f"Urządzenie Tuya #{i + 1}"
+        gateway_name = (device.get("gateway") or "").strip()
+        if gateway_name:
+            if not device.get("name") or not device.get("id"):
+                errors.append(f"{label} (podurządzenie Zigbee): nazwa i ID są wymagane")
+            if gateway_name not in gateway_names:
+                errors.append(
+                    f"{label}: wskazana bramka Zigbee '{gateway_name}' nie istnieje wśród "
+                    "zdefiniowanych bramek (sprawdź nazwę albo uzupełnij bramkę niżej)"
+                )
+        elif not device.get("name") or not device.get("id") or not device.get("ip") or not device.get("local_key"):
+            errors.append(f"{label}: nazwa, ID, adres IP i local_key są wymagane")
+
+    for i, gateway in enumerate(form.get("zigbee_gateways", [])):
+        if not gateway.get("name") or not gateway.get("id") or not gateway.get("ip") or not gateway.get("local_key"):
+            errors.append(f"Bramka Zigbee #{i + 1}: nazwa, ID, adres IP i local_key są wymagane")
     return errors
 
 
@@ -339,14 +361,38 @@ def _build_virtual_inputs(form: dict) -> dict:
 
 
 def _build_tuya_devices(form: dict) -> dict:
+    devices = {}
+    for d in form.get("tuya_devices", []):
+        if not d.get("name"):
+            continue
+        gateway_name = (d.get("gateway") or "").strip()
+        if gateway_name:
+            # Podurządzenie Zigbee bramki - BEZ własnego ip/local_key/version,
+            # ruch idzie przez połączenie bramki (patrz TuyaLocalController w
+            # bridge/tuya_local.py). cid domyślnie = id, jeśli puste.
+            entry = {"id": d["id"], "gateway": gateway_name, "type": d.get("type", "socket")}
+            if d.get("cid"):
+                entry["cid"] = d["cid"]
+        else:
+            entry = {
+                "id": d["id"], "ip": d["ip"], "local_key": d["local_key"],
+                "version": float(d.get("version", 3.4)), "type": d.get("type", "socket"),
+            }
+        if d.get("type") == "dimmer":
+            entry["dimmer_dp"] = d["dimmer_dp"]
+            entry["dimmer_range"] = [10, 1000]
+        devices[d["name"]] = entry
+    return devices
+
+
+def _build_zigbee_gateways(form: dict) -> dict:
     return {
-        d["name"]: {
-            "id": d["id"], "ip": d["ip"], "local_key": d["local_key"],
-            "version": float(d.get("version", 3.4)), "type": d.get("type", "socket"),
-            **({"dimmer_dp": d["dimmer_dp"], "dimmer_range": [10, 1000]} if d.get("type") == "dimmer" else {}),
+        g["name"]: {
+            "id": g["id"], "ip": g["ip"], "local_key": g["local_key"],
+            "version": float(g.get("version", 3.4)),
         }
-        for d in form.get("tuya_devices", [])
-        if d.get("name")
+        for g in form.get("zigbee_gateways", [])
+        if g.get("name") and g.get("id") and g.get("ip") and g.get("local_key")
     }
 
 
@@ -546,8 +592,10 @@ def build_satel_fields_dict(form: dict) -> dict:
 
 def build_tuya_devices_dict(form: dict) -> dict:
     """Buduje zawartość tuya_devices.yaml - analogicznie do
-    build_satel_fields_dict wyżej."""
-    return {"devices": _build_tuya_devices(form)}
+    build_satel_fields_dict wyżej. "zigbee_gateways" to bramki Zigbee Tuya,
+    na które mogą wskazywać poszczególne "devices" (pole "gateway") zamiast
+    mieć własne ip/local_key - patrz TuyaLocalController."""
+    return {"devices": _build_tuya_devices(form), "zigbee_gateways": _build_zigbee_gateways(form)}
 
 
 def build_automations_dict(form: dict) -> dict:

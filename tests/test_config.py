@@ -71,7 +71,7 @@ def test_sensors_file_path_relative_to_config(config_dir):
 def test_convenience_properties(config_dir):
     config = BridgeConfig.load(config_dir / "config.yaml")
     assert config.satel["host"] == "127.0.0.1"
-    assert config.tuya == {"devices": {}}
+    assert config.tuya == {"devices": {}, "zigbee_gateways": {}}
     assert config.motion_rules == []
     assert config.boiler_output == {"mode": "mqtt"}  # wartość domyślna gdy sekcja nieobecna
     assert config.unifi_protect is None
@@ -167,6 +167,17 @@ devices:
     local_key: key1
     version: 3.4
     type: socket
+  lampka_zigbee:
+    id: sub1
+    gateway: brama_salon
+    cid: node1
+    type: socket
+zigbee_gateways:
+  brama_salon:
+    id: gw1
+    ip: 192.168.1.60
+    local_key: gwkey
+    version: 3.4
 """
 
 
@@ -193,6 +204,12 @@ class TestSatelFieldsAndTuyaDevicesFiles:
         (config_dir / "tuya_devices.yaml").write_text(TUYA_DEVICES_YAML, encoding="utf-8")
         config = BridgeConfig.load(config_dir / "config.yaml")
         assert config.raw["tuya"]["devices"]["gniazdko_salon"]["ip"] == "192.168.1.50"
+        assert config.raw["tuya"]["devices"]["lampka_zigbee"] == {
+            "id": "sub1", "gateway": "brama_salon", "cid": "node1", "type": "socket",
+        }
+        assert config.raw["tuya"]["zigbee_gateways"] == {
+            "brama_salon": {"id": "gw1", "ip": "192.168.1.60", "local_key": "gwkey", "version": 3.4},
+        }
         assert config.tuya_devices_file == config_dir / "tuya_devices.yaml"
 
     def test_missing_satel_fields_and_tuya_devices_files_default_to_empty(self, config_dir):
@@ -204,6 +221,7 @@ class TestSatelFieldsAndTuyaDevicesFiles:
         assert config.raw["satel"]["zone_types"] == {}
         assert config.raw["satel"]["output_types"] == {}
         assert config.raw["tuya"]["devices"] == {}
+        assert config.raw["tuya"]["zigbee_gateways"] == {}
 
     def test_inline_values_used_when_satel_fields_file_missing(self, tmp_path):
         """Wsteczna zgodność - configi z polami wpisanymi wprost w

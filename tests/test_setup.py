@@ -255,9 +255,38 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
             {"name": "gniazdko", "id": "d1", "ip": "1.2.3.4", "local_key": "k", "type": "socket"},
         ]}
         devices = build_tuya_devices_dict(form)
-        assert devices == {"devices": {
-            "gniazdko": {"id": "d1", "ip": "1.2.3.4", "local_key": "k", "version": 3.4, "type": "socket"},
-        }}
+        assert devices == {
+            "devices": {
+                "gniazdko": {"id": "d1", "ip": "1.2.3.4", "local_key": "k", "version": 3.4, "type": "socket"},
+            },
+            "zigbee_gateways": {},
+        }
+
+    def test_build_tuya_devices_zigbee_sub_device_has_no_ip_or_local_key(self):
+        """Podurządzenie Zigbee (pole 'gateway') idzie przez połączenie
+        bramki - nie ma sensu żądać od niego własnego ip/local_key/version
+        (patrz TuyaLocalController w bridge/tuya_local.py)."""
+        form = {
+            "tuya_devices": [
+                {"name": "lampka", "id": "sub1", "gateway": "brama", "cid": "node1", "type": "socket"},
+            ],
+            "zigbee_gateways": [
+                {"name": "brama", "id": "gw1", "ip": "1.2.3.4", "local_key": "gwkey", "version": "3.4"},
+            ],
+        }
+        result = build_tuya_devices_dict(form)
+        assert result["devices"]["lampka"] == {"id": "sub1", "gateway": "brama", "cid": "node1", "type": "socket"}
+        assert result["zigbee_gateways"] == {
+            "brama": {"id": "gw1", "ip": "1.2.3.4", "local_key": "gwkey", "version": 3.4},
+        }
+
+    def test_build_tuya_devices_zigbee_sub_device_cid_defaults_to_omitted_when_blank(self):
+        form = {
+            "tuya_devices": [{"name": "lampka", "id": "sub1", "gateway": "brama", "type": "socket"}],
+            "zigbee_gateways": [{"name": "brama", "id": "gw1", "ip": "1.2.3.4", "local_key": "gwkey"}],
+        }
+        result = build_tuya_devices_dict(form)
+        assert "cid" not in result["devices"]["lampka"]
 
     def test_build_tuya_devices_dimmer_gets_extra_fields(self):
         form = {"tuya_devices": [
@@ -268,10 +297,24 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         assert devices["devices"]["d"]["dimmer_range"] == [10, 1000]
 
     def test_build_tuya_devices_empty_form(self):
-        assert build_tuya_devices_dict({}) == {"devices": {}}
+        assert build_tuya_devices_dict({}) == {"devices": {}, "zigbee_gateways": {}}
 
     def test_validate_tuya_devices_no_errors_when_complete(self):
         form = {"tuya_devices": [{"name": "x", "id": "i", "ip": "1.2.3.4", "local_key": "k"}]}
+        assert validate_tuya_devices(form) == []
+
+    def test_validate_tuya_devices_zigbee_sub_device_requires_existing_gateway(self):
+        form = {
+            "tuya_devices": [{"name": "lampka", "id": "sub1", "gateway": "nieznana_brama"}],
+        }
+        errors = validate_tuya_devices(form)
+        assert any("nieznana_brama" in e for e in errors)
+
+    def test_validate_tuya_devices_zigbee_sub_device_no_errors_when_gateway_exists(self):
+        form = {
+            "tuya_devices": [{"name": "lampka", "id": "sub1", "gateway": "brama"}],
+            "zigbee_gateways": [{"name": "brama", "id": "gw1", "ip": "1.2.3.4", "local_key": "gwkey"}],
+        }
         assert validate_tuya_devices(form) == []
 
     def test_validate_tuya_devices_incomplete_is_error(self):

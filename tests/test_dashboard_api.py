@@ -451,6 +451,35 @@ class TestTuyaDevicesEndpoint:
         assert any(d["name"] == "trwale" for d in resp.get_json()["devices"])
         assert (tmp_path / "tuya_devices.yaml").exists()
 
+    def test_saved_zigbee_gateway_and_sub_device_round_trip(self, client):
+        """Bramka Zigbee + podurządzenie wskazujące na nią (pole "gateway")
+        - patrz TuyaLocalController w bridge/tuya_local.py. Podurządzenie
+        NIE ma własnego ip/local_key, dostaje za to gateway/cid."""
+        payload = {
+            "tuya_devices": [
+                {"name": "gniazdko", "id": "d1", "ip": "1.2.3.4", "local_key": "k", "type": "socket"},
+                {"name": "lampka_zigbee", "id": "sub1", "gateway": "brama_salon", "cid": "node1", "type": "socket"},
+            ],
+            "zigbee_gateways": [
+                {"name": "brama_salon", "id": "gw1", "ip": "1.2.3.9", "local_key": "gwkey", "version": "3.4"},
+            ],
+        }
+        resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+
+        data = client.get("/api/config/tuya-devices").get_json()
+        assert {
+            "name": "lampka_zigbee", "id": "sub1", "gateway": "brama_salon", "cid": "node1",
+            "type": "socket", "ip": "", "local_key": "", "dimmer_dp": "",
+        } in data["devices"]
+        assert {"name": "brama_salon", "id": "gw1", "ip": "1.2.3.9", "local_key": "gwkey", "version": 3.4} \
+            in data["zigbee_gateways"]
+
+    def test_post_tuya_devices_rejects_sub_device_with_unknown_gateway(self, client):
+        payload = {"tuya_devices": [{"name": "lampka", "id": "sub1", "gateway": "brama_nieznana"}]}
+        resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 400
+
     def test_post_tuya_devices_does_not_touch_config_yaml(self, client, tmp_path):
         before = (tmp_path / "config.yaml").read_text(encoding="utf-8")
         client.post(

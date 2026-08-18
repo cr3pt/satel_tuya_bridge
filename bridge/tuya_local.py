@@ -126,19 +126,64 @@ def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> lis
             "local_key": d.get("key", ""),
             "ip": lan_match.get("ip", ""),
             "version": lan_match.get("version", ""),
+            # Podurządzenie Zigbee bramki (nie samodzielne urządzenie WiFi) -
+            # tinytuya.Cloud dokłada te pola tylko dla sub-devices (patrz
+            # Cloud.py: filter_devices/_update_device_list, "gateway_id" i
+            # "node_id" w DEVICEFILE_SAVE_VALUES). Puste = zwykłe urządzenie
+            # WiFi. Panel (/config) używa tego do podpowiedzi "to jest
+            # podurządzenie Zigbee bramki X" przy imporcie z Tuya Cloud -
+            # NIE dopasowuje automatycznie nazwy bramki (id bramki w Tuya
+            # Cloud i lokalna nazwa bramki w tuya_devices.yaml to różne
+            # rzeczy), tylko podpowiada id i node_id do ręcznego dopasowania.
+            "gateway_id": d.get("gateway_id", ""),
+            "node_id": d.get("node_id", ""),
         })
     return devices
 
 
 class TuyaLocalController:
-    def __init__(self, devices_cfg: dict, retries: int = 2, retry_delay: float = 1.5):
+    def __init__(self, devices_cfg: dict, zigbee_gateways_cfg: dict | None = None,
+                 retries: int = 2, retry_delay: float = 1.5):
         self.devices_cfg = devices_cfg
+        self.zigbee_gateways_cfg = zigbee_gateways_cfg or {}
         self.retries = retries
         self.retry_delay = retry_delay
+
+        # Bramki Zigbee (Tuya) - urządzenia WiFi same w sobie, przez które
+        # przechodzi cały ruch do podpiętych pod nie czujników/przełączników
+        # Zigbee. tinytuya obsługuje to jako "dziecko" (parent=<obiekt bramki>,
+        # cid=<id podurządzenia>) - biblioteka sama kieruje komendy przez
+        # połączenie TCP bramki, więc podurządzenie NIE dostaje własnego
+        # adresu IP ani local_key (patrz tinytuya.core.XenonDevice.__init__:
+        # "sub-devices do not need a local key").
+        self._gateways: dict[str, tinytuya.Device] = {}
+        for name, cfg in self.zigbee_gateways_cfg.items():
+            gw = tinytuya.Device(cfg["id"], cfg["ip"], cfg["local_key"])
+            gw.set_version(cfg.get("version", 3.4))
+            self._gateways[name] = gw
+
         self._devices: dict[str, tinytuya.Device] = {}
         for name, cfg in devices_cfg.items():
-            dev = tinytuya.OutletDevice(cfg["id"], cfg["ip"], cfg["local_key"])
-            dev.set_version(cfg.get("version", 3.4))
+            gateway_name = cfg.get("gateway")
+            if gateway_name:
+                gateway = self._gateways.get(gateway_name)
+                if gateway is None:
+                    logger.error(
+                        "Urządzenie Tuya '%s' wskazuje na nieistniejącą bramkę Zigbee '%s' - "
+                        "pomijam je (sprawdź zakładkę ⚙ Ustawienia -> Tuya -> Bramki Zigbee)",
+                        name, gateway_name,
+                    )
+                    continue
+                # dev_type="zigbee" dobiera właściwy kształt zapytań DP dla
+                # podurządzeń (patrz tinytuya.core.XenonDevice payload_dict) -
+                # cid domyślnie = id urządzenia, jeśli nie podano osobnego
+                # node_id (typowe przy ręcznym dodawaniu, gdy oba się zgadzają).
+                dev = tinytuya.Device(
+                    cfg["id"], cid=cfg.get("cid") or cfg["id"], dev_type="zigbee", parent=gateway,
+                )
+            else:
+                dev = tinytuya.OutletDevice(cfg["id"], cfg["ip"], cfg["local_key"])
+                dev.set_version(cfg.get("version", 3.4))
             self._devices[name] = dev
 
     async def _call_with_retry(self, device_name: str, func, *args):
