@@ -63,6 +63,7 @@ class RulesEngine:
             history=self.history,
             notify_cfg=notify_cfg,
             grace_seconds=grace_seconds,
+            status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 15),
         )
         self._active_timers: dict[str, asyncio.Task] = {}
         self.boiler_publishers = build_boiler_publishers(config, history=self.history)
@@ -402,6 +403,11 @@ class RulesEngine:
         # start()).
         self.satel.monitored_zones = new_config.satel.get("monitored_zones", {})
         self.satel.monitored_outputs = new_config.satel.get("monitored_outputs", {})
+        # Interwał cyklicznego dopytywania o stan (patrz satel_client.py:
+        # _periodic_status_sync) - W ODRÓŻNIENIU od host/portu/klucza,
+        # DZIAŁA NA ŻYWO od razu, bez restartu procesu - pętla czyta ten
+        # atrybut na bieżąco przy każdym obrocie, nie tylko raz na starcie.
+        self.satel.status_poll_interval_seconds = new_config.satel.get("status_poll_interval_seconds", 15)
         self.satel_virtual_inputs = SatelVirtualInputTrigger(
             new_config.satel["host"], new_config.satel["virtual_inputs"],
         )
@@ -465,7 +471,7 @@ class RulesEngine:
     # trzeba je samemu pollingować; interwał dobrany tak, żeby nie
     # obciążać RPi Zero W ani sieci)
     # ------------------------------------------------------------------
-    async def _tuya_status_poll_loop(self, interval_seconds: int = 30) -> None:
+    async def _tuya_status_poll_loop(self) -> None:
         # HealthReporter tworzony tutaj (nie w __init__) - potrzebuje
         # działającej pętli asyncio, którą mamy dopiero po starcie.
         self._tuya_health = HealthReporter(
@@ -519,7 +525,12 @@ class RulesEngine:
                 # pojedynczy nieoczekiwany błąd nie może jej zabić, bo
                 # straciłoby się cykliczne statusy Tuya na zawsze.
                 logger.exception("Błąd w pętli odpytywania statusów Tuya")
-            await asyncio.sleep(interval_seconds)
+            # Odczytywane NA ŚWIEŻO przy każdym obrocie (nie raz, na
+            # starcie zadania) - żeby RulesEngine.reload_config() mogło
+            # podmienić interwał na żywo, bez restartu procesu (patrz
+            # analogiczne rozwiązanie dla Satela: SatelIntegraClient.
+            # status_poll_interval_seconds).
+            await asyncio.sleep(self.config.tuya.get("status_poll_interval_seconds", 30))
 
     def _seed_satel_status_labels(self) -> None:
         """Zapisuje początkowy stan (OK/nieaktywne) dla wszystkich
@@ -633,9 +644,7 @@ class RulesEngine:
         # Awaria jednego komponentu (np. Satel chwilowo nieosiągalny) nie
         # blokuje ani nie zatrzymuje pozostałych.
         asyncio.create_task(self.satel.run_forever())
-        asyncio.create_task(self._tuya_status_poll_loop(
-            self.config.tuya.get("status_poll_interval_seconds", 30)
-        ))
+        asyncio.create_task(self._tuya_status_poll_loop())
         asyncio.create_task(self.presence_simulation.run_forever())
         asyncio.create_task(self._command_poll_loop())
         asyncio.create_task(self._maintenance_loop())

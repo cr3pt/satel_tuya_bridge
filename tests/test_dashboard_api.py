@@ -79,6 +79,9 @@ class TestPublicEndpoints:
     def test_config_page_loads(self, client):
         assert client.get("/config").status_code == 200
 
+    def test_plugins_page_loads(self, client):
+        assert client.get("/plugins").status_code == 200
+
     def test_get_sensors_no_auth_required(self, client):
         assert client.get("/api/config/sensors").status_code == 200
 
@@ -555,6 +558,149 @@ class TestConnectionsEndpoint:
         client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
         saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
         assert saved["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home"}
+
+
+class TestPluginsEndpoint:
+    """Zakładka 🧩 Wtyczki - spójny przegląd wszystkich integracji
+    (patrz dashboard/setup.py: list_plugins) i przełącznik TYLKO dla pól
+    "enabled" (tuya_cloud/home_assistant/mqtt_publish/presence_simulation) -
+    reszta integracji (Satel, Tuya lokalnie/Zigbee, eBUS, UniFi Protect,
+    powiadomienia) jest włączona/wyłączona przez samą obecność konfiguracji
+    i wciąż wymaga przejścia do właściwej zakładki."""
+
+    def test_get_no_auth_required(self, client):
+        assert client.get("/api/plugins").status_code == 200
+
+    def test_get_returns_satel_and_tuya_local_enabled_by_default(self, client):
+        by_id = {p["id"]: p for p in client.get("/api/plugins").get_json()}
+        assert by_id["satel"]["enabled"] is True
+        assert by_id["tuya_local"]["enabled"] is True
+        assert by_id["home_assistant"]["enabled"] is False
+        assert by_id["presence_simulation"]["enabled"] is False
+
+    def test_get_never_leaks_secrets(self, client):
+        """W odróżnieniu od /api/config/connections - ten endpoint jest
+        publiczny (bez hasła), więc absolutnie nie może zwrócić
+        integration_key/local_key/access_key."""
+        text = client.get("/api/plugins").get_data(as_text=True)
+        assert '"x"' not in text  # integration_key z CONFIG_TEMPLATE
+        assert '"k"' not in text  # local_key gniazdka z CONFIG_TEMPLATE
+
+    def test_post_without_auth_returns_401(self, client):
+        resp = client.post("/api/plugins", json={"home_assistant": {"enabled": True}})
+        assert resp.status_code == 401
+
+    def test_post_unknown_plugin_id_rejected(self, client):
+        resp = client.post(
+            "/api/plugins", json={"unifi_protect": {"enabled": False}}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_post_satel_enabled_field_is_ignored_not_toggleable(self, client, tmp_path):
+        """satel jest rdzeniem (zawsze aktywny) - ma tylko regulowalny
+        interwał odpytywania, "enabled" nie jest dla niego obsługiwane i
+        zostaje po cichu zignorowane (nie jest to błąd - satel to
+        prawidłowe id, tylko bez pola enabled)."""
+        resp = client.post(
+            "/api/plugins", json={"satel": {"enabled": False}}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["satel"]["host"] == "127.0.0.1"  # nietknięte, wciąż działa
+
+    def test_post_updates_satel_poll_interval_live(self, client, tmp_path):
+        resp = client.post(
+            "/api/plugins", json={"satel": {"status_poll_interval_seconds": 25}},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert "bez restartu" in resp.get_json()["message"]
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["satel"]["status_poll_interval_seconds"] == 25
+        assert saved["satel"]["host"] == "127.0.0.1"  # nietknięte
+
+    def test_post_updates_tuya_local_poll_interval_without_restart_message(self, client, tmp_path):
+        resp = client.post(
+            "/api/plugins", json={"tuya_local": {"status_poll_interval_seconds": 45}},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        message = resp.get_json()["message"]
+        assert "bez restartu" in message
+        assert "wymagają pełnego restartu" not in message
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["tuya"]["status_poll_interval_seconds"] == 45
+        assert saved["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"  # nietknięte
+
+    def test_post_rejects_poll_interval_below_minimum(self, client):
+        resp = client.post(
+            "/api/plugins", json={"satel": {"status_poll_interval_seconds": 1}},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_post_enables_home_assistant_without_touching_satel_host(self, client, tmp_path):
+        resp = client.post(
+            "/api/plugins", json={"home_assistant": {"enabled": True}}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["home_assistant"]["enabled"] is True
+        assert saved["satel"]["host"] == "127.0.0.1"  # nietknięte
+        assert saved["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"  # nietknięte
+
+    def test_post_disables_mqtt_publish(self, client, tmp_path):
+        client.post(
+            "/api/plugins", json={"mqtt_publish": {"enabled": False}}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["mqtt_publish"]["enabled"] is False
+
+    def test_post_enabling_tuya_cloud_without_credentials_is_rejected(self, client):
+        """Włączenie stąd samym przełącznikiem nie ma sensu bez wcześniej
+        wpisanych poświadczeń (Access ID) w zakładce 🔌 Połączenia -
+        walidacja musi to odrzucić z czytelnym błędem, nie zapisać połowicznie."""
+        resp = client.post(
+            "/api/plugins", json={"tuya_cloud": {"enabled": True}}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_post_toggles_presence_simulation_without_clobbering_scenes(self, client, tmp_path):
+        (tmp_path / "automations.yaml").write_text(
+            "scenes:\n  - name: powitanie\n    actions: [{type: satel_disarm}]\n"
+            "reguły_ruchu: []\n"
+            "presence_simulation:\n  enabled: false\n  devices: [gniazdko]\n",
+            encoding="utf-8",
+        )
+        import dashboard.app as app_module
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+        app_module.create_app(config)
+
+        resp = client.post(
+            "/api/plugins", json={"presence_simulation": {"enabled": True}},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = yaml.safe_load((tmp_path / "automations.yaml").read_text(encoding="utf-8"))
+        assert saved["presence_simulation"]["enabled"] is True
+        assert saved["presence_simulation"]["devices"] == ["gniazdko"]
+        assert saved["scenes"][0]["name"] == "powitanie"  # nietknięte
+
+    def test_post_enqueues_bridge_reload_only_for_automations_plugins(self, client, tmp_path):
+        (tmp_path / "automations.yaml").write_text(
+            "scenes: []\nreguły_ruchu: []\npresence_simulation:\n  enabled: false\n  devices: [gniazdko]\n",
+            encoding="utf-8",
+        )
+        import dashboard.app as app_module
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+        app_module.create_app(config)
+
+        client.post(
+            "/api/plugins", json={"presence_simulation": {"enabled": True}},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        pending = app_module.history.get_pending_commands()
+        assert any(c["command"] == "reload_config" for c in pending)
 
 
 class TestDiscoveryEndpoints:

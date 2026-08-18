@@ -8,7 +8,7 @@ import yaml
 from dashboard.setup import (
     build_config_dict, validate, build_automations_dict, validate_automations,
     build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
-    build_connections_patch, validate_connections, connections_to_form,
+    build_connections_patch, validate_connections, connections_to_form, list_plugins,
     draft_path_for, load_draft, save_draft, delete_draft,
 )
 
@@ -970,3 +970,115 @@ class TestDraftHelpers:
     def test_draft_path_for_is_next_to_config(self, tmp_path):
         config_path = tmp_path / "sub" / "config.yaml"
         assert draft_path_for(config_path) == tmp_path / "sub" / ".setup_draft.json"
+
+
+class TestListPlugins:
+    """list_plugins() - zakładka 🧩 Wtyczki, spójny przegląd wszystkich
+    integracji na bazie AKTUALNEGO config.raw (patrz PLUGIN_DEFS)."""
+
+    def test_empty_config_does_not_crash_and_all_unconfigured(self):
+        plugins = list_plugins({})
+        by_id = {p["id"]: p for p in plugins}
+        assert len(plugins) == len(by_id) == 10
+        # satel jest "core" (enabled=True zawsze), reszta nieskonfigurowana
+        assert by_id["satel"]["enabled"] is True
+        assert by_id["satel"]["configured"] is False
+        for plugin_id in (
+            "tuya_local", "tuya_zigbee", "tuya_cloud", "ebus", "home_assistant",
+            "mqtt_publish", "unifi_protect", "presence_simulation", "notifications",
+        ):
+            assert by_id[plugin_id]["enabled"] is False, plugin_id
+            assert by_id[plugin_id]["configured"] is False, plugin_id
+
+    def test_satel_configured_when_host_and_key_present(self):
+        by_id = {p["id"]: p for p in list_plugins({
+            "satel": {"host": "192.168.1.20", "port": 7094, "integration_key": "x"},
+        })}
+        assert by_id["satel"]["configured"] is True
+        assert "192.168.1.20" in by_id["satel"]["detail"]
+
+    def test_tuya_local_and_zigbee_split_by_gateway_field(self):
+        config_raw = {
+            "tuya": {
+                "devices": {
+                    "gniazdko": {"id": "d1", "ip": "1.2.3.4", "local_key": "k"},
+                    "lampka_zigbee": {"id": "sub1", "gateway": "brama"},
+                },
+                "zigbee_gateways": {"brama": {"id": "gw1", "ip": "1.2.3.9", "local_key": "gwkey"}},
+            },
+        }
+        by_id = {p["id"]: p for p in list_plugins(config_raw)}
+        assert by_id["tuya_local"]["enabled"] is True
+        assert "1 urządzeń WiFi" in by_id["tuya_local"]["detail"]
+        assert by_id["tuya_zigbee"]["enabled"] is True
+        assert "1 bramek" in by_id["tuya_zigbee"]["detail"]
+        assert "1 urządzeń" in by_id["tuya_zigbee"]["detail"]
+
+    def test_tuya_local_disabled_when_only_zigbee_devices(self):
+        config_raw = {
+            "tuya": {
+                "devices": {"lampka_zigbee": {"id": "sub1", "gateway": "brama"}},
+                "zigbee_gateways": {"brama": {"id": "gw1", "ip": "1.2.3.9", "local_key": "gwkey"}},
+            },
+        }
+        by_id = {p["id"]: p for p in list_plugins(config_raw)}
+        assert by_id["tuya_local"]["enabled"] is False
+
+    def test_toggleable_flags_reflected(self):
+        config_raw = {
+            "tuya": {"cloud": {"access_id": "x"}},
+            "ebus": {"mqtt_host": "127.0.0.1"},
+            "home_assistant": {"enabled": True, "mqtt_host": "127.0.0.1"},
+            "mqtt_publish": {"enabled": True},
+            "presence_simulation": {"enabled": True, "devices": ["gniazdko"]},
+        }
+        by_id = {p["id"]: p for p in list_plugins(config_raw)}
+        assert by_id["tuya_cloud"]["enabled"] is True
+        assert by_id["tuya_cloud"]["configured"] is True
+        assert by_id["home_assistant"]["enabled"] is True
+        assert by_id["mqtt_publish"]["enabled"] is True
+        assert by_id["presence_simulation"]["enabled"] is True
+
+    def test_mqtt_publish_disabled_without_ebus_broker_even_if_flag_true(self):
+        """mqtt_publish.enabled samo w sobie nic nie znaczy bez brokera
+        (patrz RulesEngine.__init__: wymaga też config.ebus.mqtt_host)."""
+        by_id = {p["id"]: p for p in list_plugins({"mqtt_publish": {"enabled": True}})}
+        assert by_id["mqtt_publish"]["enabled"] is False
+
+    def test_toggleable_ids_match_expected_set(self):
+        toggleable = {p["id"] for p in list_plugins({}) if p["toggleable"]}
+        assert toggleable == {"tuya_cloud", "home_assistant", "mqtt_publish", "presence_simulation"}
+
+    def test_poll_interval_ids_match_expected_set(self):
+        with_interval = {p["id"] for p in list_plugins({}) if p["has_poll_interval"]}
+        assert with_interval == {"satel", "tuya_local"}
+
+    def test_poll_interval_defaults(self):
+        by_id = {p["id"]: p for p in list_plugins({})}
+        assert by_id["satel"]["poll_interval_seconds"] == 15
+        assert by_id["tuya_local"]["poll_interval_seconds"] == 30
+
+    def test_poll_interval_reflects_config(self):
+        by_id = {p["id"]: p for p in list_plugins({
+            "satel": {"status_poll_interval_seconds": 20},
+            "tuya": {"status_poll_interval_seconds": 60},
+        })}
+        assert by_id["satel"]["poll_interval_seconds"] == 20
+        assert by_id["tuya_local"]["poll_interval_seconds"] == 60
+
+    def test_other_plugins_have_no_poll_interval_field(self):
+        by_id = {p["id"]: p for p in list_plugins({})}
+        for plugin_id in (
+            "tuya_zigbee", "tuya_cloud", "ebus", "home_assistant",
+            "mqtt_publish", "unifi_protect", "presence_simulation", "notifications",
+        ):
+            assert by_id[plugin_id]["has_poll_interval"] is False
+            assert "poll_interval_seconds" not in by_id[plugin_id]
+
+    def test_unifi_protect_and_notifications_are_presence_based(self):
+        by_id = {p["id"]: p for p in list_plugins({
+            "unifi_protect": {"host": "192.168.1.30"},
+            "notifications": {"ntfy_topic_url": "https://ntfy.sh/x"},
+        })}
+        assert by_id["unifi_protect"]["enabled"] is True
+        assert by_id["notifications"]["enabled"] is True

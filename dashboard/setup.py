@@ -418,6 +418,24 @@ def validate_connections(form: dict) -> list[str]:
     if ha.get("enabled") and not (ha.get("mqtt_host") or ebus.get("mqtt_host")):
         errors.append("Home Assistant: adres brokera MQTT jest wymagany, jeśli integracja włączona")
 
+    # Interwały odpytywania (zakładka 🧩 Wtyczki) - minimum 3s, żeby nie
+    # zalewać centrali/urządzeń zapytaniami przy pomyłce we wpisanej wartości.
+    satel_interval = satel.get("status_poll_interval_seconds")
+    if satel_interval not in (None, ""):
+        try:
+            if int(satel_interval) < 3:
+                errors.append("Satel: interwał odpytywania musi wynosić co najmniej 3 sekundy")
+        except (TypeError, ValueError):
+            errors.append("Satel: interwał odpytywania musi być liczbą")
+
+    tuya_local_interval = form.get("tuya_local", {}).get("status_poll_interval_seconds")
+    if tuya_local_interval not in (None, ""):
+        try:
+            if int(tuya_local_interval) < 3:
+                errors.append("Tuya (lokalnie): interwał odpytywania musi wynosić co najmniej 3 sekundy")
+        except (TypeError, ValueError):
+            errors.append("Tuya (lokalnie): interwał odpytywania musi być liczbą")
+
     return errors
 
 
@@ -458,6 +476,10 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     )
     config["satel"].setdefault("outputs", {})
     config["satel"].setdefault("fields_file", "satel_fields.yaml")
+    config["satel"]["status_poll_interval_seconds"] = int(
+        satel_form.get("status_poll_interval_seconds")
+        or config["satel"].get("status_poll_interval_seconds") or 15
+    )
 
     config.setdefault("ebus", {})
     config["ebus"]["mqtt_host"] = ebus_form.get("mqtt_host", "").strip()
@@ -498,7 +520,11 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
         }
     else:
         config["tuya"].pop("cloud", None)
-    config["tuya"].setdefault("status_poll_interval_seconds", 30)
+    tuya_local_form = form.get("tuya_local", {})
+    config["tuya"]["status_poll_interval_seconds"] = int(
+        tuya_local_form.get("status_poll_interval_seconds")
+        or config["tuya"].get("status_poll_interval_seconds") or 30
+    )
     config["tuya"].setdefault("devices_file", "tuya_devices.yaml")
 
     ha_form = form.get("home_assistant", {})
@@ -535,8 +561,9 @@ def connections_to_form(existing: dict) -> dict:
     tam ryzyko jest dużo mniejsze niż tu, bo klucz integracji Satela pozwala
     rozbroić fizyczny system alarmowy)."""
     satel = existing.get("satel", {})
+    tuya = existing.get("tuya", {})
     ebus = existing.get("ebus", {})
-    tuya_cloud = existing.get("tuya", {}).get("cloud", {})
+    tuya_cloud = tuya.get("cloud", {})
     ha = existing.get("home_assistant", {})
     mqtt_publish = existing.get("mqtt_publish", {})
     boiler_mqtt = existing.get("boiler_output", {}).get("mqtt", {})
@@ -547,6 +574,10 @@ def connections_to_form(existing: dict) -> dict:
             "partition": satel.get("partition", 1),
             "virtual_inputs_port": satel.get("virtual_inputs", {}).get("port", 8888),
             "integration_key_set": bool(satel.get("integration_key")),
+            "status_poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
+        },
+        "tuya_local": {
+            "status_poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
         },
         "ebus": {
             "mqtt_host": ebus.get("mqtt_host", ""),
@@ -574,6 +605,121 @@ def connections_to_form(existing: dict) -> dict:
             "ntfy_topic_url": existing.get("notifications", {}).get("ntfy_topic_url", ""),
         },
     }
+
+
+# Integracje pokazywane na zakładce 🧩 Wtyczki - jedno spójne miejsce z
+# przeglądem WSZYSTKICH integracji (dotychczas rozrzucone po zakładkach
+# ⚙ Ustawienia/🔌 Połączenia/🎬 Automatyzacje). "toggleable" = ma osobną,
+# zapisaną flagę enabled, którą da się przełączyć wprost stąd (POST
+# /api/plugins) - reszta jest włączona/wyłączona PRZEZ SAMĄ OBECNOŚĆ
+# konfiguracji (np. dodanie choć jednego urządzenia Tuya) i wciąż wymaga
+# przejścia do właściwej zakładki, żeby to zmienić - to NIE jest w pełni
+# dynamiczny system wtyczek (start/stop w locie bez restartu) - taka
+# architektura wymagałaby dużo większej, ryzykowniejszej przebudowy
+# cyklu życia żywych połączeń sieciowych (Satel TCP, klienci MQTT, Tuya
+# Cloud Pulsar), a przełączanie integracji jest i tak rzadką operacją.
+PLUGIN_DEFS = [
+    {"id": "satel", "name": "Centrala Satel Integra", "icon": "🔒", "toggleable": False, "restart_required": True,
+     "has_poll_interval": True,
+     "description": "Odczyt wejść/wyjść/stref i sterowanie (uzbrajanie, wyjścia) - rdzeń bridge'a, zawsze aktywny."},
+    {"id": "tuya_local", "name": "Tuya - urządzenia lokalne (WiFi)", "icon": "🔌", "toggleable": False, "restart_required": False,
+     "has_poll_interval": True,
+     "description": "Sterowanie gniazdkami/przełącznikami/ściemniaczami Tuya bezpośrednio w LAN, bez chmury (tinytuya) - obejmuje też podurządzenia Zigbee."},
+    {"id": "tuya_zigbee", "name": "Tuya - bramki Zigbee", "icon": "🐝", "toggleable": False, "restart_required": False,
+     "description": "Czujniki/przełączniki Zigbee podpięte pod bramkę Tuya (Tuya Zigbee Gateway/Hub)."},
+    {"id": "tuya_cloud", "name": "Tuya Cloud (kamery + import urządzeń)", "icon": "☁️", "toggleable": True, "restart_required": True,
+     "description": "Detekcja ruchu z kamer Tuya oraz import urządzeń z konta Tuya Cloud - wymaga projektu na developer.tuya.com."},
+    {"id": "ebus", "name": "eBUS / kocioł (dane grzewcze)", "icon": "🔥", "toggleable": False, "restart_required": False,
+     "description": "Odczyt czujników kotła (ebusd) przez MQTT - historia, alarmy progowe, automatyka."},
+    {"id": "home_assistant", "name": "Home Assistant (MQTT Discovery)", "icon": "🏠", "toggleable": True, "restart_required": True,
+     "description": "Automatyczne udostępnienie encji (wejścia/wyjścia Satela, urządzenia Tuya, czujniki kotła) w Home Assistant."},
+    {"id": "mqtt_publish", "name": "Publikacja stanu do MQTT", "icon": "📡", "toggleable": True, "restart_required": True,
+     "description": "Stan Satela/Tuya na osobnym temacie MQTT, niezależnie od Home Assistant."},
+    {"id": "unifi_protect", "name": "Kamery UniFi Protect", "icon": "📹", "toggleable": False, "restart_required": False,
+     "description": "Detekcja ruchu z kamer UniFi Protect jako alternatywa/uzupełnienie kamer Tuya."},
+    {"id": "presence_simulation", "name": "Symulacja obecności", "icon": "🎭", "toggleable": True, "restart_required": False,
+     "description": "Losowe włączanie/wyłączanie wskazanych urządzeń Tuya pod nieobecność domowników."},
+    {"id": "notifications", "name": "Powiadomienia push (ntfy)", "icon": "🔔", "toggleable": False, "restart_required": False,
+     "description": "Push przy utracie/przywróceniu połączenia z centralą/MQTT/Tuya/kamerami oraz przy alarmach progowych."},
+]
+
+
+def list_plugins(config_raw: dict) -> list[dict]:
+    """Buduje listę integracji (zakładka 🧩 Wtyczki) na bazie AKTUALNEGO
+    config.raw - każdy wpis mówi, czy jest włączony/skonfigurowany i czy da
+    się to przełączyć wprost stąd (patrz PLUGIN_DEFS wyżej)."""
+    satel = config_raw.get("satel", {})
+    tuya = config_raw.get("tuya", {})
+    ebus = config_raw.get("ebus", {})
+    ha = config_raw.get("home_assistant", {})
+    mqtt_publish = config_raw.get("mqtt_publish", {})
+    presence = config_raw.get("presence_simulation", {})
+    notifications = config_raw.get("notifications", {})
+
+    tuya_devices = tuya.get("devices", {}) or {}
+    zigbee_devices = {n: d for n, d in tuya_devices.items() if d.get("gateway")}
+    zigbee_gateways = tuya.get("zigbee_gateways", {}) or {}
+    ebus_sensors = config_raw.get("ebus", {}).get("sensors", []) or []
+
+    state = {
+        "satel": {
+            "enabled": True,
+            "configured": bool(satel.get("host") and satel.get("integration_key")),
+            "detail": f"{satel.get('host', '?')}:{satel.get('port', '?')}" if satel.get("host") else "nieskonfigurowana",
+            "poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
+        },
+        "tuya_local": {
+            "enabled": len(tuya_devices) > len(zigbee_devices),
+            "configured": len(tuya_devices) > len(zigbee_devices),
+            "detail": f"{len(tuya_devices) - len(zigbee_devices)} urządzeń WiFi",
+            "poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
+        },
+        "tuya_zigbee": {
+            "enabled": bool(zigbee_gateways),
+            "configured": bool(zigbee_gateways),
+            "detail": f"{len(zigbee_gateways)} bramek, {len(zigbee_devices)} urządzeń",
+        },
+        "tuya_cloud": {
+            "enabled": bool(tuya.get("cloud")),
+            "configured": bool(tuya.get("cloud", {}).get("access_id")),
+            "detail": "skonfigurowana" if tuya.get("cloud", {}).get("access_id") else "brak poświadczeń",
+        },
+        "ebus": {
+            "enabled": bool(ebus.get("mqtt_host")),
+            "configured": bool(ebus.get("mqtt_host")),
+            "detail": f"{len(ebus_sensors)} czujników" if ebus.get("mqtt_host") else "brak brokera MQTT",
+        },
+        "home_assistant": {
+            "enabled": bool(ha.get("enabled")),
+            "configured": bool(ha.get("mqtt_host") or ebus.get("mqtt_host")),
+            "detail": ha.get("mqtt_host") or ebus.get("mqtt_host") or "brak brokera MQTT",
+        },
+        "mqtt_publish": {
+            "enabled": bool(mqtt_publish.get("enabled", True)) and bool(ebus.get("mqtt_host")),
+            "configured": bool(ebus.get("mqtt_host")),
+            "detail": "używa brokera eBUS" if ebus.get("mqtt_host") else "brak brokera MQTT",
+        },
+        "unifi_protect": {
+            "enabled": config_raw.get("unifi_protect") is not None,
+            "configured": config_raw.get("unifi_protect") is not None,
+            "detail": "skonfigurowane" if config_raw.get("unifi_protect") is not None else "nieskonfigurowane",
+        },
+        "presence_simulation": {
+            "enabled": bool(presence.get("enabled")),
+            "configured": bool(presence.get("devices")),
+            "detail": f"{len(presence.get('devices', []))} urządzeń" if presence.get("devices") else "brak urządzeń",
+        },
+        "notifications": {
+            "enabled": bool(notifications.get("ntfy_topic_url")),
+            "configured": bool(notifications.get("ntfy_topic_url")),
+            "detail": "skonfigurowane" if notifications.get("ntfy_topic_url") else "nieskonfigurowane",
+        },
+    }
+
+    return [
+        {"has_poll_interval": False, **plugin_def, **state[plugin_def["id"]]}
+        for plugin_def in PLUGIN_DEFS
+    ]
 
 
 def build_satel_fields_dict(form: dict) -> dict:

@@ -620,6 +620,48 @@ Zmiany z tej zakładki dotykają **tylko** pól połączeń w `config.yaml` -
 reszta pliku (reguły kamer/alarmów, automatyka kotła, ustawienia
 konserwacji) zostaje nietknięta.
 
+### Zakładka 🧩 Wtyczki - jeden przegląd wszystkich integracji
+
+`/plugins` zbiera WSZYSTKIE integracje (Satel, Tuya lokalnie/Zigbee/Cloud,
+eBUS, Home Assistant, publikację stanu do MQTT, UniFi Protect, symulację
+obecności, powiadomienia push) w jednym czytelnym miejscu - każda jako
+karta z ikoną, opisem, stanem (Włączona/Wyłączona/Nieskonfigurowana) i
+liczbą skonfigurowanych elementów (np. "3 urządzenia").
+
+To **przegląd i przełącznik, nie edytor** - część integracji (Satel, Tuya
+lokalnie/Zigbee, eBUS, UniFi Protect, powiadomienia) jest włączona/
+wyłączona samą OBECNOŚCIĄ konfiguracji (np. dodanie choć jednego
+urządzenia Tuya) i pokazuje się tu tylko do odczytu, z linkiem do
+właściwej zakładki. Cztery integracje mają osobną, zapisaną flagę
+`enabled`, którą da się przełączyć bezpośrednio z tego ekranu (bez
+przechodzenia do innej zakładki): **Tuya Cloud**, **Home Assistant**,
+**publikacja stanu do MQTT** i **symulacja obecności** - ale WŁĄCZENIE
+integracji, która nigdy wcześniej nie miała podanych wymaganych danych
+(np. Tuya Cloud bez zapisanego Access ID), nadal wymaga najpierw
+uzupełnienia ich we właściwej zakładce (przełącznik odrzuci taką próbę z
+czytelnym błędem).
+
+Trzy z czterech przełączalnych integracji (Tuya Cloud, Home Assistant,
+publikacja MQTT) żyją w `config.yaml` i **wymagają pełnego restartu**
+procesu bridge'a, tak samo jak zmiany w zakładce 🔌 Połączenia (widać to
+jako odznakę "wymaga restartu" na karcie). Symulacja obecności jest
+wyjątkiem - żyje w `automations.yaml` i włącza/wyłącza się na żywo w
+ciągu ok. 1-2s, bez restartu (patrz "Zmiany działają od razu" wyżej).
+
+**Interwał odpytywania (Satel i Tuya lokalnie).** Te dwie karty mają
+dodatkowo pole "Interwał odpytywania" - jak często bridge SAM dopytuje o
+bieżący stan wejść/wyjść (Satel: `satel.status_poll_interval_seconds`,
+domyślnie 15s) i urządzeń Tuya (`tuya.status_poll_interval_seconds`,
+domyślnie 30s, obejmuje też podurządzenia Zigbee - ta sama pętla). To
+osobny mechanizm od broadcastów samej centrali/urządzeń o zmianie stanu -
+zaobserwowano na realnej instalacji, że zmiana stanu WYJŚCIA nie zawsze
+dociera jako broadcast (w odróżnieniu od wejść), więc samo poleganie na
+"centrala/urządzenie samo powie" nie wystarcza do rzetelnie ciągłej
+synchronizacji panelu/MQTT. W odróżnieniu od włączania/wyłączania
+integracji - **to zawsze działa na żywo, bez restartu** (minimum 3s, żeby
+nie zalewać centrali/urządzeń zapytaniami przy pomyłce we wpisanej
+wartości).
+
 ### Publikacja stanu do MQTT (niezależnie od Home Assistant)
 
 Stan wejść/wyjść/stref Satela i urządzeń Tuya jest publikowany na
@@ -982,6 +1024,48 @@ panelu, wywołuje scenę - np. ochrona przed mrozem (bardzo niska
 temperatura zewnętrzna -> włącz grzałkę). Ma własny `cooldown_seconds`,
 żeby wahania wartości blisko progu nie odpalały sceny co odczyt -
 sprawdzone testem.
+
+## Synchronizacja czasu
+
+Trzy niezależne miejsca, gdzie "czas" ma znaczenie - żaden nie wymaga
+osobnej konfiguracji w kodzie bridge'a, ale warto wiedzieć, gdzie czego
+szukać, jeśli coś się "rozjeżdża":
+
+**1. Zegar hosta/kontenera Docker.** Kontenery Dockera na Linuksie **NIE
+mają własnego, oddzielonego zegara** - dzielą zegar jądra z hostem
+(w odróżnieniu od maszyn wirtualnych), więc poprawny czas w bridge'u
+(znaczniki czasu zdarzeń/statusów, harmonogramy, wykresy w panelu) to
+wyłącznie kwestia poprawnego zegara **na samym hoście** (RPi/serwerze), nie
+czegoś do ustawienia w `docker-compose.yml`. Sprawdź i w razie potrzeby
+włącz synchronizację NTP na hoście:
+```bash
+timedatectl status                          # "System clock synchronized: yes"?
+sudo timedatectl set-ntp true                # włącza systemd-timesyncd, jeśli wyłączone
+```
+Zmienna `TZ=Europe/Warsaw` w `docker-compose.yml` (oba kontenery) to coś
+INNEGO - nie synchronizuje zegara, tylko mówi kontenerowi, jak
+interpretować "czas lokalny" (harmonogramy `time_window` w automatyzacjach,
+strefa czasowa do wyznaczania sunset/sunrise) - zmień ją, jeśli mieszkasz
+w innej strefie czasowej.
+
+**2. Zegar samej centrali Satel Integra (RTC).** Bridge **celowo NIE
+ustawia** zegara centrali przez protokół integracji - biblioteka
+`satel_integra` (i jej odpowiedniki w innych projektach, np. integracja
+Home Assistant czy wtyczka openHAB) udostępniają go tylko do ODCZYTU, bez
+weryfikowalnej, publicznie udokumentowanej komendy zapisu; wysyłanie
+zgadywanych bajtów do żywej centrali alarmowej to zbyt duże ryzyko, żeby to
+robić bez pewności. Jeśli zegar centrali się rozjeżdża, ustaw go
+bezpośrednio z poziomu klawiatury centrali (menu serwisowe) albo programu
+DLOADX/GUARDX - to jedyna sprawdzona droga.
+
+**3. Spójność znaczników czasu MIĘDZY integracjami (Satel/Tuya/eBUS).** Już
+teraz spójna - cały bridge to JEDEN proces Pythona, wszystkie zdarzenia i
+statusy (baza SQLite, publikacja MQTT) zapisują znacznik czasu tym samym
+mechanizmem (`time.time()`, uniksowy epoch w UTC), więc nie ma ryzyka, że
+np. zdarzenie z Satela i odczyt z Tuyi w tej samej chwili dostaną różne
+"widoki" na czas - różnią się dopiero na etapie WYŚWIETLANIA w przeglądarce
+(`toLocaleString`, strefa czasowa/lokalizacja przeglądarki), co jest
+zamierzone i normalne.
 
 ## Uruchomienie jako usługa systemd
 

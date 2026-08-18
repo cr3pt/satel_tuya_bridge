@@ -191,7 +191,8 @@ class SatelIntegraClient:
 
     def __init__(self, host: str, port: int, integration_key: str, partition: int = 1,
                  monitored_zones: dict | None = None, monitored_outputs: dict | None = None,
-                 history=None, notify_cfg: dict | None = None, grace_seconds: float = 120):
+                 history=None, notify_cfg: dict | None = None, grace_seconds: float = 120,
+                 status_poll_interval_seconds: float = 15.0):
         self.host = host
         self.port = port
         self.integration_key = integration_key
@@ -204,9 +205,18 @@ class SatelIntegraClient:
         self._output_cb = None
         self._alarm_status_cb = None
         self._supervisor = Supervisor("satel", history=history, notify_cfg=notify_cfg, grace_seconds=grace_seconds)
-        # Opóźnienie przed dopytaniem o początkowy stan wejść/wyjść po
-        # (re)połączeniu - patrz _request_initial_status(). Wydzielone jako
-        # atrybut instancji (zamiast stałej), żeby testy mogły je skrócić.
+        # Odstęp między kolejnymi dopytaniami o stan wejść/wyjść - patrz
+        # _periodic_status_sync(). PUBLICZNY atrybut (nie z podkreślnikiem) -
+        # celowo, żeby RulesEngine.reload_config() mogło go podmienić NA
+        # ŻYWO (pętla w _periodic_status_sync() czyta go na bieżąco przy
+        # każdym obrocie), bez restartu procesu - w odróżnieniu od host/
+        # portu/klucza integracji, których zmiana wciąż wymaga restartu
+        # (nowe połączenie TCP).
+        self.status_poll_interval_seconds = status_poll_interval_seconds
+        # Opóźnienie przed PIERWSZYM dopytaniem po (re)połączeniu - osobne
+        # od odstępu między kolejnymi, i celowo NIE konfigurowalne z panelu
+        # (to tylko wewnętrzny bufor czasowy, żeby nie kolidować z odczytem
+        # potwierdzenia start_monitoring(), patrz connect() niżej).
         self._initial_status_delay_seconds = 1.0
 
     async def connect(self) -> None:
@@ -239,43 +249,63 @@ class SatelIntegraClient:
         # output_changed_callback TYLKO gdy centrala sama wyśle broadcast o
         # zmianie (funkcje 0x00/0x17) - na spokojnym systemie, gdzie nic się
         # nie narusza, może to nigdy nie nastąpić, więc panel/MQTT nie
-        # dostają ŻADNEGO stanu aż do pierwszej faktycznej zmiany. Funkcje
-        # 0x00 ("zones violation") i 0x17 ("outputs state") to jednak też
-        # zwykłe polecenia ODCZYTU w protokole integracji - centrala
-        # odpowiada tym samym typem wiadomości niezależnie, czy przyszła jako
-        # broadcast, czy jako odpowiedź na nasze zapytanie, a
+        # dostają ŻADNEGO stanu aż do pierwszej faktycznej zmiany. GORZEJ:
+        # zgłoszono z prawdziwej centrali, że zmiana stanu WYJŚCIA (0x17) w
+        # ogóle nie dociera jako broadcast (w odróżnieniu od wejść) - część
+        # central/wersji firmware ETHM-1 Plus nie wysyła go spontanicznie,
+        # tylko w odpowiedzi na zapytanie (znane ograniczenie tej samej
+        # biblioteki, używanej też przez integrację Home Assistant). Same
+        # broadcasty więc NIE WYSTARCZAJĄ do rzetelnie "ciągłej"
+        # synchronizacji panelu/MQTT ze stanem centrali.
+        #
+        # Funkcje 0x00 ("zones violation") i 0x17 ("outputs state") to
+        # jednak też zwykłe polecenia ODCZYTU w protokole integracji -
+        # centrala odpowiada tym samym typem wiadomości niezależnie, czy
+        # przyszła jako broadcast, czy jako odpowiedź na nasze zapytanie, a
         # _zone_violated()/_output_changed() w bibliotece i tak zawsze
         # wywołują callback z pełnym bieżącym stanem WSZYSTKICH monitorowanych
-        # wejść/wyjść. Dlatego dopytujemy o stan od razu po (re)połączeniu,
-        # żeby panel/MQTT pokazały aktualny stan natychmiast, a nie dopiero
-        # po pierwszej zmianie.
+        # wejść/wyjść. Dlatego dopytujemy CYKLICZNIE (nie tylko raz po
+        # połączeniu) - patrz _periodic_status_sync() - żeby panel/MQTT
+        # zawsze pokazywały aktualny stan, niezależnie od tego, czy broadcast
+        # od centrali w ogóle nadejdzie.
         #
-        # UWAGA na kolejność: wysyłamy to z OPÓŹNIENIEM (osobne zadanie w
-        # tle, nie tutaj synchronicznie) - zaraz po connect() biblioteka sama
-        # wysyła własne polecenie startu nasłuchu (monitor_status() ->
-        # start_monitoring()) i czyta DOKŁADNIE JEDNĄ odpowiedź na nie. Gdyby
-        # nasze zapytania trafiły do kolejki PRZED tamtym poleceniem,
-        # start_monitoring() błędnie potraktowałby naszą odpowiedź jako
-        # potwierdzenie własnego polecenia (i zalogował mylące "Monitoring
-        # not accepted."), a nasza odpowiedź przepadłaby nieobsłużona.
-        # Krótkie opóźnienie daje
-        # pewność, że start_monitoring() (pojedynczy odczyt, ~milisekundy w
-        # sieci lokalnej) zdąży się zakończyć pierwszy.
-        asyncio.ensure_future(self._request_initial_status(generate_query))
+        # UWAGA na kolejność PIERWSZEGO zapytania: wysyłamy je z OPÓŹNIENIEM
+        # (osobne zadanie w tle, nie tutaj synchronicznie) - zaraz po
+        # connect() biblioteka sama wysyła własne polecenie startu nasłuchu
+        # (monitor_status() -> start_monitoring()) i czyta DOKŁADNIE JEDNĄ
+        # odpowiedź na nie. Gdyby nasze zapytania trafiły do kolejki PRZED
+        # tamtym poleceniem, start_monitoring() błędnie potraktowałby naszą
+        # odpowiedź jako potwierdzenie własnego polecenia (i zalogował
+        # mylące "Monitoring not accepted."), a nasza odpowiedź przepadłaby
+        # nieobsłużona. Krótkie opóźnienie daje pewność, że
+        # start_monitoring() (pojedynczy odczyt, ~milisekundy w sieci
+        # lokalnej) zdąży się zakończyć pierwszy.
+        asyncio.ensure_future(self._periodic_status_sync(generate_query))
         return
 
-    async def _request_initial_status(self, generate_query) -> None:
+    async def _periodic_status_sync(self, generate_query) -> None:
+        """Aktywnie dopytuje o stan wejść/wyjść w regularnych odstępach
+        (co self.status_poll_interval_seconds - odczytywane NA ŚWIEŻO przy
+        każdym obrocie pętli, więc RulesEngine.reload_config() może
+        podmienić tę wartość na żywo, bez restartu), NIE tylko raz zaraz po
+        połączeniu - patrz obszerny komentarz w connect() wyżej. Zadanie
+        samo się kończy, gdy to konkretne połączenie (`client`, przechwycone
+        na starcie) zostanie zastąpione nowym w wyniku (re)połączenia -
+        wtedy `self._client is client` przestaje być prawdą, a nowe
+        wywołanie connect() uruchamia już WŁASNE zadanie dla nowego
+        połączenia."""
         await asyncio.sleep(self._initial_status_delay_seconds)
         client = self._client
-        if client is None or getattr(client, "closed", True):
-            return
-        try:
-            if self.monitored_zones:
-                await client._send_data(generate_query(b'\x00'))
-            if self.monitored_outputs:
-                await client._send_data(generate_query(b'\x17'))
-        except Exception:
-            logger.exception("Nie udało się dopytać o początkowy stan wejść/wyjść Satela")
+        while client is not None and client is self._client and not getattr(client, "closed", True):
+            try:
+                if self.monitored_zones:
+                    await client._send_data(generate_query(b'\x00'))
+                if self.monitored_outputs:
+                    await client._send_data(generate_query(b'\x17'))
+            except Exception:
+                logger.exception("Nie udało się dopytać o stan wejść/wyjść Satela")
+                return
+            await asyncio.sleep(self.status_poll_interval_seconds)
 
     async def set_output(self, output_number: int, state: bool) -> None:
         if self._client is None:

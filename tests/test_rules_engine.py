@@ -6,6 +6,7 @@ import asyncio
 import time
 
 import pytest
+import yaml
 
 from bridge.config import BridgeConfig
 from bridge.rules_engine import RulesEngine
@@ -263,6 +264,31 @@ class TestReloadConfig:
         old_satel = engine.satel
         await engine.reload_config()
         assert engine.satel is old_satel
+
+    async def test_reload_config_updates_satel_poll_interval_live(self, engine, tmp_path, fake_satel):
+        """Interwał cyklicznego dopytywania Satela (zakładka 🧩 Wtyczki)
+        MUSI zadziałać bez restartu - w odróżnieniu od host/portu/klucza,
+        który nadal go wymaga (patrz satel_client.py:
+        _periodic_status_sync, które czyta ten atrybut na bieżąco)."""
+        config_path = tmp_path / "config.yaml"
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        raw["satel"]["status_poll_interval_seconds"] = 5
+        config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+        await engine.reload_config()
+        assert engine.satel.status_poll_interval_seconds == 5
+
+    async def test_reload_config_updates_tuya_poll_interval_live(self, engine, tmp_path):
+        """Analogicznie dla Tuya - _tuya_status_poll_loop() czyta
+        self.config.tuya na bieżąco przy każdym obrocie, więc sama podmiana
+        self.config (już robiona przez reload_config()) wystarcza."""
+        config_path = tmp_path / "config.yaml"
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        raw["tuya"]["status_poll_interval_seconds"] = 7
+        config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+        await engine.reload_config()
+        assert engine.config.tuya.get("status_poll_interval_seconds") == 7
 
     async def test_picks_up_new_scene_without_restart(self, engine, tmp_path):
         (tmp_path / "automations.yaml").write_text(
