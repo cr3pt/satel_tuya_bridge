@@ -59,6 +59,15 @@
     border-radius: 8px; padding: 1px 6px; display: inline-block;
   }
   .plugin-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+  .poll-interval-row {
+    display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted);
+    border-top: 1px dashed var(--border); padding-top: 8px; margin-top: 2px;
+  }
+  .poll-interval-row input[type=number] {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 6px; font-size: 12.5px; width: 64px;
+  }
+  .live-badge { color: var(--ok); font-size: 10px; }
   .actions-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
   button {
     background: var(--accent); color: white; border: none; border-radius: 6px;
@@ -82,7 +91,10 @@
   zostaje w jej właściwej zakładce - link w każdej karcie niżej.
   <span class="restart-badge">wymaga restartu</span> oznacza, że zmiana
   zadziała dopiero po pełnym restarcie procesu bridge'a - reszta włącza
-  się na żywo w ciągu ok. 1-2s.
+  się na żywo w ciągu ok. 1-2s. Centrala Satel i Tuya (lokalnie) mają
+  dodatkowo pole <strong>"Interwał odpytywania"</strong> - jak często
+  bridge sam dopytuje o bieżący stan (niezależnie od tego, czy centrala/
+  urządzenie same zgłoszą zmianę) - to zawsze działa na żywo, bez restartu.
 </div>
 
 <div id="pluginsMsg" class="msg-box"></div>
@@ -145,7 +157,7 @@ const PLUGIN_CONFIG_LINKS = {
   presence_simulation: { href: '/automations', label: 'Automatyzacje →' },
 };
 
-let pendingChanges = {};  // {plugin_id: bool} - zebrane, ale jeszcze niezapisane przełączenia
+let pendingChanges = {};  // {plugin_id: {enabled?: bool, status_poll_interval_seconds?: number}} - zebrane, ale jeszcze niezapisane zmiany
 
 function updateSaveButtonState() {
   const count = Object.keys(pendingChanges).length;
@@ -153,6 +165,22 @@ function updateSaveButtonState() {
   btn.disabled = count === 0;
   document.getElementById('pendingHint').textContent =
     count > 0 ? `${count} niezapisana(e) zmiana(y)` : '';
+}
+
+// Zbiera pojedynczą zmianę pola (enabled / status_poll_interval_seconds)
+// dla danej wtyczki do pendingChanges - {plugin_id: {pole: wartość, ...}},
+// usuwając wpis, gdy pole wraca do wartości oryginalnej (żeby "Zapisz"
+// zgasło, kiedy nic już się nie różni od stanu z serwera).
+function setPendingField(pluginId, field, value, originalValue) {
+  if (value === originalValue) {
+    if (pendingChanges[pluginId]) {
+      delete pendingChanges[pluginId][field];
+      if (Object.keys(pendingChanges[pluginId]).length === 0) delete pendingChanges[pluginId];
+    }
+  } else {
+    pendingChanges[pluginId] = { ...(pendingChanges[pluginId] || {}), [field]: value };
+  }
+  updateSaveButtonState();
 }
 
 function renderPlugin(p) {
@@ -187,18 +215,29 @@ function renderPlugin(p) {
       </div>
       <div>${restartBadge} ${linkHtml}</div>
     </div>
+    ${p.has_poll_interval ? `
+      <div class="poll-interval-row">
+        <span>Interwał odpytywania:</span>
+        <input type="number" min="3" class="poll-interval-input" value="${p.poll_interval_seconds}">
+        <span>s</span>
+        <span class="live-badge">● działa na żywo, bez restartu</span>
+      </div>
+    ` : ''}
   `;
 
   if (p.toggleable) {
     const checkbox = card.querySelector('.plugin-toggle');
     checkbox.addEventListener('change', () => {
-      if (checkbox.checked === p.enabled) {
-        delete pendingChanges[p.id];
-      } else {
-        pendingChanges[p.id] = checkbox.checked;
-      }
+      setPendingField(p.id, 'enabled', checkbox.checked, p.enabled);
       card.classList.toggle('on', checkbox.checked);
-      updateSaveButtonState();
+    });
+  }
+
+  if (p.has_poll_interval) {
+    const input = card.querySelector('.poll-interval-input');
+    input.addEventListener('change', () => {
+      const value = parseInt(input.value, 10);
+      setPendingField(p.id, 'status_poll_interval_seconds', value, p.poll_interval_seconds);
     });
   }
 
@@ -213,10 +252,7 @@ async function loadPlugins() {
 }
 
 document.getElementById('saveBtn').addEventListener('click', async () => {
-  const payload = {};
-  for (const [id, enabled] of Object.entries(pendingChanges)) {
-    payload[id] = { enabled };
-  }
+  const payload = pendingChanges;
   try {
     const resp = await authorizedFetch('/api/plugins', {
       method: 'POST',

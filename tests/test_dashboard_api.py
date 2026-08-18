@@ -592,7 +592,50 @@ class TestPluginsEndpoint:
 
     def test_post_unknown_plugin_id_rejected(self, client):
         resp = client.post(
+            "/api/plugins", json={"unifi_protect": {"enabled": False}}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_post_satel_enabled_field_is_ignored_not_toggleable(self, client, tmp_path):
+        """satel jest rdzeniem (zawsze aktywny) - ma tylko regulowalny
+        interwał odpytywania, "enabled" nie jest dla niego obsługiwane i
+        zostaje po cichu zignorowane (nie jest to błąd - satel to
+        prawidłowe id, tylko bez pola enabled)."""
+        resp = client.post(
             "/api/plugins", json={"satel": {"enabled": False}}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["satel"]["host"] == "127.0.0.1"  # nietknięte, wciąż działa
+
+    def test_post_updates_satel_poll_interval_live(self, client, tmp_path):
+        resp = client.post(
+            "/api/plugins", json={"satel": {"status_poll_interval_seconds": 25}},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert "bez restartu" in resp.get_json()["message"]
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["satel"]["status_poll_interval_seconds"] == 25
+        assert saved["satel"]["host"] == "127.0.0.1"  # nietknięte
+
+    def test_post_updates_tuya_local_poll_interval_without_restart_message(self, client, tmp_path):
+        resp = client.post(
+            "/api/plugins", json={"tuya_local": {"status_poll_interval_seconds": 45}},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        message = resp.get_json()["message"]
+        assert "bez restartu" in message
+        assert "wymagają pełnego restartu" not in message
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["tuya"]["status_poll_interval_seconds"] == 45
+        assert saved["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"  # nietknięte
+
+    def test_post_rejects_poll_interval_below_minimum(self, client):
+        resp = client.post(
+            "/api/plugins", json={"satel": {"status_poll_interval_seconds": 1}},
+            headers=_basic_auth_header("test_haslo_123"),
         )
         assert resp.status_code == 400
 

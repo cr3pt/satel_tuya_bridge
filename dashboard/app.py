@@ -659,12 +659,22 @@ def api_config_connections_post():
     })
 
 
-# Które z przełączalnych wtyczek (patrz PLUGIN_DEFS w dashboard/setup.py)
-# żyją w config.yaml (zakładka 🔌 Połączenia, wymaga pełnego restartu) a
-# które w automations.yaml (zakładka 🎬 Automatyzacje, podłapywane na
-# żywo przez RulesEngine.reload_config() - patrz też komentarz w
+# Które z przełączalnych/regulowalnych wtyczek (patrz PLUGIN_DEFS w
+# dashboard/setup.py) żyją w config.yaml (zakładka 🔌 Połączenia) a które w
+# automations.yaml (zakładka 🎬 Automatyzacje, podłapywane na żywo przez
+# RulesEngine.reload_config() - patrz też komentarz w
 # _build_presence_simulation w setup.py o jednym wyjątku).
-_CONNECTIONS_PLUGIN_IDS = {"tuya_cloud", "home_assistant", "mqtt_publish"}
+#
+# W obrębie config.yaml dwie różne rzeczy wymagają różnego traktowania:
+# WŁĄCZENIE/WYŁĄCZENIE integracji (tuya_cloud/home_assistant/mqtt_publish)
+# dotyka żywych połączeń sieciowych - wymaga PEŁNEGO RESTARTU procesu,
+# tak jak reszta zakładki 🔌 Połączenia. INTERWAŁ ODPYTYWANIA (satel/
+# tuya_local) to tylko wartość, którą pętla w tle czyta na bieżąco przy
+# każdym obrocie (patrz satel_client.py: _periodic_status_sync,
+# rules_engine.py: _tuya_status_poll_loop) - działa NA ŻYWO, bez restartu.
+_CONNECTIONS_PLUGIN_IDS_RESTART = {"tuya_cloud", "home_assistant", "mqtt_publish"}
+_CONNECTIONS_PLUGIN_IDS_LIVE = {"satel", "tuya_local"}
+_CONNECTIONS_PLUGIN_IDS = _CONNECTIONS_PLUGIN_IDS_RESTART | _CONNECTIONS_PLUGIN_IDS_LIVE
 _AUTOMATIONS_PLUGIN_IDS = {"presence_simulation"}
 
 
@@ -684,12 +694,14 @@ def api_plugins_get():
 @app.route("/api/plugins", methods=["POST"])
 @require_auth()
 def api_plugins_post():
-    """Przełącza WYŁĄCZNIE pole "enabled" wskazanych wtyczek (patrz
-    _CONNECTIONS_PLUGIN_IDS/_AUTOMATIONS_PLUGIN_IDS wyżej) - reszta
+    """Przełącza WYŁĄCZNIE pole "enabled" (tuya_cloud/home_assistant/
+    mqtt_publish/presence_simulation) albo interwał odpytywania (satel/
+    tuya_local) wskazanych wtyczek (patrz _CONNECTIONS_PLUGIN_IDS_RESTART/
+    _CONNECTIONS_PLUGIN_IDS_LIVE/_AUTOMATIONS_PLUGIN_IDS wyżej) - reszta
     ustawień danej integracji (host/klucze/urządzenia/itd.) zostaje
     nietknięta. Do PEŁNEJ konfiguracji (np. pierwsze podanie poświadczeń
     Tuya Cloud) wciąż trzeba przejść do właściwej zakładki (🔌 Połączenia /
-    🎬 Automatyzacje) - to przełącznik, nie edytor."""
+    🎬 Automatyzacje) - to przełącznik/regulator, nie edytor."""
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return jsonify({"error": "Nieprawidłowe dane"}), 400
@@ -706,7 +718,13 @@ def api_plugins_post():
             current = yaml.safe_load(f) or {}
         form = connections_to_form(current)
         for plugin_id, patch in connections_body.items():
-            form.setdefault(plugin_id, {})["enabled"] = bool((patch or {}).get("enabled"))
+            patch = patch or {}
+            if plugin_id in _CONNECTIONS_PLUGIN_IDS_RESTART:
+                form.setdefault(plugin_id, {})["enabled"] = bool(patch.get("enabled"))
+            else:
+                # satel/tuya_local - TYLKO interwał odpytywania, na żywo
+                if "status_poll_interval_seconds" in patch:
+                    form.setdefault(plugin_id, {})["status_poll_interval_seconds"] = patch["status_poll_interval_seconds"]
 
         errors = validate_connections(form)
         if errors:
@@ -742,13 +760,20 @@ def api_plugins_post():
 
     config = BridgeConfig.load(config_path)
     create_app(config)
-    if automations_body:
+    # Interwały odpytywania (satel/tuya_local) i symulacja obecności działają
+    # na żywo przez tę samą kolejkę komend co reszta panelu - w odróżnieniu
+    # od włączenia/wyłączenia integracji, które nadal wymaga restartu.
+    live_connections_ids = set(connections_body) & _CONNECTIONS_PLUGIN_IDS_LIVE
+    if automations_body or live_connections_ids:
         _enqueue_bridge_reload()
 
+    restart_ids = set(connections_body) & _CONNECTIONS_PLUGIN_IDS_RESTART
     message = "Zapisano."
-    if connections_body:
-        message += (" Zmiany dla " + ", ".join(sorted(connections_body)) + " wymagają pełnego restartu "
+    if restart_ids:
+        message += (" Zmiany dla " + ", ".join(sorted(restart_ids)) + " wymagają pełnego restartu "
                     "procesu bridge'a (np. `sudo systemctl restart satel-tuya-bridge`).")
+    if live_connections_ids:
+        message += " Zmiany interwału odpytywania zadziałają w ciągu ok. 1-2s, bez restartu."
     if automations_body:
         message += " Zmiany dla symulacji obecności zadziałają w ciągu ok. 1-2s, bez restartu."
 

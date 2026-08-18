@@ -1049,6 +1049,32 @@ class TestListPlugins:
         toggleable = {p["id"] for p in list_plugins({}) if p["toggleable"]}
         assert toggleable == {"tuya_cloud", "home_assistant", "mqtt_publish", "presence_simulation"}
 
+    def test_poll_interval_ids_match_expected_set(self):
+        with_interval = {p["id"] for p in list_plugins({}) if p["has_poll_interval"]}
+        assert with_interval == {"satel", "tuya_local"}
+
+    def test_poll_interval_defaults(self):
+        by_id = {p["id"]: p for p in list_plugins({})}
+        assert by_id["satel"]["poll_interval_seconds"] == 15
+        assert by_id["tuya_local"]["poll_interval_seconds"] == 30
+
+    def test_poll_interval_reflects_config(self):
+        by_id = {p["id"]: p for p in list_plugins({
+            "satel": {"status_poll_interval_seconds": 20},
+            "tuya": {"status_poll_interval_seconds": 60},
+        })}
+        assert by_id["satel"]["poll_interval_seconds"] == 20
+        assert by_id["tuya_local"]["poll_interval_seconds"] == 60
+
+    def test_other_plugins_have_no_poll_interval_field(self):
+        by_id = {p["id"]: p for p in list_plugins({})}
+        for plugin_id in (
+            "tuya_zigbee", "tuya_cloud", "ebus", "home_assistant",
+            "mqtt_publish", "unifi_protect", "presence_simulation", "notifications",
+        ):
+            assert by_id[plugin_id]["has_poll_interval"] is False
+            assert "poll_interval_seconds" not in by_id[plugin_id]
+
     def test_unifi_protect_and_notifications_are_presence_based(self):
         by_id = {p["id"]: p for p in list_plugins({
             "unifi_protect": {"host": "192.168.1.30"},

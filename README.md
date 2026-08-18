@@ -648,6 +648,20 @@ jako odznakę "wymaga restartu" na karcie). Symulacja obecności jest
 wyjątkiem - żyje w `automations.yaml` i włącza/wyłącza się na żywo w
 ciągu ok. 1-2s, bez restartu (patrz "Zmiany działają od razu" wyżej).
 
+**Interwał odpytywania (Satel i Tuya lokalnie).** Te dwie karty mają
+dodatkowo pole "Interwał odpytywania" - jak często bridge SAM dopytuje o
+bieżący stan wejść/wyjść (Satel: `satel.status_poll_interval_seconds`,
+domyślnie 15s) i urządzeń Tuya (`tuya.status_poll_interval_seconds`,
+domyślnie 30s, obejmuje też podurządzenia Zigbee - ta sama pętla). To
+osobny mechanizm od broadcastów samej centrali/urządzeń o zmianie stanu -
+zaobserwowano na realnej instalacji, że zmiana stanu WYJŚCIA nie zawsze
+dociera jako broadcast (w odróżnieniu od wejść), więc samo poleganie na
+"centrala/urządzenie samo powie" nie wystarcza do rzetelnie ciągłej
+synchronizacji panelu/MQTT. W odróżnieniu od włączania/wyłączania
+integracji - **to zawsze działa na żywo, bez restartu** (minimum 3s, żeby
+nie zalewać centrali/urządzeń zapytaniami przy pomyłce we wpisanej
+wartości).
+
 ### Publikacja stanu do MQTT (niezależnie od Home Assistant)
 
 Stan wejść/wyjść/stref Satela i urządzeń Tuya jest publikowany na

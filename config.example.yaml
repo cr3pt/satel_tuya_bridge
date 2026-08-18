@@ -59,10 +59,19 @@ satel:
     Dom: 1
     Garaż: 2
 
+  # Co ile sekund bridge sam dopytuje centralę o bieżący stan wejść/wyjść
+  # (niezależnie od tego, czy centrala sama zgłosi zmianę broadcastem -
+  # zaobserwowano, że wyjścia nie zawsze to robią, w odróżnieniu od wejść).
+  # Edytowalne też z panelu (zakładka 🧩 Wtyczki) BEZ restartu procesu -
+  # minimum 3s, żeby nie zalewać centrali zapytaniami.
+  status_poll_interval_seconds: 15
+
 tuya:
-  # Co ile sekund odpytywać lokalnie urządzenia Tuya o status (on/off,
+  # Co ile sekund odpytywać lokalnie urządzenia Tuya (WiFi i podurządzenia
+  # Zigbee przez bramkę - patrz zigbee_gateways niżej) o status (on/off,
   # jasność) do panelu webowego. Krótszy interwał = szybciej widoczna
-  # zmiana w panelu, ale więcej ruchu sieciowego/obciążenia RPi.
+  # zmiana w panelu, ale więcej ruchu sieciowego/obciążenia RPi. Edytowalne
+  # też z panelu (zakładka 🧩 Wtyczki) BEZ restartu procesu - minimum 3s.
   status_poll_interval_seconds: 30
 
   # Lokalne sterowanie (tinytuya) - gniazdka, włączniki, ściemniacze.

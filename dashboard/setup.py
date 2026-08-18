@@ -418,6 +418,24 @@ def validate_connections(form: dict) -> list[str]:
     if ha.get("enabled") and not (ha.get("mqtt_host") or ebus.get("mqtt_host")):
         errors.append("Home Assistant: adres brokera MQTT jest wymagany, jeśli integracja włączona")
 
+    # Interwały odpytywania (zakładka 🧩 Wtyczki) - minimum 3s, żeby nie
+    # zalewać centrali/urządzeń zapytaniami przy pomyłce we wpisanej wartości.
+    satel_interval = satel.get("status_poll_interval_seconds")
+    if satel_interval not in (None, ""):
+        try:
+            if int(satel_interval) < 3:
+                errors.append("Satel: interwał odpytywania musi wynosić co najmniej 3 sekundy")
+        except (TypeError, ValueError):
+            errors.append("Satel: interwał odpytywania musi być liczbą")
+
+    tuya_local_interval = form.get("tuya_local", {}).get("status_poll_interval_seconds")
+    if tuya_local_interval not in (None, ""):
+        try:
+            if int(tuya_local_interval) < 3:
+                errors.append("Tuya (lokalnie): interwał odpytywania musi wynosić co najmniej 3 sekundy")
+        except (TypeError, ValueError):
+            errors.append("Tuya (lokalnie): interwał odpytywania musi być liczbą")
+
     return errors
 
 
@@ -458,6 +476,10 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     )
     config["satel"].setdefault("outputs", {})
     config["satel"].setdefault("fields_file", "satel_fields.yaml")
+    config["satel"]["status_poll_interval_seconds"] = int(
+        satel_form.get("status_poll_interval_seconds")
+        or config["satel"].get("status_poll_interval_seconds") or 15
+    )
 
     config.setdefault("ebus", {})
     config["ebus"]["mqtt_host"] = ebus_form.get("mqtt_host", "").strip()
@@ -498,7 +520,11 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
         }
     else:
         config["tuya"].pop("cloud", None)
-    config["tuya"].setdefault("status_poll_interval_seconds", 30)
+    tuya_local_form = form.get("tuya_local", {})
+    config["tuya"]["status_poll_interval_seconds"] = int(
+        tuya_local_form.get("status_poll_interval_seconds")
+        or config["tuya"].get("status_poll_interval_seconds") or 30
+    )
     config["tuya"].setdefault("devices_file", "tuya_devices.yaml")
 
     ha_form = form.get("home_assistant", {})
@@ -535,8 +561,9 @@ def connections_to_form(existing: dict) -> dict:
     tam ryzyko jest dużo mniejsze niż tu, bo klucz integracji Satela pozwala
     rozbroić fizyczny system alarmowy)."""
     satel = existing.get("satel", {})
+    tuya = existing.get("tuya", {})
     ebus = existing.get("ebus", {})
-    tuya_cloud = existing.get("tuya", {}).get("cloud", {})
+    tuya_cloud = tuya.get("cloud", {})
     ha = existing.get("home_assistant", {})
     mqtt_publish = existing.get("mqtt_publish", {})
     boiler_mqtt = existing.get("boiler_output", {}).get("mqtt", {})
@@ -547,6 +574,10 @@ def connections_to_form(existing: dict) -> dict:
             "partition": satel.get("partition", 1),
             "virtual_inputs_port": satel.get("virtual_inputs", {}).get("port", 8888),
             "integration_key_set": bool(satel.get("integration_key")),
+            "status_poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
+        },
+        "tuya_local": {
+            "status_poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
         },
         "ebus": {
             "mqtt_host": ebus.get("mqtt_host", ""),
@@ -589,9 +620,11 @@ def connections_to_form(existing: dict) -> dict:
 # Cloud Pulsar), a przełączanie integracji jest i tak rzadką operacją.
 PLUGIN_DEFS = [
     {"id": "satel", "name": "Centrala Satel Integra", "icon": "🔒", "toggleable": False, "restart_required": True,
+     "has_poll_interval": True,
      "description": "Odczyt wejść/wyjść/stref i sterowanie (uzbrajanie, wyjścia) - rdzeń bridge'a, zawsze aktywny."},
     {"id": "tuya_local", "name": "Tuya - urządzenia lokalne (WiFi)", "icon": "🔌", "toggleable": False, "restart_required": False,
-     "description": "Sterowanie gniazdkami/przełącznikami/ściemniaczami Tuya bezpośrednio w LAN, bez chmury."},
+     "has_poll_interval": True,
+     "description": "Sterowanie gniazdkami/przełącznikami/ściemniaczami Tuya bezpośrednio w LAN, bez chmury (tinytuya) - obejmuje też podurządzenia Zigbee."},
     {"id": "tuya_zigbee", "name": "Tuya - bramki Zigbee", "icon": "🐝", "toggleable": False, "restart_required": False,
      "description": "Czujniki/przełączniki Zigbee podpięte pod bramkę Tuya (Tuya Zigbee Gateway/Hub)."},
     {"id": "tuya_cloud", "name": "Tuya Cloud (kamery + import urządzeń)", "icon": "☁️", "toggleable": True, "restart_required": True,
@@ -633,11 +666,13 @@ def list_plugins(config_raw: dict) -> list[dict]:
             "enabled": True,
             "configured": bool(satel.get("host") and satel.get("integration_key")),
             "detail": f"{satel.get('host', '?')}:{satel.get('port', '?')}" if satel.get("host") else "nieskonfigurowana",
+            "poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
         },
         "tuya_local": {
             "enabled": len(tuya_devices) > len(zigbee_devices),
             "configured": len(tuya_devices) > len(zigbee_devices),
             "detail": f"{len(tuya_devices) - len(zigbee_devices)} urządzeń WiFi",
+            "poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
         },
         "tuya_zigbee": {
             "enabled": bool(zigbee_gateways),
@@ -681,7 +716,10 @@ def list_plugins(config_raw: dict) -> list[dict]:
         },
     }
 
-    return [{**plugin_def, **state[plugin_def["id"]]} for plugin_def in PLUGIN_DEFS]
+    return [
+        {"has_poll_interval": False, **plugin_def, **state[plugin_def["id"]]}
+        for plugin_def in PLUGIN_DEFS
+    ]
 
 
 def build_satel_fields_dict(form: dict) -> dict:

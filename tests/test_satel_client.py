@@ -448,7 +448,7 @@ class TestPeriodicStatusSync:
             monitored_zones={"Hol": 12}, monitored_outputs={"Brama": 3},
         )
         client._initial_status_delay_seconds = 0.01
-        client._status_sync_interval_seconds = 0.02
+        client.status_poll_interval_seconds = 0.02
 
         task = asyncio.create_task(client.run_forever())
         await asyncio.sleep(0.11)  # ok. 5 cykli po 0.02s + pierwsze opóźnienie
@@ -473,7 +473,7 @@ class TestPeriodicStatusSync:
         old_fake = FakeAsyncSatelInitialStatus("127.0.0.1", 7094, None)
         client._client = old_fake
         client._initial_status_delay_seconds = 0.01
-        client._status_sync_interval_seconds = 0.02
+        client.status_poll_interval_seconds = 0.02
 
         task = asyncio.create_task(client._periodic_status_sync(generate_query))
         await asyncio.sleep(0.07)  # kilka cykli na "starym" połączeniu
@@ -490,6 +490,21 @@ class TestPeriodicStatusSync:
 
         assert len(old_fake.sent_queries) == count_before_swap, "stare zadanie powinno przestać wysyłać"
         assert new_fake.sent_queries == [], "stare zadanie nie powinno zacząć wysyłać na nowym obiekcie"
+
+    def test_status_poll_interval_seconds_configurable_via_constructor(self):
+        """Interwał odpytywania jest atrybutem PUBLICZNYM (bez podkreślnika)
+        ustawianym przez konstruktor - RulesEngine.reload_config() musi móc
+        go podmienić na żywo (bez restartu procesu), patrz też
+        test_reload_config_updates_satel_poll_interval_live w
+        tests/test_rules_engine.py."""
+        client = SatelIntegraClient(
+            "127.0.0.1", 7094, "key", status_poll_interval_seconds=42.0,
+        )
+        assert client.status_poll_interval_seconds == 42.0
+
+    def test_status_poll_interval_seconds_defaults_to_15(self):
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+        assert client.status_poll_interval_seconds == 15.0
 
 
 class TestArmedPartitionNumbers:

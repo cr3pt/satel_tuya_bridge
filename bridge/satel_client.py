@@ -191,7 +191,8 @@ class SatelIntegraClient:
 
     def __init__(self, host: str, port: int, integration_key: str, partition: int = 1,
                  monitored_zones: dict | None = None, monitored_outputs: dict | None = None,
-                 history=None, notify_cfg: dict | None = None, grace_seconds: float = 120):
+                 history=None, notify_cfg: dict | None = None, grace_seconds: float = 120,
+                 status_poll_interval_seconds: float = 15.0):
         self.host = host
         self.port = port
         self.integration_key = integration_key
@@ -204,12 +205,19 @@ class SatelIntegraClient:
         self._output_cb = None
         self._alarm_status_cb = None
         self._supervisor = Supervisor("satel", history=history, notify_cfg=notify_cfg, grace_seconds=grace_seconds)
-        # Opóźnienie przed pierwszym dopytaniem o stan wejść/wyjść po
-        # (re)połączeniu, oraz odstęp między kolejnymi dopytaniami - patrz
-        # _periodic_status_sync(). Wydzielone jako atrybuty instancji
-        # (zamiast stałych), żeby testy mogły je skrócić.
+        # Odstęp między kolejnymi dopytaniami o stan wejść/wyjść - patrz
+        # _periodic_status_sync(). PUBLICZNY atrybut (nie z podkreślnikiem) -
+        # celowo, żeby RulesEngine.reload_config() mogło go podmienić NA
+        # ŻYWO (pętla w _periodic_status_sync() czyta go na bieżąco przy
+        # każdym obrocie), bez restartu procesu - w odróżnieniu od host/
+        # portu/klucza integracji, których zmiana wciąż wymaga restartu
+        # (nowe połączenie TCP).
+        self.status_poll_interval_seconds = status_poll_interval_seconds
+        # Opóźnienie przed PIERWSZYM dopytaniem po (re)połączeniu - osobne
+        # od odstępu między kolejnymi, i celowo NIE konfigurowalne z panelu
+        # (to tylko wewnętrzny bufor czasowy, żeby nie kolidować z odczytem
+        # potwierdzenia start_monitoring(), patrz connect() niżej).
         self._initial_status_delay_seconds = 1.0
-        self._status_sync_interval_seconds = 15.0
 
     async def connect(self) -> None:
         # Import odroczony - żeby moduł dało się zaimportować nawet bez
@@ -277,7 +285,9 @@ class SatelIntegraClient:
 
     async def _periodic_status_sync(self, generate_query) -> None:
         """Aktywnie dopytuje o stan wejść/wyjść w regularnych odstępach
-        (co self._status_sync_interval_seconds), NIE tylko raz zaraz po
+        (co self.status_poll_interval_seconds - odczytywane NA ŚWIEŻO przy
+        każdym obrocie pętli, więc RulesEngine.reload_config() może
+        podmienić tę wartość na żywo, bez restartu), NIE tylko raz zaraz po
         połączeniu - patrz obszerny komentarz w connect() wyżej. Zadanie
         samo się kończy, gdy to konkretne połączenie (`client`, przechwycone
         na starcie) zostanie zastąpione nowym w wyniku (re)połączenia -
@@ -295,7 +305,7 @@ class SatelIntegraClient:
             except Exception:
                 logger.exception("Nie udało się dopytać o stan wejść/wyjść Satela")
                 return
-            await asyncio.sleep(self._status_sync_interval_seconds)
+            await asyncio.sleep(self.status_poll_interval_seconds)
 
     async def set_output(self, output_number: int, state: bool) -> None:
         if self._client is None:
