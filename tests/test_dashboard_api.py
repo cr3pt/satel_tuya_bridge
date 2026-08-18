@@ -243,6 +243,52 @@ class TestProtectedArmDisarmEndpoints:
         assert set(status_resp.get_json()["params"]["partitions"]) == {1, 2}
 
 
+class TestSystemRestartEndpoint:
+    """/api/system/restart - pełny restart obu kontenerów (bridge + panel),
+    w odróżnieniu od reload_config() (patrz _enqueue_bridge_reload), który
+    celowo nie dotyka żywych połączeń sieciowych. Testy monkeypatchują
+    os._exit/threading.Timer.start - inaczej test zabiłby własny proces."""
+
+    def _patch_exit(self, monkeypatch):
+        exit_calls = []
+        monkeypatch.setattr("dashboard.app.os._exit", lambda code: exit_calls.append(code))
+
+        started_timers = []
+
+        class FakeTimer:
+            def __init__(self, interval, fn):
+                self.interval = interval
+                self.fn = fn
+
+            def start(self):
+                started_timers.append(self)  # NIE wołamy fn() - proces testowy ma żyć dalej
+
+        monkeypatch.setattr("dashboard.app.threading.Timer", FakeTimer)
+        return exit_calls, started_timers
+
+    def test_requires_auth(self, client, monkeypatch):
+        self._patch_exit(monkeypatch)
+        resp = client.post("/api/system/restart")
+        assert resp.status_code == 401
+
+    def test_enqueues_restart_command(self, client, monkeypatch):
+        self._patch_exit(monkeypatch)
+        resp = client.post("/api/system/restart", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert "Restartuję" in resp.get_json()["message"]
+
+        command_id = resp.get_json()["command_id"]
+        status_resp = client.get(f"/api/commands/{command_id}")
+        assert status_resp.get_json()["command"] == "restart_process"
+
+    def test_schedules_delayed_self_exit_without_exiting_immediately(self, client, monkeypatch):
+        exit_calls, started_timers = self._patch_exit(monkeypatch)
+        client.post("/api/system/restart", headers=_basic_auth_header("test_haslo_123"))
+        assert len(started_timers) == 1
+        assert started_timers[0].interval == 0.5
+        assert exit_calls == []  # timer.start() spatchowany - fn() nie wywołane, proces żyje
+
+
 class TestAutomationContextEndpoint:
     def test_context_public_no_auth_required(self, client):
         assert client.get("/api/config/automation-context").status_code == 200
@@ -883,9 +929,43 @@ class TestSatelDiscoveryEndpoint:
         assert resp.status_code == 200
         assert resp.get_json() == {"zones": [12], "outputs": [3]}
 
-    def test_missing_host_returns_400(self, client):
+    def test_missing_host_returns_400(self, client, monkeypatch):
+        # Symuluje kreator PRZED zapisaniem config.yaml (config_raw puste) -
+        # dopiero wtedy brak hosta w ciele żądania jest błędem; PO
+        # skonfigurowaniu (patrz test_defaults_to_configured_host_and_port
+        # niżej) host domyślnie bierze się z zapisanego config.yaml.
+        monkeypatch.setattr("dashboard.app.config_raw", {})
         resp = client.post("/api/discover/satel", json={})
         assert resp.status_code == 400
+
+    def test_defaults_to_configured_host_and_port_when_omitted(self, client, monkeypatch):
+        """Zakładka ⚙ Ustawienia (w odróżnieniu od kreatora) NIE zna hosta
+        Satela w JS - jest on w osobnej, zablokowanej hasłem zakładce
+        "Połączenia" (patrz api_config_connections_get) - endpoint musi więc
+        sam dociągnąć host/port z JUŻ ZAPISANEGO config.yaml, gdy żądanie
+        ich nie poda (tak samo jak api_discover_ebus robi to dla mqtt_host)."""
+        captured = {}
+
+        async def fake_discover(host, port, timeout_seconds=30.0):
+            captured["host"] = host
+            captured["port"] = port
+            return {"zones": [], "outputs": []}
+
+        monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
+        resp = client.post("/api/discover/satel", json={})
+        assert resp.status_code == 200
+        assert captured == {"host": "127.0.0.1", "port": 7094}  # z CONFIG_TEMPLATE
+
+    def test_explicit_host_in_body_overrides_configured(self, client, monkeypatch):
+        captured = {}
+
+        async def fake_discover(host, port, timeout_seconds=30.0):
+            captured["host"] = host
+            return {"zones": [], "outputs": []}
+
+        monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
+        client.post("/api/discover/satel", json={"host": "10.0.0.9"})
+        assert captured["host"] == "10.0.0.9"
 
     def test_connection_error_returns_502(self, client, monkeypatch):
         async def fake_discover(host, port, timeout_seconds=30.0):

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime
 
@@ -360,6 +361,21 @@ class RulesEngine:
             elif cmd["command"] == "reload_config":
                 result = await self.reload_config()
                 self.history.mark_command_done(cmd["id"], result)
+            elif cmd["command"] == "restart_process":
+                self.history.mark_command_done(cmd["id"], {"message": "Restartuję proces bridge'a"})
+                self.history.write_event("system", detail={"message": "Restart procesu bridge'a zażądany z panelu"})
+                # Twardy exit (nie sys.exit/SystemExit - to dałoby się złapać
+                # gdzieś w kodzie i zignorować) - Docker Compose ma dla obu
+                # kontenerów `restart: unless-stopped` (patrz docker-compose.yml),
+                # więc po zakończeniu procesu kontener sam wstaje ponownie,
+                # z ŚWIEŻYM stanem procesu (nowe połączenia TCP, ponowne
+                # wczytanie CAŁEGO config.yaml - w odróżnieniu od
+                # reload_config() wyżej, które celowo NIE dotyka połączeń
+                # sieciowych). Krótkie opóźnienie na osobnym zadaniu, żeby
+                # mark_command_done()/write_event() wyżej zdążyły się zapisać
+                # (SQLite - synchroniczne, ale dajemy margines na wypadek
+                # równoległych zapisów) zanim proces zniknie.
+                asyncio.get_event_loop().call_later(0.5, os._exit, 0)
             else:
                 self.history.mark_command_error(cmd["id"], f"Nieznana komenda: {cmd['command']}")
         except Exception as exc:
@@ -460,6 +476,7 @@ class RulesEngine:
                 )
 
         self._seed_satel_status_labels()
+        self._seed_tuya_status_labels()
 
         logger.info("Konfiguracja przeładowana bez restartu procesu")
         self.history.write_event("system", detail={"message": "Konfiguracja przeładowana (bez restartu procesu)"})
@@ -496,6 +513,16 @@ class RulesEngine:
                 )
                 for device_name, dps in statuses.items():
                     if dps is None:
+                        # BEZ TEGO wpisu: urządzenie, które akurat nie
+                        # odpowiada (zły local_key/IP/wersja protokołu,
+                        # offline), w ogóle nie dostałoby żadnego statusu -
+                        # zniknęłoby z panelu (a raczej NIGDY by się na nim
+                        # nie pojawiło), bez żadnej wskazówki, że w ogóle
+                        # jest skonfigurowane. Health kanału (system_health)
+                        # jest już raportowany wyżej - to tu jest per-urządzenie.
+                        self.history.set_status(
+                            f"tuya:{device_name}", "tuya", "niedostępne", label=device_name,
+                        )
                         continue
                     # DP '1' to konwencjonalnie stan on/off większości urządzeń Tuya
                     is_on = dps.get("1")
@@ -538,13 +565,42 @@ class RulesEngine:
     def _seed_satel_status_labels(self) -> None:
         """Zapisuje początkowy stan (OK/nieaktywne) dla wszystkich
         monitorowanych wejść/wyjść/stref, żeby panel pokazywał je od razu,
-        zanim cokolwiek się zmieni."""
+        zanim cokolwiek się zmieni. Pomija numery, które JUŻ MAJĄ zapisany
+        status (patrz seen niżej) - ta metoda jest wołana też z
+        reload_config() (przy KAŻDYM zapisie dowolnego formularza w /config,
+        nie tylko pól Satela), więc bez tego pomijania nadpisywałaby żywy,
+        aktualny stan placeholderem przy każdym takim zapisie."""
+        seen = {s["key"] for s in self.history.get_status("satel_input")}
+        seen |= {s["key"] for s in self.history.get_status("satel_output")}
+        seen |= {s["key"] for s in self.history.get_status("satel_partition")}
         for name, number in self.satel.monitored_zones.items():
-            self.history.set_status(f"satel_input:{number}", "satel_input", "OK", label=name)
+            key = f"satel_input:{number}"
+            if key not in seen:
+                self.history.set_status(key, "satel_input", "OK", label=name)
         for name, number in self.satel.monitored_outputs.items():
-            self.history.set_status(f"satel_output:{number}", "satel_output", "wyłączone", label=name)
+            key = f"satel_output:{number}"
+            if key not in seen:
+                self.history.set_status(key, "satel_output", "wyłączone", label=name)
         for name, number in self.config.satel.get("partitions", {}).items():
-            self.history.set_status(f"satel_partition:{number}", "satel_partition", "nieznany", label=name)
+            key = f"satel_partition:{number}"
+            if key not in seen:
+                self.history.set_status(key, "satel_partition", "nieznany", label=name)
+
+    def _seed_tuya_status_labels(self) -> None:
+        """Zapisuje wpis '?' dla KAŻDEGO skonfigurowanego urządzenia Tuya,
+        żeby panel od razu je pokazywał. BEZ TEGO: _tuya_status_poll_loop()
+        w ogóle NIE zapisuje statusu dla urządzenia, które akurat nie
+        odpowiada (zły local_key/IP/wersja protokołu, urządzenie offline -
+        patrz `if dps is None: continue` niżej) - dodane, ale niedostępne
+        urządzenie NIGDY by się nie pojawiło na głównej stronie, bez żadnej
+        wskazówki w panelu, że w ogóle istnieje w konfiguracji. Pomija
+        urządzenia, które już mają zapisany status - patrz analogiczny
+        komentarz w _seed_satel_status_labels()."""
+        seen = {s["key"] for s in self.history.get_status("tuya")}
+        for name in self.tuya.devices_cfg:
+            key = f"tuya:{name}"
+            if key not in seen:
+                self.history.set_status(key, "tuya", "?", label=name)
 
     async def _on_alarm_status_change(self) -> None:
         """Rzeczywisty callback rejestrowany przez register_alarm_status_callback
@@ -607,6 +663,7 @@ class RulesEngine:
         asyncio.create_task(self._stale_check_loop())
 
         self._seed_satel_status_labels()
+        self._seed_tuya_status_labels()
 
         # Callback z centrali: zmiana wejść -> reguły ruchu (source=satel_zone)
         # + zapis statusu (widoczny w panelu jako "wejścia Satela").
