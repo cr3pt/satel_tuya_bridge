@@ -1,7 +1,15 @@
 PyYAML>=6.0
 aiohttp>=3.9
 tinytuya>=1.14
-satel-integra>=0.3.7
+# UWAGA: przypięte < 1.0.0 CELOWO. satel-integra 1.0.0+ (używane przez
+# aktualną integrację Home Assistant) to kompletnie przepisane API -
+# inny konstruktor AsyncSatel (bez `loop`, integration_key na starcie),
+# brak monitor_status()/keep_alive()/generate_query(), publiczne
+# register_callbacks()/start(). Nasz kod (satel_client.py) jest napisany
+# pod starsze, prywatne API 0.3.x - bez tego górnego ograniczenia `pip
+# install` po prostu wybrałby najnowszą wersję i całość Satela padłaby
+# z AttributeError przy starcie.
+satel-integra>=0.3.7,<1.0.0
 paho-mqtt>=1.6
 uiprotect>=6.0
 tuya-connector-python>=0.1.2

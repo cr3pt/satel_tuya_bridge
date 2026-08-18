@@ -338,9 +338,70 @@ class TestRunForeverKeepAlive:
             await task
 
         assert fakes, "AsyncSatel nigdy nie zostało utworzone"
-        assert fakes[0].received_zone_changed_callback is zone_cb
-        assert fakes[0].received_output_changed_callback is output_cb
-        assert fakes[0].received_alarm_status_callback is alarm_cb
+        # register_*_callback() nie przekazuje `zone_cb`/`output_cb`/`alarm_cb`
+        # WPROST bibliotece, tylko opakowuje je w synchroniczny trampolinowy
+        # wrapper (patrz SatelIntegraClient._schedule()) - dlatego dostane tu
+        # obiekty nie są identyczne z oryginalnymi korutynami.
+        assert fakes[0].received_zone_changed_callback is not None
+        assert fakes[0].received_output_changed_callback is not None
+        assert fakes[0].received_alarm_status_callback is not None
+
+    async def test_callbacks_actually_run_when_library_calls_them_synchronously(self, monkeypatch):
+        """Regresja dla realnego buga: biblioteka satel_integra woła
+        _zone_changed_callback/_output_changed_callback/_alarm_status_callback
+        SYNCHRONICZNIE (zwykłe wywołanie funkcji, bez await) - patrz
+        _zone_violated()/_output_changed()/_armed() w satel_integra.py.
+        Skoro nasze callbacki (zone_cb/output_cb/alarm_cb niżej) są `async
+        def`, wywołanie ich BEZ await tylko tworzy i odrzuca obiekt korutyny
+        - CIAŁO NIGDY SIĘ NIE WYKONUJE. register_*_callback() musi więc
+        rejestrować w bibliotece synchroniczny wrapper, który sam planuje
+        korutynę (patrz SatelIntegraClient._schedule())."""
+        import satel_integra.satel_integra as satel_module
+
+        fakes = []
+
+        def fake_ctor(host, port, loop, monitored_zones=None, monitored_outputs=None):
+            fake = FakeAsyncSatelKeepAlive(host, port, loop)
+            fakes.append(fake)
+            return fake
+
+        monkeypatch.setattr(satel_module, "AsyncSatel", fake_ctor)
+
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+
+        calls = {"zone": None, "output": None, "alarm": False}
+
+        async def zone_cb(zones):
+            calls["zone"] = zones
+
+        async def output_cb(outputs):
+            calls["output"] = outputs
+
+        async def alarm_cb():
+            calls["alarm"] = True
+
+        client.register_zone_callback(zone_cb)
+        client.register_output_callback(output_cb)
+        client.register_alarm_status_callback(alarm_cb)
+
+        task = asyncio.create_task(client.run_forever())
+        await asyncio.sleep(0.05)  # daje monitor_status() fejka czas na start
+
+        # Symuluje bibliotekę: wywołuje zarejestrowane callbacki
+        # SYNCHRONICZNIE, dokładnie tak jak _zone_violated()/_output_changed()/
+        # _armed() w satel_integra.py.
+        fakes[0].received_zone_changed_callback({1: 1})
+        fakes[0].received_output_changed_callback({2: 0})
+        fakes[0].received_alarm_status_callback()
+
+        await asyncio.sleep(0.05)  # da zaplanowanym zadaniom szansę się wykonać
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert calls["zone"] == {1: 1}
+        assert calls["output"] == {2: 0}
+        assert calls["alarm"] is True
 
 
 class FakeAsyncSatelInitialStatus(FakeAsyncSatelKeepAlive):
@@ -536,3 +597,73 @@ class TestArmedPartitionNumbers:
 
         client._client = FakeClient()
         assert client.armed_partition_numbers == set()
+
+
+class TestTriggeredPartitionNumbers:
+    """SatelIntegraClient.triggered_partition_numbers - patrz disarm()
+    niżej, gdzie decyduje, czy po rozbrojeniu wysłać też clear_alarm()."""
+
+    def test_empty_when_not_connected(self):
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+        assert client.triggered_partition_numbers == set()
+
+    def test_unions_triggered_and_triggered_fire_only(self):
+        from satel_integra.satel_integra import AlarmState
+
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+
+        class FakeClient:
+            partition_states = {
+                AlarmState.TRIGGERED: [1],
+                AlarmState.TRIGGERED_FIRE: [2],
+                AlarmState.ARMED_MODE0: [3],
+            }
+
+        client._client = FakeClient()
+        assert client.triggered_partition_numbers == {1, 2}
+
+
+class TestDisarmClearsAlarmMemory:
+    """disarm() - tak jak integracja Home Assistant (alarm_control_panel.py:
+    async_alarm_disarm), po rozbrojeniu strefy będącej akurat w stanie
+    TRIGGERED/TRIGGERED_FIRE wysyła też komendę czyszczącą pamięć alarmu
+    (clear_alarm), bo centrala Satel trzyma ją jako osobną flagę."""
+
+    def _client_with_triggered(self, triggered_partitions: list[int]):
+        from satel_integra.satel_integra import AlarmState
+
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+
+        class FakeClient:
+            partition_states = {AlarmState.TRIGGERED: triggered_partitions}
+            disarm_calls: list = []
+            clear_alarm_calls: list = []
+
+            async def disarm(self, code, partitions):
+                self.disarm_calls.append((code, partitions))
+
+            async def clear_alarm(self, code, partitions):
+                self.clear_alarm_calls.append((code, partitions))
+
+        client._client = FakeClient()
+        return client
+
+    async def test_sends_clear_alarm_when_partition_was_triggered(self, monkeypatch):
+        real_sleep = asyncio.sleep
+        monkeypatch.setattr(asyncio, "sleep", lambda *a, **k: real_sleep(0))
+        client = self._client_with_triggered([1])
+        await client.disarm(partitions=[1])
+        assert client._client.disarm_calls == [("key", [1])]
+        assert client._client.clear_alarm_calls == [("key", [1])]
+
+    async def test_skips_clear_alarm_when_not_triggered(self):
+        client = self._client_with_triggered([])
+        await client.disarm(partitions=[1])
+        assert client._client.disarm_calls == [("key", [1])]
+        assert client._client.clear_alarm_calls == []
+
+    async def test_skips_clear_alarm_when_different_partition_triggered(self):
+        client = self._client_with_triggered([2])
+        await client.disarm(partitions=[1])
+        assert client._client.disarm_calls == [("key", [1])]
+        assert client._client.clear_alarm_calls == []

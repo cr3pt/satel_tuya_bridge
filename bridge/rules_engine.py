@@ -66,6 +66,9 @@ class RulesEngine:
             status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 15),
         )
         self._active_timers: dict[str, asyncio.Task] = {}
+        # Zadanie odliczające debounce dla _on_alarm_status_change() niżej -
+        # patrz tam po wyjaśnienie.
+        self._alarm_status_debounce_task: asyncio.Task | None = None
         self.boiler_publishers = build_boiler_publishers(config, history=self.history)
         self.ebus_listener: EbusMqttListener | None = None  # utworzony w start(), potrzebny reload_config()
         self._notify_cfg = notify_cfg
@@ -543,16 +546,37 @@ class RulesEngine:
         for name, number in self.config.satel.get("partitions", {}).items():
             self.history.set_status(f"satel_partition:{number}", "satel_partition", "nieznany", label=name)
 
-    async def _handle_alarm_status_change(self) -> None:
-        """Callback rejestrowany przez SatelIntegraClient.register_alarm_status_callback
-        (patrz start() niżej) - odświeża status uzbrojenia WSZYSTKICH
-        skonfigurowanych stref w panelu/MQTT.
+    async def _on_alarm_status_change(self) -> None:
+        """Rzeczywisty callback rejestrowany przez register_alarm_status_callback
+        (patrz start() niżej) - odbija (debounce'uje) wybuchy powiadomień w
+        _handle_alarm_status_change() poniżej, tak samo jak robi to
+        integracja Home Assistant (PARTITION_UPDATE_DEBOUNCE_DELAY=0.15 w
+        homeassistant/components/satel_integra/coordinator.py).
 
-        WAŻNE: satel_integra woła ten callback BEZ ŻADNYCH argumentów - to
-        tylko powiadomienie "coś się zmieniło" (uzbrojenie ALBO rozłączenie,
-        patrz register_alarm_status_callback w satel_client.py), nie niesie
-        samego stanu. Aktualny stan trzeba więc odczytać osobno z
-        self.satel.armed_partition_numbers, dla WSZYSTKICH skonfigurowanych
+        DLACZEGO: centrala wysyła stan każdej strefy JAKO OSOBNĄ ramkę per
+        tryb (0x0A/0x2A/0x0B/0x0C/0x0E/... - patrz AsyncSatel.partition_states),
+        więc pojedyncza zmiana uzbrojenia/alarmu potrafi wywołać ten callback
+        KILKA razy pod rząd, zanim partition_states w bibliotece zdąży się
+        w pełni ustabilizować. Bez debounce _handle_alarm_status_change()
+        publikowałoby do MQTT/historii kilka pośrednich (niepełnych) stanów
+        zamiast jednego, ostatecznego."""
+        if self._alarm_status_debounce_task is not None and not self._alarm_status_debounce_task.done():
+            self._alarm_status_debounce_task.cancel()
+        self._alarm_status_debounce_task = asyncio.create_task(self._debounced_alarm_status_change())
+
+    async def _debounced_alarm_status_change(self) -> None:
+        try:
+            await asyncio.sleep(0.15)
+        except asyncio.CancelledError:
+            return
+        await self._handle_alarm_status_change()
+
+    async def _handle_alarm_status_change(self) -> None:
+        """Odświeża status uzbrojenia WSZYSTKICH skonfigurowanych stref w
+        panelu/MQTT. Wołane (z debounce, patrz _on_alarm_status_change
+        wyżej) po każdym powiadomieniu "coś się zmieniło" z Satela -
+        powiadomienie samo nie niesie stanu, więc trzeba go odczytać osobno
+        z self.satel.armed_partition_numbers, dla WSZYSTKICH skonfigurowanych
         stref (nie tylko tej, która się akurat zmieniła - nie wiemy, która
         to była). Wydzielone jako osobna metoda (nie domknięcie wewnątrz
         start()) celowo - da się przetestować wprost, bez uruchamiania
@@ -637,7 +661,7 @@ class RulesEngine:
 
         self.satel.register_zone_callback(_on_zone_change)
         self.satel.register_output_callback(_on_output_change)
-        self.satel.register_alarm_status_callback(self._handle_alarm_status_change)
+        self.satel.register_alarm_status_callback(self._on_alarm_status_change)
 
         # Wszystkie długożyjące połączenia jako nadzorowane zadania w tle -
         # każde samo się podnosi po awarii (patrz bridge/resilience.py).
