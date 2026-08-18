@@ -482,6 +482,7 @@ async function loadSatelFieldTypes() {
 function statusCardClass(category, value) {
   const v = (value || '').toString().toLowerCase();
   if (category === 'satel_input') return v === 'naruszone' ? 'violated' : 'ok';
+  if (category === 'tuya' && v === 'niedostępne') return 'violated';
   if (category === 'satel_output' || category === 'tuya') return v.startsWith('włącz') ? 'on' : 'off';
   if (category === 'system_health') return v.startsWith('połączono') ? 'ok' : 'violated';
   if (category === 'satel_partition') return v === 'uzbrojona' ? 'violated' : 'ok';

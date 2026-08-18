@@ -175,8 +175,17 @@
 
   <div class="actions-bar">
     <button id="saveConnectionsBtn" type="button">Zapisz połączenia</button>
+    <button id="restartBtn" type="button" class="secondary">🔄 Zrestartuj bridge i panel teraz</button>
   </div>
   <div id="connectionsMsg" class="msg-box"></div>
+  <div class="section-hint" style="margin-top: 10px;">
+    Zapisanie połączeń NIE restartuje automatycznie - zmiany hosta/portu/kluczy
+    wymagają pełnego restartu procesu (żywe połączenia TCP z centralą/brokerami
+    nie są odtwarzane w locie). Użyj przycisku wyżej, żeby zrobić to od razu z
+    panelu, bez dostępu do konsoli/SSH - restartuje OBA kontenery (bridge +
+    panel); ta strona przestanie odpowiadać na kilka-kilkanaście sekund.
+  </div>
+  <div id="restartMsg" class="msg-box"></div>
 </div>
 
 <!-- ============================== eBUS ============================== -->
@@ -229,10 +238,18 @@
 <div class="section" id="satelSection">
   <h2>Satel - strefy, wyjścia, wejścia IP, partycje</h2>
   <div class="section-hint">
-    Bez przycisku "Wykryj" - protokół integracji Satela nie udostępnia listy
-    skonfigurowanych stref/wyjść (tylko bieżący stan already-znanych
-    numerów), więc numer i nazwę trzeba przepisać z DLOADX ręcznie. Numery
-    muszą pokrywać się z rzeczywistą konfiguracją centrali.
+    Protokół integracji Satela nie udostępnia listy WSZYSTKICH skonfigurowanych
+    stref/wyjść wraz z nazwami (ograniczenie protokołu, nie da się tego
+    obejść) - dlatego przycisk "Wykryj" niżej nasłuchuje 30 sekund i notuje
+    numery, które w tym czasie FIZYCZNIE zmienią stan (otwórz/zamknij drzwi
+    i okna, wywołaj czujki ruchu, załącz wyjście). Strefy, które nie
+    zmienią stanu w tym oknie, nie zostaną wykryte - dodaj je ręcznie, jeśli
+    znasz ich numer z DLOADX.
+  </div>
+
+  <div class="discover-row">
+    <button type="button" class="secondary" id="discoverSatelBtn">🔍 Wykryj aktywne strefy/wyjścia (nasłuchuj 30s)</button>
+    <span class="discover-status" id="satelDiscoverStatus"></span>
   </div>
 
   <div class="field-group">
@@ -462,6 +479,30 @@ document.getElementById('saveConnectionsBtn').addEventListener('click', async ()
     }
   } catch (e) {
     showMsg('connectionsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+document.getElementById('restartBtn').addEventListener('click', async () => {
+  if (!confirm('Zrestartować bridge i panel teraz? Panel przestanie odpowiadać na kilka-kilkanaście sekund.')) {
+    return;
+  }
+  const btn = document.getElementById('restartBtn');
+  btn.disabled = true;
+  try {
+    const resp = await authorizedFetch('/api/system/restart', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('restartMsg', false, data.error || 'Błąd restartu');
+      btn.disabled = false;
+      return;
+    }
+    showMsg('restartMsg', true, data.message);
+    // Panel zaraz zniknie razem z procesem - odśwież stronę po chwili,
+    // żeby złapać go z powrotem, gdy Docker go podniesie.
+    setTimeout(() => window.location.reload(), 15000);
+  } catch (e) {
+    showMsg('restartMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+    btn.disabled = false;
   }
 });
 
@@ -786,6 +827,45 @@ async function loadSatelFields() {
   (data.monitored_outputs || []).forEach(o => addZoneOrOutputRow('outputsRows', o, SATEL_OUTPUT_TYPES));
   (data.virtual_inputs || []).forEach(v => addVirtualInputRow(v));
 }
+
+document.getElementById('discoverSatelBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('discoverSatelBtn');
+  const status = document.getElementById('satelDiscoverStatus');
+  btn.disabled = true;
+  status.textContent = 'Nasłuchuję 30s - przejdź teraz przez pilnowane pomieszczenia (otwórz/zamknij drzwi i okna, wywołaj czujki ruchu)...';
+  try {
+    const resp = await fetch('/api/discover/satel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timeout_seconds: 30 }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = '❌ ' + (data.error || 'Błąd wykrywania');
+      return;
+    }
+    const existingZones = new Set(collectZoneOrOutputRows('zonesRows').map(z => String(z.number)));
+    const existingOutputs = new Set(collectZoneOrOutputRows('outputsRows').map(o => String(o.number)));
+    let added = 0;
+    (data.zones || []).forEach(number => {
+      if (existingZones.has(String(number))) return;
+      addZoneOrOutputRow('zonesRows', { name: `Wejście ${number}`, number }, SATEL_ZONE_TYPES);
+      added++;
+    });
+    (data.outputs || []).forEach(number => {
+      if (existingOutputs.has(String(number))) return;
+      addZoneOrOutputRow('outputsRows', { name: `Wyjście ${number}`, number }, SATEL_OUTPUT_TYPES);
+      added++;
+    });
+    status.textContent = added
+      ? `Wykryto aktywność na ${added} numerach - dodano jako nowe wiersze niżej, nadaj im właściwe nazwy/rodzaj i zapisz.`
+      : 'Nie wykryto żadnej aktywności - żadna czujka/wyjście nie zmieniły stanu podczas nasłuchu. Spróbuj ponownie i fizycznie wyzwól interesujące Cię strefy w tym oknie.';
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 document.getElementById('saveSatelBtn').addEventListener('click', async () => {
   const payload = {

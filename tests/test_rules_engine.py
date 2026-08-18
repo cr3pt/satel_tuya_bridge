@@ -215,6 +215,29 @@ class TestBoilerValueRouting:
         assert any(s["value"] == "heating" for s in statuses)
 
 
+class TestExecuteCommandRestartProcess:
+    """_execute_command('restart_process') - patrz api_system_restart w
+    dashboard/app.py: pełny restart obu kontenerów (Docker Compose ma
+    restart: unless-stopped dla obu serwisów), w odróżnieniu od
+    'reload_config' (patrz TestReloadConfig niżej), który celowo NIE dotyka
+    żywych połączeń sieciowych. Monkeypatchuje os._exit - inaczej test
+    zabiłby własny proces."""
+
+    async def test_marks_command_done_and_schedules_exit(self, engine, monkeypatch):
+        import bridge.rules_engine as re_module
+
+        exit_calls = []
+        monkeypatch.setattr(re_module.os, "_exit", lambda code: exit_calls.append(code))
+
+        cmd_id = engine.history.enqueue_command("restart_process", {})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        assert engine.history.get_command(cmd_id)["status"] == "done"
+        await asyncio.sleep(0.6)  # dłużej niż 0.5s opóźnienie przed os._exit(0)
+        assert exit_calls == [0]
+
+
 class TestReloadConfig:
     """RulesEngine.reload_config() - przeładowanie 'lekkiej' konfiguracji
     (czujniki eBUS/pola Satela/urządzenia Tuya/automatyzacje/alarmy) BEZ

@@ -404,6 +404,68 @@ class TestRunForeverKeepAlive:
         assert calls["alarm"] is True
 
 
+class TestConnectionWatchdog:
+    """run_forever() - regresja dla realnie zaobserwowanego wzorca w logach:
+    'Starting monitor_status loop' -> 'Got exception: N bytes read... Most
+    likely the other side has disconnected!' -> 'Start monitoring failed,
+    sleeping for 10s...' - biblioteka satel_integra, gdy start_monitoring()
+    zaraz po connect() się nie powiedzie, PONAWIA połączenie WEWNĘTRZNIE, w
+    nieskończoność, nigdy nie zwracając sterowania do run_forever() - bez
+    watchdoga Supervisor (i system_health w panelu) nigdy by się o tym nie
+    dowiedział. Watchdog obserwuje `self._client.connected` z ZEWNĄTRZ i
+    wymusza pełne ponowne połączenie (cancel monitor_task), gdy widzi dwa
+    kolejne 'nie' pod rząd (~10s)."""
+
+    async def test_cancels_stuck_monitor_task_when_disconnected(self, monkeypatch):
+        real_sleep = asyncio.sleep
+        monkeypatch.setattr(asyncio, "sleep", lambda *a, **k: real_sleep(0))
+        import satel_integra.satel_integra as satel_module
+
+        class StuckFake(FakeAsyncSatelKeepAlive):
+            """`connected` nie jest zdefiniowane (jak w reszcie fejków w tym
+            pliku) - domyślne getattr(..., False) w watchdogu odzwierciedla
+            więc dokładnie zaobserwowany scenariusz: biblioteka "utknęła"
+            wewnątrz monitor_status(), które nigdy nie wraca samo z siebie."""
+
+            def __init__(self, host, port, loop):
+                super().__init__(host, port, loop)
+                self.cancelled = False
+
+            async def monitor_status(self, alarm_status_callback=None,
+                                      zone_changed_callback=None, output_changed_callback=None):
+                # Event, które nigdy się nie ustawi - w odróżnieniu od
+                # asyncio.sleep(...), nie jest dotknięte spatchowaniem
+                # asyncio.sleep wyżej, więc naprawdę "wisi" w miejscu, dopóki
+                # watchdog go nie anuluje - dokładnie symulując bibliotekę
+                # utkniętą wewnątrz własnej, wewnętrznej pętli ponawiania.
+                self.monitor_status_called = True
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    self.cancelled = True
+                    raise
+
+        fakes = []
+
+        def fake_ctor(host, port, loop, monitored_zones=None, monitored_outputs=None):
+            fake = StuckFake(host, port, loop)
+            fakes.append(fake)
+            return fake
+
+        monkeypatch.setattr(satel_module, "AsyncSatel", fake_ctor)
+
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+        task = asyncio.create_task(client.run_forever())
+        await real_sleep(0.1)  # kilka obrotów pętli watchdoga (asyncio.sleep spatchowany na 0)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert fakes, "AsyncSatel nigdy nie zostało utworzone"
+        assert fakes[0].monitor_status_called is True
+        assert fakes[0].cancelled is True
+
+
 class FakeAsyncSatelInitialStatus(FakeAsyncSatelKeepAlive):
     """Jak FakeAsyncSatelKeepAlive, ale dodatkowo przechwytuje surowe dane
     wysłane przez _send_data() - do testu cyklicznego dopytywania o stan
@@ -639,11 +701,21 @@ class TestDisarmClearsAlarmMemory:
             disarm_calls: list = []
             clear_alarm_calls: list = []
 
+            def __init__(self):
+                # Symuluje 0xEF ("command result") - patrz
+                # SatelIntegraClient._send_and_confirm(), które na to czeka.
+                self._command_status_event = asyncio.Event()
+                self._command_status = False
+
             async def disarm(self, code, partitions):
                 self.disarm_calls.append((code, partitions))
+                self._command_status = {"error": "OK"}
+                self._command_status_event.set()
 
             async def clear_alarm(self, code, partitions):
                 self.clear_alarm_calls.append((code, partitions))
+                self._command_status = {"error": "OK"}
+                self._command_status_event.set()
 
         client._client = FakeClient()
         return client
@@ -667,3 +739,53 @@ class TestDisarmClearsAlarmMemory:
         await client.disarm(partitions=[1])
         assert client._client.disarm_calls == [("key", [1])]
         assert client._client.clear_alarm_calls == []
+
+
+class TestSendAndConfirm:
+    """_send_and_confirm() - regresja dla zgłoszonego z realnej instalacji
+    'nie uzbraja stref, ale poprawnie wyświetla ich stan' - biblioteka
+    satel_integra sama NIE czeka na potwierdzenie komendy zapisu (0xEF), a
+    arm()/disarm()/set_output() wcześniej uznawały samo wysłanie bajtów po
+    sieci za sukces. Błędny kod użytkownika (satel.integration_key) albo
+    odrzucenie komendy przez centralę kończyły się więc CISZĄ porażką -
+    stąd czytanie stanu (broadcast/poll, patrz TestAlarmStatusCallback w
+    test_rules_engine.py) działało poprawnie, a same komendy zapisu nie."""
+
+    def _client_with_fake(self):
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+
+        class FakeClient:
+            def __init__(self):
+                self._command_status_event = asyncio.Event()
+                self._command_status = False
+
+        client._client = FakeClient()
+        return client
+
+    async def test_succeeds_when_panel_confirms_ok(self):
+        client = self._client_with_fake()
+
+        async def send():
+            client._client._command_status = {"error": "OK"}
+            client._client._command_status_event.set()
+
+        await client._send_and_confirm("test", send())  # nie powinno rzucić
+
+    async def test_raises_when_panel_rejects_command(self):
+        client = self._client_with_fake()
+
+        async def send():
+            client._client._command_status = {"error": "User code not found"}
+            client._client._command_status_event.set()
+
+        with pytest.raises(RuntimeError, match="User code not found"):
+            await client._send_and_confirm("test", send())
+
+    async def test_raises_connection_error_on_timeout(self):
+        client = self._client_with_fake()
+
+        async def send():
+            pass  # nigdy nie ustawia _command_status_event - symuluje brak odpowiedzi centrali
+
+        with pytest.raises(ConnectionError, match="nie potwierdziła"):
+            await client._send_and_confirm("test", send(), timeout=0.05)
