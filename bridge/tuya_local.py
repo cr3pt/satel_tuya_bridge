@@ -240,19 +240,23 @@ class TuyaLocalController:
         return result.get("dps", {}) if isinstance(result, dict) else {}
 
     async def get_all_statuses(self) -> dict[str, dict]:
-        """Odpytuje wszystkie skonfigurowane urządzenia po kolei. Sekwencyjnie
-        (nie równolegle) - RPi Zero W ma jeden rdzeń, a tinytuya i tak działa
-        blokująco w wątku wykonawcy; równoległe odpytanie nie przyspieszy,
-        za to zwiększy szczyt zużycia pamięci."""
-        results = {}
-        for name in self.devices_cfg:
-            try:
-                results[name] = await self.get_status(name)
-            except Exception:
-                # get_status już zalogował szczegóły przez _call_with_retry -
-                # tu tylko zaznaczamy urządzenie jako niedostępne, nie
-                # przerywamy pętli dla pozostałych urządzeń.
-                results[name] = None
+        """Odpytuje wszystkie skonfigurowane urządzenia RÓWNOLEGLE
+        (asyncio.gather) - tinytuya działa blokująco w wątku wykonawcy
+        (patrz _call_with_retry: run_in_executor), więc N urządzeń
+        równolegle to N krótkich sieciowych oczekiwań nakładających się na
+        siebie zamiast N razy dłuższego sumarycznego czasu odpytania przy
+        wielu urządzeniach. Docker ma do dyspozycji więcej niż jeden rdzeń,
+        więc to bezpieczne przyspieszenie bez realnego ryzyka."""
+        names = list(self.devices_cfg)
+        results_list = await asyncio.gather(
+            *(self.get_status(name) for name in names), return_exceptions=True,
+        )
+        results: dict[str, dict | None] = {}
+        for name, result in zip(names, results_list):
+            # get_status już zalogował szczegóły przez _call_with_retry -
+            # tu tylko zaznaczamy urządzenie jako niedostępne, nie
+            # przerywamy zbierania wyników dla pozostałych urządzeń.
+            results[name] = None if isinstance(result, Exception) else result
         return results
 
     async def turn_on_for_duration(

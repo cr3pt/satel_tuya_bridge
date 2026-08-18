@@ -3,9 +3,12 @@ COŚ ZMIENIAJĄ (zapis konfiguracji czujników, uzbrajanie/rozbrajanie stref).
 Zwykłe przeglądanie panelu (historia, statusy, dziennik zdarzeń) zostaje
 otwarte - to był świadomy wybór, nie przez zapomnienie.
 
-Pojedyncze hasło administratora (nie ma potrzeby wielu kont w domowym
-systemie), trzymane jako hash (werkzeug - ta sama biblioteka, której i tak
-używa Flask, więc zero nowej zależności). Dwa sposoby zalogowania:
+Pojedyncze konto administratora (nazwa użytkownika + hasło, nie ma potrzeby
+wielu kont w domowym systemie) - hasło trzymane jako hash (werkzeug - ta
+sama biblioteka, której i tak używa Flask, więc zero nowej zależności),
+nazwa użytkownika jawnym tekstem w config.yaml (nie jest sekretem, tylko
+identyfikatorem - jak login, nie hasło). Oba ustawiane raz w kreatorze
+(/setup) przy pierwszej konfiguracji. Dwa sposoby zalogowania:
 
 1. **Sesja przez `/login`** (używana przez panel webowy) - hasło wpisujesz
    RAZ w prawdziwym, zamaskowanym polu formularza (`<input type=password>`,
@@ -48,6 +51,7 @@ SESSION_TTL_SECONDS = 12 * 3600  # 12h - wystarczająco długo na jedną "sesję
 
 class AuthGuard:
     def __init__(self, auth_cfg: dict | None):
+        self.username = (auth_cfg or {}).get("username") or "admin"
         self.password_hash = (auth_cfg or {}).get("password_hash")
         self.max_attempts = (auth_cfg or {}).get("max_failed_attempts", 5)
         self.lockout_seconds = (auth_cfg or {}).get("lockout_seconds", 300)
@@ -78,9 +82,14 @@ class AuthGuard:
         self._failed_attempts.pop(ip, None)
 
     # -- logowanie sesyjne (/login, /api/login, /api/logout) ------------
-    def check_password(self, password: str) -> tuple[bool, str]:
-        """Sprawdza hasło wprost (nie z nagłówka Basic Auth) - używane przez
-        POST /api/login. Ten sam rate-limiting po IP co reszta metod."""
+    def check_password(self, username: str, password: str) -> tuple[bool, str]:
+        """Sprawdza login+hasło wprost (nie z nagłówka Basic Auth) - używane
+        przez POST /api/login. Ten sam rate-limiting po IP co reszta metod.
+
+        Nazwa użytkownika NIE jest sekretem (jak hasło) - porównanie wprost
+        (`!=`) wystarcza, timing attack na samą nazwę nic tu nie ujawnia,
+        bo i tak trzeba jeszcze trafić hasło (sprawdzane przez
+        check_password_hash, które JEST odporne na timing attack)."""
         if not self.configured:
             return False, (
                 "Panel nie ma skonfigurowanego hasła administratora "
@@ -93,10 +102,10 @@ class AuthGuard:
             logger.warning("Zablokowano próbę logowania z %s - zbyt wiele nieudanych prób", ip)
             return False, f"Zbyt wiele nieudanych prób - spróbuj ponownie za maks. {self.lockout_seconds}s"
 
-        if not password or not check_password_hash(self.password_hash, password):
+        if username != self.username or not password or not check_password_hash(self.password_hash, password):
             self._record_failure(ip)
             logger.warning("Nieudana próba logowania z %s", ip)
-            return False, "Nieprawidłowe hasło"
+            return False, "Nieprawidłowa nazwa użytkownika lub hasło"
 
         self._record_success(ip)
         return True, ""
@@ -151,19 +160,20 @@ class AuthGuard:
         if not auth or not auth.password:
             return False, "Wymagana autoryzacja"
 
-        if not check_password_hash(self.password_hash, auth.password):
+        if auth.username != self.username or not check_password_hash(self.password_hash, auth.password):
             self._record_failure(ip)
             logger.warning("Nieudana próba logowania z %s", ip)
-            return False, "Nieprawidłowe hasło"
+            return False, "Nieprawidłowa nazwa użytkownika lub hasło"
 
         self._record_success(ip)
         return True, ""
 
 
-def require_auth(guard_attr: str = "auth_guard"):
+def require_auth(guard_attr: str = "auth_guard", get_guard=None):
     """Dekorator dla endpointów Flask, które ZMIENIAJĄ stan (config,
-    uzbrojenie/rozbrojenie). `guard_attr` to nazwa zmiennej globalnej w
-    module wywołującym (dashboard/app.py), przez którą dekorator dostaje
+    uzbrojenie/rozbrojenie). Domyślnie (`get_guard=None`) `guard_attr` to
+    nazwa zmiennej globalnej w module, w którym fizycznie zdefiniowana jest
+    dekorowana funkcja (dashboard/app.py), przez którą dekorator dostaje
     się do skonfigurowanego AuthGuard.
 
     CELOWO czyta ją z `fn.__globals__` (globalne zmienne modułu, w którym
@@ -173,11 +183,18 @@ def require_auth(guard_attr: str = "auth_guard"):
     żądania tworzyłby DRUGĄ, osobną kopię modułu pod inną nazwą w
     sys.modules - z własnymi, nigdy nie zainicjowanymi zmiennymi globalnymi
     (auth_guard zawsze None, mimo poprawnie skonfigurowanego hasła) - stąd
-    fn.__globals__ zamiast dodatkowego importu."""
+    fn.__globals__ zamiast dodatkowego importu.
+
+    `get_guard` (callable bez argumentów, zwracające AuthGuard) to WYJŚCIE
+    z tego samego problemu dla wtyczek (plugins/<id>/routes.py) - tam
+    dekorowana funkcja jest zdefiniowana we WŁASNYM module wtyczki, którego
+    `__globals__` nie ma (i nie powinien mieć) zmiennej `auth_guard` -
+    dashboard/app.py przekazuje wtedy `get_guard=lambda: auth_guard` przy
+    rejestracji (patrz plugins/__init__.py)."""
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            guard: AuthGuard = fn.__globals__[guard_attr]
+            guard: AuthGuard = get_guard() if get_guard is not None else fn.__globals__[guard_attr]
             ok, message = guard.check()
             if not ok:
                 response = jsonify({"error": message})

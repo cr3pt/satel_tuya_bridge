@@ -248,7 +248,7 @@ class RulesEngine:
             elif action == "output":
                 await self.satel.set_output(rule["output_number"], True)
             elif action == "arm":
-                await self.satel.arm(rule.get("arm_mode", 0))
+                await self.satel.arm(rule.get("arm_mode", 0), rule.get("partitions"))
             logger.info("Reguła kamery: %s(%s) -> %s", source, camera_id, action)
             self.history.write_event(
                 "camera_alarm", source=f"{source}:{camera_id}", detail={"action": action},
@@ -404,7 +404,7 @@ class RulesEngine:
         dużo bardziej ryzykowne niż warte tego dla ustawień, które i tak
         zmienia się rzadko (w odróżnieniu od list czujników/urządzeń/reguł,
         edytowanych często)."""
-        new_config = BridgeConfig.load(self.config.config_file)
+        new_config = BridgeConfig.load(self.config.db_path)
         self.config = new_config
 
         # Tuya lokalne - bezpieczne do podmiany w całości: TuyaLocalController

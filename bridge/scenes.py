@@ -74,9 +74,14 @@ class SceneRunner:
         elif kind == "satel_virtual_input":
             await self.satel_virtual_inputs.trigger(action["virtual_input"])
         elif kind == "satel_arm":
-            await self.satel.arm(action.get("mode", 0))
+            # `partitions` opcjonalne - gdy akcja go nie poda (stare sceny
+            # sprzed tego pola, albo instalacja z jedną strefą), arm()
+            # sam spada na domyślną (SatelIntegraClient.partition) - patrz
+            # tam. Z wieloma strefami warto podać je JAWNIE per scena
+            # (jedna scena może uzbrajać tylko "Garaż", inna wszystko).
+            await self.satel.arm(action.get("mode", 0), action.get("partitions"))
         elif kind == "satel_disarm":
-            await self.satel.disarm()
+            await self.satel.disarm(action.get("partitions"))
         elif kind == "delay":
             await asyncio.sleep(action["seconds"])
         else:

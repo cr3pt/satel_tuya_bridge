@@ -361,8 +361,11 @@ sudo systemctl enable --now mosquitto</pre>
     <div class="step-header"><div class="step-number">4</div><div class="step-title">Hasło administratora panelu</div></div>
     <div class="step-hint">Wymagane tylko do zmiany ustawień i uzbrajania/rozbrajania - podgląd panelu zostaje bez hasła.</div>
     <div class="field-row">
-      <div class="field"><label>Hasło (min. 8 znaków)</label><input type="password" id="admin_password"></div>
-      <div class="field"><label>Powtórz hasło</label><input type="password" id="admin_password_confirm"></div>
+      <div class="field"><label>Nazwa użytkownika</label><input type="text" id="admin_username" value="admin" autocomplete="username"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Hasło (min. 8 znaków)</label><input type="password" id="admin_password" autocomplete="new-password"></div>
+      <div class="field"><label>Powtórz hasło</label><input type="password" id="admin_password_confirm" autocomplete="new-password"></div>
     </div>
   </div>
 
@@ -1240,6 +1243,7 @@ function collectFormData() {
       mqtt_host: document.getElementById('ebus_mqtt_host').value.trim(),
       mqtt_port: document.getElementById('ebus_mqtt_port').value,
     },
+    admin_username: document.getElementById('admin_username').value.trim(),
     admin_password: document.getElementById('admin_password').value,
     admin_password_confirm: document.getElementById('admin_password_confirm').value,
     notifications: { ntfy_topic_url: document.getElementById('ntfy_topic_url').value.trim() },
@@ -1296,6 +1300,7 @@ function populateForm(data) {
     document.getElementById('ebusLocalBrokerInfo').style.display = '';
   }
 
+  set('admin_username', data.admin_username || 'admin');
   set('admin_password', data.admin_password); set('admin_password_confirm', data.admin_password_confirm);
   set('ntfy_topic_url', (data.notifications || {}).ntfy_topic_url);
 
@@ -1347,6 +1352,7 @@ function validateStep(n, data) {
   } else if (n === 3) {
     if (!data.ebus.mqtt_host) errors.push('Adres brokera MQTT (eBUS) jest wymagany');
   } else if (n === 4) {
+    if (!data.admin_username) errors.push('Nazwa użytkownika administratora jest wymagana');
     if (data.admin_password.length < 8) errors.push('Hasło panelu: minimum 8 znaków');
     if (data.admin_password !== data.admin_password_confirm) errors.push('Hasła nie są identyczne');
   } else if (n === 6) {

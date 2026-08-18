@@ -2,6 +2,7 @@
 import pytest
 
 from bridge.config import BridgeConfig
+from bridge.config_store import ConfigStore
 
 MINIMAL_CONFIG = """
 satel:
@@ -63,11 +64,6 @@ def test_missing_required_section_raises(tmp_path):
         BridgeConfig.load(tmp_path / "config.yaml")
 
 
-def test_sensors_file_path_relative_to_config(config_dir):
-    config = BridgeConfig.load(config_dir / "config.yaml")
-    assert config.sensors_file == config_dir / "sensors.yaml"
-
-
 def test_convenience_properties(config_dir):
     config = BridgeConfig.load(config_dir / "config.yaml")
     assert config.satel["host"] == "127.0.0.1"
@@ -104,7 +100,7 @@ class TestAutomationsFile:
         assert config.raw["scenes"][0]["name"] == "powitanie"
         assert config.raw["reguły_ruchu"][0]["zone_number"] == 5
         assert config.raw["presence_simulation"]["enabled"] is True
-        assert config.automations_file == config_dir / "automations.yaml"
+        assert config.store.get("automations")["scenes"][0]["name"] == "powitanie"
 
     def test_missing_automations_file_defaults_to_empty(self, config_dir):
         config = BridgeConfig.load(config_dir / "config.yaml")
@@ -130,7 +126,11 @@ scenes:
         assert config.raw["reguły_ruchu"][0]["zone_number"] == 9
         assert config.raw["scenes"][0]["name"] == "legacy_scene"
 
-    def test_custom_automations_file_path(self, tmp_path):
+    def test_custom_automations_file_path_used_only_for_one_time_migration(self, tmp_path):
+        """Niestandardowa nazwa pliku (`automations_file`) miała sens tylko
+        dla starych, plikowych instalacji - respektowana PRZY MIGRACJI (żeby
+        znaleźć zawartość do zaimportowania), ale PO migracji to zwykły
+        dokument "automations" w bazie, bez własnej ścieżki."""
         config_text = MINIMAL_CONFIG + "automations_file: custom_automations.yaml\n"
         (tmp_path / "config.yaml").write_text(config_text, encoding="utf-8")
         (tmp_path / "custom_automations.yaml").write_text(
@@ -138,7 +138,7 @@ scenes:
         )
         config = BridgeConfig.load(tmp_path / "config.yaml")
         assert config.raw["scenes"][0]["name"] == "x"
-        assert config.automations_file == tmp_path / "custom_automations.yaml"
+        assert config.store.get("automations")["scenes"][0]["name"] == "x"
 
 
 SATEL_FIELDS_YAML = """
@@ -198,7 +198,7 @@ class TestSatelFieldsAndTuyaDevicesFiles:
         }
         assert config.raw["satel"]["zone_types"] == {"Salon": "ruch"}
         assert config.raw["satel"]["output_types"] == {"Syrena": "syrena"}
-        assert config.satel_fields_file == config_dir / "satel_fields.yaml"
+        assert config.store.get("satel_fields")["partitions"] == {"Dom": 1, "Garaz": 2}
 
     def test_tuya_devices_file_overrides_inline_values(self, config_dir):
         (config_dir / "tuya_devices.yaml").write_text(TUYA_DEVICES_YAML, encoding="utf-8")
@@ -210,7 +210,7 @@ class TestSatelFieldsAndTuyaDevicesFiles:
         assert config.raw["tuya"]["zigbee_gateways"] == {
             "brama_salon": {"id": "gw1", "ip": "192.168.1.60", "local_key": "gwkey", "version": 3.4},
         }
-        assert config.tuya_devices_file == config_dir / "tuya_devices.yaml"
+        assert config.store.get("tuya_devices")["devices"]["gniazdko_salon"]["ip"] == "192.168.1.50"
 
     def test_missing_satel_fields_and_tuya_devices_files_default_to_empty(self, config_dir):
         config = BridgeConfig.load(config_dir / "config.yaml")
@@ -247,7 +247,10 @@ class TestSatelFieldsAndTuyaDevicesFiles:
         config = BridgeConfig.load(tmp_path / "config.yaml")
         assert config.raw["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"
 
-    def test_custom_satel_fields_and_tuya_devices_file_paths(self, tmp_path):
+    def test_custom_satel_fields_and_tuya_devices_file_paths_used_only_for_migration(self, tmp_path):
+        """Jak wyżej dla automations_file - `fields_file`/`devices_file`
+        respektowane tylko przy jednorazowej migracji ze starej instalacji
+        plikowej, żeby znaleźć zawartość do zaimportowania."""
         config_text = MINIMAL_CONFIG.replace(
             'integration_key: "x"\n', 'integration_key: "x"\n  fields_file: custom_satel.yaml\n',
         ).replace("tuya:\n  devices: {}", "tuya:\n  devices: {}\n  devices_file: custom_tuya.yaml")
@@ -260,5 +263,65 @@ class TestSatelFieldsAndTuyaDevicesFiles:
         config = BridgeConfig.load(tmp_path / "config.yaml")
         assert config.raw["satel"]["partitions"] == {"Dom": 1}
         assert config.raw["tuya"]["devices"]["x"]["ip"] == "1.2.3.4"
-        assert config.satel_fields_file == tmp_path / "custom_satel.yaml"
-        assert config.tuya_devices_file == tmp_path / "custom_tuya.yaml"
+
+
+class TestDatabaseMigration:
+    """Konfiguracja żyje w config.db (bridge/config_store.py) - stare
+    instalacje plikowe migrują się do niej automatycznie i jednorazowo,
+    patrz docstring migrate_legacy_yaml_dir()."""
+
+    def test_first_load_creates_db_and_renames_legacy_files(self, config_dir):
+        assert not (config_dir / "config.db").exists()
+        BridgeConfig.load(config_dir / "config.yaml")
+        assert (config_dir / "config.db").exists()
+        assert not (config_dir / "config.yaml").exists()
+        assert (config_dir / "config.yaml.migrated").exists()
+        assert (config_dir / "sensors.yaml.migrated").exists()
+
+    def test_second_load_reads_db_directly_ignores_stale_legacy_content(self, config_dir):
+        """Migracja jest jednorazowa - modyfikacja resztek starych plików
+        (albo ich przywrócenie z backupu) PO migracji nie powinna niczego
+        cofnąć, bo od tego momentu bridge w ogóle ich nie czyta."""
+        BridgeConfig.load(config_dir / "config.yaml")
+        # Symulujemy "przywrócony z backupu" stary plik z innym adresem -
+        # gdyby migracja odpalała się ponownie, dostalibyśmy 9.9.9.9.
+        (config_dir / "config.yaml").write_text(
+            MINIMAL_CONFIG.replace('"127.0.0.1"', '"9.9.9.9"', 1), encoding="utf-8",
+        )
+        config = BridgeConfig.load(config_dir / "config.yaml")
+        assert config.raw["satel"]["host"] == "127.0.0.1"
+
+    def test_passing_db_path_directly_works_for_fresh_install(self, tmp_path):
+        """Konwencja od tej wersji: kreator/panel tworzą config.db wprost
+        (bez żadnego pośredniczącego pliku .yaml) - BridgeConfig.load musi
+        to obsłużyć tak samo jak migrację ze starej instalacji."""
+        store = ConfigStore(tmp_path / "config.db")
+        store.set("config", {
+            "satel": {"host": "1.2.3.4", "port": 7094, "integration_key": "x",
+                      "virtual_inputs": {"port": 8888, "url_template": "http://x", "inputs": {}}},
+            "tuya": {"devices": {}},
+            "reguły_ruchu": [],
+            "ebus": {"mqtt_host": "127.0.0.1"},
+        })
+        config = BridgeConfig.load(tmp_path / "config.db")
+        assert config.raw["satel"]["host"] == "1.2.3.4"
+        assert config.db_path == tmp_path / "config.db"
+
+    def test_local_key_with_special_characters_survives_migration_roundtrip(self, tmp_path):
+        """Powód migracji na bazę: local_key Tuya (i inne sekrety) to
+        dowolne znaki - JSON w SQLite nie ma niejawnego typowania YAML-a,
+        na które podatna jest ręczna edycja pliku. Regresja dla tego
+        konkretnego niepokoju."""
+        import yaml
+
+        tricky_key = 'aB3+/==xY7"quote\'s\\back\ttab'
+        data = yaml.safe_load(MINIMAL_CONFIG)
+        data["tuya"]["devices"] = {
+            "x": {"id": "d1", "ip": "1.2.3.4", "local_key": tricky_key, "version": 3.4, "type": "socket"},
+        }
+        (tmp_path / "config.yaml").write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+        assert config.raw["tuya"]["devices"]["x"]["local_key"] == tricky_key
+        # Ponowne wczytanie z już zmigrowanej bazy - to samo zachowanie.
+        config2 = BridgeConfig.load(tmp_path / "config.db")
+        assert config2.raw["tuya"]["devices"]["x"]["local_key"] == tricky_key

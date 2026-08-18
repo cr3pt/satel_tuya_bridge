@@ -1,11 +1,23 @@
-"""Wczytywanie i walidacja pliku konfiguracyjnego."""
+"""Wczytywanie i walidacja konfiguracji.
+
+Konfiguracja żyje w bazie SQLite (bridge/config_store.py: ConfigStore) jako
+kilka nazwanych "dokumentów" (config/satel_fields/tuya_devices/automations/
+sensors) - dokładnie ten sam podział, co wcześniej osobne pliki .yaml, tylko
+inny nośnik (patrz docstring config_store.py po uzasadnienie: sekrety typu
+Tuya `local_key` to dowolne bajty, JSON w SQLite nie ma niejawnego rzutowania
+typów, na które podatny jest ręcznie edytowany YAML).
+
+Stare instalacje (config.yaml + siostrzane pliki) są migrowane AUTOMATYCZNIE
+i JEDNORAZOWO przy pierwszym `BridgeConfig.load()` wskazującym na jeszcze
+nieistniejącą bazę - patrz `migrate_legacy_yaml_dir`.
+"""
 from __future__ import annotations
 
 import pathlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
-import yaml
+from .config_store import ConfigStore, migrate_legacy_yaml_dir, resolve_db_and_legacy_paths
 
 
 _AUTOMATIONS_DEFAULTS = {
@@ -15,63 +27,37 @@ _AUTOMATIONS_DEFAULTS = {
 }
 
 
-def _resolve_path(config_dir: pathlib.Path, filename: str) -> pathlib.Path:
-    p = pathlib.Path(filename)
-    return p if p.is_absolute() else config_dir / p
-
-
-def _load_yaml_file(path: pathlib.Path) -> dict:
-    if not path.exists():
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
 @dataclass
 class BridgeConfig:
     raw: dict[str, Any]
-    # Ścieżka do pliku z listą czujników eBUS (patrz sensors.example.yaml) -
-    # trzymana OSOBNO od config.yaml celowo: to jedyny plik, który
-    # nadpisuje edytor w panelu webowym (dashboard/app.py, /config).
-    # config.yaml zostaje w pełni ręcznie edytowalny, z komentarzami,
-    # bez ryzyka, że zapis z UI je wykasuje.
-    sensors_file: pathlib.Path = field(default=None)
-    # Analogicznie - sceny/reguły ruchu (harmonogram+eskalacja)/symulacja
-    # obecności trzymane OSOBNO, żeby panel /automations mógł je edytować
-    # bezpiecznie (patrz dashboard/app.py). Plik opcjonalny: jeśli nie
-    # istnieje, wartości brane są wprost z config.yaml (wstecznie zgodne
-    # ze starszymi configami, gdzie te sekcje były wpisane bezpośrednio).
-    automations_file: pathlib.Path = field(default=None)
-    # Tak samo - "pola" Satela (strefy/wyjścia/wejścia IP do monitorowania,
-    # partycje) i urządzenia Tuya, edytowalne z panelu /config bez ryzyka
-    # nadpisania reszty config.yaml. Połączenie (host/port/klucz/cloud)
-    # zostaje inline w config.yaml - to tylko NAZWANE POLA.
-    satel_fields_file: pathlib.Path = field(default=None)
-    tuya_devices_file: pathlib.Path = field(default=None)
-    # Ścieżka do GŁÓWNEGO config.yaml, z którego to wczytano - potrzebna,
-    # żeby RulesEngine.reload_config() (bridge/rules_engine.py) mogło
-    # ponownie wczytać świeżą konfigurację z DOKŁADNIE tego samego miejsca,
-    # bez konieczności pamiętania ścieżki gdzie indziej.
-    config_file: pathlib.Path = field(default=None)
+    # Żywy uchwyt do bazy konfiguracji - dashboard/app.py zapisuje przez
+    # niego zmiany z panelu (store.set("satel_fields", ...) itd.), zamiast
+    # bezpośrednio pisać pliki. RulesEngine.reload_config() (bridge/
+    # rules_engine.py) używa `db_path` do ponownego wczytania.
+    store: ConfigStore
+    db_path: pathlib.Path
 
     @classmethod
     def load(cls, path: str | pathlib.Path) -> "BridgeConfig":
-        path = pathlib.Path(path)
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Nie znaleziono pliku konfiguracyjnego: {path}. "
-                f"Skopiuj config.example.yaml jako config.yaml i uzupełnij dane."
-            )
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
+        db_path, legacy_yaml_path = resolve_db_and_legacy_paths(path)
 
-        # Wczytanie automations.yaml MUSI nastąpić PRZED _validate() -
-        # "reguły_ruchu" jest wymagane jako klucz najwyższego poziomu, a w
-        # nowo generowanych configach (kreator) już go tam nie ma wprost,
-        # tylko w automations.yaml (albo dostaje domyślną pustą wartość
-        # poniżej, jeśli nie ma go NIGDZIE).
-        automations_path = _resolve_path(path.parent, data.get("automations_file", "automations.yaml"))
-        automations = _load_yaml_file(automations_path)
+        if not db_path.exists() and not legacy_yaml_path.exists():
+            raise FileNotFoundError(
+                f"Nie znaleziono konfiguracji: {db_path} (ani starego {legacy_yaml_path}). "
+                f"Uruchom kreator pierwszej konfiguracji (/setup) albo skopiuj config.example.yaml "
+                f"jako {legacy_yaml_path.name}, uzupełnij i uruchom ponownie (patrz README)."
+            )
+
+        store = ConfigStore(db_path)
+        if not store.has("config"):
+            migrate_legacy_yaml_dir(store, legacy_yaml_path)
+
+        data = store.get("config")
+
+        # "reguły_ruchu" jest wymagane jako klucz najwyższego poziomu - w
+        # nowo generowanych configach (kreator) mieszka w dokumencie
+        # "automations" razem ze scenami i symulacją obecności.
+        automations = store.get("automations")
         for key, default in _AUTOMATIONS_DEFAULTS.items():
             if key in automations:
                 data[key] = automations[key]
@@ -80,12 +66,11 @@ class BridgeConfig:
 
         cls._validate(data)
 
-        # Pola Satela (strefy/wyjścia/wejścia IP/partycje) - jeśli
-        # satel_fields.yaml istnieje, NADPISUJE wartości wpisane wprost w
-        # config.yaml (tak samo jak automations.yaml). "satel" jest już
-        # zwalidowane wyżej jako wymagany słownik.
-        satel_fields_path = _resolve_path(path.parent, data["satel"].get("fields_file", "satel_fields.yaml"))
-        satel_fields = _load_yaml_file(satel_fields_path)
+        # Pola Satela (strefy/wyjścia/wejścia IP/partycje) - dokument
+        # "satel_fields" NADPISUJE wartości wpisane wprost w "config", jeśli
+        # faktycznie coś zawiera (tak samo jak automations wyżej). "satel"
+        # jest już zwalidowane wyżej jako wymagany słownik.
+        satel_fields = store.get("satel_fields")
         for key in ("monitored_zones", "monitored_outputs", "partitions"):
             if key in satel_fields:
                 data["satel"][key] = satel_fields[key]
@@ -106,10 +91,9 @@ class BridgeConfig:
         else:
             data["satel"]["virtual_inputs"].setdefault("inputs", {})
 
-        # Urządzenia Tuya - analogicznie, tuya_devices.yaml nadpisuje
-        # tuya.devices wpisane wprost w config.yaml, jeśli istnieje.
-        tuya_devices_path = _resolve_path(path.parent, data["tuya"].get("devices_file", "tuya_devices.yaml"))
-        tuya_devices_data = _load_yaml_file(tuya_devices_path)
+        # Urządzenia Tuya - analogicznie, dokument "tuya_devices" nadpisuje
+        # tuya.devices wpisane wprost w "config", jeśli istnieje.
+        tuya_devices_data = store.get("tuya_devices")
         if "devices" in tuya_devices_data:
             data["tuya"]["devices"] = tuya_devices_data["devices"]
         else:
@@ -117,26 +101,16 @@ class BridgeConfig:
         # Bramki Zigbee (Tuya) - urządzenia w tuya.devices mogą wskazywać na
         # nie przez pole "gateway" (patrz TuyaLocalController), zamiast
         # własnego ip/local_key. Osobna mapa (nie zagnieżdżona w devices),
-        # analogicznie do zone_types/output_types wyżej - ten sam wzorzec
-        # nadpisywania co "devices" powyżej (tuya_devices.yaml nadpisuje
-        # tylko, jeśli faktycznie zawiera ten klucz, inaczej zostaje wartość
-        # wpisana wprost w config.yaml, jeśli taka jest).
+        # analogicznie do zone_types/output_types wyżej.
         if "zigbee_gateways" in tuya_devices_data:
             data["tuya"]["zigbee_gateways"] = tuya_devices_data["zigbee_gateways"]
         else:
             data["tuya"].setdefault("zigbee_gateways", {})
 
-        # Ścieżka do sensors.yaml - względna wobec katalogu config.yaml,
-        # jeśli podana jako względna. Domyślnie "sensors.yaml" obok config.yaml.
-        sensors_path = _resolve_path(path.parent, data.get("ebus", {}).get("sensors_file", "sensors.yaml"))
-        sensors_content = _load_yaml_file(sensors_path)
+        sensors_content = store.get("sensors")
         data.setdefault("ebus", {})["sensors"] = sensors_content.get("sensors", [])
 
-        return cls(
-            raw=data, sensors_file=sensors_path, automations_file=automations_path,
-            satel_fields_file=satel_fields_path, tuya_devices_file=tuya_devices_path,
-            config_file=path,
-        )
+        return cls(raw=data, store=store, db_path=db_path)
 
     @staticmethod
     def _validate(data: dict[str, Any]) -> None:

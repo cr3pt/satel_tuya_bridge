@@ -1,6 +1,16 @@
 # ============================================================================
 # Konfiguracja bridge'a Satel Integra <-> Tuya <-> eBUS (Wolf)
-# Skopiuj ten plik jako config.yaml i uzupełnij własnymi danymi.
+#
+# UWAGA: od wersji z bazą config.db ten plik NIE jest już bezpośrednio
+# wczytywany przez bridge/panel (patrz README, sekcja "Konfiguracja w
+# bazie danych") - służy jako DOKUMENTACJA dostępnych pól. Dwa sposoby
+# użycia:
+#   1. Zwykle: przejdź kreator (/setup) - nie musisz w ogóle dotykać YAML-a.
+#   2. Ręcznie/skryptowo: skopiuj jako config.yaml, uzupełnij, uruchom
+#      raz `python main.py` albo panel - PIERWSZE uruchomienie migruje go
+#      automatycznie do config.db (i zmienia nazwę na config.yaml.migrated).
+#      Dalsze zmiany rób z panelu albo przez eksport/import YAML
+#      (`/api/config/export-yaml` / `/api/config/import-yaml`).
 # ============================================================================
 
 satel:
@@ -272,10 +282,13 @@ dashboard:
   db_path: "bridge_history.db"
 
   auth:
-    # Hasło administratora chroniące TYLKO akcje, które coś zmieniają:
+    # Konto administratora chroniące TYLKO akcje, które coś zmieniają:
     # zapis konfiguracji czujników (/config) oraz uzbrajanie/rozbrajanie
     # stref. Samo przeglądanie panelu (historia, statusy, dziennik
-    # zdarzeń) zostaje otwarte - to świadomy wybór.
+    # zdarzeń) zostaje otwarte - to świadomy wybór. Oba pola ustawia się
+    # normalnie raz w kreatorze (/setup) - ręczna edycja poniżej to tylko
+    # dla ręcznie pisanego config.yaml (bez kreatora).
+    username: "admin"   # NIE jest sekretem (jak login, nie hasło) - jawny tekst
     #
     # Wygeneruj hash hasła (nigdy nie wpisuj hasła jawnym tekstem):
     #   python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('TWOJE_HASLO'))"

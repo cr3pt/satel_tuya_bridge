@@ -186,6 +186,20 @@
     panel); ta strona przestanie odpowiadać na kilka-kilkanaście sekund.
   </div>
   <div id="restartMsg" class="msg-box"></div>
+
+  <div class="section-hint" style="margin-top: 20px;">
+    <strong>Kopia zapasowa konfiguracji.</strong> Cała konfiguracja żyje w
+    bazie (nie w plikach .yaml na dysku) - tu można ją wyeksportować do
+    wglądu/backupu albo zaimportować z powrotem (np. po przeniesieniu na
+    inny serwer). Import NADPISUJE wskazane sekcje - zmiany połączeń
+    wymagają potem pełnego restartu (przycisk wyżej).
+  </div>
+  <div class="actions-bar">
+    <button id="exportYamlBtn" type="button" class="secondary">⬇ Eksportuj konfigurację</button>
+    <button id="importYamlBtn" type="button" class="secondary">⬆ Importuj konfigurację</button>
+    <input type="file" id="importYamlFile" accept=".json" style="display:none;">
+  </div>
+  <div id="backupMsg" class="msg-box"></div>
 </div>
 
 <!-- ============================== eBUS ============================== -->
@@ -504,6 +518,59 @@ document.getElementById('restartBtn').addEventListener('click', async () => {
     showMsg('restartMsg', false, 'Błąd komunikacji z serwerem: ' + e);
     btn.disabled = false;
   }
+});
+
+document.getElementById('exportYamlBtn').addEventListener('click', async () => {
+  try {
+    const resp = await authorizedFetch('/api/config/export-yaml');
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('backupMsg', false, data.error || 'Błąd eksportu');
+      return;
+    }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'satel_tuya_bridge_config_export.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showMsg('backupMsg', true, 'Wyeksportowano - plik pobrany.');
+  } catch (e) {
+    showMsg('backupMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+document.getElementById('importYamlBtn').addEventListener('click', () => {
+  document.getElementById('importYamlFile').click();
+});
+
+document.getElementById('importYamlFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!confirm('Import NADPISZE wskazane sekcje konfiguracji zawartością pliku. Kontynuować?')) {
+    e.target.value = '';
+    return;
+  }
+  try {
+    const bundle = JSON.parse(await file.text());
+    const resp = await authorizedFetch('/api/config/import-yaml', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(bundle),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('backupMsg', false, data.error || 'Błąd importu');
+    } else {
+      showMsg('backupMsg', true, data.message);
+    }
+  } catch (err) {
+    showMsg('backupMsg', false, 'Błąd odczytu/importu pliku: ' + err);
+  }
+  e.target.value = '';
 });
 
 // ------------------------------------------------------------------

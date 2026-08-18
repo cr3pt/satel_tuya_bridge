@@ -2,7 +2,6 @@
 import base64
 
 import pytest
-import yaml
 from werkzeug.security import generate_password_hash
 
 from bridge.config import BridgeConfig
@@ -43,8 +42,11 @@ dashboard:
 """
 
 
-def _basic_auth_header(password: str) -> dict:
-    token = base64.b64encode(f":{password}".encode()).decode()
+def _basic_auth_header(password: str, username: str = "admin") -> dict:
+    # CONFIG_TEMPLATE wyżej nie ustawia dashboard.auth.username, więc
+    # AuthGuard domyślnie używa "admin" (patrz dashboard/auth.py) - stąd
+    # domyślna wartość tu, bez zmiany wszystkich dotychczasowych wywołań.
+    token = base64.b64encode(f"{username}:{password}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
 
 
@@ -63,10 +65,17 @@ def client(tmp_path):
     )
     (tmp_path / "config.yaml").write_text(config_text, encoding="utf-8")
 
-    import dashboard.app as app_module
-    app_module.config_path = tmp_path / "config.yaml"  # inaczej before_request przekieruje wszystko na /setup
-
     config = BridgeConfig.load(tmp_path / "config.yaml")
+
+    import dashboard.app as app_module
+    # config_path MUSI wskazywać na config.db (świeżo utworzone przez
+    # migrację przy load() wyżej), nie na oryginalny config.yaml - inaczej
+    # is_configured()/before_request przekierowałoby wszystko na /setup
+    # (patrz bridge/config.py: BridgeConfig.load normalizuje ścieżkę do
+    # bazy niezależnie od tego, jaką konwencję dostał, ale downstream kod w
+    # dashboard/app.py trzyma config_path jako osobną zmienną globalną).
+    app_module.config_path = config.db_path
+
     create_app(config)
     flask_app.config["TESTING"] = True
     return flask_app.test_client()
@@ -113,19 +122,23 @@ class TestSessionAuthEndpoints:
     def test_auth_status_when_not_logged_in(self, client):
         resp = client.get("/api/auth/status")
         assert resp.status_code == 200
-        assert resp.get_json() == {"logged_in": False, "configured": True}
+        assert resp.get_json() == {"logged_in": False, "configured": True, "username": "admin"}
 
     def test_login_with_correct_password_sets_session_cookie(self, client):
-        resp = client.post("/api/login", json={"password": "test_haslo_123"})
+        resp = client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
         assert resp.status_code == 200
         assert "stb_session" in resp.headers.get("Set-Cookie", "")
 
     def test_login_with_wrong_password_returns_401(self, client):
-        resp = client.post("/api/login", json={"password": "złe hasło"})
+        resp = client.post("/api/login", json={"username": "admin", "password": "złe hasło"})
+        assert resp.status_code == 401
+
+    def test_login_with_wrong_username_returns_401(self, client):
+        resp = client.post("/api/login", json={"username": "ktoinny", "password": "test_haslo_123"})
         assert resp.status_code == 401
 
     def test_auth_status_true_after_login(self, client):
-        client.post("/api/login", json={"password": "test_haslo_123"})
+        client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
         resp = client.get("/api/auth/status")
         assert resp.get_json()["logged_in"] is True
 
@@ -134,12 +147,12 @@ class TestSessionAuthEndpoints:
         żadnego nagłówka Authorization - sam token w ciasteczku wystarcza
         (klient testowy Flask trzyma ciasteczka między żądaniami jak
         prawdziwa przeglądarka)."""
-        client.post("/api/login", json={"password": "test_haslo_123"})
+        client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
         resp = client.post("/api/config/sensors", json=[])
         assert resp.status_code == 200
 
     def test_logout_clears_session(self, client):
-        client.post("/api/login", json={"password": "test_haslo_123"})
+        client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
         client.post("/api/logout")
         resp = client.get("/api/auth/status")
         assert resp.get_json()["logged_in"] is False
@@ -298,6 +311,13 @@ class TestAutomationContextEndpoint:
         assert data["tuya_devices"] == ["gniazdko"]
         assert data["virtual_inputs"] == ["motion_hall"]
 
+    def test_context_returns_satel_partitions_for_scene_action_ui(self, client):
+        """Zakładka /automations potrzebuje nazwanych stref, żeby akcje
+        'Uzbrój strefę(y)'/'Rozbrój strefę(y)' w edytorze scen mogły dać
+        wybrać KTÓRE strefy, zamiast zawsze dotykać tylko domyślnej."""
+        data = client.get("/api/config/automation-context").get_json()
+        assert data["satel_partitions"] == {"Dom": 1, "Garaz": 2}  # z CONFIG_TEMPLATE
+
 
 class TestAutomationsEndpoint:
     def test_automations_page_loads(self, client):
@@ -359,25 +379,30 @@ class TestAutomationsEndpoint:
         assert data["presence_simulation"]["enabled"] is True
         assert data["presence_simulation"]["devices"] == ["gniazdko"]
 
-    def test_post_automations_writes_automations_yaml_file(self, client, tmp_path):
-        payload = {
-            "scenes": [{"name": "s", "actions": [{"type": "satel_disarm"}]}],
-            "motion_rules": [], "presence_simulation": {},
-        }
-        client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert (tmp_path / "automations.yaml").exists()
+    def test_post_automations_writes_automations_document(self, client):
+        import dashboard.app as app_module
 
-    def test_post_automations_does_not_touch_config_yaml(self, client, tmp_path):
-        """Zapis z panelu MUSI iść do automations.yaml, nigdy do config.yaml -
-        inaczej ręczne komentarze/zmiany w config.yaml zostałyby skasowane
-        (patrz uzasadnienie dla sensors.yaml w bridge/config.py)."""
-        before = (tmp_path / "config.yaml").read_text(encoding="utf-8")
         payload = {
             "scenes": [{"name": "s", "actions": [{"type": "satel_disarm"}]}],
             "motion_rules": [], "presence_simulation": {},
         }
         client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        after = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+        assert app_module.config_store.get("automations")["scenes"][0]["name"] == "s"
+
+    def test_post_automations_does_not_touch_config_document(self, client):
+        """Zapis z panelu MUSI iść do dokumentu "automations", nigdy do
+        "config" - inaczej reszta ustawień (Satel/Tuya/hasło) zostałaby
+        nadpisana pustymi wartościami z formularza automatyzacji (patrz
+        uzasadnienie dla sensors.yaml/automations.yaml w bridge/config.py)."""
+        import dashboard.app as app_module
+
+        before = app_module.config_store.get("config")
+        payload = {
+            "scenes": [{"name": "s", "actions": [{"type": "satel_disarm"}]}],
+            "motion_rules": [], "presence_simulation": {},
+        }
+        client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        after = app_module.config_store.get("config")
         assert before == after
 
 
@@ -448,14 +473,16 @@ class TestSatelFieldsEndpoint:
         assert data["zone_types"] == {"Kuchnia": "dym"}
         assert data["output_types"] == {"Syrena zew.": "syrena"}
 
-    def test_post_satel_fields_does_not_touch_config_yaml(self, client, tmp_path):
-        before = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    def test_post_satel_fields_does_not_touch_config_document(self, client):
+        import dashboard.app as app_module
+
+        before = app_module.config_store.get("config")
         client.post(
             "/api/config/satel-fields",
             json={"partitions": [{"name": "X", "number": "1"}]},
             headers=_basic_auth_header("test_haslo_123"),
         )
-        after = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+        after = app_module.config_store.get("config")
         assert before == after
 
 
@@ -491,14 +518,16 @@ class TestTuyaDevicesEndpoint:
         resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 400
 
-    def test_saved_tuya_devices_persist_and_are_readable(self, client, tmp_path):
+    def test_saved_tuya_devices_persist_and_are_readable(self, client):
+        import dashboard.app as app_module
+
         payload = {"tuya_devices": [
             {"name": "trwale", "id": "d3", "ip": "1.2.3.6", "local_key": "k3", "type": "socket"},
         ]}
         client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
         resp = client.get("/api/config/tuya-devices")
         assert any(d["name"] == "trwale" for d in resp.get_json()["devices"])
-        assert (tmp_path / "tuya_devices.yaml").exists()
+        assert "trwale" in app_module.config_store.get("tuya_devices")["devices"]
 
     def test_saved_zigbee_gateway_and_sub_device_round_trip(self, client):
         """Bramka Zigbee + podurządzenie wskazujące na nią (pole "gateway")
@@ -529,14 +558,16 @@ class TestTuyaDevicesEndpoint:
         resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 400
 
-    def test_post_tuya_devices_does_not_touch_config_yaml(self, client, tmp_path):
-        before = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    def test_post_tuya_devices_does_not_touch_config_document(self, client):
+        import dashboard.app as app_module
+
+        before = app_module.config_store.get("config")
         client.post(
             "/api/config/tuya-devices",
             json={"tuya_devices": [{"name": "x", "id": "i", "ip": "1.2.3.4", "local_key": "k"}]},
             headers=_basic_auth_header("test_haslo_123"),
         )
-        after = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+        after = app_module.config_store.get("config")
         assert before == after
 
 
@@ -566,20 +597,24 @@ class TestConnectionsEndpoint:
         resp = client.post("/api/config/connections", json={})
         assert resp.status_code == 401
 
-    def test_post_updates_satel_host(self, client, tmp_path):
+    def test_post_updates_satel_host(self, client):
+        import dashboard.app as app_module
+
         payload = {"satel": {"host": "10.0.0.9", "port": "7094"}, "ebus": {"mqtt_host": "127.0.0.1"}}
         resp = client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 200
-        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        saved = app_module.config_store.get("config")
         assert saved["satel"]["host"] == "10.0.0.9"
 
-    def test_post_blank_integration_key_preserves_existing_secret(self, client, tmp_path):
+    def test_post_blank_integration_key_preserves_existing_secret(self, client):
+        import dashboard.app as app_module
+
         payload = {
             "satel": {"host": "127.0.0.1", "port": "7094", "integration_key": ""},
             "ebus": {"mqtt_host": "127.0.0.1"},
         }
         client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        saved = app_module.config_store.get("config")
         assert saved["satel"]["integration_key"] == "x"  # niezmieniony, patrz CONFIG_TEMPLATE
 
     def test_post_validates_missing_satel_host(self, client):
@@ -587,22 +622,26 @@ class TestConnectionsEndpoint:
         resp = client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 400
 
-    def test_post_preserves_other_config_sections(self, client, tmp_path):
+    def test_post_preserves_other_config_sections(self, client):
         """reguły_ruchu i inne sekcje spoza formularza połączeń nie mogą
         zniknąć po zapisie (patrz build_connections_patch)."""
+        import dashboard.app as app_module
+
         payload = {"satel": {"host": "10.0.0.9"}, "ebus": {"mqtt_host": "127.0.0.1"}}
         client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        saved = app_module.config_store.get("config")
         assert saved["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"
         assert saved["dashboard"]["auth"]["password_hash"]
 
-    def test_post_sets_custom_mqtt_publish_topics(self, client, tmp_path):
+    def test_post_sets_custom_mqtt_publish_topics(self, client):
+        import dashboard.app as app_module
+
         payload = {
             "satel": {"host": "127.0.0.1"}, "ebus": {"mqtt_host": "127.0.0.1"},
             "mqtt_publish": {"enabled": True, "satel_topic": "alarm", "tuya_topic": "smart_home"},
         }
         client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        saved = app_module.config_store.get("config")
         assert saved["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home"}
 
 
@@ -642,30 +681,36 @@ class TestPluginsEndpoint:
         )
         assert resp.status_code == 400
 
-    def test_post_satel_enabled_field_is_ignored_not_toggleable(self, client, tmp_path):
+    def test_post_satel_enabled_field_is_ignored_not_toggleable(self, client):
         """satel jest rdzeniem (zawsze aktywny) - ma tylko regulowalny
         interwał odpytywania, "enabled" nie jest dla niego obsługiwane i
         zostaje po cichu zignorowane (nie jest to błąd - satel to
         prawidłowe id, tylko bez pola enabled)."""
+        import dashboard.app as app_module
+
         resp = client.post(
             "/api/plugins", json={"satel": {"enabled": False}}, headers=_basic_auth_header("test_haslo_123"),
         )
         assert resp.status_code == 200
-        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        saved = app_module.config_store.get("config")
         assert saved["satel"]["host"] == "127.0.0.1"  # nietknięte, wciąż działa
 
-    def test_post_updates_satel_poll_interval_live(self, client, tmp_path):
+    def test_post_updates_satel_poll_interval_live(self, client):
+        import dashboard.app as app_module
+
         resp = client.post(
             "/api/plugins", json={"satel": {"status_poll_interval_seconds": 25}},
             headers=_basic_auth_header("test_haslo_123"),
         )
         assert resp.status_code == 200
         assert "bez restartu" in resp.get_json()["message"]
-        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        saved = app_module.config_store.get("config")
         assert saved["satel"]["status_poll_interval_seconds"] == 25
         assert saved["satel"]["host"] == "127.0.0.1"  # nietknięte
 
-    def test_post_updates_tuya_local_poll_interval_without_restart_message(self, client, tmp_path):
+    def test_post_updates_tuya_local_poll_interval_without_restart_message(self, client):
+        import dashboard.app as app_module
+
         resp = client.post(
             "/api/plugins", json={"tuya_local": {"status_poll_interval_seconds": 45}},
             headers=_basic_auth_header("test_haslo_123"),
@@ -674,7 +719,7 @@ class TestPluginsEndpoint:
         message = resp.get_json()["message"]
         assert "bez restartu" in message
         assert "wymagają pełnego restartu" not in message
-        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        saved = app_module.config_store.get("config")
         assert saved["tuya"]["status_poll_interval_seconds"] == 45
         assert saved["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"  # nietknięte
 
@@ -685,21 +730,25 @@ class TestPluginsEndpoint:
         )
         assert resp.status_code == 400
 
-    def test_post_enables_home_assistant_without_touching_satel_host(self, client, tmp_path):
+    def test_post_enables_home_assistant_without_touching_satel_host(self, client):
+        import dashboard.app as app_module
+
         resp = client.post(
             "/api/plugins", json={"home_assistant": {"enabled": True}}, headers=_basic_auth_header("test_haslo_123"),
         )
         assert resp.status_code == 200
-        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        saved = app_module.config_store.get("config")
         assert saved["home_assistant"]["enabled"] is True
         assert saved["satel"]["host"] == "127.0.0.1"  # nietknięte
         assert saved["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"  # nietknięte
 
-    def test_post_disables_mqtt_publish(self, client, tmp_path):
+    def test_post_disables_mqtt_publish(self, client):
+        import dashboard.app as app_module
+
         client.post(
             "/api/plugins", json={"mqtt_publish": {"enabled": False}}, headers=_basic_auth_header("test_haslo_123"),
         )
-        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        saved = app_module.config_store.get("config")
         assert saved["mqtt_publish"]["enabled"] is False
 
     def test_post_enabling_tuya_cloud_without_credentials_is_rejected(self, client):
@@ -711,35 +760,34 @@ class TestPluginsEndpoint:
         )
         assert resp.status_code == 400
 
-    def test_post_toggles_presence_simulation_without_clobbering_scenes(self, client, tmp_path):
-        (tmp_path / "automations.yaml").write_text(
-            "scenes:\n  - name: powitanie\n    actions: [{type: satel_disarm}]\n"
-            "reguły_ruchu: []\n"
-            "presence_simulation:\n  enabled: false\n  devices: [gniazdko]\n",
-            encoding="utf-8",
-        )
+    def test_post_toggles_presence_simulation_without_clobbering_scenes(self, client):
         import dashboard.app as app_module
-        config = BridgeConfig.load(tmp_path / "config.yaml")
-        app_module.create_app(config)
+
+        app_module.config_store.set("automations", {
+            "scenes": [{"name": "powitanie", "actions": [{"type": "satel_disarm"}]}],
+            "reguły_ruchu": [],
+            "presence_simulation": {"enabled": False, "devices": ["gniazdko"]},
+        })
+        app_module.create_app(BridgeConfig.load(app_module.config_path))
 
         resp = client.post(
             "/api/plugins", json={"presence_simulation": {"enabled": True}},
             headers=_basic_auth_header("test_haslo_123"),
         )
         assert resp.status_code == 200
-        saved = yaml.safe_load((tmp_path / "automations.yaml").read_text(encoding="utf-8"))
+        saved = app_module.config_store.get("automations")
         assert saved["presence_simulation"]["enabled"] is True
         assert saved["presence_simulation"]["devices"] == ["gniazdko"]
         assert saved["scenes"][0]["name"] == "powitanie"  # nietknięte
 
-    def test_post_enqueues_bridge_reload_only_for_automations_plugins(self, client, tmp_path):
-        (tmp_path / "automations.yaml").write_text(
-            "scenes: []\nreguły_ruchu: []\npresence_simulation:\n  enabled: false\n  devices: [gniazdko]\n",
-            encoding="utf-8",
-        )
+    def test_post_enqueues_bridge_reload_only_for_automations_plugins(self, client):
         import dashboard.app as app_module
-        config = BridgeConfig.load(tmp_path / "config.yaml")
-        app_module.create_app(config)
+
+        app_module.config_store.set("automations", {
+            "scenes": [], "reguły_ruchu": [],
+            "presence_simulation": {"enabled": False, "devices": ["gniazdko"]},
+        })
+        app_module.create_app(BridgeConfig.load(app_module.config_path))
 
         client.post(
             "/api/plugins", json={"presence_simulation": {"enabled": True}},

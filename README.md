@@ -82,15 +82,19 @@ Dwie drogi - wybierz wygodniejszą:
 
 ### A) Kreator w przeglądarce (zalecane na start)
 
-Jeśli `config.yaml` jeszcze nie istnieje, panel **automatycznie
+Jeśli konfiguracja jeszcze nie istnieje, panel **automatycznie
 przekierowuje** na `/setup` przy pierwszym wejściu - kreator **podzielony
 na etapy** (przyciski Wstecz/Dalej, jeden logicznie spójny temat na
 stronę), z przyciskami otwierającymi w nowej karcie strony, których
 potrzebujesz (developer.tuya.com, ntfy.sh). Wystarczy:
 
 ```bash
-python -m dashboard.app --config config.yaml
+python -m dashboard.app --config config.db
 ```
+
+(patrz sekcja "Konfiguracja w bazie danych" niżej - `config.db` to
+plik SQLite, nie YAML do ręcznej edycji, ale ma swoją furtkę
+eksportu/importu).
 
 i otworzyć `http://<adres-rpi>:8090/` w przeglądarce - trafisz prosto do
 kreatora. Po zapisaniu ("Zapisz i uruchom") strona **sama przenosi Cię do
@@ -128,7 +132,7 @@ do logów serwera - hasła/klucze/sekrety są w nim zawsze ukryte.
   DLOADX) - to świadome ograniczenie, nie błąd.
 
 **Postęp zapisuje się automatycznie po każdym kliknięciu "Dalej"** (w
-pliku roboczym `.setup_draft.json` obok `config.yaml`) - kreator da się
+pliku roboczym `.setup_draft.json` obok `config.db`) - kreator da się
 bezpiecznie przerwać w dowolnym momencie i wrócić do niego później,
 nawet z innej karty/przeglądarki w tej samej sieci. Plik roboczy znika
 automatycznie po ostatecznym zapisie (albo ręcznie, przyciskiem "Zacznij
@@ -145,8 +149,9 @@ Cloud), jak i bardziej zaawansowane rzeczy zbudowane na scenach
 - **Eskalacja** - kilka naruszeń wejścia Satela w krótkim czasie wywołuje
   mocniejszą scenę zamiast zwykłej akcji.
 
-Te trzy rzeczy trafiają do osobnego pliku `automations.yaml`, nie do
-`config.yaml` - i **zostają w pełni edytowalne PO zapisie**, z powrotem w
+Te trzy rzeczy trafiają do osobnego dokumentu `automations` w bazie
+(patrz sekcja "Konfiguracja w bazie danych" niżej), nie do dokumentu
+`config` - i **zostają w pełni edytowalne PO zapisie**, z powrotem w
 przeglądarce, w zabezpieczonej hasłem zakładce **🎬 Automatyzacje**
 (`/automations`) - nie trzeba wracać do kreatora ani ręcznie do YAML-a,
 żeby dodać kolejną scenę czy regułę później. Symulacja obecności (patrz
@@ -175,11 +180,22 @@ z poziomu przeglądarki), tylko pokazuje gotowe komendy do wklejenia
 
 Rzeczy, których panel WCIĄŻ nie obsługuje (reguły kamer, reguły
 "światło Tuya → Satel", automatyka kotła, alarmy progowe) dostają puste
-wartości domyślne w `config.yaml` - dopisujesz je później ręcznie (plik
-zostaje w pełni edytowalny - kreator nie uruchomi się drugi raz, dopóki
-plik istnieje, więc żadne Twoje ręczne zmiany nie zostaną nadpisane).
+wartości domyślne w dokumencie `config` - dopisujesz je później przez
+eksport/import YAML (patrz "Konfiguracja w bazie danych" niżej) - kreator
+nie uruchomi się drugi raz, dopóki konfiguracja istnieje, więc żadne
+Twoje ręczne zmiany nie zostaną nadpisane.
 
-### B) Ręczna edycja plików
+### B) Ręczna edycja plików (przed pierwszym uruchomieniem)
+
+Konfiguracja finalnie żyje w bazie `config.db`, ale PRZED pierwszym
+uruchomieniem można ją przygotować tak samo jak dawniej - ręcznie
+edytowanymi plikami YAML. Przy pierwszym starcie (jeśli `config.db`
+jeszcze nie istnieje, a `config.yaml` tak) bridge/panel **migrują je
+automatycznie do bazy jednorazowo** i zmieniają nazwy starych plików na
+`*.migrated` (żeby było jasne, że przestały być czytane - patrz sekcja
+"Konfiguracja w bazie danych"). PO pierwszym uruchomieniu ręczna edycja
+tych plików już nic nie robi - dalsze zmiany rób z panelu albo przez
+import YAML (`/api/config/import-yaml`, patrz niżej).
 
 1. `cp config.example.yaml config.yaml`
 2. `cp sensors.example.yaml sensors.yaml` (lista czujników eBUS - można
@@ -191,12 +207,54 @@ plik istnieje, więc żadne Twoje ręczne zmiany nie zostaną nadpisane).
    możesz zostawić wpisane wprost w `config.yaml` tak jak w przykładzie -
    działa bez zmian - albo od razu przenieść do osobnych plików
    (`automations.yaml`/`satel_fields.yaml`/`tuya_devices.yaml`, patrz
-   sekcje "Automatyzacje" i "Panel webowy" niżej), jeśli chcesz mieć
-   możliwość edycji tych rzeczy później z panelu (`/automations`, `/config`).
+   sekcje "Automatyzacje" i "Panel webowy" niżej), jeśli wolisz mieć te
+   rzeczy oddzielone już przed pierwszą migracją.
 4. Local key urządzeń Tuya wyciągnij narzędziem:
    ```bash
    python -m tinytuya wizard
    ```
+5. Uruchom `python main.py --config config.db` (albo panel) - migracja
+   nastąpi automatycznie przy tym pierwszym starcie.
+
+## Konfiguracja w bazie danych
+
+Cała konfiguracja (połączenia, strefy/wyjścia Satela, urządzenia Tuya -
+razem z `local_key` - sceny/reguły/harmonogramy, hasło administratora)
+żyje w jednym pliku SQLite: **`config.db`** (w tym samym katalogu, co
+wcześniej `config.yaml`, wskazywanym przez `--config`). To NIE jest plik
+do ręcznej edycji tekstowej - patrz "Import/eksport YAML" niżej po
+sposób na wgląd/edycję poza panelem.
+
+**Dlaczego baza, a nie pliki `.yaml`:** `local_key` urządzeń Tuya (i inne
+sekrety - hasła MQTT, Tuya Cloud Access Secret, kod integracji Satela) to
+dowolne ciągi znaków. Zapis/odczyt przez `yaml.safe_dump`/`safe_load`
+(tak jak robił to panel) jest w pełni bezpieczny dla dowolnych znaków -
+ale przy RĘCZNEJ edycji pliku (bez cudzysłowów wokół wartości, która
+akurat wygląda jak liczba/`yes`/`no`/`null`) łatwo coś przypadkiem
+popsuć. SQLite (kolumna `TEXT`, wartości serializowane jako JSON) nie ma
+tego rodzaju niejawnego typowania - nie ma czym tego zepsuć.
+
+**Migracja ze starszej instalacji** jest automatyczna i jednorazowa: jeśli
+`config.db` jeszcze nie istnieje, ale `config.yaml` (+ siostrzane pliki
+`satel_fields.yaml`/`tuya_devices.yaml`/`automations.yaml`/
+`sensors.yaml`) tak, pierwsze uruchomienie (`main.py` albo
+`dashboard.app`) importuje je do nowej bazy i zmienia nazwy starych
+plików na `*.migrated` (zostają na dysku do wglądu, ale przestają być
+czytane - dalsza ręczna edycja `config.yaml` po tym momencie nic już nie
+robi).
+
+**Import/eksport YAML** - furtka bezpieczeństwa, żeby baza nikogo nie
+zamykała bez wyjścia:
+- **Eksport**: przycisk "⬇ Eksportuj konfigurację" w zakładce
+  ⚙ Ustawienia -> Połączenia (albo `GET /api/config/export-yaml`, wymaga
+  zalogowania) - pobiera plik JSON z rekonstrukcją wszystkich dokumentów
+  jako tekst YAML (`{"config.yaml": "...", "satel_fields.yaml": "...", ...}`)
+  - do backupu, wglądu, migracji na inny serwer.
+- **Import**: przycisk "⬆ Importuj konfigurację" (albo
+  `POST /api/config/import-yaml` z tym samym JSON-em) - nadpisuje
+  wskazane dokumenty w bazie. Zmiany połączeń (host/port/klucze) wymagają
+  potem pełnego restartu (przycisk "🔄 Zrestartuj bridge i panel teraz",
+  ta sama zakładka).
 
 ## Konto Tuya Cloud (Access ID / Access Secret)
 
@@ -416,7 +474,7 @@ maintenance:
 
 ```bash
 # crontab -e
-0 3 * * * /home/pi/satel_tuya_bridge/venv/bin/python /home/pi/satel_tuya_bridge/maintenance.py --config /home/pi/satel_tuya_bridge/config.yaml >> /home/pi/satel_tuya_bridge/maintenance.log 2>&1
+0 3 * * * /home/pi/satel_tuya_bridge/venv/bin/python /home/pi/satel_tuya_bridge/maintenance.py --config /home/pi/satel_tuya_bridge/config.db >> /home/pi/satel_tuya_bridge/maintenance.log 2>&1
 ```
 
 ## Wirtualne urządzenie Tuya dla danych z kotła — czy warto?
@@ -483,7 +541,7 @@ serwuje dane z SQLite przez lekki Flask + waitress.
 Uruchomienie (osobny proces od głównego bridge'a):
 
 ```bash
-python -m dashboard.app --config config.yaml --port 8090
+python -m dashboard.app --config config.db --port 8090
 ```
 
 Panel dostępny pod `http://<adres-rpi>:8090/`. Dwie zakładki dostępne z
@@ -737,15 +795,35 @@ Panel jest **celowo** podzielony na dwie strefy:
   `/automations`) oraz uzbrajanie/rozbrajanie stref alarmowych z panelu
   głównego.
 
-#### Konfiguracja hasła
+#### Konfiguracja konta administratora (nazwa użytkownika + hasło)
+
+Ustawiane normalnie RAZ w kreatorze (`/setup`, krok "Hasło administratora
+panelu") - nazwa użytkownika (domyślnie `admin`, dowolna) i hasło (min. 8
+znaków). Ręcznie (bez kreatora, przez import YAML - patrz "Konfiguracja w
+bazie danych" wyżej):
 
 ```bash
 python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('TWOJE_HASLO'))"
 ```
 
-Wynik wklej do `config.yaml` -> `dashboard.auth.password_hash`. Dopóki
-pole jest puste, akcje zmieniające stan są **zablokowane** (nie ma trybu
-"otwartego na wszystko" przez pomyłkę - brak hasła = brak zapisu).
+Wynik wklej jako `dashboard.auth.password_hash`, nazwę użytkownika jako
+`dashboard.auth.username` (jawnym tekstem - to NIE jest sekret, tylko
+identyfikator, jak login, nie hasło) w wyeksportowanym `config.yaml` i
+zaimportuj z powrotem (`⬇ Eksportuj konfigurację` -> edytuj plik ->
+`⬆ Importuj konfigurację`, zakładka ⚙ Ustawienia -> Połączenia). Dopóki
+`password_hash` jest puste, akcje zmieniające stan są **zablokowane** (nie
+ma trybu "otwartego na wszystko" przez pomyłkę - brak hasła = brak
+zapisu). `username` bez ustawionej wartości domyślnie to `admin` (dotyczy
+też configów sprzed dodania tego pola - aktualizacja pakietu nikogo nie
+wylogowuje/blokuje).
+
+**Uczciwie o obecnym braku**: zmiana nazwy użytkownika/hasła PO pierwszej
+konfiguracji wymaga eksportu/importu YAML (jak wyżej) i restartu panelu -
+w przeciwieństwie do reszty ustawień (Satel/
+Tuya/eBUS), zakładka 🔌 Połączenia świadomie NIE oferuje do tego formularza
+(zmiana własnego hasła administratora bez potwierdzenia bieżącego hasła to
+osobna, większa funkcja bezpieczeństwa - do zrobienia w kolejnej rundzie,
+jeśli będzie potrzebna).
 
 Ochrona przed brute-force: po `max_failed_attempts` (domyślnie 5)
 nieudanych próbach z tego samego adresu IP, dalsze próby są odrzucane
@@ -754,9 +832,10 @@ dopóki blokada nie wygaśnie. Sprawdzone testem.
 
 #### Jak to działa w przeglądarce - logowanie sesyjne (`/login`)
 
-Prawdziwe logowanie, nie okienko `prompt()`: strona `/login` ma
+Prawdziwe logowanie, nie okienko `prompt()`: strona `/login` ma pole nazwy
+użytkownika (podpowiedziane automatycznie - nie jest sekretem) i
 zamaskowane pole hasła (`<input type=password>`, jak wszędzie indziej w
-sieci) - wpisujesz hasło RAZ, serwer wystawia losowy token sesji w
+sieci) - wpisujesz dane logowania RAZ, serwer wystawia losowy token sesji w
 ciasteczku **`HttpOnly`** (niedostępnym dla JavaScriptu na stronie -
 ochrona przed odczytaniem go przez ewentualny złośliwy skrypt/XSS).
 Dalsze żądania z panelu **nie wysyłają już hasła w ogóle** - tylko ten
@@ -982,36 +1061,30 @@ symulację obecności. Odczyt jest otwarty, **zapis wymaga hasła
 administratora panelu** (tego samego z kroku "Hasło administratora panelu"
 w kreatorze - patrz sekcja "Bezpieczeństwo panelu" niżej). Alternatywnie:
 te same trzy rzeczy da się skonfigurować już **w kreatorze** przy
-pierwszym uruchomieniu (kroki "Sceny" i "Reguły ruchu"), albo ręcznie w
-pliku `automations.yaml` (patrz niżej) - wszystkie trzy drogi prowadzą do
-tego samego pliku.
+pierwszym uruchomieniu (kroki "Sceny" i "Reguły ruchu"), albo przez
+import YAML (patrz "Konfiguracja w bazie danych" wyżej) - wszystkie trzy
+drogi prowadzą do tego samego dokumentu w bazie.
 
-### Gdzie to jest zapisane: `automations.yaml`, nie `config.yaml`
+### Gdzie to jest zapisane: dokument `automations`, nie `config`
 
-Sceny/reguły ruchu/symulacja obecności trafiają do **osobnego pliku**
-`automations.yaml` (obok `config.yaml`, ścieżka konfigurowalna polem
-`automations_file` w `config.yaml`) - z dokładnie tego samego powodu, dla
-którego czujniki eBUS mają swój `sensors.yaml`: to jedyne pliki, które
-UI (kreator i panel `/automations`) wolno mu bezpiecznie **nadpisać w
-całości** przy każdym zapisie, bez ryzyka skasowania Twoich ręcznych
-zmian/komentarzy w `config.yaml`. Format pliku - patrz
-`config.example.yaml` (sekcje `scenes`/`reguły_ruchu`/
-`presence_simulation`) i przykłady niżej.
+Sceny/reguły ruchu/symulacja obecności trafiają do **osobnego dokumentu**
+`automations` w `config.db` (patrz "Konfiguracja w bazie danych" wyżej) -
+z dokładnie tego samego powodu, dla którego czujniki eBUS mają swój
+dokument `sensors`: to jedyne dokumenty, które UI (kreator i panel
+`/automations`) wolno mu bezpiecznie **nadpisać w całości** przy każdym
+zapisie, bez ryzyka skasowania reszty konfiguracji. Kształt danych -
+patrz `config.example.yaml` (sekcje `scenes`/`reguły_ruchu`/
+`presence_simulation`, wciąż aktualny jako dokumentacja pól, mimo że sam
+plik nie jest już bezpośrednio wczytywany) i przykłady niżej.
 
-Ten sam wzorzec (osobny plik, konfigurowalna ścieżka, panel może go
-bezpiecznie nadpisać w całości) obowiązuje też dla pól edytowanych w
-zakładce ⚙ Ustawienia (patrz sekcja "Panel webowy" wyżej):
-`satel_fields.yaml` (`satel.fields_file`) dla stref/wyjść/wejść IP/
-partycji, `tuya_devices.yaml` (`tuya.devices_file`) dla urządzeń Tuya.
-Wszystkie cztery pliki są opcjonalne - jeśli nie istnieją, wartości brane
-są wprost z `config.yaml` (wsteczna zgodność).
+Ten sam wzorzec (osobny dokument, panel może go bezpiecznie nadpisać w
+całości) obowiązuje też dla pól edytowanych w zakładce ⚙ Ustawienia
+(patrz sekcja "Panel webowy" wyżej): dokument `satel_fields` dla
+stref/wyjść/wejść IP/partycji, dokument `tuya_devices` dla urządzeń Tuya.
 
-Configi sprzed tego podziału (gdzie te sekcje były wpisane bezpośrednio w
-`config.yaml`) wciąż działają bez zmian - `automations.yaml` jest
-całkowicie opcjonalny; jeśli nie istnieje, bridge czyta te sekcje wprost z
-`config.yaml` jak dawniej. Pierwszy zapis z panelu `/automations` tworzy
-plik i **od tej pory to on jest źródłem prawdy** dla tych trzech sekcji
-(wartości w `config.yaml`, jeśli tam nadal są, są wtedy ignorowane).
+Configi sprzed migracji na bazę (gdzie te sekcje były wpisane bezpośrednio
+w `config.yaml`) migrują się automatycznie przy pierwszym uruchomieniu -
+patrz "Konfiguracja w bazie danych" wyżej.
 
 **Zmiany z panelu/kreatora wchodzą w życie po restarcie procesu bridge'a**
 (samego panelu nie trzeba restartować - patrz "Jak działa uzbrajanie/
@@ -1168,15 +1241,16 @@ journalctl -u satel-tuya-bridge -f
 ```
 
 Analogicznie dla panelu webowego (drugi plik `.service`, np.
-`satel-tuya-dashboard.service`, `ExecStart=... python -m dashboard.app --config config.yaml --port 8090`).
+`satel-tuya-dashboard.service`, `ExecStart=... python -m dashboard.app --config config.db --port 8090`).
 
 ## Uruchomienie w Dockerze
 
 Alternatywa dla instalacji przez `venv`/systemd wyżej - jeden obraz
 (`Dockerfile`), dwa kontenery z `docker-compose.yml` (bridge + panel
-webowy), dzielące wspólny wolumen na dane (`config.yaml`, `sensors.yaml`,
-baza SQLite, backupy). Działa tak samo na RPi (arm64/armv7) jak na
-amd64 - `python:3.11-slim` ma gotowe obrazy dla obu architektur.
+webowy), dzielące wspólny wolumen na dane (`config.db` - cała
+konfiguracja, patrz "Konfiguracja w bazie danych" wyżej - plus
+`bridge_history.db` i backupy). Działa tak samo na RPi (arm64/armv7) jak
+na amd64 - `python:3.11-slim` ma gotowe obrazy dla obu architektur.
 
 ### Pierwsze uruchomienie
 
@@ -1188,11 +1262,12 @@ docker compose up -d --build
 ```
 
 Otwórz `http://<adres-hosta>:8090/setup` w przeglądarce i przejdź kreator
-dokładnie tak samo, jak przy uruchomieniu bez Dockera - `config.yaml`,
-`sensors.yaml` i baza SQLite wylądują w `./data/` na hoście (a nie w
-kontenerze), więc przetrwają przebudowę/aktualizację obrazu i są dostępne
-do ręcznej edycji z hosta. Po zapisaniu w kreatorze kontener `bridge`
-trzeba zrestartować, żeby wczytał świeżo zapisaną konfigurację:
+dokładnie tak samo, jak przy uruchomieniu bez Dockera - `config.db` i
+`bridge_history.db` wylądują w `./data/` na hoście (a nie w kontenerze),
+więc przetrwają przebudowę/aktualizację obrazu (do backupu/wglądu poza
+panelem - patrz "Import/eksport YAML" wyżej). Po zapisaniu w kreatorze
+kontener `bridge` trzeba zrestartować, żeby wczytał świeżo zapisaną
+konfigurację:
 
 ```bash
 docker compose restart bridge
@@ -1201,10 +1276,10 @@ docker compose restart bridge
 ### Build i rebuild - krok po kroku
 
 Wszystkie polecenia niżej uruchamiasz z katalogu repo (tam, gdzie jest
-`docker-compose.yml`). Rozróżnienie, które ma znaczenie: **zmiana w
-`config.yaml`/`sensors.yaml`/itd. (przez panel albo ręcznie) wymaga tylko
-restartu** (dane są w zamontowanym `./data/`, nie w obrazie) - **zmiana w
-kodzie (`bridge/`, `dashboard/`, `requirements.txt`, `Dockerfile`) wymaga
+`docker-compose.yml`). Rozróżnienie, które ma znaczenie: **zmiana
+konfiguracji w `config.db` (przez panel) wymaga tylko restartu** (dane są
+w zamontowanym `./data/`, nie w obrazie) - **zmiana w kodzie (`bridge/`,
+`dashboard/`, `plugins/`, `requirements.txt`, `Dockerfile`) wymaga
 przebudowy obrazu (`--build`)**, inaczej kontener dalej uruchamia STARY kod.
 
 **1. Pierwszy build (raz, przy pierwszej instalacji):**
@@ -1231,10 +1306,9 @@ nawet jeśli nic się nie zmieniło (wtedy po prostu nic nie robi). `-d`
 sprawia, że stare kontenery są podmieniane na nowe automatycznie, bez
 osobnego `stop`/`start`.
 
-**3. Restart BEZ rebuildu (wystarczy po zmianie tylko w `config.yaml`/
-`sensors.yaml`/`automations.yaml`/`satel_fields.yaml`/`tuya_devices.yaml`,
-np. przez panel `/config` albo `/automations` - te pliki żyją w `./data/`,
-nie w obrazie, więc rebuild niczego by tu nie zmienił):**
+**3. Restart BEZ rebuildu (wystarczy po zmianie samej konfiguracji w
+`config.db`, np. przez panel `/config` albo `/automations` - baza żyje w
+`./data/`, nie w obrazie, więc rebuild niczego by tu nie zmienił):**
 ```bash
 docker compose restart bridge
 ```
@@ -1282,8 +1356,8 @@ konfiguracji).
   **tylko** jeśli nie masz już takiego, na którym publikuje `ebusd`.
   `ebusd` sam wymaga fizycznego dostępu do adaptera eBUS (USB/szeregowy)
   i **nie jest** tu kontenerowany - zwykle działa bezpośrednio na hoście
-  (RPi) albo osobnym urządzeniu; w `config.yaml` (`ebus.mqtt_host`)
-  wskaż adres LAN tego, co faktycznie działa. Włączenie:
+  (RPi) albo osobnym urządzeniu; w zakładce ⚙ Ustawienia -> Połączenia
+  (`mqtt_host`, eBUS) wskaż adres LAN tego, co faktycznie działa. Włączenie:
   ```bash
   docker compose --profile broker up -d
   ```
@@ -1292,7 +1366,7 @@ konfiguracji).
 
 Domyślnie kontenery używają zwykłej sieci mostkowanej Dockera -
 połączenia WYCHODZĄCE do centrali Satel i urządzeń Tuya (skonfigurowanych
-po adresie IP w `config.yaml`) działają bez dodatkowej konfiguracji. Jeśli
+po adresie IP w panelu) działają bez dodatkowej konfiguracji. Jeśli
 coś w Twojej sieci tego wymaga (np. discovery po multicaście), w
 `docker-compose.yml` przy usłudze `bridge` odkomentuj `network_mode: host`
 (tylko Linux).
@@ -1302,21 +1376,22 @@ coś w Twojej sieci tego wymaga (np. discovery po multicaście), w
 Kontener działa jako **użytkownik bez uprawnień roota** (UID 1000) -
 stąd wymóg `chown` katalogu `data/` przed pierwszym uruchomieniem
 (inaczej Docker utworzy go jako root i kontener nie będzie mógł zapisać
-`config.yaml`). Sekrety (klucz integracji Satela, local_key urządzeń
-Tuya, hasła) trafiają wyłącznie do zamontowanego `./data/config.yaml` -
+`config.db`). Sekrety (klucz integracji Satela, local_key urządzeń
+Tuya, hasła) trafiają wyłącznie do zamontowanego `./data/config.db` -
 nigdy do obrazu ani do warstw builda.
 
 ## Struktura projektu
 
 ```
 satel_tuya_bridge/
-  config.example.yaml       # wzór głównej konfiguracji (połączenia, poświadczenia)
+  config.example.yaml       # dokumentacja pól głównej konfiguracji (połączenia, poświadczenia) -
+                             # NIE jest już bezpośrednio wczytywany, patrz "Konfiguracja w bazie danych"
   sensors.example.yaml      # wzór listy czujników eBUS (edytowalny z panelu, patrz /config)
-  # automations.yaml (sceny/reguły ruchu/symulacja obecności), satel_fields.yaml
-  # (strefy/wyjścia/wejścia IP/partycje) i tuya_devices.yaml (urządzenia Tuya)
-  # NIE MAJĄ wzoru - tworzy je kreator albo pierwszy zapis z panelu
-  # (/automations, /config); format pól - patrz odpowiednie sekcje w
-  # config.example.yaml (scenes/reguły_ruchu/presence_simulation/satel/tuya)
+  # config.db - cała faktyczna konfiguracja (dokumenty config/sensors/
+  # automations/satel_fields/tuya_devices) - baza SQLite tworzona przez
+  # kreator (albo migrowana automatycznie ze starych plików .yaml przy
+  # pierwszym uruchomieniu), patrz bridge/config_store.py i sekcja
+  # "Konfiguracja w bazie danych"
   requirements.txt
   Dockerfile                # jeden obraz dla bridge'a i panelu, patrz "Uruchomienie w Dockerze"
   docker-compose.yml         # usługi bridge/dashboard/(opcjonalnie) mosquitto
@@ -1324,7 +1399,8 @@ satel_tuya_bridge/
   docker/mosquitto.conf      # minimalny config opcjonalnego brokera MQTT (profil "broker")
   main.py                   # punkt wejścia głównego bridge'a
   bridge/
-    config.py               # loader YAML
+    config.py               # BridgeConfig.load() - czyta z ConfigStore, migruje stare pliki YAML
+    config_store.py         # baza SQLite z dokumentami konfiguracji + eksport/import YAML
     satel_client.py         # protokół integracji + wirtualne wejścia IP + test_connection() ("Testuj połączenie")
     tuya_local.py            # sterowanie lokalne (tinytuya) + scan_network()/fetch_cloud_devices() (import w /config)
     tuya_cloud_events.py     # ruch z kamer Tuya (Pulsar, wymaga chmury)
@@ -1342,15 +1418,18 @@ satel_tuya_bridge/
     maintenance.py            # rotacja starych danych + backup bazy
     ha_discovery.py            # budowanie encji Home Assistant (MQTT Discovery)
     ha_mqtt.py                 # klient MQTT integracji Home Assistant
-    rules_engine.py          # spina wszystko razem wg config.yaml
+    rules_engine.py          # spina wszystko razem wg BridgeConfig.raw
   dashboard/
     app.py                   # backend panelu (Flask + waitress)
     auth.py                   # autoryzacja - tylko akcje zmieniające stan
-    setup.py                   # logika kreatora + budowanie config.yaml i towarzyszy
+    setup.py                   # logika kreatora + budowanie dokumentów configu
     templates/index.html     # frontend panelu (Chart.js, filtrowanie, sterowanie alarmem)
-    templates/config.html    # edytor czujników eBUS / pól Satela / urządzeń Tuya (+ przyciski wykrywania)
+    templates/config.html    # edytor czujników eBUS / pól Satela / urządzeń Tuya (+ przyciski wykrywania, backup)
     templates/automations.html # edytor scen/reguł ruchu/symulacji obecności (wymaga hasła do zapisu)
     templates/setup.html      # kreator pierwszej konfiguracji (krok po kroku, autozapis postępu)
+    templates/plugins.html    # przegląd wszystkich integracji (włącz/wyłącz, interwały)
+  plugins/                   # wtyczki z WŁASNĄ stroną konfiguracji, jeden podkatalog na integrację
+    satel/routes.py           # /plugins/satel - strefy/wyjścia/partycje + skanowanie, patrz plugins/__init__.py
   tests/                     # testy pytest (patrz sekcja "Testy automatyczne")
   .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.9/3.11/3.12
   maintenance.py              # CLI do rotacji/backupu bazy (do crona, patrz sekcja "Rotacja i backup bazy")

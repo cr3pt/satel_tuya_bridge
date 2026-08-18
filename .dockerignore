@@ -13,9 +13,16 @@ venv
 .venv
 
 # Prawdziwa konfiguracja i dane - w Dockerze trafiają przez wolumen
-# (./data:/config), nie przez obraz.
+# (./data:/config), nie przez obraz. config.db (baza z całą konfiguracją)
+# i bridge_history.db łapie już *.db; config.yaml/sensors.yaml/
+# automations.yaml/satel_fields.yaml/tuya_devices.yaml to pliki starszych,
+# niezmigrowanych instalacji (patrz README, sekcja "Konfiguracja w bazie
+# danych").
 config.yaml
 sensors.yaml
+automations.yaml
+satel_fields.yaml
+tuya_devices.yaml
 *.db
 *.db-journal
 backups/

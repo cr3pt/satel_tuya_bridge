@@ -24,7 +24,7 @@
   h1 { font-size: 18px; font-weight: 500; margin: 0 0 6px; }
   .hint { color: var(--muted); font-size: 13px; margin-bottom: 18px; line-height: 1.5; }
   label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
-  input[type=password] {
+  input[type=password], input[type=text] {
     background: #262a32; color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 10px 12px; font-size: 14px; width: 100%; margin-bottom: 14px;
   }
@@ -47,8 +47,10 @@
     logowania.
   </div>
   <form id="loginForm">
+    <label for="username">Nazwa użytkownika</label>
+    <input type="text" id="username" autocomplete="username" autofocus>
     <label for="password">Hasło administratora</label>
-    <input type="password" id="password" autocomplete="current-password" autofocus>
+    <input type="password" id="password" autocomplete="current-password">
     <button type="submit" id="loginBtn">Zaloguj</button>
   </form>
   <div id="loginMsg" class="msg-box"></div>
@@ -63,10 +65,18 @@ function nextUrl() {
   return (next && next.startsWith('/')) ? next : '/';
 }
 
+// Podpowiedź nazwy użytkownika (nie jest sekretem, patrz api_auth_status w
+// dashboard/app.py) - ułatwia przypomnienie sobie loginu, jeśli ktoś go
+// zapomniał, bez potrzeby zaglądania do config.yaml.
+fetch('/api/auth/status').then(r => r.json()).then(data => {
+  if (data.username) document.getElementById('username').value = data.username;
+}).catch(() => {});
+
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = document.getElementById('loginBtn');
   const msg = document.getElementById('loginMsg');
+  const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value;
   btn.disabled = true;
   msg.style.display = 'none';
@@ -74,7 +84,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     const resp = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ username, password }),
     });
     const data = await resp.json();
     if (!resp.ok) {

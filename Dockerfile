@@ -1,9 +1,9 @@
 # Jeden obraz dla obu procesów (bridge + panel webowy) - dzielą ten sam
 # kod i zależności, różni je tylko polecenie uruchomieniowe (patrz
 # docker-compose.yml). Working directory z kodem to /app; katalog z danymi
-# (config.yaml, sensors.yaml, baza SQLite, backupy) to zamontowany wolumen
-# /config - dokładnie tak samo jak przy uruchomieniu bez Dockera (main.py
-# i dashboard/app.py trzymają ścieżki względne wobec katalogu roboczego).
+# (config.db, bridge_history.db, backupy) to zamontowany wolumen /config -
+# dokładnie tak samo jak przy uruchomieniu bez Dockera (main.py i
+# dashboard/app.py trzymają ścieżki względne wobec katalogu roboczego).
 FROM python:3.11-slim AS base
 
 # gcc/libffi-dev potrzebne do zbudowania kilku zależności (np. bcrypt
@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bridge/ bridge/
 COPY dashboard/ dashboard/
+COPY plugins/ plugins/
 COPY main.py maintenance.py ./
 
 ENV PYTHONPATH=/app \

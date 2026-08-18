@@ -22,7 +22,7 @@ logger = logging.getLogger("bridge.main")
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--config", default="config.db")
     args = parser.parse_args()
 
     try:

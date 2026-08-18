@@ -71,6 +71,10 @@ def validate(form: dict) -> list[str]:
     if not ebus.get("mqtt_host"):
         errors.append("eBUS: adres brokera MQTT jest wymagany")
 
+    username = (form.get("admin_username") or "").strip()
+    if not username:
+        errors.append("Nazwa użytkownika administratora jest wymagana")
+
     password = form.get("admin_password", "")
     if len(password) < 8:
         errors.append("Hasło panelu: minimum 8 znaków")
@@ -245,6 +249,13 @@ def _build_scene_action(action: dict) -> dict:
     elif action_type == "satel_arm":
         if action.get("mode") not in (None, ""):
             built["mode"] = int(action["mode"])
+        if action.get("partitions"):
+            built["partitions"] = [int(p) for p in action["partitions"]]
+    elif action_type == "satel_disarm":
+        # Opcjonalne - patrz komentarz w bridge/scenes.py: gdy pominięte,
+        # dotyka domyślnej (jedynej) strefy skonfigurowanej dla instalacji.
+        if action.get("partitions"):
+            built["partitions"] = [int(p) for p in action["partitions"]]
     elif action_type == "delay":
         built["seconds"] = float(action["seconds"])
     return built
@@ -722,6 +733,45 @@ def list_plugins(config_raw: dict) -> list[dict]:
     ]
 
 
+def dict_to_name_number_rows(d: dict) -> list[dict]:
+    return [{"name": name, "number": number} for name, number in d.items()]
+
+
+def zones_to_rows(numbers: dict, types: dict) -> list[dict]:
+    """Jak dict_to_name_number_rows, ale dokłada opcjonalny "type" (rodzaj
+    czujki/wyjścia - patrz SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES niżej) do
+    edycji w panelu i wyświetlania ikon na stronie głównej."""
+    return [{"name": name, "number": number, "type": types.get(name, "")} for name, number in numbers.items()]
+
+
+def virtual_inputs_to_rows(inputs: dict) -> list[dict]:
+    return [{"name": name, "number": v.get("number"), "key": v.get("key")} for name, v in inputs.items()]
+
+
+def tuya_devices_to_rows(devices: dict) -> list[dict]:
+    return [
+        {
+            "name": name, "id": cfg.get("id", ""), "ip": cfg.get("ip", ""),
+            "local_key": cfg.get("local_key", ""), "type": cfg.get("type", "socket"),
+            "dimmer_dp": cfg.get("dimmer_dp", ""),
+            # Podurządzenie Zigbee bramki (patrz TuyaLocalController) - puste
+            # dla zwykłych urządzeń WiFi, które mają własne ip/local_key wyżej.
+            "gateway": cfg.get("gateway", ""), "cid": cfg.get("cid", ""),
+        }
+        for name, cfg in devices.items()
+    ]
+
+
+def zigbee_gateways_to_rows(gateways: dict) -> list[dict]:
+    return [
+        {
+            "name": name, "id": cfg.get("id", ""), "ip": cfg.get("ip", ""),
+            "local_key": cfg.get("local_key", ""), "version": cfg.get("version", 3.4),
+        }
+        for name, cfg in gateways.items()
+    ]
+
+
 def build_satel_fields_dict(form: dict) -> dict:
     """Buduje zawartość satel_fields.yaml (strefy/wyjścia/wejścia IP/
     partycje) - używane zarówno przez kreator (razem z build_config_dict),
@@ -810,6 +860,7 @@ def build_config_dict(form: dict) -> dict:
         "dashboard": {
             "db_path": "bridge_history.db",
             "auth": {
+                "username": (form.get("admin_username") or "admin").strip() or "admin",
                 "password_hash": generate_password_hash(form["admin_password"]),
                 "max_failed_attempts": 5,
                 "lockout_seconds": 300,

@@ -22,6 +22,7 @@ VALID_FORM = {
         {"name": "gniazdko_salon", "id": "dev1", "ip": "192.168.1.50", "local_key": "key1", "type": "socket"},
     ],
     "ebus": {"mqtt_host": "127.0.0.1", "mqtt_port": "1883"},
+    "admin_username": "admin",
     "admin_password": "bardzo_bezpieczne_haslo",
     "notifications": {"ntfy_topic_url": ""},
     "location": {"latitude": "", "longitude": ""},
@@ -49,6 +50,11 @@ class TestValidation:
         form = {**VALID_FORM, "admin_password": "krotkie"}
         errors = validate(form)
         assert any("Hasło" in e for e in errors)
+
+    def test_missing_admin_username_is_error(self):
+        form = {**VALID_FORM, "admin_username": ""}
+        errors = validate(form)
+        assert any("użytkownika" in e for e in errors)
 
     def test_missing_mqtt_host_is_error(self):
         form = {**VALID_FORM, "ebus": {"mqtt_host": "", "mqtt_port": "1883"}}
@@ -108,6 +114,18 @@ class TestBuildConfigDict:
         stored = config["dashboard"]["auth"]["password_hash"]
         assert stored != VALID_FORM["admin_password"]
         assert stored.startswith("scrypt:") or stored.startswith("pbkdf2:")
+
+    def test_username_is_stored_as_plaintext(self):
+        """W odróżnieniu od hasła, nazwa użytkownika NIE jest sekretem (jak
+        login) - zapisywana jawnym tekstem, nie hashowana."""
+        form = {**VALID_FORM, "admin_username": "szef"}
+        config = build_config_dict(form)
+        assert config["dashboard"]["auth"]["username"] == "szef"
+
+    def test_missing_admin_username_defaults_to_admin(self):
+        form = {**VALID_FORM, "admin_username": ""}
+        config = build_config_dict(form)
+        assert config["dashboard"]["auth"]["username"] == "admin"
 
     def test_advanced_sections_get_empty_safe_defaults(self):
         config = build_config_dict(VALID_FORM)
@@ -540,7 +558,7 @@ def setup_client(tmp_path):
     import dashboard.app as app_module
 
     app_module.history = None
-    app_module.sensors_file_path = None
+    app_module.config_store = None
     app_module.auth_guard = None
     app_module.satel_partitions_cfg = {}
     app_module.config_path = tmp_path / "config.yaml"  # celowo NIE tworzymy tego pliku
@@ -595,12 +613,15 @@ class TestSetupRedirect:
 
 
 class TestSetupSave:
-    def test_save_creates_config_and_sensors_files(self, setup_client):
+    def test_save_creates_config_db(self, setup_client):
         client, tmp_path = setup_client
         resp = client.post("/api/setup/save", json=VALID_FORM)
         assert resp.status_code == 200
-        assert (tmp_path / "config.yaml").exists()
-        assert (tmp_path / "sensors.yaml").exists()
+        assert (tmp_path / "config.db").exists()
+
+        import dashboard.app as app_module
+        assert app_module.config_store.get("config")["satel"]["host"]
+        assert app_module.config_store.has("sensors")
 
     def test_save_with_errors_returns_400(self, setup_client):
         client, _ = setup_client
@@ -830,6 +851,33 @@ class TestBuildConfigDictAdvanced:
         assert actions[1] == {"type": "satel_output", "output_number": 1, "state": True}
         assert actions[2] == {"type": "delay", "seconds": 2.0}
         assert actions[3] == {"type": "satel_virtual_input", "virtual_input": "motion_hall_camera"}
+
+    def test_arm_disarm_actions_capture_explicit_partitions(self):
+        """Regresja: sceny wcześniej nie miały żadnego sposobu na wskazanie,
+        KTÓRE strefy uzbroić/rozbroić - zawsze dotykały tylko domyślnej
+        (patrz bridge/scenes.py). `partitions` jest opcjonalne (pominięte =
+        stare zachowanie), ale gdy podane, musi przejść przez build w
+        całości, jako liczby całkowite (nie stringi z formularza)."""
+        form = {**VALID_FORM, "scenes": [
+            {
+                "name": "wyjscie_z_domu",
+                "actions": [
+                    {"type": "satel_arm", "mode": "0", "partitions": ["1", "2"]},
+                    {"type": "satel_disarm", "partitions": ["2"]},
+                ],
+            },
+        ]}
+        actions = build_automations_dict(form)["scenes"][0]["actions"]
+        assert actions[0] == {"type": "satel_arm", "mode": 0, "partitions": [1, 2]}
+        assert actions[1] == {"type": "satel_disarm", "partitions": [2]}
+
+    def test_arm_disarm_actions_omit_partitions_when_not_given(self):
+        form = {**VALID_FORM, "scenes": [
+            {"name": "s", "actions": [{"type": "satel_arm"}, {"type": "satel_disarm"}]},
+        ]}
+        actions = build_automations_dict(form)["scenes"][0]["actions"]
+        assert actions[0] == {"type": "satel_arm"}
+        assert actions[1] == {"type": "satel_disarm"}
 
     def test_motion_rules_built_with_harmonogram_and_escalation(self):
         automations = build_automations_dict(FORM_WITH_ADVANCED)

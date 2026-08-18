@@ -1,12 +1,12 @@
 """CLI do ręcznego lub cronowego uruchamiania czyszczenia i backupu bazy.
 
 Uruchomienie ręczne:
-    python maintenance.py --config config.yaml
+    python maintenance.py --config config.db
 
 Zalecane uruchamianie przez cron (codziennie o 3:00, poza godzinami
 szczytu ruchu w domu):
     0 3 * * * /home/pi/satel_tuya_bridge/venv/bin/python \\
-        /home/pi/satel_tuya_bridge/maintenance.py --config /home/pi/satel_tuya_bridge/config.yaml \\
+        /home/pi/satel_tuya_bridge/maintenance.py --config /home/pi/satel_tuya_bridge/config.db \\
         >> /home/pi/satel_tuya_bridge/maintenance.log 2>&1
 
 Bridge sam robi to samo automatycznie raz na dobę (patrz
@@ -29,7 +29,7 @@ logger = logging.getLogger("maintenance.cli")
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--config", default="config.db")
     args = parser.parse_args()
 
     config = BridgeConfig.load(args.config)
