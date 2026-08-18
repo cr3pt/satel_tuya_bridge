@@ -558,7 +558,7 @@ def setup_client(tmp_path):
     import dashboard.app as app_module
 
     app_module.history = None
-    app_module.sensors_file_path = None
+    app_module.config_store = None
     app_module.auth_guard = None
     app_module.satel_partitions_cfg = {}
     app_module.config_path = tmp_path / "config.yaml"  # celowo NIE tworzymy tego pliku
@@ -613,12 +613,15 @@ class TestSetupRedirect:
 
 
 class TestSetupSave:
-    def test_save_creates_config_and_sensors_files(self, setup_client):
+    def test_save_creates_config_db(self, setup_client):
         client, tmp_path = setup_client
         resp = client.post("/api/setup/save", json=VALID_FORM)
         assert resp.status_code == 200
-        assert (tmp_path / "config.yaml").exists()
-        assert (tmp_path / "sensors.yaml").exists()
+        assert (tmp_path / "config.db").exists()
+
+        import dashboard.app as app_module
+        assert app_module.config_store.get("config")["satel"]["host"]
+        assert app_module.config_store.has("sensors")
 
     def test_save_with_errors_returns_400(self, setup_client):
         client, _ = setup_client

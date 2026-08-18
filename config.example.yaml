@@ -1,6 +1,16 @@
 # ============================================================================
 # Konfiguracja bridge'a Satel Integra <-> Tuya <-> eBUS (Wolf)
-# Skopiuj ten plik jako config.yaml i uzupełnij własnymi danymi.
+#
+# UWAGA: od wersji z bazą config.db ten plik NIE jest już bezpośrednio
+# wczytywany przez bridge/panel (patrz README, sekcja "Konfiguracja w
+# bazie danych") - służy jako DOKUMENTACJA dostępnych pól. Dwa sposoby
+# użycia:
+#   1. Zwykle: przejdź kreator (/setup) - nie musisz w ogóle dotykać YAML-a.
+#   2. Ręcznie/skryptowo: skopiuj jako config.yaml, uzupełnij, uruchom
+#      raz `python main.py` albo panel - PIERWSZE uruchomienie migruje go
+#      automatycznie do config.db (i zmienia nazwę na config.yaml.migrated).
+#      Dalsze zmiany rób z panelu albo przez eksport/import YAML
+#      (`/api/config/export-yaml` / `/api/config/import-yaml`).
 # ============================================================================
 
 satel:

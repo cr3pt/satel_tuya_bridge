@@ -25,6 +25,7 @@ import yaml
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 from bridge.config import BridgeConfig
+from bridge.config_store import ConfigStore, resolve_db_and_legacy_paths
 from bridge.ebus_client import discover_topics as discover_ebus_topics, BackgroundTopicDiscovery
 from bridge.history_store import HistoryStore
 from bridge.satel_client import test_connection as test_satel_connection
@@ -32,7 +33,6 @@ from bridge.satel_client import discover_active_zones_and_outputs
 from bridge.tuya_local import scan_network as scan_tuya_network, fetch_cloud_devices as fetch_tuya_cloud_devices
 from dashboard.auth import AuthGuard, require_auth, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
 from dashboard.setup import (
-    CONFIG_HEADER, SENSORS_HEADER, AUTOMATIONS_HEADER, SATEL_FIELDS_HEADER, TUYA_DEVICES_HEADER,
     build_config_dict, validate, build_automations_dict, validate_automations,
     build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
     build_connections_patch, validate_connections, connections_to_form, list_plugins,
@@ -43,14 +43,11 @@ from dashboard.setup import (
 
 app = Flask(__name__)
 history: HistoryStore | None = None  # ustawiane w create_app()
-sensors_file_path = None  # ustawiane w create_app() - ścieżka do sensors.yaml
-automations_file_path = None  # ustawiane w create_app() - ścieżka do automations.yaml
-satel_fields_file_path = None  # ustawiane w create_app() - ścieżka do satel_fields.yaml
-tuya_devices_file_path = None  # ustawiane w create_app() - ścieżka do tuya_devices.yaml
+config_store: ConfigStore | None = None  # ustawiane w create_app() - baza z dokumentami config/sensors/automations/satel_fields/tuya_devices
 auth_guard: AuthGuard | None = None  # ustawiane w create_app()
 satel_partitions_cfg: dict = {}  # nazwa -> numer strefy, ustawiane w create_app()
 config_raw: dict = {}  # ostatnio wczytany config.raw (do odczytu automatyzacji/kontekstu), ustawiane w create_app()
-config_path: pathlib.Path | None = None  # ustawiane w main() - potrzebne, zanim config.yaml w ogóle istnieje
+config_path: pathlib.Path | None = None  # ustawiane w main() - ścieżka do bazy config.db, potrzebna, zanim w ogóle istnieje
 
 # Endpointy dostępne, ZANIM config.yaml istnieje (kreator + statyka) -
 # wszystko inne przekierowuje na /setup, dopóki konfiguracja nie powstanie.
@@ -65,18 +62,20 @@ _SETUP_EXEMPT_ENDPOINTS = {
 
 
 def is_configured() -> bool:
-    return config_path is not None and config_path.exists()
+    # Konfiguracja istnieje albo jako baza config.db, albo (stara instalacja
+    # jeszcze niezmigrowana) jako config.yaml obok niej - BridgeConfig.load()
+    # migruje automatycznie przy pierwszym użyciu (patrz bridge/config.py).
+    if config_path is None:
+        return False
+    db_path, legacy_yaml_path = resolve_db_and_legacy_paths(config_path)
+    return db_path.exists() or legacy_yaml_path.exists()
 
 
 def create_app(config: BridgeConfig) -> Flask:
-    global history, sensors_file_path, automations_file_path, satel_fields_file_path, tuya_devices_file_path
-    global auth_guard, satel_partitions_cfg, config_raw
+    global history, config_store, auth_guard, satel_partitions_cfg, config_raw
     db_path = config.raw.get("dashboard", {}).get("db_path", "bridge_history.db")
     history = HistoryStore(db_path)
-    sensors_file_path = config.sensors_file
-    automations_file_path = config.automations_file
-    satel_fields_file_path = config.satel_fields_file
-    tuya_devices_file_path = config.tuya_devices_file
+    config_store = config.store
     auth_guard = AuthGuard(config.raw.get("dashboard", {}).get("auth"))
     satel_partitions_cfg = config.satel.get("partitions", {"Dom": config.satel.get("partition", 1)})
     config_raw = config.raw
@@ -130,7 +129,7 @@ _plugin_metas = _plugins.register_all(
     require_auth=require_auth,
     get_auth_guard=lambda: auth_guard,
     get_config_raw=lambda: config_raw,
-    get_satel_fields_path=lambda: satel_fields_file_path,
+    get_config_store=lambda: config_store,
     get_config_path=lambda: config_path,
     reload_bridge_config=_reload_bridge_config_from_disk,
     enqueue_bridge_reload=_enqueue_bridge_reload,
@@ -335,29 +334,20 @@ def api_setup_save():
     satel_fields_dict = build_satel_fields_dict(form)
     tuya_devices_dict = build_tuya_devices_dict(form)
 
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(CONFIG_HEADER)
-        yaml.safe_dump(config_dict, f, allow_unicode=True, sort_keys=False)
-
-    sensors_path = config_path.parent / config_dict["ebus"]["sensors_file"]
-    with open(sensors_path, "w", encoding="utf-8") as f:
-        f.write(SENSORS_HEADER)
-        yaml.safe_dump({"sensors": []}, f, allow_unicode=True, sort_keys=False)
-
-    automations_path = config_path.parent / config_dict["automations_file"]
-    with open(automations_path, "w", encoding="utf-8") as f:
-        f.write(AUTOMATIONS_HEADER)
-        yaml.safe_dump(automations_dict, f, allow_unicode=True, sort_keys=False)
-
-    satel_fields_path = config_path.parent / config_dict["satel"]["fields_file"]
-    with open(satel_fields_path, "w", encoding="utf-8") as f:
-        f.write(SATEL_FIELDS_HEADER)
-        yaml.safe_dump(satel_fields_dict, f, allow_unicode=True, sort_keys=False)
-
-    tuya_devices_path = config_path.parent / config_dict["tuya"]["devices_file"]
-    with open(tuya_devices_path, "w", encoding="utf-8") as f:
-        f.write(TUYA_DEVICES_HEADER)
-        yaml.safe_dump(tuya_devices_dict, f, allow_unicode=True, sort_keys=False)
+    # Pierwszy zapis tworzy plik bazy config.db pod ścieżką z --config (patrz
+    # main()) - wszystkie "dokumenty" (config/sensors/automations/
+    # satel_fields/tuya_devices) trafiają do TEJ SAMEJ bazy SQLite zamiast
+    # osobnych plików .yaml (patrz bridge/config_store.py po uzasadnienie).
+    # resolve_db_and_legacy_paths (nie config_path wprost) - ta sama
+    # normalizacja co main()/BridgeConfig.load, na wypadek gdyby
+    # config_path wciąż kończył się na .yaml (patrz komentarz w main()).
+    db_path, _ = resolve_db_and_legacy_paths(config_path)
+    store = ConfigStore(db_path)
+    store.set("config", config_dict)
+    store.set("sensors", {"sensors": []})
+    store.set("automations", automations_dict)
+    store.set("satel_fields", satel_fields_dict)
+    store.set("tuya_devices", tuya_devices_dict)
 
     # Konfiguracja jest już kompletna i zapisana - plik roboczy kreatora
     # (postęp między krokami) nie jest już potrzebny.
@@ -397,11 +387,7 @@ def config_page():
 
 @app.route("/api/config/sensors", methods=["GET"])
 def api_config_sensors_get():
-    if not sensors_file_path.exists():
-        return jsonify([])
-    with open(sensors_file_path, "r", encoding="utf-8") as f:
-        content = yaml.safe_load(f) or {}
-    return jsonify(content.get("sensors", []))
+    return jsonify(config_store.get("sensors").get("sensors", []))
 
 
 @app.route("/api/config/sensors", methods=["POST"])
@@ -438,9 +424,7 @@ def api_config_sensors_post():
             },
         })
 
-    with open(sensors_file_path, "w", encoding="utf-8") as f:
-        f.write("# Wygenerowane z panelu webowego (/config) - patrz sensors.example.yaml po opis pól\n")
-        yaml.safe_dump({"sensors": cleaned}, f, allow_unicode=True, sort_keys=False)
+    config_store.set("sensors", {"sensors": cleaned})
     _enqueue_bridge_reload()
 
     return jsonify({"saved": len(cleaned), "message": _RELOAD_MESSAGE})
@@ -589,9 +573,7 @@ def api_config_satel_fields_post():
         return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
     satel_fields_dict = build_satel_fields_dict(form)
-    with open(satel_fields_file_path, "w", encoding="utf-8") as f:
-        f.write(SATEL_FIELDS_HEADER)
-        yaml.safe_dump(satel_fields_dict, f, allow_unicode=True, sort_keys=False)
+    config_store.set("satel_fields", satel_fields_dict)
 
     config = BridgeConfig.load(config_path)
     create_app(config)
@@ -626,9 +608,7 @@ def api_config_tuya_devices_post():
         return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
     tuya_devices_dict = build_tuya_devices_dict(form)
-    with open(tuya_devices_file_path, "w", encoding="utf-8") as f:
-        f.write(TUYA_DEVICES_HEADER)
-        yaml.safe_dump(tuya_devices_dict, f, allow_unicode=True, sort_keys=False)
+    config_store.set("tuya_devices", tuya_devices_dict)
 
     config = BridgeConfig.load(config_path)
     create_app(config)
@@ -648,8 +628,7 @@ def api_config_connections_get():
     hasła administratora NAWET do odczytu (w odróżnieniu od reszty
     endpointów /api/config/*) - zwracane dane obejmują, czy klucz integracji
     Satela / Tuya Cloud Access Secret SĄ ustawione, nigdy ich wartości."""
-    with open(config_path, "r", encoding="utf-8") as f:
-        current = yaml.safe_load(f) or {}
+    current = config_store.get("config")
     return jsonify(connections_to_form(current))
 
 
@@ -668,12 +647,9 @@ def api_config_connections_post():
     if errors:
         return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        current = yaml.safe_load(f) or {}
+    current = config_store.get("config")
     new_config = build_connections_patch(form, current)
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(CONFIG_HEADER)
-        yaml.safe_dump(new_config, f, allow_unicode=True, sort_keys=False)
+    config_store.set("config", new_config)
 
     config = BridgeConfig.load(config_path)
     create_app(config)
@@ -681,6 +657,43 @@ def api_config_connections_post():
     return jsonify({
         "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
                     "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
+    })
+
+
+@app.route("/api/config/export-yaml", methods=["GET"])
+@require_auth()
+def api_config_export_yaml():
+    """Cała konfiguracja żyje w bazie config.db (patrz bridge/config_store.py),
+    nie w plikach .yaml - ten endpoint to furtka bezpieczeństwa: backup,
+    ręczna inspekcja, migracja między instalacjami. Zwraca JSON
+    {"config.yaml": "...", "satel_fields.yaml": "...", ...} - rekonstrukcję
+    dokładnie tych plików, które istniały przed migracją na bazę."""
+    return jsonify(config_store.export_yaml_bundle())
+
+
+@app.route("/api/config/import-yaml", methods=["POST"])
+@require_auth()
+def api_config_import_yaml():
+    """Odwrotność eksportu wyżej - nadpisuje wskazane dokumenty w bazie
+    zawartością przesłanych plików YAML (ten sam kształt, jaki zwraca
+    export-yaml). Nierozpoznane nazwy plików są pomijane. Zmiany połączeń
+    (host/klucze) wymagają pełnego restartu - patrz /api/system/restart."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not payload:
+        return jsonify({"error": "Oczekiwano {'nazwa_pliku.yaml': 'tekst_yaml', ...}"}), 400
+    try:
+        config_store.import_yaml_bundle(payload)
+    except yaml.YAMLError as exc:
+        return jsonify({"error": f"Błąd parsowania YAML: {exc}"}), 400
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+    _enqueue_bridge_reload()
+
+    return jsonify({
+        "imported": list(payload.keys()),
+        "message": "Zaimportowano. Zmiany połączeń (host/klucze) wymagają pełnego restartu - "
+                    "użyj przycisku restartu w zakładce Połączenia.",
     })
 
 
@@ -739,8 +752,7 @@ def api_plugins_post():
 
     connections_body = {k: v for k, v in body.items() if k in _CONNECTIONS_PLUGIN_IDS}
     if connections_body:
-        with open(config_path, "r", encoding="utf-8") as f:
-            current = yaml.safe_load(f) or {}
+        current = config_store.get("config")
         form = connections_to_form(current)
         for plugin_id, patch in connections_body.items():
             patch = patch or {}
@@ -756,9 +768,7 @@ def api_plugins_post():
             return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
         new_config = build_connections_patch(form, current)
-        with open(config_path, "w", encoding="utf-8") as f:
-            f.write(CONFIG_HEADER)
-            yaml.safe_dump(new_config, f, allow_unicode=True, sort_keys=False)
+        config_store.set("config", new_config)
         saved.update(connections_body)
 
     automations_body = {k: v for k, v in body.items() if k in _AUTOMATIONS_PLUGIN_IDS}
@@ -778,9 +788,7 @@ def api_plugins_post():
             return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
         automations_dict = build_automations_dict(form)
-        with open(automations_file_path, "w", encoding="utf-8") as f:
-            f.write(AUTOMATIONS_HEADER)
-            yaml.safe_dump(automations_dict, f, allow_unicode=True, sort_keys=False)
+        config_store.set("automations", automations_dict)
         saved.update(automations_body)
 
     config = BridgeConfig.load(config_path)
@@ -853,9 +861,7 @@ def api_config_automations_post():
         return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
     automations_dict = build_automations_dict(form)
-    with open(automations_file_path, "w", encoding="utf-8") as f:
-        f.write(AUTOMATIONS_HEADER)
-        yaml.safe_dump(automations_dict, f, allow_unicode=True, sort_keys=False)
+    config_store.set("automations", automations_dict)
 
     # Jak przy zapisie czujników - odświeżamy config.raw w TYM procesie
     # (żeby GET zaraz potem pokazał świeże dane), i prosimy bridge o
@@ -1007,17 +1013,22 @@ def healthz():
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--config", default="config.db")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8090)
     args = parser.parse_args()
 
     global config_path
-    config_path = pathlib.Path(args.config)
+    # Normalizacja RAZ, na starcie - jeśli ktoś wciąż poda stary
+    # `--config config.yaml` (np. niezaktualizowany systemd unit sprzed
+    # migracji na bazę), od tego miejsca w dół cały kod procesu widzi
+    # spójnie ścieżkę do config.db (ta sama funkcja, której używa
+    # BridgeConfig.load i api_setup_save - musi być identyczna wszędzie).
+    config_path, _ = resolve_db_and_legacy_paths(args.config)
 
     from waitress import serve
 
-    if config_path.exists():
+    if is_configured():
         create_app(BridgeConfig.load(config_path))
         print(f"Panel dostępny pod http://{args.host}:{args.port}")
     else:

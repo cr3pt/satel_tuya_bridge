@@ -6,7 +6,6 @@ import asyncio
 import time
 
 import pytest
-import yaml
 
 from bridge.config import BridgeConfig
 from bridge.rules_engine import RulesEngine
@@ -257,26 +256,19 @@ class TestReloadConfig:
         assert engine.config is not old_config
 
     async def test_picks_up_new_tuya_device_without_restart(self, engine, tmp_path):
-        (tmp_path / "tuya_devices.yaml").write_text(
-            "devices:\n"
-            "  nowe_urzadzenie:\n"
-            "    id: dNEW\n"
-            "    ip: 1.2.3.9\n"
-            "    local_key: k9\n"
-            "    type: socket\n",
-            encoding="utf-8",
-        )
+        engine.config.store.set("tuya_devices", {
+            "devices": {"nowe_urzadzenie": {"id": "dNEW", "ip": "1.2.3.9", "local_key": "k9", "type": "socket"}},
+        })
         await engine.reload_config()
         assert "nowe_urzadzenie" in engine.tuya.devices_cfg
 
     async def test_picks_up_new_satel_zone_without_restart(self, engine, tmp_path):
-        (tmp_path / "satel_fields.yaml").write_text(
-            "monitored_zones:\n  Nowe_wejscie: 99\n"
-            "monitored_outputs: {}\n"
-            "partitions: {Dom: 1}\n"
-            "virtual_inputs: {}\n",
-            encoding="utf-8",
-        )
+        engine.config.store.set("satel_fields", {
+            "monitored_zones": {"Nowe_wejscie": 99},
+            "monitored_outputs": {},
+            "partitions": {"Dom": 1},
+            "virtual_inputs": {},
+        })
         await engine.reload_config()
         assert engine.satel.monitored_zones == {"Nowe_wejscie": 99}
 
@@ -293,10 +285,9 @@ class TestReloadConfig:
         MUSI zadziałać bez restartu - w odróżnieniu od host/portu/klucza,
         który nadal go wymaga (patrz satel_client.py:
         _periodic_status_sync, które czyta ten atrybut na bieżąco)."""
-        config_path = tmp_path / "config.yaml"
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        raw = engine.config.store.get("config")
         raw["satel"]["status_poll_interval_seconds"] = 5
-        config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+        engine.config.store.set("config", raw)
 
         await engine.reload_config()
         assert engine.satel.status_poll_interval_seconds == 5
@@ -305,24 +296,19 @@ class TestReloadConfig:
         """Analogicznie dla Tuya - _tuya_status_poll_loop() czyta
         self.config.tuya na bieżąco przy każdym obrocie, więc sama podmiana
         self.config (już robiona przez reload_config()) wystarcza."""
-        config_path = tmp_path / "config.yaml"
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        raw = engine.config.store.get("config")
         raw["tuya"]["status_poll_interval_seconds"] = 7
-        config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+        engine.config.store.set("config", raw)
 
         await engine.reload_config()
         assert engine.config.tuya.get("status_poll_interval_seconds") == 7
 
     async def test_picks_up_new_scene_without_restart(self, engine, tmp_path):
-        (tmp_path / "automations.yaml").write_text(
-            "scenes:\n"
-            "  - name: nowa_scena\n"
-            "    actions:\n"
-            "      - {type: tuya_on, device: gniazdko_salon}\n"
-            "reguły_ruchu: []\n"
-            "presence_simulation: {enabled: false}\n",
-            encoding="utf-8",
-        )
+        engine.config.store.set("automations", {
+            "scenes": [{"name": "nowa_scena", "actions": [{"type": "tuya_on", "device": "gniazdko_salon"}]}],
+            "reguły_ruchu": [],
+            "presence_simulation": {"enabled": False},
+        })
         await engine.reload_config()
         assert engine.scenes.exists("nowa_scena")
 
@@ -331,20 +317,22 @@ class TestReloadConfig:
         miejscu) - jego run_forever() mogło już być uruchomione jako
         zadanie w tle przywiązane do TEGO obiektu (patrz reload_config)."""
         old_presence = engine.presence_simulation
-        (tmp_path / "automations.yaml").write_text(
-            "scenes: []\nreguły_ruchu: []\n"
-            "presence_simulation: {enabled: true, devices: [gniazdko_salon], min_interval_minutes: 5, max_interval_minutes: 10}\n",
-            encoding="utf-8",
-        )
+        engine.config.store.set("automations", {
+            "scenes": [], "reguły_ruchu": [],
+            "presence_simulation": {
+                "enabled": True, "devices": ["gniazdko_salon"],
+                "min_interval_minutes": 5, "max_interval_minutes": 10,
+            },
+        })
         await engine.reload_config()
         assert engine.presence_simulation is old_presence
         assert engine.presence_simulation.cfg["enabled"] is True
         assert engine.presence_simulation.cfg["devices"] == ["gniazdko_salon"]
 
     async def test_picks_up_new_alarm_rule_without_restart(self, engine, tmp_path):
-        config_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
-        config_text += "\nalarm_rules:\n  - name: test\n    sensor: kociol_temp\n    condition: above\n    threshold: 90\n"
-        (tmp_path / "config.yaml").write_text(config_text, encoding="utf-8")
+        raw = engine.config.store.get("config")
+        raw["alarm_rules"] = [{"name": "test", "sensor": "kociol_temp", "condition": "above", "threshold": 90}]
+        engine.config.store.set("config", raw)
         await engine.reload_config()
         assert len(engine.alarms.rules) == 1
 

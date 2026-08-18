@@ -6,12 +6,11 @@ tamtejsze docstringi) - ten moduł tylko routuje i wywołuje."""
 from __future__ import annotations
 
 import asyncio
-import yaml
 from flask import Flask, jsonify, render_template, request
 
 from bridge.satel_client import discover_active_zones_and_outputs
 from dashboard.setup import (
-    SATEL_FIELDS_HEADER, build_satel_fields_dict, validate_satel_fields,
+    build_satel_fields_dict, validate_satel_fields,
     dict_to_name_number_rows, zones_to_rows, virtual_inputs_to_rows,
 )
 from plugins import PluginMeta
@@ -25,7 +24,7 @@ META = PluginMeta(
 )
 
 
-def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_satel_fields_path,
+def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              get_config_path, reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
     """Rejestruje routing wtyczki Satel. `_ignored` połyka zależności
     przeznaczone dla INNYCH wtyczek - register_all() w plugins/__init__.py
@@ -59,9 +58,7 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_sa
             return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
         satel_fields_dict = build_satel_fields_dict(form)
-        with open(get_satel_fields_path(), "w", encoding="utf-8") as f:
-            f.write(SATEL_FIELDS_HEADER)
-            yaml.safe_dump(satel_fields_dict, f, allow_unicode=True, sort_keys=False)
+        get_config_store().set("satel_fields", satel_fields_dict)
 
         reload_bridge_config()
         enqueue_bridge_reload()
@@ -75,7 +72,7 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_sa
     def api_plugin_satel_scan():
         """Publiczny (jak /api/discover/satel w kreatorze) - to tylko
         nasłuch, nic nie zmienia w centrali. Host/port brane domyślnie z
-        JUŻ ZAPISANEGO config.yaml (nie trzeba ich przepisywać z
+        JUŻ ZAPISANEJ konfiguracji (nie trzeba ich przepisywać z
         zablokowanej hasłem zakładki 🔌 Połączenia)."""
         payload = request.get_json(silent=True) or {}
         satel_cfg = get_config_raw().get("satel", {})
