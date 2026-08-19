@@ -51,6 +51,9 @@ class BridgeConfig:
         store = ConfigStore(db_path)
         if not store.has("config"):
             migrate_legacy_yaml_dir(store, legacy_yaml_path)
+        # Jednorazowa migracja pojedynczego konta (dashboard.auth.*) do
+        # tabeli users - no-op, jeśli jakiekolwiek konto już istnieje.
+        store.migrate_single_admin_to_users()
 
         data = store.get("config")
 

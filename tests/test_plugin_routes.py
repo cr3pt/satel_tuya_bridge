@@ -55,6 +55,11 @@ def client(tmp_path):
 
     import dashboard.app as app_module
     app_module.config_path = config.db_path
+    # create_app() od teraz PONOWNIE UŻYWA istniejącego auth_guard (żeby
+    # zapis configu z panelu nie wylogowywał wszystkich - patrz
+    # AuthGuard.update_config) - dla izolacji testów między sobą trzeba
+    # więc jawnie wymusić świeży obiekt na starcie każdego testu.
+    app_module.auth_guard = None
 
     create_app(config)
     flask_app.config["TESTING"] = True

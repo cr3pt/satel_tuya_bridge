@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 
 from .config import BridgeConfig
+from .logging_config import apply_log_levels
 from .satel_client import SatelIntegraClient, SatelVirtualInputTrigger
 from .tuya_local import TuyaLocalController
 from .tuya_cloud_events import TuyaCameraMotionListener
@@ -406,6 +407,7 @@ class RulesEngine:
         edytowanych często)."""
         new_config = BridgeConfig.load(self.config.db_path)
         self.config = new_config
+        apply_log_levels(new_config.raw)
 
         # Tuya lokalne - bezpieczne do podmiany w całości: TuyaLocalController
         # nie trzyma żywego połączenia (tylko krótkie żądania per komenda).

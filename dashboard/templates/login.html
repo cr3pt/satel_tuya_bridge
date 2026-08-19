@@ -65,13 +65,6 @@ function nextUrl() {
   return (next && next.startsWith('/')) ? next : '/';
 }
 
-// Podpowiedź nazwy użytkownika (nie jest sekretem, patrz api_auth_status w
-// dashboard/app.py) - ułatwia przypomnienie sobie loginu, jeśli ktoś go
-// zapomniał, bez potrzeby zaglądania do config.yaml.
-fetch('/api/auth/status').then(r => r.json()).then(data => {
-  if (data.username) document.getElementById('username').value = data.username;
-}).catch(() => {});
-
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = document.getElementById('loginBtn');

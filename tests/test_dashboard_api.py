@@ -75,6 +75,11 @@ def client(tmp_path):
     # bazy niezależnie od tego, jaką konwencję dostał, ale downstream kod w
     # dashboard/app.py trzyma config_path jako osobną zmienną globalną).
     app_module.config_path = config.db_path
+    # create_app() od teraz PONOWNIE UŻYWA istniejącego auth_guard (żeby
+    # zapis configu z panelu nie wylogowywał wszystkich - patrz
+    # AuthGuard.update_config) - dla izolacji testów między sobą trzeba
+    # więc jawnie wymusić świeży obiekt na starcie każdego testu.
+    app_module.auth_guard = None
 
     create_app(config)
     flask_app.config["TESTING"] = True
@@ -122,7 +127,7 @@ class TestSessionAuthEndpoints:
     def test_auth_status_when_not_logged_in(self, client):
         resp = client.get("/api/auth/status")
         assert resp.status_code == 200
-        assert resp.get_json() == {"logged_in": False, "configured": True, "username": "admin"}
+        assert resp.get_json() == {"logged_in": False, "configured": True, "username": None}
 
     def test_login_with_correct_password_sets_session_cookie(self, client):
         resp = client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})

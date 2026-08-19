@@ -3,12 +3,12 @@ COŚ ZMIENIAJĄ (zapis konfiguracji czujników, uzbrajanie/rozbrajanie stref).
 Zwykłe przeglądanie panelu (historia, statusy, dziennik zdarzeń) zostaje
 otwarte - to był świadomy wybór, nie przez zapomnienie.
 
-Pojedyncze konto administratora (nazwa użytkownika + hasło, nie ma potrzeby
-wielu kont w domowym systemie) - hasło trzymane jako hash (werkzeug - ta
-sama biblioteka, której i tak używa Flask, więc zero nowej zależności),
-nazwa użytkownika jawnym tekstem w config.yaml (nie jest sekretem, tylko
-identyfikatorem - jak login, nie hasło). Oba ustawiane raz w kreatorze
-(/setup) przy pierwszej konfiguracji. Dwa sposoby zalogowania:
+WIELE kont administratorskich (patrz bridge/config_store.py: tabela
+`users`) - płaski model uprawnień, każde zalogowane konto ma pełny dostęp
+do zapisu (nie ma ról, bo nikt o nie nie prosił). Hasła trzymane jako hash
+(werkzeug - ta sama biblioteka, której i tak używa Flask). Zarządzanie
+kontami - zakładka ⚙ Ustawienia ogólne (patrz dashboard/app.py:
+/api/system/users). Dwa sposoby zalogowania:
 
 1. **Sesja przez `/login`** (używana przez panel webowy) - hasło wpisujesz
    RAZ w prawdziwym, zamaskowanym polu formularza (`<input type=password>`,
@@ -50,24 +50,43 @@ SESSION_TTL_SECONDS = 12 * 3600  # 12h - wystarczająco długo na jedną "sesję
 
 
 class AuthGuard:
-    def __init__(self, auth_cfg: dict | None):
-        self.username = (auth_cfg or {}).get("username") or "admin"
-        self.password_hash = (auth_cfg or {}).get("password_hash")
+    def __init__(self, config_store, auth_cfg: dict | None):
+        self.config_store = config_store
         self.max_attempts = (auth_cfg or {}).get("max_failed_attempts", 5)
         self.lockout_seconds = (auth_cfg or {}).get("lockout_seconds", 300)
+        # "Tryb logowania": Basic Auth jest przydatny dla skryptów/crona, ale
+        # wysyła hasło jawnym tekstem (zakodowanym base64, nie zaszyfrowanym)
+        # przy KAŻDYM żądaniu - kto woli wyłączyć ten fallback i wymusić
+        # wyłącznie logowanie sesyjne, ustawia to na False (⚙ Ustawienia
+        # ogólne -> Tryb logowania).
+        self.allow_basic_auth = (auth_cfg or {}).get("allow_basic_auth", True)
         # proste liczenie nieudanych prób per adres IP, w pamięci procesu -
         # wystarczające dla domowego użytku, resetuje się przy restarcie
         # panelu (co jest OK - restart panelu to rzadkie, świadome zdarzenie)
         self._failed_attempts: dict[str, list[float]] = {}
-        # token sesji -> timestamp wygaśnięcia. W pamięci procesu (jak wyżej)
-        # - restart panelu wylogowuje wszystkich, co jest akceptowalne
-        # (rzadkie, świadome zdarzenie, użytkownik po prostu loguje się
-        # ponownie raz).
-        self._sessions: dict[str, float] = {}
+        # token sesji -> {"expires": ts, "username": str}. W pamięci procesu
+        # (jak wyżej) - restart panelu wylogowuje wszystkich, co jest
+        # akceptowalne (rzadkie, świadome zdarzenie, użytkownik po prostu
+        # loguje się ponownie raz).
+        self._sessions: dict[str, dict] = {}
 
     @property
     def configured(self) -> bool:
-        return bool(self.password_hash)
+        return self.config_store.user_count() > 0
+
+    def update_config(self, config_store, auth_cfg: dict | None) -> None:
+        """Odświeża ustawienia (config_store + limity prób/blokady/tryb
+        Basic Auth) po przeładowaniu konfiguracji (dashboard/app.py:
+        create_app(), wołane po KAŻDYM zapisie z panelu) - CELOWO NIE
+        tworzy nowego obiektu AuthGuard, żeby nie zgubić aktywnych sesji
+        (`_sessions`)/liczników nieudanych prób (`_failed_attempts`)
+        trzymanych w pamięci procesu. Zapisanie dowolnego ustawienia
+        wylogowywałoby wtedy każdego, kto akurat jest zalogowany -
+        łącznie z osobą, która to ustawienie właśnie zapisuje."""
+        self.config_store = config_store
+        self.max_attempts = (auth_cfg or {}).get("max_failed_attempts", 5)
+        self.lockout_seconds = (auth_cfg or {}).get("lockout_seconds", 300)
+        self.allow_basic_auth = (auth_cfg or {}).get("allow_basic_auth", True)
 
     def _is_locked_out(self, ip: str) -> bool:
         attempts = self._failed_attempts.get(ip, [])
@@ -86,15 +105,15 @@ class AuthGuard:
         """Sprawdza login+hasło wprost (nie z nagłówka Basic Auth) - używane
         przez POST /api/login. Ten sam rate-limiting po IP co reszta metod.
 
-        Nazwa użytkownika NIE jest sekretem (jak hasło) - porównanie wprost
-        (`!=`) wystarcza, timing attack na samą nazwę nic tu nie ujawnia,
-        bo i tak trzeba jeszcze trafić hasło (sprawdzane przez
+        Nazwa użytkownika NIE jest sekretem (jak hasło) - odczyt z bazy po
+        nazwie wystarcza, timing attack na samą nazwę nic tu nie ujawnia, bo
+        i tak trzeba jeszcze trafić hasło (sprawdzane przez
         check_password_hash, które JEST odporne na timing attack)."""
         if not self.configured:
             return False, (
-                "Panel nie ma skonfigurowanego hasła administratora "
-                "(dashboard.auth.password_hash w config.yaml) - akcje zmieniające "
-                "stan są zablokowane, dopóki nie ustawisz hasła. Patrz README."
+                "Panel nie ma jeszcze żadnego konta administratora - "
+                "akcje zmieniające stan są zablokowane, dopóki nie utworzysz "
+                "pierwszego konta w kreatorze (/setup). Patrz README."
             )
 
         ip = request.remote_addr or "unknown"
@@ -102,7 +121,8 @@ class AuthGuard:
             logger.warning("Zablokowano próbę logowania z %s - zbyt wiele nieudanych prób", ip)
             return False, f"Zbyt wiele nieudanych prób - spróbuj ponownie za maks. {self.lockout_seconds}s"
 
-        if username != self.username or not password or not check_password_hash(self.password_hash, password):
+        user = self.config_store.get_user_by_username(username)
+        if user is None or not password or not check_password_hash(user["password_hash"], password):
             self._record_failure(ip)
             logger.warning("Nieudana próba logowania z %s", ip)
             return False, "Nieprawidłowa nazwa użytkownika lub hasło"
@@ -112,18 +132,18 @@ class AuthGuard:
 
     def _prune_expired_sessions(self) -> None:
         now = time.time()
-        expired = [token for token, expires in self._sessions.items() if expires < now]
+        expired = [token for token, s in self._sessions.items() if s["expires"] < now]
         for token in expired:
             del self._sessions[token]
 
-    def create_session(self) -> str:
+    def create_session(self, username: str) -> str:
         """Zwraca NOWY token sesji - wywołaj TYLKO po udanym check_password().
         `secrets.token_urlsafe` - kryptograficznie bezpieczny generator,
         token nie ma żadnego związku matematycznego z hasłem (w
         odróżnieniu od Basic Auth, gdzie nagłówek to zakodowane hasło)."""
         self._prune_expired_sessions()
         token = secrets.token_urlsafe(32)
-        self._sessions[token] = time.time() + SESSION_TTL_SECONDS
+        self._sessions[token] = {"expires": time.time() + SESSION_TTL_SECONDS, "username": username}
         return token
 
     def destroy_session(self, token: str | None) -> None:
@@ -136,20 +156,33 @@ class AuthGuard:
         self._prune_expired_sessions()
         return token in self._sessions
 
+    def session_username(self, token: str | None) -> str | None:
+        """Nazwa konta zalogowanego w TEJ sesji (do "Zalogowano jako X" w
+        nawigacji) - None, jeśli sesja nie istnieje/wygasła."""
+        if not token:
+            return None
+        self._prune_expired_sessions()
+        session = self._sessions.get(token)
+        return session["username"] if session else None
+
     # -- sprawdzenie dla require_auth() - sesja ALBO Basic Auth ----------
     def check(self) -> tuple[bool, str]:
         """Zwraca (czy_ok, komunikat_błędu). Najpierw sprawdza ciasteczko
         sesji (panel webowy po zalogowaniu przez /login) - dopiero gdy go
-        brak, spada do HTTP Basic Auth (skrypty/curl/automatyzacja)."""
+        brak, spada do HTTP Basic Auth (skrypty/curl/automatyzacja), chyba
+        że wyłączona w ustawieniach (allow_basic_auth=False)."""
         if self.check_session(request.cookies.get(SESSION_COOKIE_NAME)):
             return True, ""
 
         if not self.configured:
             return False, (
-                "Panel nie ma skonfigurowanego hasła administratora "
-                "(dashboard.auth.password_hash w config.yaml) - akcje zmieniające "
-                "stan są zablokowane, dopóki nie ustawisz hasła. Patrz README."
+                "Panel nie ma jeszcze żadnego konta administratora - "
+                "akcje zmieniające stan są zablokowane, dopóki nie utworzysz "
+                "pierwszego konta w kreatorze (/setup). Patrz README."
             )
+
+        if not self.allow_basic_auth:
+            return False, "Wymagane logowanie sesyjne (/login) - Basic Auth jest wyłączony w ustawieniach"
 
         ip = request.remote_addr or "unknown"
         if self._is_locked_out(ip):
@@ -160,7 +193,8 @@ class AuthGuard:
         if not auth or not auth.password:
             return False, "Wymagana autoryzacja"
 
-        if auth.username != self.username or not check_password_hash(self.password_hash, auth.password):
+        user = self.config_store.get_user_by_username(auth.username)
+        if user is None or not check_password_hash(user["password_hash"], auth.password):
             self._record_failure(ip)
             logger.warning("Nieudana próba logowania z %s", ip)
             return False, "Nieprawidłowa nazwa użytkownika lub hasło"

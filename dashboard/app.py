@@ -23,9 +23,12 @@ import time
 
 import yaml
 from flask import Flask, jsonify, redirect, render_template, request, url_for
+from werkzeug.security import generate_password_hash
 
 from bridge.config import BridgeConfig
 from bridge.config_store import ConfigStore, resolve_db_and_legacy_paths
+from bridge.log_capture import attach_log_capture
+from bridge.logging_config import apply_log_levels, VALID_LEVELS as LOG_LEVELS
 from bridge.ebus_client import discover_topics as discover_ebus_topics, BackgroundTopicDiscovery
 from bridge.history_store import HistoryStore
 from bridge.satel_client import test_connection as test_satel_connection
@@ -76,9 +79,19 @@ def create_app(config: BridgeConfig) -> Flask:
     db_path = config.raw.get("dashboard", {}).get("db_path", "bridge_history.db")
     history = HistoryStore(db_path)
     config_store = config.store
-    auth_guard = AuthGuard(config.raw.get("dashboard", {}).get("auth"))
+    # NIE tworzymy nowego AuthGuard, jeśli już istnieje - create_app() jest
+    # wołane ponownie po KAŻDYM zapisie configu z panelu (patrz wywołania
+    # niżej w tym module), a nowy obiekt zgubiłby aktywne sesje/liczniki
+    # nieudanych prób w pamięci procesu, wylogowując wszystkich (patrz
+    # docstring AuthGuard.update_config).
+    if auth_guard is None:
+        auth_guard = AuthGuard(config_store, config.raw.get("dashboard", {}).get("auth"))
+    else:
+        auth_guard.update_config(config_store, config.raw.get("dashboard", {}).get("auth"))
     satel_partitions_cfg = config.satel.get("partitions", {"Dom": config.satel.get("partition", 1)})
     config_raw = config.raw
+    apply_log_levels(config_raw)
+    attach_log_capture(history, "dashboard")
     return app
 
 
@@ -179,7 +192,7 @@ def api_login():
     if not ok:
         return jsonify({"error": message}), 401
 
-    token = auth_guard.create_session()
+    token = auth_guard.create_session(username)
     resp = jsonify({"message": "Zalogowano"})
     resp.set_cookie(SESSION_COOKIE_NAME, token, max_age=SESSION_TTL_SECONDS, httponly=True, samesite="Lax")
     return resp
@@ -198,16 +211,16 @@ def api_logout():
 @app.route("/api/auth/status")
 def api_auth_status():
     """Do pokazania stanu (Zaloguj/Wyloguj) w nawigacji paneli - publiczny,
-    nic nie ujawnia poza tym, czy TA przeglądarka ma ważną sesję."""
-    logged_in = auth_guard.check_session(request.cookies.get(SESSION_COOKIE_NAME))
+    nic nie ujawnia poza tym, czy TA przeglądarka ma ważną sesję i (jeśli
+    tak) jaka nazwa konta jest nią zalogowana. Wiele kont administratorskich
+    (patrz bridge/config_store.py: tabela users) - nie ma już jednej "tej"
+    nazwy użytkownika do podpowiedzenia przed zalogowaniem."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    logged_in = auth_guard.check_session(token)
     return jsonify({
         "logged_in": logged_in,
         "configured": auth_guard.configured,
-        # Nazwa użytkownika NIE jest sekretem (jak samo hasło) - bezpieczna
-        # do pokazania w nawigacji ("Zalogowano jako <username>") ZAWSZE,
-        # nie tylko po zalogowaniu - ułatwia użytkownikowi przypomnienie
-        # sobie loginu przed próbą logowania.
-        "username": auth_guard.username,
+        "username": auth_guard.session_username(token) if logged_in else None,
     })
 
 
@@ -375,7 +388,7 @@ def api_setup_save():
     # co jest jawnym, odwracalnym zakodowaniem hasła w adresie strony).
     # Panel po przeładowaniu jest więc od razu zalogowany, bez ponownego
     # wpisywania hasła 30 sekund później.
-    token = auth_guard.create_session()
+    token = auth_guard.create_session(config_dict["dashboard"]["auth"]["username"])
     resp.set_cookie(SESSION_COOKIE_NAME, token, max_age=SESSION_TTL_SECONDS, httponly=True, samesite="Lax")
     return resp
 
@@ -972,6 +985,146 @@ def api_system_restart():
                    "(restart: unless-stopped) w ciągu kilku-kilkunastu sekund. Ta strona "
                    "przestanie odpowiadać na chwilę.",
     })
+
+
+# ============================================================================
+# ⚙ Ustawienia ogólne - konta użytkowników, tryb logowania, poziom logów
+# domyślny, wgląd w czas serwera. Rzeczy, które NIE są przypisane do żadnej
+# konkretnej wtyczki (patrz zakładka 🧩 Wtyczki dla ustawień per integracja).
+# ============================================================================
+
+@app.route("/system")
+def system_page():
+    return render_template("system.html")
+
+
+@app.route("/api/system/users", methods=["GET"])
+@require_auth()
+def api_system_users_get():
+    """Lista kont administratorskich - nigdy nie zwraca hashy haseł.
+    Wymaga zalogowania (jak reszta panelu Ustawień ogólne) - to nie jest
+    tajemnica jak samo hasło, ale i tak nie ma po co ujawniać publicznie."""
+    return jsonify(config_store.list_users())
+
+
+@app.route("/api/system/users", methods=["POST"])
+@require_auth()
+def api_system_users_post():
+    """Tworzy nowe konto administratorskie - płaski model uprawnień (jak
+    dotychczas): każde konto ma pełny dostęp do zapisu, nie ma ról."""
+    payload = request.get_json(silent=True) or {}
+    username = (payload.get("username") or "").strip()
+    password = payload.get("password") or ""
+    if not username:
+        return jsonify({"error": "Nazwa użytkownika jest wymagana"}), 400
+    if len(password) < 8:
+        return jsonify({"error": "Hasło: minimum 8 znaków"}), 400
+
+    try:
+        user_id = config_store.add_user(username, generate_password_hash(password))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"id": user_id, "username": username})
+
+
+@app.route("/api/system/users/<int:user_id>/password", methods=["POST"])
+@require_auth()
+def api_system_user_password_post(user_id: int):
+    """Zmiana hasła dowolnego konta - płaski model uprawnień, każde
+    zalogowane konto może zarządzać każdym innym (tak jak już mogło
+    zmieniać KAŻDE ustawienie systemu, nie tylko własne konto)."""
+    payload = request.get_json(silent=True) or {}
+    password = payload.get("password") or ""
+    if len(password) < 8:
+        return jsonify({"error": "Hasło: minimum 8 znaków"}), 400
+    config_store.update_user(user_id, password_hash=generate_password_hash(password))
+    return jsonify({"message": "Hasło zmienione"})
+
+
+@app.route("/api/system/users/<int:user_id>", methods=["DELETE"])
+@require_auth()
+def api_system_user_delete(user_id: int):
+    """Usuwa konto - NIGDY ostatnie pozostałe (zablokowałoby dostęp do
+    panelu dla wszystkich, bez żadnej furtki poza eksportem/importem YAML
+    bazy z poziomu dysku)."""
+    if config_store.user_count() <= 1:
+        return jsonify({"error": "Nie można usunąć ostatniego konta - panel zostałby bez żadnego dostępu"}), 400
+    config_store.delete_user(user_id)
+    return jsonify({"message": "Konto usunięte"})
+
+
+@app.route("/api/system/settings", methods=["GET"])
+@require_auth()
+def api_system_settings_get():
+    """Tryb logowania (sesja/Basic Auth, limity prób) i domyślny poziom
+    logów - jedyne miejsce w panelu, nieprzypisane do żadnej wtyczki.
+    Czas serwera jest tu WYŁĄCZNIE informacyjny (patrz README, sekcja
+    'Synchronizacja czasu') - synchronizacja NTP dzieje się na hoście, nie
+    da się jej ustawić bezpiecznie z wnętrza kontenera."""
+    auth_cfg = config_raw.get("dashboard", {}).get("auth", {})
+    return jsonify({
+        "max_failed_attempts": auth_cfg.get("max_failed_attempts", 5),
+        "lockout_seconds": auth_cfg.get("lockout_seconds", 300),
+        "allow_basic_auth": auth_cfg.get("allow_basic_auth", True),
+        "session_ttl_seconds": SESSION_TTL_SECONDS,
+        "default_log_level": (config_raw.get("logging") or {}).get("default_level", "INFO"),
+        "log_levels": LOG_LEVELS,
+        "server_time": time.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "timezone_env": os.environ.get("TZ", "(nieustawiona - domyślna kontenera/hosta)"),
+    })
+
+
+@app.route("/api/system/settings", methods=["POST"])
+@require_auth()
+def api_system_settings_post():
+    payload = request.get_json(silent=True) or {}
+    errors = []
+    try:
+        max_attempts = int(payload.get("max_failed_attempts", 5))
+    except (TypeError, ValueError):
+        errors.append("Limit nieudanych prób musi być liczbą")
+        max_attempts = 5
+    try:
+        lockout_seconds = int(payload.get("lockout_seconds", 300))
+    except (TypeError, ValueError):
+        errors.append("Czas blokady musi być liczbą (sekundy)")
+        lockout_seconds = 300
+    default_log_level = payload.get("default_log_level", "INFO")
+    if default_log_level not in LOG_LEVELS:
+        errors.append(f"Nieprawidłowy poziom logów - dozwolone: {', '.join(LOG_LEVELS)}")
+    if errors:
+        return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+    current = config_store.get("config")
+    current.setdefault("dashboard", {}).setdefault("auth", {})
+    current["dashboard"]["auth"]["max_failed_attempts"] = max_attempts
+    current["dashboard"]["auth"]["lockout_seconds"] = lockout_seconds
+    current["dashboard"]["auth"]["allow_basic_auth"] = bool(payload.get("allow_basic_auth", True))
+    current.setdefault("logging", {})["default_level"] = default_log_level
+    config_store.set("config", current)
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+    _enqueue_bridge_reload()
+
+    return jsonify({"message": "Zapisano. Poziom logów zadziała na żywo w ciągu ok. 1-2s, bez restartu."})
+
+
+@app.route("/api/system/logs", methods=["GET"])
+@require_auth()
+def api_system_logs_get():
+    """Przechwycone logi (bridge + panel), patrz bridge/log_capture.py.
+    Filtrowanie: component (bridge|dashboard), logger (pełna nazwa, np.
+    'bridge.satel'), level (minimalny - pokazuje też poważniejsze), hours
+    (ile ostatnich godzin)."""
+    component = request.args.get("component") or None
+    logger_name = request.args.get("logger") or None
+    level = request.args.get("level") or None
+    hours = float(request.args.get("hours", 24))
+    limit = int(request.args.get("limit", 300))
+    ts_from = time.time() - hours * 3600
+    return jsonify(history.get_logs(component, logger_name, level, ts_from, limit))
 
 
 @app.route("/healthz")
