@@ -880,6 +880,15 @@ def api_config_automations_post():
     if errors:
         return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
+    # Zakładka Automatyzacje nie zna pola "log_level" (żyje tylko na
+    # dedykowanej stronie /plugins/presence_simulation - patrz
+    # plugins/presence_simulation/routes.py) - trzeba je jawnie przenieść z
+    # tego, co już zapisane, inaczej KAŻDY zapis stąd (nawet samych scen)
+    # po cichu skasowałby wcześniej ustawiony poziom logowania.
+    existing_log_level = config_store.get("automations").get("presence_simulation", {}).get("log_level")
+    if existing_log_level and isinstance(form.get("presence_simulation"), dict):
+        form["presence_simulation"].setdefault("log_level", existing_log_level)
+
     automations_dict = build_automations_dict(form)
     config_store.set("automations", automations_dict)
 

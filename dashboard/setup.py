@@ -307,8 +307,19 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
 
 def _build_presence_simulation(form: dict) -> dict:
     ps = form.get("presence_simulation") or {}
+    # log_level (patrz plugins/presence_simulation/routes.py - jedyna
+    # wtyczka, której "enabled"/"log_level" żyją w TYM dokumencie zamiast
+    # "config") nie pochodzi z tego formularza (kreator/zakładka
+    # Automatyzacje o nim nie wiedzą) - trzeba go jawnie przenieść, inaczej
+    # KAŻDY zapis stąd (nawet samych scen) po cichu skasowałby ustawiony
+    # wcześniej poziom logowania.
+    log_level = ps.get("log_level")
+
     if not ps.get("enabled"):
-        return {"enabled": False}
+        built = {"enabled": False}
+        if log_level:
+            built["log_level"] = log_level
+        return built
 
     built = {
         "enabled": True,
@@ -319,6 +330,8 @@ def _build_presence_simulation(form: dict) -> dict:
     window = ps.get("window") or {}
     if window.get("enabled") and window.get("start") and window.get("end"):
         built["window"] = {"start": window["start"].strip(), "end": window["end"].strip()}
+    if log_level:
+        built["log_level"] = log_level
     return built
 
 

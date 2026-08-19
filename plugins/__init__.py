@@ -45,6 +45,7 @@ def register_settings_route(
     get_section: Callable[[], dict], save_section: Callable[[dict], None],
     reload_bridge_config: Callable, enqueue_bridge_reload: Callable,
     supports_enabled: bool = True,
+    validate_enable: Callable[[], str | None] | None = None,
 ) -> None:
     """Rejestruje GET/POST /api/plugins/<id>/settings - wspólny wzorzec
     "włącznik + poziom logowania zdarzeń", ten sam dla każdej wtyczki (patrz
@@ -55,7 +56,13 @@ def register_settings_route(
     tuya_cloud to config["tuya"]["cloud"]) - ten kod zna tylko dwa wspólne
     pola: "enabled" i "log_level". Włączenie/wyłączenie wymaga pełnego
     restartu procesu bridge'a (patrz rules_engine.py: start()), poziom
-    logowania działa na żywo przez zwykłe reload_config()."""
+    logowania działa na żywo przez zwykłe reload_config().
+
+    `validate_enable` - opcjonalny hak dla wtyczek, których "enabled" nie
+    ma sensu bez wcześniej zapisanych innych pól (np. UniFi Protect bez
+    hosta kontrolera) - zwraca komunikat błędu (odrzuca żądanie) albo
+    `None` (zezwala). Wywoływany TYLKO gdy żądanie faktycznie włącza
+    wtyczkę (nie przy wyłączaniu/samym poziomie logowania)."""
 
     @app.route(f"/api/plugins/{plugin_id}/settings", methods=["GET"],
                endpoint=f"plugin_{plugin_id}_settings_get")
@@ -82,6 +89,10 @@ def register_settings_route(
         enabled_changed = False
         if supports_enabled and "enabled" in body:
             new_enabled = bool(body.get("enabled"))
+            if new_enabled and validate_enable is not None:
+                error = validate_enable()
+                if error:
+                    return jsonify({"error": error}), 400
             enabled_changed = bool(section.get("enabled", True)) != new_enabled
             section["enabled"] = new_enabled
         if "log_level" in body:
@@ -114,8 +125,17 @@ def register_all(app: Flask, **deps) -> list[PluginMeta]:
     from plugins.satel import routes as satel_routes
     from plugins.tuya_local import routes as tuya_routes
     from plugins.ebus import routes as ebus_routes
+    from plugins.tuya_cloud import routes as tuya_cloud_routes
+    from plugins.home_assistant import routes as home_assistant_routes
+    from plugins.mqtt_publish import routes as mqtt_publish_routes
+    from plugins.unifi_protect import routes as unifi_protect_routes
+    from plugins.notifications import routes as notifications_routes
+    from plugins.presence_simulation import routes as presence_simulation_routes
 
     metas = []
-    for routes_module in (satel_routes, tuya_routes, ebus_routes):
+    for routes_module in (
+        satel_routes, tuya_routes, ebus_routes, tuya_cloud_routes, home_assistant_routes,
+        mqtt_publish_routes, unifi_protect_routes, notifications_routes, presence_simulation_routes,
+    ):
         metas.append(routes_module.register(app, **deps))
     return metas

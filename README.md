@@ -1385,6 +1385,38 @@ stąd wymóg `chown` katalogu `data/` przed pierwszym uruchomieniem
 Tuya, hasła) trafiają wyłącznie do zamontowanego `./data/config.db` -
 nigdy do obrazu ani do warstw builda.
 
+### Ruch sieciowy PODCZAS BUILDA (pobieranie pakietów Python)
+
+Sam **build** obrazu (`docker compose build`/`up -d --build`) łączy się
+WYCHODZĄCO z PyPI (`pypi.org`/`files.pythonhosted.org`, serwowane przez
+CDN Fastly - stąd adres IP bywa różny w zależności od tego, który węzeł
+brzegowy CDN jest najbliżej Twojego łącza) - to `RUN pip install -r
+requirements.txt` w `Dockerfile`, zwyczajne i wymagane pobieranie
+zależności (PyYAML, aiohttp, tinytuya, satel-integra, paho-mqtt,
+uiprotect, tuya-connector-python, Flask, waitress, astral). **Sam bridge
+w trakcie DZIAŁANIA nie kontaktuje żadnego z tych adresów** - łączy się
+tylko z tym, co wpiszesz w panelu (centrala Satel, urządzenia Tuya,
+broker MQTT), a opcjonalnie z Tuya Cloud (`openapi.tuya*.com`, tylko
+jeśli włączysz integrację Tuya Cloud w zakładce 🧩 Wtyczki) i z serwerem
+ntfy (tylko jeśli skonfigurujesz powiadomienia). Jeśli widzisz ruch do
+nieznanego adresu IP z kontenera/hosta w trakcie zwykłej pracy (nie
+builda) - to NIE jest żaden z modułów tego repo; sprawdź inne procesy na
+tej samej maszynie.
+
+`requirements.txt` celowo używa `>=` (nie dokładnie przypiętych wersji,
+poza górnym ograniczeniem `satel-integra<1.0.0` - patrz komentarz w
+pliku), więc **każdy build bez cache'u Dockera i tak pobiera najnowsze
+zgodne wersje** z PyPI. Warstwa `RUN pip install` jest jednak
+cache'owana przez Docker dopóki `requirements.txt` się nie zmieni - żeby
+wymusić świeże pobranie pakietów Python mimo niezmienionego
+`requirements.txt` (np. żeby dociągnąć łatkę bezpieczeństwa wydaną od
+ostatniego builda), użyj pełnego rebuildu bez cache'u (patrz punkt 5
+wyżej):
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
 ## Struktura projektu
 
 ```
