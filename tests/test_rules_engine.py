@@ -443,6 +443,35 @@ class TestReloadConfig:
         assert "sensors" in calls[0]
 
 
+class TestTuyaStatusPollLoop:
+    """Regresja dla zgłoszonego z prawdziwego wdrożenia błędu:
+    `KeyError: 'T & H Sensor'` w _tuya_status_poll_loop. engine.tuya.
+    devices_cfg (odpytywane przez get_all_statuses()) zawiera teraz też
+    urządzenia sterowane przez Tuya Cloud (patrz bridge/tuya_dispatch.py) -
+    ale `config.tuya["devices"]` to WYŁĄCZNIE urządzenia lokalne. Kod
+    sprawdzający ściemniacz robił surowy dostęp przez [], co wywalało
+    KeyError dla dowolnego urządzenia chmurowego (tu: czujnik temperatury/
+    wilgotności) i PRZERYWAŁO resztę pętli for dla WSZYSTKICH pozostałych
+    urządzeń w danym cyklu odpytywania."""
+
+    async def test_cloud_only_device_does_not_crash_loop_for_other_devices(self, engine, fake_tuya):
+        # Kolejność ma znaczenie - urządzenie chmurowe MUSI być przetworzone
+        # PRZED "gniazdko_salon", żeby odtworzyć zgłoszony błąd (przerwana
+        # pętla for nigdy nie docierała do kolejnych urządzeń).
+        fake_tuya.devices_cfg = {
+            "T & H Sensor": {"id": "cloud1"},  # chmurowe - BRAK wpisu w config.tuya["devices"]
+            "gniazdko_salon": {"id": "dev1", "ip": "192.168.1.50", "local_key": "key1"},
+        }
+        try:
+            await asyncio.wait_for(engine._tuya_status_poll_loop(), timeout=0.05)
+        except asyncio.TimeoutError:
+            pass  # oczekiwane - pętla działa w nieskończoność
+
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert "tuya:gniazdko_salon" in statuses  # NIE zostało pominięte przez wcześniejszy crash
+        assert "tuya:T & H Sensor" in statuses
+
+
 class TestStateMqttPublisher:
     """self.state_mqtt - publikacja stanu Satel/Tuya do MQTT pod
     konfigurowalnym tematem PER INTEGRACJA, niezależnie od

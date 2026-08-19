@@ -49,7 +49,10 @@ class FakeTuya:
         return {"1": device not in self.fail_devices}
 
     async def get_all_statuses(self):
-        return {}
+        # Odzwierciedla devices_cfg (jak prawdziwe kontrolery) - potrzebne
+        # przez testy _tuya_status_poll_loop (tests/test_rules_engine.py),
+        # które ustawiają devices_cfg i oczekują spójnego wyniku.
+        return {name: await self.get_status(name) for name in self.devices_cfg}
 
 
 class FakeSatel:

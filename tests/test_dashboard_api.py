@@ -343,6 +343,21 @@ class TestAutomationContextEndpoint:
         data = client.get("/api/config/automation-context").get_json()
         assert data["satel_partitions"] == {"Dom": 1, "Garaz": 2}  # z CONFIG_TEMPLATE
 
+    def test_context_includes_cloud_only_devices(self, client):
+        """Zgłoszony błąd: urządzenie sterowane WYŁĄCZNIE przez Tuya Cloud
+        (zakładka ☁ Tuya Cloud, brak local_key/IP) nie dało się wybrać jako
+        cel sceny/reguły ruchu, bo ten endpoint listował TYLKO tuya.devices
+        (lokalne) - mimo że TuyaController (bridge/tuya_dispatch.py) i tak
+        potrafi nim sterować."""
+        client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [{"name": "T & H Sensor", "id": "cloud1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        data = client.get("/api/config/automation-context").get_json()
+        assert "gniazdko" in data["tuya_devices"]  # lokalne, nietknięte
+        assert "T & H Sensor" in data["tuya_devices"]
+
 
 class TestAutomationsEndpoint:
     def test_automations_page_loads(self, client):

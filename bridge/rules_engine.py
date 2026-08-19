@@ -565,8 +565,18 @@ class RulesEngine:
                             f"{self._tuya_mqtt_topic}/{device_name}/state",
                             "ON" if is_on else "OFF",
                         )
-                    cfg = self.config.tuya["devices"][device_name]
-                    if cfg.get("type") == "dimmer" and cfg.get("dimmer_dp") in dps:
+                    # .get(), NIE [] - device_name może być urządzeniem
+                    # sterowanym przez Tuya Cloud (patrz
+                    # bridge/tuya_dispatch.py: TuyaController.devices_cfg
+                    # łączy lokalne i chmurowe), które nie ma wpisu w
+                    # config.tuya["devices"] (tylko lokalne) - bez .get()
+                    # KeyError tutaj przerywał resztę pętli for dla
+                    # WSZYSTKICH pozostałych urządzeń w tym cyklu. Sterowanie
+                    # chmurowe i tak nie obsługuje ściemniania (patrz
+                    # TuyaCloudController), więc brak wpisu = po prostu
+                    # pomiń blok jasności.
+                    cfg = self.config.tuya["devices"].get(device_name)
+                    if cfg and cfg.get("type") == "dimmer" and cfg.get("dimmer_dp") in dps:
                         lo, hi = cfg.get("dimmer_range", [10, 1000])
                         raw = dps[cfg["dimmer_dp"]]
                         percent = round((raw - lo) / (hi - lo) * 100) if hi > lo else 0
