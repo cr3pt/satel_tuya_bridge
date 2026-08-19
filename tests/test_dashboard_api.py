@@ -117,6 +117,26 @@ class TestPublicEndpoints:
         assert resp.status_code == 404  # nie istnieje, ale endpoint jest dostępny bez auth
 
 
+class TestGlobalErrorHandlerNonApiRoutes:
+    """Regresja: handle_unexpected_error (dashboard/app.py) robił `raise exc`
+    dla ścieżek spoza /api/*, żeby "nie ruszać" domyślnej obsługi błędów
+    Flaska - ale ponowne rzucenie wyjątku WEWNĄTRZ zarejestrowanego
+    errorhandlera nie przywraca normalnego zachowania Flaska, tylko ucieka
+    z całego pipeline'u i zamienia się w generyczne 500, niezależnie od
+    prawdziwego kodu błędu. Zaobserwowane w praktyce: zwykłe 404 na
+    /favicon.ico (przeglądarka pyta o nie przy każdym wejściu na stronę)
+    kończyło się jako "500 Internal Server Error" w logach zamiast
+    cichego 404."""
+
+    def test_404_on_non_api_route_stays_404_not_500(self, client):
+        resp = client.get("/favicon.ico")
+        assert resp.status_code == 404
+
+    def test_404_on_arbitrary_non_api_path_stays_404(self, client):
+        resp = client.get("/this-page-does-not-exist")
+        assert resp.status_code == 404
+
+
 class TestSessionAuthEndpoints:
     """/login, /api/login, /api/logout, /api/auth/status - logowanie
     sesyjne, które zastąpiło prompt()-owy Basic Auth w panelu webowym."""

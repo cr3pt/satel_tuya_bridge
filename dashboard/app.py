@@ -25,7 +25,7 @@ import time
 
 import yaml
 from flask import Flask, jsonify, redirect, render_template, request, url_for
-from werkzeug.exceptions import HTTPException
+from werkzeug.exceptions import HTTPException, InternalServerError
 from werkzeug.security import generate_password_hash
 
 from bridge.config import BridgeConfig
@@ -72,9 +72,23 @@ def handle_unexpected_error(exc: Exception):
     kompletnie nieczytelnym `SyntaxError: Unexpected token '<'` w
     przeglądarce, bez żadnej wskazówki, co faktycznie poszło nie tak.
     Strony HTML (nie /api/*) zostają nietknięte - tam strona błędu Flaska
-    ma sens."""
+    ma sens.
+
+    UWAGA: dla stron spoza /api/* NIE wolno zrobić tu `raise exc` - to
+    NIE przywraca domyślnej obsługi Flaska (np. poprawnej strony 404 dla
+    NotFound), bo jesteśmy już WEWNĄTRZ zarejestrowanego errorhandlera;
+    ponownie rzucony wyjątek ucieka z całego pipeline'u Flaska i
+    zamienia się w generyczny status 500, NIEZALEŻNIE od oryginalnego
+    kodu (np. zwykłe 404 na /favicon.ico stawało się w logach "500
+    Internal Server Error" - zaobserwowane w praktyce). Zamiast tego
+    trzeba samodzielnie zbudować odpowiedź, jaką Flask dałby domyślnie:
+    `exc.get_response()` dla HTTPException (poprawny status/treść), a
+    dla nieoczekiwanych wyjątków - generyczne 500 Werkzeuga."""
     if not request.path.startswith("/api/"):
-        raise exc
+        if isinstance(exc, HTTPException):
+            return exc.get_response()
+        logger.exception("Nieoczekiwany błąd serwera (%s %s)", request.method, request.path)
+        return InternalServerError().get_response()
     if isinstance(exc, HTTPException):
         return jsonify({"error": exc.description or exc.name}), exc.code
     if isinstance(exc, (PermissionError, sqlite3.OperationalError)):
