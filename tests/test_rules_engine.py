@@ -276,6 +276,42 @@ class TestExecuteCommandRestartProcess:
         assert exit_calls == [0]
 
 
+class TestBuildTuyaController:
+    """_build_tuya_controller() - helper współdzielony przez
+    RulesEngine.__init__ i reload_config(), buduje kontroler Tuya
+    (lokalny + fallback chmurowy, patrz bridge/tuya_dispatch.py). Testowane
+    bezpośrednio (nie przez fixture `engine`, która podmienia engine.tuya
+    na fałszywkę zaraz po konstrukcji)."""
+
+    def test_returns_dispatcher_wrapping_local_and_cloud(self):
+        from bridge.rules_engine import _build_tuya_controller
+        from bridge.tuya_dispatch import TuyaController
+        from bridge.tuya_cloud import TuyaCloudController
+        from bridge.tuya_local import TuyaLocalController
+
+        tuya_cfg = {
+            "devices": {"gniazdko": {"id": "d1", "ip": "1.2.3.4", "local_key": "k"}},
+            "cloud_devices": {"lampa": {"id": "c1", "switch_code": "switch_1"}},
+            "cloud": {"api_region": "eu", "access_id": "aid", "access_key": "akey"},
+        }
+        controller = _build_tuya_controller(tuya_cfg)
+        assert isinstance(controller, TuyaController)
+        assert isinstance(controller.local, TuyaLocalController)
+        assert isinstance(controller.cloud, TuyaCloudController)
+        assert "gniazdko" in controller.local.devices_cfg
+        assert "lampa" in controller.cloud.devices_cfg
+        assert controller.cloud.credentials == {"api_region": "eu", "access_id": "aid", "access_key": "akey"}
+
+    def test_works_with_missing_cloud_devices_and_credentials(self):
+        """Konfiguracje sprzed tej funkcji (bez tuya.cloud_devices/tuya.cloud)
+        nie mogą się wywalić - patrz bridge/config.py (setdefault do {})."""
+        from bridge.rules_engine import _build_tuya_controller
+
+        controller = _build_tuya_controller({"devices": {}})
+        assert controller.cloud.devices_cfg == {}
+        assert controller.local.devices_cfg == {}
+
+
 class TestReloadConfig:
     """RulesEngine.reload_config() - przeładowanie 'lekkiej' konfiguracji
     (czujniki eBUS/pola Satela/urządzenia Tuya/automatyzacje/alarmy) BEZ
@@ -300,6 +336,25 @@ class TestReloadConfig:
         })
         await engine.reload_config()
         assert "nowe_urzadzenie" in engine.tuya.devices_cfg
+
+    async def test_picks_up_new_cloud_device_without_restart(self, engine, tmp_path):
+        engine.config.store.set("tuya_devices", {
+            "cloud_devices": {"lampa_taras": {"id": "cNEW", "category": "kg", "switch_code": "switch_1"}},
+        })
+        await engine.reload_config()
+        assert "lampa_taras" in engine.tuya.cloud.devices_cfg
+        assert "lampa_taras" in engine.tuya.devices_cfg  # widoczne też w sumie (dispatcher)
+
+    async def test_local_device_takes_precedence_over_cloud_after_local_configured(self, engine, tmp_path):
+        """Dokładnie scenariusz ze zgłoszenia: urządzenie zaczyna jako
+        sterowane przez chmurę, a potem użytkownik konfiguruje je lokalnie
+        pod TĄ SAMĄ nazwą - lokalne musi "wygrać"."""
+        engine.config.store.set("tuya_devices", {
+            "devices": {"gniazdko_hybryda": {"id": "dLOCAL", "ip": "1.2.3.8", "local_key": "klocal", "type": "socket"}},
+            "cloud_devices": {"gniazdko_hybryda": {"id": "cCLOUD", "category": "kg", "switch_code": "switch_1"}},
+        })
+        await engine.reload_config()
+        assert engine.tuya._resolve("gniazdko_hybryda") is engine.tuya.local
 
     async def test_picks_up_new_satel_zone_without_restart(self, engine, tmp_path):
         engine.config.store.set("satel_fields", {

@@ -61,9 +61,10 @@
 <div class="hint">
   Gniazdka/przełączniki/ściemniacze Tuya sterowane bezpośrednio w LAN
   (tinytuya), bez chmury - plus bramki Zigbee, jeśli używasz podurządzeń.
-  Poświadczenia Tuya Cloud (dla importu niżej i kamer) ustawia się osobno w
-  zakładce 🔌 Połączenia. <strong>Odczyt jest otwarty, zapis wymaga hasła
-  administratora.</strong>
+  Import urządzeń z Tuya Cloud (i sterowanie chmurowe dla tych, których nie
+  da się skonfigurować tutaj) przeniesiono do zakładki
+  <a href="/plugins/tuya_cloud">☁ Tuya Cloud</a>. <strong>Odczyt jest
+  otwarty, zapis wymaga hasła administratora.</strong>
 </div>
 
 <div class="section" id="pluginSettingsSection">
@@ -102,29 +103,17 @@
 <div class="section" id="scanSection">
   <h2>Wykrywanie urządzeń</h2>
   <div class="section-hint">
-    Dwa sposoby - skan LAN (szybki, ale bez <code>local_key</code> ze
-    względów bezpieczeństwa) i import z Tuya Cloud (jednym kliknięciem
-    pobiera WSZYSTKIE podpięte urządzenia razem z nazwą i
-    <code>local_key</code>, wymaga poświadczeń Tuya Cloud - patrz
-    zakładka 🔌 Połączenia albo README).
+    Skan broadcastu UDP w sieci LAN - szybki, ale bez <code>local_key</code>
+    (nie jest rozgłaszany ze względów bezpieczeństwa) - uzupełnij go ręcznie
+    (<code>python -m tinytuya wizard</code>, patrz README) albo zaimportuj
+    urządzenia razem z <code>local_key</code> w zakładce
+    <a href="/plugins/tuya_cloud">☁ Tuya Cloud</a>. Jeśli dane urządzenie
+    było już tam zaimportowane, jego znana nazwa pojawi się automatycznie
+    przy dopasowanym ID.
   </div>
   <div class="discover-row">
     <button type="button" class="secondary" id="scanLanBtn">🔍 Skanuj sieć LAN</button>
     <span class="discover-status" id="scanLanStatus"></span>
-  </div>
-  <div class="cloud-grid">
-    <select id="cloudRegion">
-      <option value="eu">Europa (eu)</option>
-      <option value="us">USA (us)</option>
-      <option value="cn">Chiny (cn)</option>
-      <option value="in">Indie (in)</option>
-    </select>
-    <input type="text" id="cloudAccessId" placeholder="Access ID">
-    <input type="password" id="cloudAccessKey" placeholder="Access Secret">
-  </div>
-  <div class="discover-row">
-    <button type="button" class="secondary" id="cloudImportBtn">☁ Import z Tuya Cloud</button>
-    <span class="discover-status" id="cloudImportStatus"></span>
   </div>
 </div>
 
@@ -335,55 +324,12 @@ document.getElementById('scanLanBtn').addEventListener('click', async () => {
     let added = 0;
     (data.devices || []).forEach(dev => {
       if (existing.has(dev.id)) return;
-      addDeviceRow({ name: dev.id, id: dev.id, ip: dev.ip, type: 'socket' });
+      addDeviceRow({ name: dev.known_name || dev.id, id: dev.id, ip: dev.ip, type: 'socket' });
       added++;
     });
     status.textContent = added
-      ? `Znaleziono ${added} nowych urządzeń - local_key NIE jest rozgłaszany, uzupełnij go ręcznie albo użyj importu z Tuya Cloud wyżej.`
+      ? `Znaleziono ${added} nowych urządzeń - local_key NIE jest rozgłaszany, uzupełnij go ręcznie albo zaimportuj z Tuya Cloud (zakładka ☁ Tuya Cloud).`
       : 'Nie znaleziono nowych urządzeń w sieci.';
-  } catch (e) {
-    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-document.getElementById('cloudImportBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('cloudImportBtn');
-  const status = document.getElementById('cloudImportStatus');
-  const region = document.getElementById('cloudRegion').value;
-  const accessId = document.getElementById('cloudAccessId').value.trim();
-  const accessKey = document.getElementById('cloudAccessKey').value.trim();
-  if (!accessId || !accessKey) {
-    status.textContent = '❌ Podaj Access ID i Access Secret';
-    return;
-  }
-  btn.disabled = true;
-  status.textContent = 'Pobieram listę urządzeń z Tuya Cloud...';
-  try {
-    const resp = await fetch('/api/plugins/tuya/cloud-import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_region: region, access_id: accessId, access_key: accessKey }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) {
-      status.textContent = '❌ ' + (data.error || 'Błąd importu');
-      return;
-    }
-    const existing = new Set(collectDevices().map(d => d.id));
-    let added = 0;
-    (data.devices || []).forEach(dev => {
-      if (existing.has(dev.id)) return;
-      addDeviceRow({
-        name: dev.name || dev.id, id: dev.id, ip: dev.ip || '',
-        local_key: dev.local_key || '', type: 'socket',
-      });
-      added++;
-    });
-    status.textContent = added
-      ? `Zaimportowano ${added} nowych urządzeń - sprawdź nazwy i zapisz.`
-      : 'Brak nowych urządzeń do zaimportowania (wszystkie już są na liście).';
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
   } finally {

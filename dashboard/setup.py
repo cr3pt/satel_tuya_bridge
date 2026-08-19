@@ -81,6 +81,7 @@ def validate(form: dict) -> list[str]:
 
     errors.extend(validate_satel_fields(form))
     errors.extend(validate_tuya_devices(form))
+    errors.extend(validate_cloud_devices(form))
     errors.extend(validate_automations(form))
 
     return errors
@@ -129,6 +130,21 @@ def validate_tuya_devices(form: dict) -> list[str]:
     for i, gateway in enumerate(form.get("zigbee_gateways", [])):
         if not gateway.get("name") or not gateway.get("id") or not gateway.get("ip") or not gateway.get("local_key"):
             errors.append(f"Bramka Zigbee #{i + 1}: nazwa, ID, adres IP i local_key są wymagane")
+    return errors
+
+
+def validate_cloud_devices(form: dict) -> list[str]:
+    """Waliduje urządzenia sterowane WYŁĄCZNIE przez Tuya Cloud (REST) -
+    CELOWO NIE wymaga ip/local_key (w odróżnieniu od validate_tuya_devices
+    wyżej) - to jest właśnie sens tej listy: urządzenia zaimportowane z
+    Tuya Cloud, dla których nie udało się (albo nie próbowano) uzyskać
+    local_key/adresu IP w sieci LAN, więc sterowanie lokalne
+    (TuyaLocalController) nie jest możliwe - patrz TuyaCloudController."""
+    errors = []
+    for i, device in enumerate(form.get("cloud_devices", [])):
+        label = f"Urządzenie Tuya Cloud #{i + 1}"
+        if not device.get("name") or not device.get("id"):
+            errors.append(f"{label}: nazwa i ID są wymagane")
     return errors
 
 
@@ -417,6 +433,22 @@ def _build_zigbee_gateways(form: dict) -> dict:
         }
         for g in form.get("zigbee_gateways", [])
         if g.get("name") and g.get("id") and g.get("ip") and g.get("local_key")
+    }
+
+
+def _build_cloud_devices(form: dict) -> dict:
+    # "switch_code" - kod DP (data point) wysyłany do Tuya Cloud przy
+    # włączaniu/wyłączaniu (patrz TuyaCloudController.turn_on/turn_off) -
+    # "switch_1" pasuje do WIĘKSZOŚCI prostych przełączników/gniazdek, ale
+    # różni się między kategoriami urządzeń (np. niektóre lampy używają
+    # "switch_led") - stąd pole edytowalne per urządzenie, nie na sztywno.
+    return {
+        d["name"]: {
+            "id": d["id"], "category": d.get("category", ""),
+            "switch_code": (d.get("switch_code") or "switch_1").strip(),
+        }
+        for d in form.get("cloud_devices", [])
+        if d.get("name") and d.get("id")
     }
 
 
@@ -818,6 +850,16 @@ def zigbee_gateways_to_rows(gateways: dict) -> list[dict]:
     ]
 
 
+def cloud_devices_to_rows(devices: dict) -> list[dict]:
+    return [
+        {
+            "name": name, "id": cfg.get("id", ""), "category": cfg.get("category", ""),
+            "switch_code": cfg.get("switch_code", "switch_1"),
+        }
+        for name, cfg in devices.items()
+    ]
+
+
 def build_satel_fields_dict(form: dict) -> dict:
     """Buduje zawartość satel_fields.yaml (strefy/wyjścia/wejścia IP/
     partycje) - używane zarówno przez kreator (razem z build_config_dict),
@@ -837,7 +879,11 @@ def build_tuya_devices_dict(form: dict) -> dict:
     build_satel_fields_dict wyżej. "zigbee_gateways" to bramki Zigbee Tuya,
     na które mogą wskazywać poszczególne "devices" (pole "gateway") zamiast
     mieć własne ip/local_key - patrz TuyaLocalController."""
-    return {"devices": _build_tuya_devices(form), "zigbee_gateways": _build_zigbee_gateways(form)}
+    return {
+        "devices": _build_tuya_devices(form),
+        "zigbee_gateways": _build_zigbee_gateways(form),
+        "cloud_devices": _build_cloud_devices(form),
+    }
 
 
 def clean_sensors_payload(payload) -> tuple[list | None, str | None]:

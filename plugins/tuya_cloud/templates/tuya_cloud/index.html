@@ -43,6 +43,13 @@
   .field-group { margin-bottom: 18px; }
   .field-group:last-child { margin-bottom: 0; }
   .field-group > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .repeatable-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+  .repeatable-row input, .repeatable-row select { flex: 1; min-width: 90px; }
+  .row-remove { background: transparent; color: var(--danger); border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; flex-shrink: 0; }
+  .add-row-btn { background: #262a32; color: var(--text); border: 1px dashed var(--border); border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-top: 4px; }
+  button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
+  .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .discover-status { font-size: 12.5px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -51,8 +58,12 @@
 <h1>☁ Tuya Cloud (API)</h1>
 <div class="hint">
   Poświadczenia projektu Tuya IoT (developer.tuya.com) - potrzebne do
-  importu urządzeń z konta Tuya (zakładka
-  <a href="/plugins/tuya">🔌 Tuya (LAN)</a>) i detekcji ruchu z kamer Tuya.
+  importu urządzeń z konta Tuya, ich sterowania przez chmurę i detekcji
+  ruchu z kamer Tuya. Urządzenia z kompletem danych (adres IP + local_key)
+  trafiają do sterowania lokalnego (zakładka
+  <a href="/plugins/tuya">🔌 Tuya (LAN)</a> - szybsze, nie wymaga internetu);
+  reszta ląduje niżej jako sterowana przez chmurę - lokalne ma zawsze
+  pierwszeństwo, jeśli to samo urządzenie skonfigurujesz też tam.
   <strong>Odczyt jest otwarty, zapis wymaga hasła administratora.</strong>
 </div>
 
@@ -105,7 +116,15 @@
     <input type="password" id="accessKeyInput" placeholder="(zostaw puste, żeby nie zmieniać)">
   </div>
   <div class="field-group">
-    <label>Adres API (api_endpoint)</label>
+    <label>Region (api_region) - do importu urządzeń i sterowania chmurowego</label>
+    <select id="apiRegionSelect">
+      {% for code, label in regions.items() %}
+      <option value="{{ code }}">{{ label }} ({{ code }})</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field-group">
+    <label>Adres API (api_endpoint) - do detekcji ruchu z kamer</label>
     <input type="text" id="apiEndpointInput" placeholder="https://openapi.tuyaeu.com">
   </div>
   <div class="field-group">
@@ -116,6 +135,40 @@
     <button id="saveCredentialsBtn" type="button">Zapisz poświadczenia</button>
   </div>
   <div id="credentialsMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="importSection">
+  <h2>Import urządzeń</h2>
+  <div class="section-hint">
+    Pobiera WSZYSTKIE urządzenia podpięte do projektu Tuya Cloud, używając
+    poświadczeń zapisanych wyżej (zapisz je najpierw). Urządzenia z
+    kompletem danych (adres IP + local_key) trafiają jako podpowiedzi do
+    zakładki <a href="/plugins/tuya">🔌 Tuya (LAN)</a> - skonfiguruj je tam
+    dla szybszego, lokalnego sterowania. Reszta ląduje niżej, w tabeli
+    "Urządzenia sterowane przez chmurę".
+  </div>
+  <div class="discover-row">
+    <button type="button" class="secondary" id="cloudImportBtn">☁ Importuj z Tuya Cloud</button>
+    <span class="discover-status" id="cloudImportStatus"></span>
+  </div>
+</div>
+
+<div class="section" id="cloudDevicesSection">
+  <h2>Urządzenia sterowane przez chmurę</h2>
+  <div class="section-hint">
+    Urządzenia BEZ local_key/adresu IP (Tuya Cloud ich nie zwróciła, albo
+    urządzenie nie jest w tej samej sieci LAN) - sterowane przez Tuya Cloud
+    (REST), wolniej i zależnie od internetu. "Kod przełącznika" to kod DP
+    wysyłany przy włączaniu/wyłączaniu - <code>switch_1</code> pasuje do
+    większości gniazdek/przełączników, zmień go, jeśli sterowanie nie
+    działa (sprawdź kod w zakładce "Cloud Debugging" na developer.tuya.com).
+  </div>
+  <div id="cloudDevicesRows"></div>
+  <button type="button" class="add-row-btn" id="addCloudDeviceBtn">+ Dodaj urządzenie</button>
+  <div class="actions-bar">
+    <button id="saveCloudDevicesBtn" type="button">Zapisz urządzenia chmurowe</button>
+  </div>
+  <div id="cloudDevicesMsg" class="msg-box"></div>
 </div>
 
 <script>
@@ -199,6 +252,7 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
 async function loadCredentials() {
   const data = await (await fetch('/api/plugins/tuya_cloud/credentials')).json();
   document.getElementById('accessIdInput').value = data.access_id || '';
+  document.getElementById('apiRegionSelect').value = data.api_region || 'eu';
   document.getElementById('apiEndpointInput').value = data.api_endpoint || '';
   document.getElementById('mqEndpointInput').value = data.mq_endpoint || '';
   document.getElementById('accessKeySetHint').textContent = data.access_key_set ? '(zapisany)' : '(brak)';
@@ -209,6 +263,7 @@ document.getElementById('saveCredentialsBtn').addEventListener('click', async ()
   const payload = {
     access_id: document.getElementById('accessIdInput').value,
     access_key: document.getElementById('accessKeyInput').value,
+    api_region: document.getElementById('apiRegionSelect').value,
     api_endpoint: document.getElementById('apiEndpointInput').value,
     mq_endpoint: document.getElementById('mqEndpointInput').value,
   };
@@ -228,6 +283,109 @@ document.getElementById('saveCredentialsBtn').addEventListener('click', async ()
     }
   } catch (e) {
     showMsg('credentialsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+// ------------------------------------------------------------------
+// Urządzenia sterowane przez chmurę
+// ------------------------------------------------------------------
+function addCloudDeviceRow(initial) {
+  const container = document.getElementById('cloudDevicesRows');
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. lampa_taras)" class="cd-name">
+    <input type="text" placeholder="ID urządzenia" class="cd-id">
+    <input type="text" placeholder="kategoria (opcjonalnie)" class="cd-category">
+    <input type="text" placeholder="kod przełącznika" class="cd-switch-code" style="max-width: 150px;">
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.cd-name').value = initial.name ?? '';
+    row.querySelector('.cd-id').value = initial.id ?? '';
+    row.querySelector('.cd-category').value = initial.category ?? '';
+    row.querySelector('.cd-switch-code').value = initial.switch_code || 'switch_1';
+  } else {
+    row.querySelector('.cd-switch-code').value = 'switch_1';
+  }
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+document.getElementById('addCloudDeviceBtn').addEventListener('click', () => addCloudDeviceRow());
+
+function collectCloudDevices() {
+  return Array.from(document.querySelectorAll('#cloudDevicesRows .repeatable-row'))
+    .map(row => ({
+      name: row.querySelector('.cd-name').value.trim(),
+      id: row.querySelector('.cd-id').value.trim(),
+      category: row.querySelector('.cd-category').value.trim(),
+      switch_code: row.querySelector('.cd-switch-code').value.trim() || 'switch_1',
+    }))
+    .filter(d => d.name);
+}
+
+async function loadCloudDevices() {
+  const data = await (await fetch('/api/plugins/tuya_cloud/devices')).json();
+  (data.devices || []).forEach(d => addCloudDeviceRow(d));
+}
+loadCloudDevices();
+
+document.getElementById('saveCloudDevicesBtn').addEventListener('click', async () => {
+  try {
+    const resp = await authorizedFetch('/api/plugins/tuya_cloud/devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cloud_devices: collectCloudDevices() }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const details = data.details ? ' - ' + data.details.join('; ') : '';
+      showMsg('cloudDevicesMsg', false, (data.error || 'Błąd zapisu') + details);
+    } else {
+      showMsg('cloudDevicesMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('cloudDevicesMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+// ------------------------------------------------------------------
+// Import z Tuya Cloud (poświadczenia JUŻ ZAPISANE wyżej)
+// ------------------------------------------------------------------
+document.getElementById('cloudImportBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('cloudImportBtn');
+  const status = document.getElementById('cloudImportStatus');
+  btn.disabled = true;
+  status.textContent = 'Pobieram listę urządzeń z Tuya Cloud...';
+  try {
+    const resp = await authorizedFetch('/api/plugins/tuya_cloud/cloud-import', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = '❌ ' + (data.error || 'Błąd importu');
+      return;
+    }
+    const existingCloud = new Set(collectCloudDevices().map(d => d.id));
+    let addedLocal = 0, addedCloud = 0;
+    (data.devices || []).forEach(dev => {
+      if (dev.ip && dev.local_key) {
+        // Kompletne dane (IP + local_key) - lokalne sterowanie jest
+        // szybsze i nie zależy od internetu, więc TYLKO podpowiadamy, gdzie
+        // je skonfigurować, zamiast dodawać tutaj (ta strona zarządza
+        // wyłącznie "cloud_devices" - patrz plugins/tuya_cloud/routes.py).
+        addedLocal++;
+        return;
+      }
+      if (existingCloud.has(dev.id)) return;
+      addCloudDeviceRow({ name: dev.name || dev.id, id: dev.id, category: dev.category || '' });
+      addedCloud++;
+    });
+    const parts = [];
+    if (addedCloud) parts.push(`${addedCloud} dodano niżej (sterowanie chmurowe) - zapisz.`);
+    if (addedLocal) parts.push(`${addedLocal} ma komplet danych (IP + local_key) - skonfiguruj je w zakładce 🔌 Tuya (LAN), tam skan LAN podpowie ich nazwę.`);
+    status.textContent = parts.length ? parts.join(' ') : 'Brak nowych urządzeń do zaimportowania.';
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
   }
 });
 </script>

@@ -14,6 +14,8 @@ from .config import BridgeConfig
 from .logging_config import apply_log_levels
 from .satel_client import SatelIntegraClient, SatelVirtualInputTrigger
 from .tuya_local import TuyaLocalController
+from .tuya_cloud import TuyaCloudController
+from .tuya_dispatch import TuyaController
 from .tuya_cloud_events import TuyaCameraMotionListener
 from .unifi_protect_events import UnifiProtectMotionListener
 from .ebus_client import EbusMqttListener
@@ -30,6 +32,18 @@ from .ha_discovery import build_all_entities
 from .ha_mqtt import HomeAssistantMqttBridge
 
 logger = logging.getLogger("bridge.rules")
+
+
+def _build_tuya_controller(tuya_cfg: dict) -> TuyaController:
+    """Buduje kontroler Tuya (lokalny + fallback chmurowy) z sekcji
+    `tuya` configu - wspólne dla RulesEngine.__init__ i reload_config, żeby
+    obie ścieżki budowały go identycznie. Chmurowy kontroler jest budowany
+    ZAWSZE (nawet bez skonfigurowanych urządzeń/poświadczeń) - patrz
+    TuyaController, który i tak nigdy do niego nie sięgnie, jeśli
+    `cloud_devices` jest puste."""
+    local = TuyaLocalController(tuya_cfg["devices"], tuya_cfg.get("zigbee_gateways"))
+    cloud = TuyaCloudController(tuya_cfg.get("cloud_devices", {}), tuya_cfg.get("cloud", {}))
+    return TuyaController(local, cloud)
 
 
 class RulesEngine:
@@ -58,7 +72,7 @@ class RulesEngine:
         # zerwaniach WiFi. Konfigurowalne globalnie (notifications.grace_seconds).
         grace_seconds = (notify_cfg or {}).get("grace_seconds", 120)
 
-        self.tuya = TuyaLocalController(config.tuya["devices"], config.tuya.get("zigbee_gateways"))
+        self.tuya = _build_tuya_controller(config.tuya)
         self.satel_virtual_inputs = SatelVirtualInputTrigger(
             config.satel["host"], config.satel["virtual_inputs"]
         )
@@ -416,9 +430,10 @@ class RulesEngine:
         self.config = new_config
         apply_log_levels(new_config.raw)
 
-        # Tuya lokalne - bezpieczne do podmiany w całości: TuyaLocalController
-        # nie trzyma żywego połączenia (tylko krótkie żądania per komenda).
-        self.tuya = TuyaLocalController(new_config.tuya["devices"], new_config.tuya.get("zigbee_gateways"))
+        # Tuya (lokalne + chmurowe) - bezpieczne do podmiany w całości: ani
+        # TuyaLocalController, ani TuyaCloudController nie trzymają żywego
+        # połączenia (tylko krótkie żądania per komenda).
+        self.tuya = _build_tuya_controller(new_config.tuya)
 
         # Satel - etykiety/numery monitorowanych stref/wyjść/wejść IP,
         # AKTUALIZOWANE na już istniejącym obiekcie klienta (NIE tworzymy

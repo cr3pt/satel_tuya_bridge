@@ -52,8 +52,15 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         if errors:
             return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
+        # Ta strona edytuje TYLKO urządzenia lokalne/bramki - "cloud_devices"
+        # (zakładka Tuya Cloud, plugins/tuya_cloud/routes.py) dzieli ten sam
+        # dokument ConfigStore, więc trzeba go zachować, inaczej zapis stąd
+        # kasowałby listę urządzeń chmurowych.
         tuya_devices_dict = build_tuya_devices_dict(form)
-        get_config_store().set("tuya_devices", tuya_devices_dict)
+        existing = get_config_store().get("tuya_devices")
+        existing["devices"] = tuya_devices_dict["devices"]
+        existing["zigbee_gateways"] = tuya_devices_dict["zigbee_gateways"]
+        get_config_store().set("tuya_devices", existing)
 
         reload_bridge_config()
         enqueue_bridge_reload()
@@ -69,11 +76,29 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         broadcastu UDP w sieci LAN, nic nie zmienia. NIE zwraca local_key
         (nie jest rozgłaszany ze względów bezpieczeństwa) - trzeba go
         osobno wyciągnąć narzędziem `python -m tinytuya wizard` (patrz
-        README) albo importem z Tuya Cloud (przycisk niżej)."""
+        README) albo importem z Tuya Cloud (zakładka ☁ Tuya Cloud).
+
+        Dopasowuje wyniki po ID do JUŻ ZNANYCH urządzeń (lokalnych i
+        chmurowych) - jeśli dane urządzenie było wcześniej zaimportowane z
+        Tuya Cloud (ma nazwę w tuya.cloud_devices, ale nie miało wtedy
+        adresu IP w sieci LAN), a teraz pojawia się w skanie, dokładamy jego
+        znaną nazwę - żeby nie trzeba było zgadywać, które urządzenie
+        fizyczne odpowiada któremu wpisowi."""
+        tuya = get_config_raw().get("tuya", {})
+        known_by_id: dict[str, str] = {}
+        for name, cfg in tuya.get("cloud_devices", {}).items():
+            if cfg.get("id"):
+                known_by_id[cfg["id"]] = name
+        for name, cfg in tuya.get("devices", {}).items():
+            if cfg.get("id"):
+                known_by_id[cfg["id"]] = name
+
         try:
             devices = scan_tuya_network()
         except Exception as exc:
             return jsonify({"error": f"Błąd skanowania: {exc}"}), 502
+        for d in devices:
+            d["known_name"] = known_by_id.get(d.get("id"), "")
         return jsonify({"devices": devices})
 
     @app.route("/api/plugins/tuya/cloud-import", methods=["POST"])

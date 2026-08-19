@@ -109,6 +109,17 @@ class BridgeConfig:
             data["tuya"]["zigbee_gateways"] = tuya_devices_data["zigbee_gateways"]
         else:
             data["tuya"].setdefault("zigbee_gateways", {})
+        # Urządzenia sterowane WYŁĄCZNIE przez Tuya Cloud (REST) - typowo
+        # zaimportowane z Tuya Cloud bez local_key/IP (np. urządzenia bez
+        # dostępu do tej samej sieci LAN) - patrz TuyaCloudController i
+        # RulesEngine._build_tuya_controller. Osobna mapa od "devices"
+        # (lokalnych) - to samo urządzenie (po nazwie) w obu mapach naraz
+        # oznacza "sterowane lokalnie, chmura jako fallback niedostępny,
+        # bo lokalne ma pierwszeństwo" (patrz komentarz w rules_engine.py).
+        if "cloud_devices" in tuya_devices_data:
+            data["tuya"]["cloud_devices"] = tuya_devices_data["cloud_devices"]
+        else:
+            data["tuya"].setdefault("cloud_devices", {})
 
         sensors_content = store.get("sensors")
         data.setdefault("ebus", {})["sensors"] = sensors_content.get("sensors", [])

@@ -676,8 +676,15 @@ def api_config_tuya_devices_post():
     if errors:
         return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
+    # Ta strona edytuje TYLKO urządzenia lokalne/bramki - "cloud_devices"
+    # (zakładka Tuya Cloud, plugins/tuya_cloud/routes.py) dzieli ten sam
+    # dokument ConfigStore, więc trzeba go zachować, inaczej zapis stąd
+    # kasowałby listę urządzeń chmurowych.
     tuya_devices_dict = build_tuya_devices_dict(form)
-    config_store.set("tuya_devices", tuya_devices_dict)
+    existing = config_store.get("tuya_devices")
+    existing["devices"] = tuya_devices_dict["devices"]
+    existing["zigbee_gateways"] = tuya_devices_dict["zigbee_gateways"]
+    config_store.set("tuya_devices", existing)
 
     config = BridgeConfig.load(config_path)
     create_app(config)

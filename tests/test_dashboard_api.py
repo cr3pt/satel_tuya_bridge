@@ -595,6 +595,24 @@ class TestTuyaDevicesEndpoint:
         after = app_module.config_store.get("config")
         assert before == after
 
+    def test_post_tuya_devices_preserves_cloud_devices(self, client):
+        """Zapis stąd (urządzenia lokalne) nie może skasować urządzeń
+        chmurowych zapisanych z zakładki Tuya Cloud (współdzielony
+        dokument ConfigStore "tuya_devices") - patrz
+        plugins/tuya_cloud/routes.py."""
+        client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/config/tuya-devices",
+            json={"tuya_devices": [{"name": "x", "id": "i", "ip": "1.2.3.4", "local_key": "k"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        cloud_after = client.get("/api/plugins/tuya_cloud/devices").get_json()
+        assert any(d["name"] == "lampa_taras" for d in cloud_after["devices"])
+
 
 class TestConnectionsEndpoint:
     """Zakładka "Połączenia" - jedyne miejsce do zmiany host/port/kluczy/

@@ -126,6 +126,10 @@ def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> lis
             "local_key": d.get("key", ""),
             "ip": lan_match.get("ip", ""),
             "version": lan_match.get("version", ""),
+            # Kategoria Tuya (np. "kg" przełącznik, "cz" gniazdko) - do
+            # podpowiedzi w panelu przy imporcie (patrz plugins/tuya_cloud) i
+            # jako domyślny opis w liście urządzeń sterowanych przez chmurę.
+            "category": d.get("category", ""),
             # Podurządzenie Zigbee bramki (nie samodzielne urządzenie WiFi) -
             # tinytuya.Cloud dokłada te pola tylko dla sub-devices (patrz
             # Cloud.py: filter_devices/_update_device_list, "gateway_id" i

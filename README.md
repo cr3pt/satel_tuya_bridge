@@ -291,10 +291,40 @@ zakładka **Overview** pokazuje `Access ID/Client ID` oraz
    *IoT Core* i *Authorization* (zwykle domyślnie tak).
 5. Wróć do zakładki **Overview** po Access ID/Secret.
 
-Poświadczenia wpisywane przy imporcie w kreatorze/panelu **nie są nigdzie
+Poświadczenia wpisywane przy imporcie w kreatorze **nie są nigdzie
 zapisywane** - używane jednorazowo do pobrania listy urządzeń, potem
 zapominane (w przeciwieństwie do `tuya.cloud` w `config.yaml`, gdzie
 zostają trwale, jeśli włączysz integrację kamer).
+
+### Import urządzeń i sterowanie przez chmurę (po pierwszej konfiguracji)
+
+Po skonfigurowaniu bridge'a import urządzeń przenosi się do zakładki
+**☁ Tuya Cloud** (🧩 Wtyczki → Tuya Cloud) - zapisz tam poświadczenia
+(Access ID/Secret/region) RAZ, potem przycisk **☁ Importuj z Tuya Cloud**
+pobiera listę urządzeń jednym kliknięciem, bez wpisywania ich ponownie.
+
+Import rozdziela urządzenia automatycznie:
+- **Komplet danych** (adres IP znaleziony w sieci LAN + `local_key`
+  zwrócony przez Tuya Cloud) → podpowiedź do skonfigurowania w zakładce
+  **🔌 Tuya (LAN)** - sterowanie lokalne jest szybsze i nie zależy od
+  internetu.
+- **Niekompletne dane** (typowe - Tuya Cloud nie zawsze zwraca
+  `local_key`, albo urządzenie nie jest w tej samej sieci LAN co bridge)
+  → lądują w tabeli "Urządzenia sterowane przez chmurę" na tej samej
+  stronie - sterowane przez Tuya Cloud REST API (wolniej, wymaga
+  internetu), **jako fallback TYLKO dopóki** dane urządzenie nie zostanie
+  ręcznie skonfigurowane w zakładce Tuya (LAN) pod tą samą nazwą -
+  wtedy lokalne automatycznie przejmuje sterowanie.
+
+Sterowanie chmurowe jest na start ograniczone do prostych przełączników
+on/off (bez ściemniania) - "kod przełącznika" (domyślnie `switch_1`,
+pasuje do większości gniazdek/przełączników) można zmienić per urządzenie,
+jeśli sterowanie nie działa (sprawdź faktyczny kod w zakładce
+**Cloud Debugging** na developer.tuya.com, wybierając swoje urządzenie).
+
+Skan sieci LAN (zakładka Tuya (LAN)) dopasowuje też odwrotnie - jeśli
+skanowane urządzenie ma ID znane z wcześniejszego importu Tuya Cloud,
+jego nazwa pojawia się automatycznie zamiast gołego ID.
 
 ### Częsty problem: import zwraca 0 urządzeń (albo błąd 401 na kamery) mimo poprawnych danych
 

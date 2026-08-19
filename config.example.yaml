@@ -141,17 +141,31 @@ tuya:
       local_key: "zzzzzzzzzzzzzzzz"
       version: 3.4
 
-  # Detekcja ruchu z kamer Tuya - WYMAGA konta Tuya IoT Developer
-  # (developer.tuya.com), utworzonego projektu chmurowego, powiązania
-  # urządzeń z projektem i włączonej subskrypcji Message Service (Pulsar).
+  # Detekcja ruchu z kamer Tuya + import urządzeń/sterowanie chmurowe -
+  # WYMAGA konta Tuya IoT Developer (developer.tuya.com), utworzonego
+  # projektu chmurowego, powiązania urządzeń z projektem i (dla kamer)
+  # włączonej subskrypcji Message Service (Pulsar).
   cloud:
     access_id: "TWOJ_ACCESS_ID"
     access_key: "TWOJ_ACCESS_KEY"
-    api_endpoint: "https://openapi.tuyaeu.com"   # region UE
-    mq_endpoint: "wss://mqe.tuyaeu.com:8285/"    # region UE
+    api_region: "eu"                             # kod regionu (import urządzeń + sterowanie REST)
+    api_endpoint: "https://openapi.tuyaeu.com"   # region UE (tylko kamery Pulsar)
+    mq_endpoint: "wss://mqe.tuyaeu.com:8285/"    # region UE (tylko kamery Pulsar)
     camera_device_ids:
       - "bfabcdef1234567890"   # kamera 1
       - "bf1122334455667788"   # kamera 2
+
+  # Urządzenia sterowane WYŁĄCZNIE przez Tuya Cloud (REST) - typowo
+  # zaimportowane z Tuya Cloud (zakładka ☁ Tuya Cloud), dla których nie
+  # udało się uzyskać local_key/adresu IP w sieci LAN, więc sterowanie
+  # lokalne (devices wyżej) nie jest możliwe - patrz bridge/tuya_cloud.py.
+  # To samo urządzenie skonfigurowane też w "devices" wyżej pod TĄ SAMĄ
+  # nazwą - lokalne ma zawsze pierwszeństwo (bridge/tuya_dispatch.py).
+  cloud_devices:
+    lampa_taras:
+      id: "bfccccccccccccccc"
+      category: "kg"          # opcjonalne, czysto opisowe
+      switch_code: "switch_1" # kod DP wysyłany przy włączaniu/wyłączaniu
 
 location:
   # Potrzebne TYLKO jeśli jakaś reguła używa okna czasowego "sunset"/"sunrise"
