@@ -95,14 +95,17 @@
 <div class="section" id="connectionsSection">
   <h2>🔌 Połączenia</h2>
   <div class="section-hint">
-    Host/port/klucze centrali Satel, brokera MQTT (eBUS), Tuya Cloud i Home
-    Assistant, oraz tematy MQTT, pod którymi bridge publikuje stan każdej
-    integracji (niezależnie od Home Assistant). To jedyne miejsce do zmiany
-    tych ustawień PO pierwszej konfiguracji - kreator (<code>/setup</code>)
-    jest celowo zablokowany po zapisie, żeby nie nadpisać przypadkiem
-    ręcznych zmian w <code>config.yaml</code>. <strong>Odczyt TEŻ wymaga
-    hasła administratora</strong> (w odróżnieniu od reszty tej strony) -
-    dane obejmują klucz integracji Satela i sekrety Tuya Cloud.
+    Host/port/klucz centrali Satel i adres brokera MQTT (eBUS) - jedyne
+    dwie integracje BEZ własnego edytora tych pól (ich dedykowane strony,
+    <a href="/plugins/satel">/plugins/satel</a> i
+    <a href="/plugins/ebus">/plugins/ebus</a>, konfigurują tylko
+    strefy/wyjścia/czujniki). Tuya Cloud, Home Assistant, publikacja MQTT i
+    powiadomienia mają już własne strony (linki niżej) - to jedyne miejsce
+    do zmiany pól Satela/eBUS PO pierwszej konfiguracji - kreator
+    (<code>/setup</code>) jest celowo zablokowany po zapisie, żeby nie
+    nadpisać przypadkiem ręcznych zmian w <code>config.yaml</code>.
+    <strong>Odczyt TEŻ wymaga hasła administratora</strong> (w odróżnieniu
+    od reszty tej strony) - dane obejmują klucz integracji Satela.
   </div>
 
   <div class="discover-row">
@@ -132,45 +135,17 @@
   </div>
 
   <div class="field-group">
-    <label>Publikacja stanu do MQTT (poza Home Assistant)</label>
-    <div class="section-hint" style="margin: 0 0 10px;">
-      Stan wejść/wyjść/stref Satela i urządzeń Tuya jest publikowany na
-      broker MQTT wyżej pod tematem <code>&lt;temat&gt;/.../state</code> -
-      niezależnie od tego, czy Home Assistant jest włączony.
+    <label>Publikacja stanu do MQTT, Tuya Cloud, Home Assistant, powiadomienia</label>
+    <div class="section-hint" style="margin: 0;">
+      Te cztery integracje mają teraz WŁASNE, dedykowane strony konfiguracji
+      (włącznik, poziom logowania i wszystkie pola w jednym miejscu, patrz
+      zakładka <a href="/plugins">🧩 Wtyczki</a>) - żeby uniknąć dwóch miejsc
+      do edycji tego samego ustawienia, nie duplikujemy ich już tutaj:
+      <a href="/plugins/mqtt_publish">📡 Publikacja stanu MQTT →</a>,
+      <a href="/plugins/tuya_cloud">☁ Tuya Cloud →</a>,
+      <a href="/plugins/home_assistant">🏠 Home Assistant →</a>,
+      <a href="/plugins/notifications">🔔 Powiadomienia (ntfy) →</a>.
     </div>
-    <div class="checkbox-row"><input type="checkbox" id="conn_mqtt_publish_enabled"><label for="conn_mqtt_publish_enabled">Publikuj stan Satela i Tuya do MQTT</label></div>
-    <div class="conn-grid">
-      <div class="field"><label>Temat MQTT dla Satela</label><input type="text" id="conn_mqtt_satel_topic" placeholder="satel"></div>
-      <div class="field"><label>Temat MQTT dla Tuya</label><input type="text" id="conn_mqtt_tuya_topic" placeholder="tuya"></div>
-    </div>
-  </div>
-
-  <div class="field-group">
-    <div class="checkbox-row"><input type="checkbox" id="conn_tuya_cloud_enabled"><label for="conn_tuya_cloud_enabled">Tuya Cloud (kamery Tuya / wirtualne urządzenie)</label></div>
-    <div class="optional-content" id="connTuyaCloudContent">
-      <div class="conn-grid">
-        <div class="field"><label>Access ID</label><input type="text" id="conn_tuya_access_id"></div>
-        <div class="field"><label>Access Secret</label><input type="password" id="conn_tuya_access_key" placeholder="(bez zmian)"></div>
-        <div class="field"><label>API endpoint</label><input type="text" id="conn_tuya_api_endpoint" placeholder="https://openapi.tuyaeu.com"></div>
-        <div class="field"><label>MQ endpoint (Pulsar)</label><input type="text" id="conn_tuya_mq_endpoint" placeholder="wss://mqe.tuyaeu.com:8285/"></div>
-      </div>
-      <div class="secret-hint" id="conn_tuya_key_hint"></div>
-    </div>
-  </div>
-
-  <div class="field-group">
-    <div class="checkbox-row"><input type="checkbox" id="conn_ha_enabled"><label for="conn_ha_enabled">Home Assistant (MQTT Discovery)</label></div>
-    <div class="optional-content" id="connHaContent">
-      <div class="conn-grid">
-        <div class="field"><label>Adres brokera (puste = jak eBUS)</label><input type="text" id="conn_ha_host" placeholder="127.0.0.1"></div>
-        <div class="field"><label>Port</label><input type="number" id="conn_ha_port" placeholder="1883"></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="field-group">
-    <label>Powiadomienia push (ntfy)</label>
-    <input type="text" id="conn_ntfy_url" placeholder="https://ntfy.sh/moj-temat (puste = wyłączone)">
   </div>
 
   <div class="actions-bar">
@@ -385,12 +360,17 @@ function showMsg(elId, ok, text) {
 // ------------------------------------------------------------------
 // Połączenia (host/port/klucze/tematy MQTT per integracja)
 // ------------------------------------------------------------------
-[['conn_tuya_cloud_enabled', 'connTuyaCloudContent'], ['conn_ha_enabled', 'connHaContent']]
-  .forEach(([checkboxId, contentId]) => {
-    const checkbox = document.getElementById(checkboxId);
-    const content = document.getElementById(contentId);
-    checkbox.addEventListener('change', () => content.classList.toggle('visible', checkbox.checked));
-  });
+// Tuya Cloud/Home Assistant/publikacja MQTT/powiadomienia mają już WŁASNE
+// strony (patrz linki w sekcji Połączenia wyżej) - ten formularz edytuje
+// już tylko Satel/eBUS, ale zapis do /api/config/connections wciąż
+// oczekuje pełnego kształtu (patrz dashboard/setup.py:
+// build_connections_patch) - żeby zapis stąd NIGDY nie skasował/zresetował
+// tamtych 4 sekcji (część z nich ma DESTRUKCYJNE zachowanie przy braku
+// pola - np. Tuya Cloud usuwa całą sekcję, jeśli "enabled" nie przyjdzie w
+// ogóle), za każdym razem oddajemy z powrotem DOKŁADNIE to, co ostatnio
+// wczytaliśmy z serwera (connectionsSnapshot), zamiast czytać je z pól,
+// których już nie ma na tej stronie.
+let connectionsSnapshot = null;
 
 document.getElementById('loadConnectionsBtn').addEventListener('click', async () => {
   const status = document.getElementById('connectionsLoadStatus');
@@ -401,6 +381,8 @@ document.getElementById('loadConnectionsBtn').addEventListener('click', async ()
       status.textContent = '❌ ' + (data.error || 'Błąd wczytywania');
       return;
     }
+    connectionsSnapshot = data;
+
     document.getElementById('conn_satel_host').value = data.satel.host || '';
     document.getElementById('conn_satel_port').value = data.satel.port || '';
     document.getElementById('conn_satel_partition').value = data.satel.partition || '';
@@ -413,28 +395,6 @@ document.getElementById('loadConnectionsBtn').addEventListener('click', async ()
     document.getElementById('conn_ebus_port').value = data.ebus.mqtt_port || '';
     document.getElementById('conn_ebus_topic').value = data.ebus.topic_prefix || '';
 
-    document.getElementById('conn_mqtt_publish_enabled').checked = !!data.mqtt_publish.enabled;
-    document.getElementById('conn_mqtt_satel_topic').value = data.mqtt_publish.satel_topic || '';
-    document.getElementById('conn_mqtt_tuya_topic').value = data.mqtt_publish.tuya_topic || '';
-
-    const tcCheckbox = document.getElementById('conn_tuya_cloud_enabled');
-    tcCheckbox.checked = !!data.tuya_cloud.enabled;
-    document.getElementById('connTuyaCloudContent').classList.toggle('visible', tcCheckbox.checked);
-    document.getElementById('conn_tuya_access_id').value = data.tuya_cloud.access_id || '';
-    document.getElementById('conn_tuya_api_endpoint').value = data.tuya_cloud.api_endpoint || '';
-    document.getElementById('conn_tuya_mq_endpoint').value = data.tuya_cloud.mq_endpoint || '';
-    document.getElementById('conn_tuya_key_hint').textContent = data.tuya_cloud.access_key_set
-      ? 'Access Secret jest już ustawiony - zostaw pole puste, żeby go nie zmieniać.'
-      : 'Access Secret NIE jest jeszcze ustawiony.';
-
-    const haCheckbox = document.getElementById('conn_ha_enabled');
-    haCheckbox.checked = !!data.home_assistant.enabled;
-    document.getElementById('connHaContent').classList.toggle('visible', haCheckbox.checked);
-    document.getElementById('conn_ha_host').value = data.home_assistant.mqtt_host || '';
-    document.getElementById('conn_ha_port').value = data.home_assistant.mqtt_port || '';
-
-    document.getElementById('conn_ntfy_url').value = data.notifications.ntfy_topic_url || '';
-
     status.textContent = '✅ Wczytano bieżące ustawienia.';
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
@@ -442,6 +402,10 @@ document.getElementById('loadConnectionsBtn').addEventListener('click', async ()
 });
 
 document.getElementById('saveConnectionsBtn').addEventListener('click', async () => {
+  if (!connectionsSnapshot) {
+    showMsg('connectionsMsg', false, 'Najpierw wczytaj bieżące ustawienia (przycisk "🔒 Wczytaj bieżące ustawienia" wyżej) - inaczej zapis mógłby zresetować Tuya Cloud/Home Assistant/publikację MQTT/powiadomienia.');
+    return;
+  }
   const payload = {
     satel: {
       host: document.getElementById('conn_satel_host').value.trim(),
@@ -455,25 +419,28 @@ document.getElementById('saveConnectionsBtn').addEventListener('click', async ()
       mqtt_port: document.getElementById('conn_ebus_port').value,
       topic_prefix: document.getElementById('conn_ebus_topic').value.trim(),
     },
+    // Odesłane BEZ ZMIAN - edytuje się je na własnych stronach (patrz
+    // /plugins/tuya_cloud, /plugins/home_assistant, /plugins/mqtt_publish,
+    // /plugins/notifications), to tylko zapobiega ich skasowaniu stąd.
     mqtt_publish: {
-      enabled: document.getElementById('conn_mqtt_publish_enabled').checked,
-      satel_topic: document.getElementById('conn_mqtt_satel_topic').value.trim(),
-      tuya_topic: document.getElementById('conn_mqtt_tuya_topic').value.trim(),
+      enabled: connectionsSnapshot.mqtt_publish.enabled,
+      satel_topic: connectionsSnapshot.mqtt_publish.satel_topic,
+      tuya_topic: connectionsSnapshot.mqtt_publish.tuya_topic,
     },
     tuya_cloud: {
-      enabled: document.getElementById('conn_tuya_cloud_enabled').checked,
-      access_id: document.getElementById('conn_tuya_access_id').value.trim(),
-      access_key: document.getElementById('conn_tuya_access_key').value,
-      api_endpoint: document.getElementById('conn_tuya_api_endpoint').value.trim(),
-      mq_endpoint: document.getElementById('conn_tuya_mq_endpoint').value.trim(),
+      enabled: connectionsSnapshot.tuya_cloud.enabled,
+      access_id: connectionsSnapshot.tuya_cloud.access_id,
+      access_key: '',  // puste = "zostaw bez zmian" (prawdziwy sekret i tak nigdy tu nie wraca)
+      api_endpoint: connectionsSnapshot.tuya_cloud.api_endpoint,
+      mq_endpoint: connectionsSnapshot.tuya_cloud.mq_endpoint,
     },
     home_assistant: {
-      enabled: document.getElementById('conn_ha_enabled').checked,
-      mqtt_host: document.getElementById('conn_ha_host').value.trim(),
-      mqtt_port: document.getElementById('conn_ha_port').value,
+      enabled: connectionsSnapshot.home_assistant.enabled,
+      mqtt_host: connectionsSnapshot.home_assistant.mqtt_host,
+      mqtt_port: connectionsSnapshot.home_assistant.mqtt_port,
     },
     notifications: {
-      ntfy_topic_url: document.getElementById('conn_ntfy_url').value.trim(),
+      ntfy_topic_url: connectionsSnapshot.notifications.ntfy_topic_url,
     },
   };
   try {
@@ -488,7 +455,6 @@ document.getElementById('saveConnectionsBtn').addEventListener('click', async ()
       showMsg('connectionsMsg', false, (data.error || 'Błąd zapisu') + details);
     } else {
       document.getElementById('conn_satel_key').value = '';
-      document.getElementById('conn_tuya_access_key').value = '';
       showMsg('connectionsMsg', true, data.message);
     }
   } catch (e) {

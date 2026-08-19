@@ -61,8 +61,9 @@ test, żadnych prawdziwych połączeń sieciowych) - fałszywe (fake) wersje
 prawdziwych urządzeń.
 
 CI (`.github/workflows/tests.yml`) uruchamia cały zestaw na Pythonie
-3.9/3.11/3.12 przy każdym push/PR - 3.9 celowo, bo to najstarszy Python
-realnie spotykany na Raspberry Pi OS (Bullseye).
+3.11/3.12/3.13 przy każdym push/PR - projekt nie jest już ograniczony do
+RPi Zero, więc macierz testuje nowsze, aktualnie wspierane wersje (część
+zależności, np. `uiprotect>=6.0`, i tak już wymaga Python ≥3.10).
 
 ## Instalacja na RPi Zero W
 
@@ -1546,6 +1547,6 @@ satel_tuya_bridge/
     notifications/routes.py   # /plugins/notifications - adres tematu ntfy + okres ciszy
     presence_simulation/routes.py  # /plugins/presence_simulation - włącznik/log_level (lista urządzeń w /automations)
   tests/                     # testy pytest (patrz sekcja "Testy automatyczne")
-  .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.9/3.11/3.12
+  .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.11/3.12/3.13
   maintenance.py              # CLI do rotacji/backupu bazy (do crona, patrz sekcja "Rotacja i backup bazy")
 ```

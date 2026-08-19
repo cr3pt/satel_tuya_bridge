@@ -520,6 +520,13 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     )
     config["boiler_output"].setdefault("tuya_virtual_device", {"device_id": ""})
 
+    # log_level (patrz plugins/*/routes.py: register_settings_route) nie
+    # pochodzi z TEGO formularza (ani stary /config, ani zakładka Wtyczki o
+    # nim nie wiedzą - żyje tylko na dedykowanej stronie każdej wtyczki) -
+    # trzeba go jawnie przenieść przy KAŻDYM przebudowaniu sekcji od zera
+    # niżej, inaczej zapis stąd (nawet samego hosta/tematu) po cichu
+    # skasowałby wcześniej ustawiony poziom logowania tej wtyczki.
+    existing_mqtt_publish = config.get("mqtt_publish", {})
     mqtt_publish_form = form.get("mqtt_publish", {})
     config["mqtt_publish"] = {
         "enabled": bool(mqtt_publish_form.get("enabled", True)),
@@ -528,12 +535,19 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
             "tuya": (mqtt_publish_form.get("tuya_topic") or "tuya").strip(),
         },
     }
+    if existing_mqtt_publish.get("log_level"):
+        config["mqtt_publish"]["log_level"] = existing_mqtt_publish["log_level"]
 
     config.setdefault("tuya", {})
     tuya_cloud_form = form.get("tuya_cloud", {})
     if tuya_cloud_form.get("enabled") and (tuya_cloud_form.get("access_id") or "").strip():
         existing_cloud = config["tuya"].get("cloud", {})
         config["tuya"]["cloud"] = {
+            # "enabled" tutaj w formularzu to sygnał "czy w ogóle
+            # skonfigurowane" (patrz connections_to_form: bool(tuya_cloud))
+            # - RZECZYWISTY włącznik z /plugins/tuya_cloud (⚙ Ustawienia
+            # wtyczki) to osobne pole wewnątrz sekcji, zachowaj je.
+            "enabled": existing_cloud.get("enabled", True),
             "access_id": tuya_cloud_form["access_id"].strip(),
             "access_key": (tuya_cloud_form.get("access_key") or "").strip() or existing_cloud.get("access_key", ""),
             "api_endpoint": (tuya_cloud_form.get("api_endpoint") or "").strip()
@@ -542,6 +556,8 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
                 or existing_cloud.get("mq_endpoint", "wss://mqe.tuyaeu.com:8285/"),
             "camera_device_ids": existing_cloud.get("camera_device_ids", []),
         }
+        if existing_cloud.get("log_level"):
+            config["tuya"]["cloud"]["log_level"] = existing_cloud["log_level"]
     else:
         config["tuya"].pop("cloud", None)
     tuya_local_form = form.get("tuya_local", {})
@@ -562,6 +578,8 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
             "state_topic_prefix": existing_ha.get("state_topic_prefix", "home/bridge"),
             "device_name": existing_ha.get("device_name", "Satel-Tuya-eBUS Bridge"),
         }
+        if existing_ha.get("log_level"):
+            config["home_assistant"]["log_level"] = existing_ha["log_level"]
     else:
         config["home_assistant"] = {**existing_ha, "enabled": False}
 

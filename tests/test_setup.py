@@ -477,6 +477,47 @@ class TestConnectionsBuilder:
         patched = build_connections_patch(form, self.EXISTING)
         assert patched["home_assistant"]["enabled"] is False
 
+    def test_mqtt_publish_preserves_log_level_set_via_dedicated_page(self):
+        """log_level (patrz plugins/mqtt_publish/routes.py) nie pochodzi z
+        TEGO formularza - musi przetrwać, nawet gdy zapisujemy stąd tylko
+        tematy MQTT."""
+        existing = {**self.EXISTING, "mqtt_publish": {"enabled": True, "topics": {"satel": "satel", "tuya": "tuya"}, "log_level": "DEBUG"}}
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "mqtt_publish": {"enabled": True, "satel_topic": "alarm", "tuya_topic": "smart_home"},
+        }
+        patched = build_connections_patch(form, existing)
+        assert patched["mqtt_publish"]["log_level"] == "DEBUG"
+        assert patched["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home"}
+
+    def test_tuya_cloud_preserves_log_level_and_real_enabled_flag(self):
+        """log_level i "enabled" ustawione przez /plugins/tuya_cloud (⚙
+        Ustawienia wtyczki) muszą przetrwać zapis stąd - w odróżnieniu od
+        "enabled" w TYM formularzu (tylko sygnał "czy w ogóle
+        skonfigurowane", patrz connections_to_form: bool(tuya_cloud))."""
+        existing = {**self.EXISTING, "tuya": {**self.EXISTING["tuya"], "cloud": {
+            "access_id": "id1", "access_key": "secret1", "api_endpoint": "https://openapi.tuyaeu.com",
+            "mq_endpoint": "wss://mqe.tuyaeu.com:8285/", "camera_device_ids": [],
+            "enabled": False, "log_level": "WARNING",
+        }}}
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya_cloud": {"enabled": True, "access_id": "id1", "access_key": ""},
+        }
+        patched = build_connections_patch(form, existing)
+        assert patched["tuya"]["cloud"]["log_level"] == "WARNING"
+        assert patched["tuya"]["cloud"]["enabled"] is False  # nietknięte, mimo enabled=True w formularzu
+
+    def test_home_assistant_preserves_log_level_set_via_dedicated_page(self):
+        existing = {**self.EXISTING, "home_assistant": {"enabled": True, "mqtt_host": "127.0.0.1", "mqtt_port": 1883, "log_level": "ERROR"}}
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "home_assistant": {"enabled": True, "mqtt_host": "10.0.0.9"},
+        }
+        patched = build_connections_patch(form, existing)
+        assert patched["home_assistant"]["log_level"] == "ERROR"
+        assert patched["home_assistant"]["mqtt_host"] == "10.0.0.9"
+
     def test_result_is_yaml_serializable(self):
         form = {
             "satel": {"host": "192.168.1.10", "integration_key": "k"}, "ebus": {"mqtt_host": "127.0.0.1"},

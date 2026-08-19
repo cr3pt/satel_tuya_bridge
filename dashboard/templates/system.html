@@ -119,16 +119,36 @@
       <option value="ERROR">ERROR - tylko błędy</option>
     </select>
   </div>
-  <div class="section-hint">
-    Czas serwera: <span id="serverTime">-</span> (strefa czasowa: <span id="tzEnv">-</span>).
-    To tylko podgląd - synchronizacja zegara dzieje się na hoście Dockera,
-    nie da się jej bezpiecznie ustawić z wnętrza kontenera (patrz README,
-    sekcja "Synchronizacja czasu").
-  </div>
   <div class="actions-bar">
     <button id="saveSettingsBtn" type="button">Zapisz ustawienia</button>
   </div>
   <div id="settingsMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="timeSyncSection">
+  <h2>🕐 Synchronizacja czasu</h2>
+  <div class="section-hint">
+    Czas serwera: <strong id="serverTime">-</strong> &nbsp;·&nbsp; strefa czasowa: <strong id="tzEnv">-</strong>
+    &nbsp;<button type="button" class="secondary" id="refreshServerTimeBtn" style="padding: 3px 10px; font-size: 12px;">🔄 Odśwież</button>
+  </div>
+  <div class="section-hint">
+    To tylko PODGLĄD, nie ustawienie - panel i bridge działają w kontenerze
+    Docker bez uprawnień do zmiany zegara systemowego (świadome ograniczenie
+    bezpieczeństwa, nie brakująca funkcja). Jeśli czas wyżej jest
+    nieprawidłowy, popraw go tam, gdzie faktycznie się synchronizuje:
+  </div>
+  <ul class="section-hint" style="margin: 0 0 4px; padding-left: 20px;">
+    <li>Strefa czasowa - zmienna środowiskowa <code>TZ</code> kontenera
+      (<code>docker-compose.yml</code>, np. <code>TZ=Europe/Warsaw</code>) -
+      zmiana wymaga przebudowy/restartu kontenerów.</li>
+    <li>Sam zegar (NTP) - synchronizuje się na HOŚCIE (systemd-timesyncd/
+      chrony/ntpd na Raspberry Pi albo innej maszynie, na której działa
+      Docker) - kontener dziedziczy zegar hosta, nigdy nie synchronizuje
+      go sam. Sprawdź: <code>timedatectl status</code> na hoście.</li>
+  </ul>
+  <div class="section-hint" style="margin: 0;">
+    Pełna instrukcja: README, sekcja "Synchronizacja czasu".
+  </div>
 </div>
 
 <div class="section" id="logsSection">
@@ -278,6 +298,13 @@ async function loadSettings() {
   document.getElementById('tzEnv').textContent = data.timezone_env;
 }
 loadSettings();
+
+document.getElementById('refreshServerTimeBtn').addEventListener('click', async () => {
+  const resp = await authorizedFetch('/api/system/settings');
+  const data = await resp.json();
+  document.getElementById('serverTime').textContent = data.server_time;
+  document.getElementById('tzEnv').textContent = data.timezone_env;
+});
 
 document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
   const payload = {
