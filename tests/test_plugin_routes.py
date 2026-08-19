@@ -55,6 +55,11 @@ def client(tmp_path):
 
     import dashboard.app as app_module
     app_module.config_path = config.db_path
+    # create_app() od teraz PONOWNIE UŻYWA istniejącego auth_guard (żeby
+    # zapis configu z panelu nie wylogowywał wszystkich - patrz
+    # AuthGuard.update_config) - dla izolacji testów między sobą trzeba
+    # więc jawnie wymusić świeży obiekt na starcie każdego testu.
+    app_module.auth_guard = None
 
     create_app(config)
     flask_app.config["TESTING"] = True
@@ -95,6 +100,66 @@ class TestSatelPluginPage:
     def test_scan_no_auth_required_and_handles_connection_error(self, client):
         resp = client.post("/api/plugins/satel/scan", json={"host": "127.0.0.1", "timeout_seconds": 0.1})
         assert resp.status_code == 502
+
+    def test_settings_get_no_auth_required(self, client):
+        resp = client.get("/api/plugins/satel/settings")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"enabled": True, "log_level": ""}
+
+    def test_settings_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/satel/settings", json={"log_level": "DEBUG"}).status_code == 401
+
+    def test_settings_post_sets_log_level_without_touching_host(self, client):
+        import dashboard.app as app_module
+
+        resp = client.post(
+            "/api/plugins/satel/settings", json={"log_level": "debug"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert "bez restartu" in resp.get_json()["message"]
+        saved = app_module.config_store.get("config")["satel"]
+        assert saved["log_level"] == "DEBUG"
+        assert saved["host"] == "127.0.0.1"  # nietknięte
+
+    def test_settings_post_rejects_invalid_log_level(self, client):
+        resp = client.post(
+            "/api/plugins/satel/settings", json={"log_level": "LOUD"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_settings_post_toggles_enabled_and_reports_restart_required(self, client):
+        import dashboard.app as app_module
+
+        resp = client.post(
+            "/api/plugins/satel/settings", json={"enabled": False},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert "restartu" in resp.get_json()["message"]
+        assert app_module.config_store.get("config")["satel"]["enabled"] is False
+
+    def test_settings_post_does_not_clobber_fields_saved_via_satel_fields_doc(self, client):
+        """Po zapisie przez /api/plugins/satel/fields, monitored_zones/
+        partitions żyją w OSOBNYM dokumencie satel_fields (nadpisują to,
+        co w configu - patrz BridgeConfig.load) - zapis /settings (log_level/
+        enabled) nie może cofnąć tej zmiany, bo bierze/zapisuje sekcję
+        "satel" wprost z dokumentu "config", nie ze scalonego widoku."""
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/satel/fields", json={"partitions": [{"name": "Piwnica", "number": "9"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/satel/settings", json={"log_level": "INFO"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert app_module.config_store.get("config")["satel"]["log_level"] == "INFO"
+        # scalony widok wciąż pokazuje partycję zapisaną przez /fields,
+        # NIE tę wciąż leżącą (nieaktualną) w samym dokumencie "config"
+        assert {"name": "Piwnica", "number": 9} in client.get("/api/plugins/satel/fields").get_json()["partitions"]
 
 
 class TestTuyaLocalPluginPage:
@@ -147,6 +212,37 @@ class TestTuyaLocalPluginPage:
         )
         assert resp.status_code == 200
         assert resp.get_json()["devices"][0]["name"] == "Nowe"
+
+    def test_settings_get_no_auth_required(self, client):
+        resp = client.get("/api/plugins/tuya_local/settings")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"enabled": True, "log_level": ""}
+
+    def test_settings_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/tuya_local/settings", json={"log_level": "DEBUG"}).status_code == 401
+
+    def test_settings_post_does_not_clobber_devices_saved_via_tuya_devices_doc(self, client):
+        """Tak jak dla satel - po zapisie przez /api/plugins/tuya/devices,
+        zapis /settings (enabled/log_level) nie może cofnąć zmiany
+        urządzeń, bo bierze/zapisuje sekcję "tuya" wprost z dokumentu
+        "config", nie ze scalonego widoku (gdzie devices nadpisane są z
+        osobnego dokumentu tuya_devices)."""
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/tuya/devices",
+            json={"tuya_devices": [{"name": "trwale", "id": "d3", "ip": "1.2.3.6", "local_key": "k3", "type": "socket"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = client.post(
+            "/api/plugins/tuya_local/settings", json={"enabled": False, "log_level": "WARNING"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        stored_tuya = app_module.config_store.get("config")["tuya"]
+        assert stored_tuya["enabled"] is False
+        assert stored_tuya["log_level"] == "WARNING"
+        assert any(d["name"] == "trwale" for d in client.get("/api/plugins/tuya/devices").get_json()["devices"])
 
 
 class TestEbusPluginPage:
@@ -231,3 +327,353 @@ class TestEbusPluginPage:
 
         resp = client.post("/api/plugins/ebus/discover/start", json={})
         assert resp.status_code == 400
+
+    def test_settings_get_no_auth_required(self, client):
+        resp = client.get("/api/plugins/ebus/settings")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"enabled": True, "log_level": ""}
+
+    def test_settings_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/ebus/settings", json={"log_level": "DEBUG"}).status_code == 401
+
+    def test_settings_post_does_not_duplicate_sensors_into_config_doc(self, client):
+        import dashboard.app as app_module
+
+        resp = client.post(
+            "/api/plugins/ebus/settings", json={"log_level": "ERROR"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        stored_ebus = app_module.config_store.get("config")["ebus"]
+        assert stored_ebus["log_level"] == "ERROR"
+        assert "sensors" not in stored_ebus
+        assert stored_ebus["mqtt_host"] == "127.0.0.1"
+
+
+class TestTuyaCloudPluginPage:
+    def test_page_loads(self, client):
+        assert client.get("/plugins/tuya_cloud").status_code == 200
+
+    def test_credentials_get_no_auth_required_and_defaults(self, client):
+        resp = client.get("/api/plugins/tuya_cloud/credentials")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["access_id"] == ""
+        assert data["access_key_set"] is False
+        assert data["api_endpoint"] == "https://openapi.tuyaeu.com"
+
+    def test_credentials_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/tuya_cloud/credentials", json={"access_id": "x"}).status_code == 401
+
+    def test_credentials_post_requires_access_id(self, client):
+        resp = client.post(
+            "/api/plugins/tuya_cloud/credentials", json={}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_credentials_post_persists_and_never_leaks_secret_back(self, client):
+        import dashboard.app as app_module
+
+        resp = client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid1", "access_key": "secret1", "api_endpoint": "", "mq_endpoint": ""},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["tuya"]["cloud"]
+        assert saved["access_id"] == "aid1"
+        assert saved["access_key"] == "secret1"
+
+        data = client.get("/api/plugins/tuya_cloud/credentials").get_json()
+        assert data["access_id"] == "aid1"
+        assert data["access_key_set"] is True
+        assert "secret1" not in client.get("/api/plugins/tuya_cloud/credentials").get_data(as_text=True)
+
+    def test_credentials_post_blank_secret_keeps_existing(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/tuya_cloud/credentials", json={"access_id": "aid1", "access_key": "secret1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/tuya_cloud/credentials", json={"access_id": "aid1", "access_key": ""},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        saved = app_module.config_store.get("config")["tuya"]["cloud"]
+        assert saved["access_key"] == "secret1"  # nietknięte
+
+    def test_settings_get_defaults(self, client):
+        resp = client.get("/api/plugins/tuya_cloud/settings")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"enabled": True, "log_level": ""}
+
+    def test_settings_post_does_not_clobber_credentials(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/tuya_cloud/credentials", json={"access_id": "aid1", "access_key": "secret1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = client.post(
+            "/api/plugins/tuya_cloud/settings", json={"log_level": "DEBUG"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["tuya"]["cloud"]
+        assert saved["log_level"] == "DEBUG"
+        assert saved["access_id"] == "aid1"  # nietknięte
+
+
+class TestHomeAssistantPluginPage:
+    def test_page_loads(self, client):
+        assert client.get("/plugins/home_assistant").status_code == 200
+
+    def test_broker_get_no_auth_required_and_falls_back_to_ebus_host(self, client):
+        resp = client.get("/api/plugins/home_assistant/broker")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["mqtt_host"] == ""
+        assert data["ebus_mqtt_host"] == "127.0.0.1"
+
+    def test_broker_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/home_assistant/broker", json={}).status_code == 401
+
+    def test_broker_post_falls_back_to_ebus_host_when_blank(self, client):
+        import dashboard.app as app_module
+
+        resp = client.post(
+            "/api/plugins/home_assistant/broker", json={"mqtt_host": ""},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["home_assistant"]
+        assert saved["mqtt_host"] == "127.0.0.1"
+
+    def test_broker_post_rejects_when_no_host_available(self, client):
+        import dashboard.app as app_module
+
+        raw = app_module.config_store.get("config")
+        raw["ebus"] = {}
+        app_module.config_store.set("config", raw)
+        app_module.create_app(BridgeConfig.load(app_module.config_path))
+
+        resp = client.post(
+            "/api/plugins/home_assistant/broker", json={"mqtt_host": ""},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_settings_post_does_not_clobber_broker_fields(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/home_assistant/broker", json={"mqtt_host": "10.0.0.5", "device_name": "Custom"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/home_assistant/settings", json={"enabled": True, "log_level": "INFO"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        saved = app_module.config_store.get("config")["home_assistant"]
+        assert saved["mqtt_host"] == "10.0.0.5"
+        assert saved["device_name"] == "Custom"
+        assert saved["enabled"] is True
+        assert saved["log_level"] == "INFO"
+
+
+class TestMqttPublishPluginPage:
+    def test_page_loads(self, client):
+        assert client.get("/plugins/mqtt_publish").status_code == 200
+
+    def test_topics_get_no_auth_required_and_defaults(self, client):
+        resp = client.get("/api/plugins/mqtt_publish/topics")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"satel_topic": "satel", "tuya_topic": "tuya"}
+
+    def test_topics_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/mqtt_publish/topics", json={}).status_code == 401
+
+    def test_topics_post_persists_and_settings_do_not_clobber_them(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/mqtt_publish/topics", json={"satel_topic": "moj_satel", "tuya_topic": "moje_tuya"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/mqtt_publish/settings", json={"log_level": "WARNING"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        saved = app_module.config_store.get("config")["mqtt_publish"]
+        assert saved["topics"] == {"satel": "moj_satel", "tuya": "moje_tuya"}
+        assert saved["log_level"] == "WARNING"
+
+
+class TestUnifiProtectPluginPage:
+    def test_page_loads(self, client):
+        assert client.get("/plugins/unifi_protect").status_code == 200
+
+    def test_credentials_get_no_auth_required_and_defaults_when_unconfigured(self, client):
+        resp = client.get("/api/plugins/unifi_protect/credentials")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"configured": False, "host": "", "username": "", "password_set": False, "verify_ssl": False}
+
+    def test_credentials_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/unifi_protect/credentials", json={"host": "x"}).status_code == 401
+
+    def test_credentials_post_requires_host(self, client):
+        resp = client.post(
+            "/api/plugins/unifi_protect/credentials", json={}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_credentials_post_persists_and_never_leaks_password_back(self, client):
+        import dashboard.app as app_module
+
+        resp = client.post(
+            "/api/plugins/unifi_protect/credentials",
+            json={"host": "192.168.1.1", "username": "admin", "password": "s3cr3t", "verify_ssl": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["unifi_protect"]
+        assert saved["host"] == "192.168.1.1"
+        assert saved["password"] == "s3cr3t"
+        assert "s3cr3t" not in client.get("/api/plugins/unifi_protect/credentials").get_data(as_text=True)
+
+    def test_settings_post_rejects_enabling_when_not_configured(self, client):
+        resp = client.post(
+            "/api/plugins/unifi_protect/settings", json={"enabled": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_settings_post_succeeds_once_configured(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/unifi_protect/credentials", json={"host": "192.168.1.1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = client.post(
+            "/api/plugins/unifi_protect/settings", json={"enabled": True, "log_level": "ERROR"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["unifi_protect"]
+        assert saved["enabled"] is True
+        assert saved["log_level"] == "ERROR"
+        assert saved["host"] == "192.168.1.1"  # nietknięte
+
+
+class TestNotificationsPluginPage:
+    def test_page_loads(self, client):
+        assert client.get("/plugins/notifications").status_code == 200
+
+    def test_topic_get_no_auth_required_and_defaults(self, client):
+        resp = client.get("/api/plugins/notifications/topic")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"ntfy_topic_url": "", "grace_seconds": 120}
+
+    def test_topic_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/notifications/topic", json={}).status_code == 401
+
+    def test_topic_post_rejects_negative_grace_seconds(self, client):
+        resp = client.post(
+            "/api/plugins/notifications/topic", json={"grace_seconds": -5},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_topic_post_persists_and_settings_do_not_clobber_it(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/notifications/topic",
+            json={"ntfy_topic_url": "https://ntfy.sh/xyz", "grace_seconds": 60},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/notifications/settings", json={"log_level": "CRITICAL"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        saved = app_module.config_store.get("config")["notifications"]
+        assert saved["ntfy_topic_url"] == "https://ntfy.sh/xyz"
+        assert saved["grace_seconds"] == 60
+        assert saved["log_level"] == "CRITICAL"
+
+
+class TestPresenceSimulationPluginPage:
+    def test_page_loads(self, client):
+        assert client.get("/plugins/presence_simulation").status_code == 200
+
+    def test_summary_get_no_auth_required_and_defaults_empty(self, client):
+        resp = client.get("/api/plugins/presence_simulation/summary")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"devices": []}
+
+    def test_settings_get_no_auth_required_and_defaults(self, client):
+        resp = client.get("/api/plugins/presence_simulation/settings")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"enabled": True, "log_level": ""}
+
+    def test_settings_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/presence_simulation/settings", json={"log_level": "DEBUG"}).status_code == 401
+
+    def test_settings_post_persists_to_automations_doc_without_clobbering_scenes(self, client):
+        import dashboard.app as app_module
+
+        app_module.config_store.set("automations", {
+            "scenes": [{"name": "powitanie", "actions": [{"type": "satel_disarm"}]}],
+            "reguły_ruchu": [],
+            "presence_simulation": {"enabled": False, "devices": ["gniazdko"]},
+        })
+        app_module.create_app(BridgeConfig.load(app_module.config_path))
+
+        resp = client.post(
+            "/api/plugins/presence_simulation/settings", json={"enabled": True, "log_level": "DEBUG"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("automations")
+        assert saved["presence_simulation"]["enabled"] is True
+        assert saved["presence_simulation"]["log_level"] == "DEBUG"
+        assert saved["presence_simulation"]["devices"] == ["gniazdko"]  # nietknięte
+        assert saved["scenes"][0]["name"] == "powitanie"  # nietknięte
+
+    def test_summary_reflects_devices_from_automations_doc(self, client):
+        import dashboard.app as app_module
+
+        app_module.config_store.set("automations", {
+            "scenes": [], "reguły_ruchu": [],
+            "presence_simulation": {"enabled": True, "devices": ["gniazdko", "lampka"]},
+        })
+        app_module.create_app(BridgeConfig.load(app_module.config_path))
+
+        data = client.get("/api/plugins/presence_simulation/summary").get_json()
+        assert data["devices"] == ["gniazdko", "lampka"]
+
+    def test_automations_page_save_does_not_clobber_log_level(self, client):
+        """Zakładka /automations nie zna pola log_level (żyje tylko na
+        /plugins/presence_simulation) - zapis stamtąd (nawet samych scen)
+        nie może po cichu skasować wcześniej ustawionego poziomu logowania
+        (patrz komentarz w dashboard/app.py: api_config_automations_post)."""
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/presence_simulation/settings", json={"log_level": "WARNING"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = client.post(
+            "/api/config/automations",
+            json={
+                "scenes": [],
+                "motion_rules": [],
+                "presence_simulation": {"enabled": False, "devices": []},
+            },
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("automations")["presence_simulation"]
+        assert saved["log_level"] == "WARNING"

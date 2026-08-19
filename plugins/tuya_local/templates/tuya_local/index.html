@@ -55,7 +55,7 @@
 </style>
 </head>
 <body>
-<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/plugins">🧩 Wtyczki</a> &nbsp;·&nbsp; <a href="/config">⚙ Ustawienia</a> &nbsp;·&nbsp; <a id="authNavLink" href="/login"></a></div>
+<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/plugins">🧩 Wtyczki</a> &nbsp;·&nbsp; <a href="/config">⚙ Ustawienia</a> &nbsp;·&nbsp; <a href="/system">⚙ Ustawienia ogólne</a> &nbsp;·&nbsp; <a id="authNavLink" href="/login"></a></div>
 
 <h1>🔌 Urządzenia Tuya (LAN)</h1>
 <div class="hint">
@@ -64,6 +64,39 @@
   Poświadczenia Tuya Cloud (dla importu niżej i kamer) ustawia się osobno w
   zakładce 🔌 Połączenia. <strong>Odczyt jest otwarty, zapis wymaga hasła
   administratora.</strong>
+</div>
+
+<div class="section" id="pluginSettingsSection">
+  <h2>⚙ Ustawienia wtyczki</h2>
+  <div class="section-hint">
+    Włącz/wyłącz tę integrację (współdzielone z Tuya Zigbee - jedna sekcja
+    "tuya" w configu) i ustaw poziom logowania jej zdarzeń (niezależnie od
+    domyślnego poziomu globalnego - zakładka
+    <a href="/system">⚙ Ustawienia ogólne</a>). Wyłączenie/włączenie wymaga
+    pełnego restartu procesu bridge'a, poziom logowania działa od razu, bez
+    restartu.
+  </div>
+  <div class="field-group">
+    <label style="display:flex; align-items:center; gap:8px; margin:0;">
+      <input type="checkbox" id="pluginEnabledCheckbox">
+      Wtyczka włączona
+    </label>
+  </div>
+  <div class="field-group">
+    <label>Poziom logowania zdarzeń</label>
+    <select id="pluginLogLevelSelect">
+      <option value="">(domyślny globalny)</option>
+      <option value="DEBUG">DEBUG</option>
+      <option value="INFO">INFO</option>
+      <option value="WARNING">WARNING</option>
+      <option value="ERROR">ERROR</option>
+      <option value="CRITICAL">CRITICAL</option>
+    </select>
+  </div>
+  <div class="actions-bar">
+    <button id="savePluginSettingsBtn" type="button">Zapisz ustawienia wtyczki</button>
+  </div>
+  <div id="pluginSettingsMsg" class="msg-box"></div>
 </div>
 
 <div class="section" id="scanSection">
@@ -158,6 +191,41 @@ function showMsg(elId, ok, text) {
   el.style.display = '';
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
+
+// ------------------------------------------------------------------
+// Ustawienia wtyczki (włącznik + poziom logowania) - ten sam wzorzec
+// GET/POST /api/plugins/<id>/settings co reszta stron wtyczek.
+// ------------------------------------------------------------------
+const PLUGIN_ID = 'tuya_local';
+
+async function loadPluginSettings() {
+  const data = await (await fetch(`/api/plugins/${PLUGIN_ID}/settings`)).json();
+  document.getElementById('pluginEnabledCheckbox').checked = !!data.enabled;
+  document.getElementById('pluginLogLevelSelect').value = data.log_level || '';
+}
+loadPluginSettings();
+
+document.getElementById('savePluginSettingsBtn').addEventListener('click', async () => {
+  const payload = {
+    enabled: document.getElementById('pluginEnabledCheckbox').checked,
+    log_level: document.getElementById('pluginLogLevelSelect').value,
+  };
+  try {
+    const resp = await authorizedFetch(`/api/plugins/${PLUGIN_ID}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('pluginSettingsMsg', false, data.error || 'Błąd zapisu');
+    } else {
+      showMsg('pluginSettingsMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('pluginSettingsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
 
 // ------------------------------------------------------------------
 // Bramki Zigbee

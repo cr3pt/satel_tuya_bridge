@@ -11,6 +11,8 @@ import logging
 import sys
 
 from bridge.config import BridgeConfig
+from bridge.log_capture import attach_log_capture
+from bridge.logging_config import apply_log_levels
 from bridge.rules_engine import RulesEngine
 
 logging.basicConfig(
@@ -31,7 +33,10 @@ async def main() -> None:
         logger.error(str(exc))
         sys.exit(1)
 
+    apply_log_levels(config.raw)
+
     engine = RulesEngine(config)
+    attach_log_capture(engine.history, "bridge")
     await engine.start()
 
     # Utrzymuj proces przy życiu - cała logika działa w zarejestrowanych

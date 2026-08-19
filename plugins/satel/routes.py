@@ -13,7 +13,7 @@ from dashboard.setup import (
     build_satel_fields_dict, validate_satel_fields,
     dict_to_name_number_rows, zones_to_rows, virtual_inputs_to_rows,
 )
-from plugins import PluginMeta
+from plugins import PluginMeta, register_settings_route
 
 META = PluginMeta(
     id="satel",
@@ -98,5 +98,25 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
             return jsonify({"error": f"Błąd wykrywania: {exc}"}), 502
 
         return jsonify(result)
+
+    def _get_satel_section() -> dict:
+        # UWAGA: bierzemy STORED sekcję wprost z dokumentu "config", NIE z
+        # get_config_raw() - ta druga jest scalonym widokiem, gdzie
+        # monitored_zones/monitored_outputs/partitions/virtual_inputs
+        # nadpisane są z OSOBNEGO dokumentu "satel_fields" (patrz
+        # bridge/config.py: BridgeConfig.load). Zapisanie scalonego widoku
+        # z powrotem do "config" zdublowałoby te dane w niewłaściwym miejscu.
+        return get_config_store().get("config").get("satel", {})
+
+    def _save_satel_section(section: dict) -> None:
+        current = get_config_store().get("config")
+        current["satel"] = section
+        get_config_store().set("config", current)
+
+    register_settings_route(
+        app, "satel", require_auth=require_auth, get_auth_guard=get_auth_guard,
+        get_section=_get_satel_section, save_section=_save_satel_section,
+        reload_bridge_config=reload_bridge_config, enqueue_bridge_reload=enqueue_bridge_reload,
+    )
 
     return META

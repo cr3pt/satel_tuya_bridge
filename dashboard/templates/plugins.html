@@ -80,7 +80,7 @@
 </style>
 </head>
 <body>
-<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/config">⚙ Ustawienia</a> &nbsp;·&nbsp; <a href="/automations">🎬 Automatyzacje</a> &nbsp;·&nbsp; <a id="authNavLink" href="/login"></a></div>
+<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/config">⚙ Ustawienia</a> &nbsp;·&nbsp; <a href="/automations">🎬 Automatyzacje</a> &nbsp;·&nbsp; <a href="/system">⚙ Ustawienia ogólne</a> &nbsp;·&nbsp; <a id="authNavLink" href="/login"></a></div>
 <h1>🧩 Wtyczki</h1>
 <div class="hint">
   Jeden spójny przegląd wszystkich integracji. <strong>Przełącznik działa
@@ -143,18 +143,20 @@ function showMsg(ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// Gdzie faktycznie skonfigurować każdą wtyczkę (link w karcie) - te BEZ
-// wpisu tutaj nie mają osobnego edytora (np. Satel to rdzeń, jego
-// ustawienia są w zakładce Połączenia razem z resztą).
+// Gdzie faktycznie skonfigurować każdą wtyczkę (link w karcie) - każda ma
+// już własną, dedykowaną stronę (patrz plugins/<id>/routes.py), oprócz
+// tuya_zigbee (dzieli edytor urządzeń z tuya_local - ta sama sekcja "tuya").
 const PLUGIN_CONFIG_LINKS = {
   satel: { href: '/plugins/satel', label: '⚙ Konfiguruj →' },
   tuya_local: { href: '/plugins/tuya', label: '⚙ Konfiguruj →' },
   tuya_zigbee: { href: '/plugins/tuya', label: '⚙ Konfiguruj →' },
-  tuya_cloud: { href: '/config', label: 'Połączenia →' },
+  tuya_cloud: { href: '/plugins/tuya_cloud', label: '⚙ Konfiguruj →' },
   ebus: { href: '/plugins/ebus', label: '⚙ Konfiguruj →' },
-  home_assistant: { href: '/config', label: 'Połączenia →' },
-  mqtt_publish: { href: '/config', label: 'Połączenia →' },
-  presence_simulation: { href: '/automations', label: 'Automatyzacje →' },
+  home_assistant: { href: '/plugins/home_assistant', label: '⚙ Konfiguruj →' },
+  mqtt_publish: { href: '/plugins/mqtt_publish', label: '⚙ Konfiguruj →' },
+  unifi_protect: { href: '/plugins/unifi_protect', label: '⚙ Konfiguruj →' },
+  presence_simulation: { href: '/plugins/presence_simulation', label: '⚙ Konfiguruj →' },
+  notifications: { href: '/plugins/notifications', label: '⚙ Konfiguruj →' },
 };
 
 let pendingChanges = {};  // {plugin_id: {enabled?: bool, status_poll_interval_seconds?: number}} - zebrane, ale jeszcze niezapisane zmiany

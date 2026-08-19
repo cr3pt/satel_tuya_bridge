@@ -307,8 +307,19 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
 
 def _build_presence_simulation(form: dict) -> dict:
     ps = form.get("presence_simulation") or {}
+    # log_level (patrz plugins/presence_simulation/routes.py - jedyna
+    # wtyczka, której "enabled"/"log_level" żyją w TYM dokumencie zamiast
+    # "config") nie pochodzi z tego formularza (kreator/zakładka
+    # Automatyzacje o nim nie wiedzą) - trzeba go jawnie przenieść, inaczej
+    # KAŻDY zapis stąd (nawet samych scen) po cichu skasowałby ustawiony
+    # wcześniej poziom logowania.
+    log_level = ps.get("log_level")
+
     if not ps.get("enabled"):
-        return {"enabled": False}
+        built = {"enabled": False}
+        if log_level:
+            built["log_level"] = log_level
+        return built
 
     built = {
         "enabled": True,
@@ -319,6 +330,8 @@ def _build_presence_simulation(form: dict) -> dict:
     window = ps.get("window") or {}
     if window.get("enabled") and window.get("start") and window.get("end"):
         built["window"] = {"start": window["start"].strip(), "end": window["end"].strip()}
+    if log_level:
+        built["log_level"] = log_level
     return built
 
 
@@ -630,27 +643,35 @@ def connections_to_form(existing: dict) -> dict:
 # cyklu życia żywych połączeń sieciowych (Satel TCP, klienci MQTT, Tuya
 # Cloud Pulsar), a przełączanie integracji jest i tak rzadką operacją.
 PLUGIN_DEFS = [
-    {"id": "satel", "name": "Centrala Satel Integra", "icon": "🔒", "toggleable": False, "restart_required": True,
-     "has_poll_interval": True,
-     "description": "Odczyt wejść/wyjść/stref i sterowanie (uzbrajanie, wyjścia) - rdzeń bridge'a, zawsze aktywny."},
-    {"id": "tuya_local", "name": "Tuya - urządzenia lokalne (WiFi)", "icon": "🔌", "toggleable": False, "restart_required": False,
-     "has_poll_interval": True,
+    {"id": "satel", "name": "Centrala Satel Integra", "icon": "🔒", "toggleable": True, "restart_required": True,
+     "has_poll_interval": True, "has_log_level": True,
+     "description": "Odczyt wejść/wyjść/stref i sterowanie (uzbrajanie, wyjścia)."},
+    {"id": "tuya_local", "name": "Tuya - urządzenia lokalne (WiFi)", "icon": "🔌", "toggleable": True, "restart_required": True,
+     "has_poll_interval": True, "has_log_level": True,
      "description": "Sterowanie gniazdkami/przełącznikami/ściemniaczami Tuya bezpośrednio w LAN, bez chmury (tinytuya) - obejmuje też podurządzenia Zigbee."},
     {"id": "tuya_zigbee", "name": "Tuya - bramki Zigbee", "icon": "🐝", "toggleable": False, "restart_required": False,
-     "description": "Czujniki/przełączniki Zigbee podpięte pod bramkę Tuya (Tuya Zigbee Gateway/Hub)."},
+     "has_log_level": True,
+     "description": "Czujniki/przełączniki Zigbee podpięte pod bramkę Tuya (Tuya Zigbee Gateway/Hub) - dzieli połączenie z 'Tuya lokalnie' wyżej, brak osobnego przełącznika."},
     {"id": "tuya_cloud", "name": "Tuya Cloud (kamery + import urządzeń)", "icon": "☁️", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Detekcja ruchu z kamer Tuya oraz import urządzeń z konta Tuya Cloud - wymaga projektu na developer.tuya.com."},
-    {"id": "ebus", "name": "eBUS / kocioł (dane grzewcze)", "icon": "🔥", "toggleable": False, "restart_required": False,
+    {"id": "ebus", "name": "eBUS / kocioł (dane grzewcze)", "icon": "🔥", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Odczyt czujników kotła (ebusd) przez MQTT - historia, alarmy progowe, automatyka."},
     {"id": "home_assistant", "name": "Home Assistant (MQTT Discovery)", "icon": "🏠", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Automatyczne udostępnienie encji (wejścia/wyjścia Satela, urządzenia Tuya, czujniki kotła) w Home Assistant."},
     {"id": "mqtt_publish", "name": "Publikacja stanu do MQTT", "icon": "📡", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Stan Satela/Tuya na osobnym temacie MQTT, niezależnie od Home Assistant."},
-    {"id": "unifi_protect", "name": "Kamery UniFi Protect", "icon": "📹", "toggleable": False, "restart_required": False,
+    {"id": "unifi_protect", "name": "Kamery UniFi Protect", "icon": "📹", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Detekcja ruchu z kamer UniFi Protect jako alternatywa/uzupełnienie kamer Tuya."},
     {"id": "presence_simulation", "name": "Symulacja obecności", "icon": "🎭", "toggleable": True, "restart_required": False,
+     "has_log_level": True,
      "description": "Losowe włączanie/wyłączanie wskazanych urządzeń Tuya pod nieobecność domowników."},
-    {"id": "notifications", "name": "Powiadomienia push (ntfy)", "icon": "🔔", "toggleable": False, "restart_required": False,
+    {"id": "notifications", "name": "Powiadomienia push (ntfy)", "icon": "🔔", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Push przy utracie/przywróceniu połączenia z centralą/MQTT/Tuya/kamerami oraz przy alarmach progowych."},
 ]
 
@@ -672,31 +693,33 @@ def list_plugins(config_raw: dict) -> list[dict]:
     zigbee_gateways = tuya.get("zigbee_gateways", {}) or {}
     ebus_sensors = config_raw.get("ebus", {}).get("sensors", []) or []
 
+    unifi_protect_cfg = config_raw.get("unifi_protect") or {}
+
     state = {
         "satel": {
-            "enabled": True,
+            "enabled": satel.get("enabled", True) and bool(satel.get("host") and satel.get("integration_key")),
             "configured": bool(satel.get("host") and satel.get("integration_key")),
             "detail": f"{satel.get('host', '?')}:{satel.get('port', '?')}" if satel.get("host") else "nieskonfigurowana",
             "poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
         },
         "tuya_local": {
-            "enabled": len(tuya_devices) > len(zigbee_devices),
+            "enabled": tuya.get("enabled", True) and len(tuya_devices) > len(zigbee_devices),
             "configured": len(tuya_devices) > len(zigbee_devices),
             "detail": f"{len(tuya_devices) - len(zigbee_devices)} urządzeń WiFi",
             "poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
         },
         "tuya_zigbee": {
-            "enabled": bool(zigbee_gateways),
+            "enabled": tuya.get("enabled", True) and bool(zigbee_gateways),
             "configured": bool(zigbee_gateways),
             "detail": f"{len(zigbee_gateways)} bramek, {len(zigbee_devices)} urządzeń",
         },
         "tuya_cloud": {
-            "enabled": bool(tuya.get("cloud")),
+            "enabled": tuya.get("cloud", {}).get("enabled", True) and bool(tuya.get("cloud", {}).get("access_id")),
             "configured": bool(tuya.get("cloud", {}).get("access_id")),
             "detail": "skonfigurowana" if tuya.get("cloud", {}).get("access_id") else "brak poświadczeń",
         },
         "ebus": {
-            "enabled": bool(ebus.get("mqtt_host")),
+            "enabled": ebus.get("enabled", True) and bool(ebus.get("mqtt_host")),
             "configured": bool(ebus.get("mqtt_host")),
             "detail": f"{len(ebus_sensors)} czujników" if ebus.get("mqtt_host") else "brak brokera MQTT",
         },
@@ -711,7 +734,7 @@ def list_plugins(config_raw: dict) -> list[dict]:
             "detail": "używa brokera eBUS" if ebus.get("mqtt_host") else "brak brokera MQTT",
         },
         "unifi_protect": {
-            "enabled": config_raw.get("unifi_protect") is not None,
+            "enabled": unifi_protect_cfg.get("enabled", True) and config_raw.get("unifi_protect") is not None,
             "configured": config_raw.get("unifi_protect") is not None,
             "detail": "skonfigurowane" if config_raw.get("unifi_protect") is not None else "nieskonfigurowane",
         },
@@ -721,14 +744,19 @@ def list_plugins(config_raw: dict) -> list[dict]:
             "detail": f"{len(presence.get('devices', []))} urządzeń" if presence.get("devices") else "brak urządzeń",
         },
         "notifications": {
-            "enabled": bool(notifications.get("ntfy_topic_url")),
+            "enabled": notifications.get("enabled", True) and bool(notifications.get("ntfy_topic_url")),
             "configured": bool(notifications.get("ntfy_topic_url")),
             "detail": "skonfigurowane" if notifications.get("ntfy_topic_url") else "nieskonfigurowane",
         },
     }
 
+    from bridge.logging_config import plugin_config_section
+
     return [
-        {"has_poll_interval": False, **plugin_def, **state[plugin_def["id"]]}
+        {
+            "has_poll_interval": False, **plugin_def, **state[plugin_def["id"]],
+            "log_level": plugin_config_section(config_raw, plugin_def["id"]).get("log_level") or "",
+        }
         for plugin_def in PLUGIN_DEFS
     ]
 

@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS documents (
     data TEXT NOT NULL,         -- JSON
     updated_ts REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_ts REAL NOT NULL
+);
 """
 
 # Kolejność ma znaczenie tylko dla export/import (czytelność zrzutu) - sam
@@ -82,6 +89,87 @@ class ConfigStore:
         with self._lock:
             rows = self._conn.execute("SELECT name FROM documents ORDER BY name").fetchall()
         return [r[0] for r in rows]
+
+    # -- konta użytkowników (patrz dashboard/auth.py: AuthGuard) - wiele
+    # kont administratorskich zamiast jednego wpisanego wprost w dokument
+    # "config" (dashboard.auth.username/password_hash) - ten pojedynczy
+    # wpis jest migrowany do pierwszego wiersza tej tabeli przy pierwszym
+    # użyciu, patrz migrate_single_admin_to_users() niżej. Płaski model
+    # uprawnień (jak dawniej): każde zalogowane konto ma pełny dostęp do
+    # zapisu - nie ma ról/uprawnień, bo nikt o nie nie prosił.
+    def add_user(self, username: str, password_hash: str) -> int:
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "INSERT INTO users (username, password_hash, created_ts) VALUES (?, ?, ?)",
+                    (username, password_hash, time.time()),
+                )
+            except sqlite3.IntegrityError:
+                raise ValueError(f"Użytkownik '{username}' już istnieje") from None
+            self._conn.commit()
+            return cur.lastrowid
+
+    def list_users(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, username, created_ts FROM users ORDER BY id"
+            ).fetchall()
+        return [{"id": r[0], "username": r[1], "created_ts": r[2]} for r in rows]
+
+    def get_user_by_username(self, username: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, username, password_hash, created_ts FROM users WHERE username = ?", (username,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {"id": row[0], "username": row[1], "password_hash": row[2], "created_ts": row[3]}
+
+    def user_count(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) FROM users").fetchone()
+        return row[0]
+
+    def update_user(self, user_id: int, *, username: str | None = None, password_hash: str | None = None) -> None:
+        """Aktualizuje wybrane pola (None = zostaw bez zmian). Rzuca
+        ValueError, jeśli nowa nazwa koliduje z innym istniejącym kontem."""
+        fields, params = [], []
+        if username is not None:
+            fields.append("username = ?")
+            params.append(username)
+        if password_hash is not None:
+            fields.append("password_hash = ?")
+            params.append(password_hash)
+        if not fields:
+            return
+        params.append(user_id)
+        with self._lock:
+            try:
+                self._conn.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = ?", params)
+            except sqlite3.IntegrityError:
+                raise ValueError(f"Użytkownik '{username}' już istnieje") from None
+            self._conn.commit()
+
+    def delete_user(self, user_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            self._conn.commit()
+
+    def migrate_single_admin_to_users(self) -> None:
+        """Jednorazowo przenosi dashboard.auth.username/password_hash z
+        dokumentu "config" (stary model - jedno konto wpisane wprost w
+        config) do tabeli users, jeśli tabela jest jeszcze pusta, a stary
+        wpis istnieje. Bezpieczne przy wielokrotnym wywołaniu - nie robi
+        nic, gdy jakiekolwiek konto już istnieje."""
+        if self.user_count() > 0:
+            return
+        config = self.get("config")
+        auth_cfg = config.get("dashboard", {}).get("auth", {})
+        password_hash = auth_cfg.get("password_hash")
+        if not password_hash:
+            return
+        username = auth_cfg.get("username") or "admin"
+        self.add_user(username, password_hash)
 
     # -- eksport/import YAML - furtka bezpieczeństwa na wypadek, gdyby ktoś
     # chciał obejrzeć/edytować konfigurację poza panelem (backup, migracja,

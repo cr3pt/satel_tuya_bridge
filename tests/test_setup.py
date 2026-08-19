@@ -1028,11 +1028,10 @@ class TestListPlugins:
         plugins = list_plugins({})
         by_id = {p["id"]: p for p in plugins}
         assert len(plugins) == len(by_id) == 10
-        # satel jest "core" (enabled=True zawsze), reszta nieskonfigurowana
-        assert by_id["satel"]["enabled"] is True
-        assert by_id["satel"]["configured"] is False
+        # przy pustym configu nic nie jest skonfigurowane, więc nic nie jest
+        # też "enabled" (satel/tuya/ebus itd. wymagają realnej konfiguracji)
         for plugin_id in (
-            "tuya_local", "tuya_zigbee", "tuya_cloud", "ebus", "home_assistant",
+            "satel", "tuya_local", "tuya_zigbee", "tuya_cloud", "ebus", "home_assistant",
             "mqtt_publish", "unifi_protect", "presence_simulation", "notifications",
         ):
             assert by_id[plugin_id]["enabled"] is False, plugin_id
@@ -1095,7 +1094,12 @@ class TestListPlugins:
 
     def test_toggleable_ids_match_expected_set(self):
         toggleable = {p["id"] for p in list_plugins({}) if p["toggleable"]}
-        assert toggleable == {"tuya_cloud", "home_assistant", "mqtt_publish", "presence_simulation"}
+        # tuya_zigbee to jedyny wyjątek - dzieli połączenie/runtime z tuya_local,
+        # więc nie ma niezależnego cyklu życia do włączania/wyłączania
+        assert toggleable == {
+            "satel", "tuya_local", "tuya_cloud", "ebus", "home_assistant",
+            "mqtt_publish", "unifi_protect", "presence_simulation", "notifications",
+        }
 
     def test_poll_interval_ids_match_expected_set(self):
         with_interval = {p["id"] for p in list_plugins({}) if p["has_poll_interval"]}

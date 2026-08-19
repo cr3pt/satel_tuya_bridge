@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ustawienia ogólne - Panel Satel-Tuya-eBUS</title>
+<style>
+  :root {
+    --bg: #14161a; --card: #1d2026; --border: #2c3038;
+    --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
+    --danger: #e5484d; --ok: #3dd68c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 20px; max-width: 1000px; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  .nav { margin-bottom: 16px; }
+  .nav a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
+  .section-hint { color: var(--muted); font-size: 13px; margin: 4px 0 14px; line-height: 1.5; }
+  .card, .section {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px; margin-bottom: 18px;
+  }
+  input[type=text], input[type=password], input[type=number] {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 100%;
+  }
+  select { background: #262a32; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; width: 100%; font-size: 13px; }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 8px 16px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: #3a1a1c; color: var(--danger); border: 1px solid var(--danger); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .actions-bar { display: flex; gap: 10px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+  .msg-box { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; display: none; }
+  .msg-box.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  .msg-box.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
+  .field-group { margin-bottom: 18px; }
+  .field-group:last-child { margin-bottom: 0; }
+  .field-group > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .conn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 640px) { .conn-grid { grid-template-columns: 1fr; } }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 11.5px; text-transform: uppercase; padding: 4px 8px; }
+  td { padding: 6px 8px; border-top: 1px solid var(--border); }
+  .row-remove { background: transparent; color: var(--danger); border: none; font-size: 13px; cursor: pointer; padding: 4px 8px; }
+  .user-row-new { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .user-row-new input { flex: 1; min-width: 140px; }
+  .log-filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .log-filters select, .log-filters input { width: auto; min-width: 120px; }
+  .log-table { max-height: 480px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+  .log-table table { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .log-level { font-weight: 600; padding: 1px 6px; border-radius: 4px; font-size: 10.5px; }
+  .log-level.DEBUG { color: var(--muted); }
+  .log-level.INFO { color: var(--accent); }
+  .log-level.WARNING { color: #e5b84d; }
+  .log-level.ERROR, .log-level.CRITICAL { color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/plugins">🧩 Wtyczki</a> &nbsp;·&nbsp; <a href="/config">⚙ Ustawienia czujników eBUS</a> &nbsp;·&nbsp; <a href="/automations">🎬 Automatyzacje</a> &nbsp;·&nbsp; <a id="authNavLink" href="/login"></a></div>
+
+<h1>⚙ Ustawienia ogólne</h1>
+<div class="hint">
+  Konta administratorskie, tryb logowania do panelu i domyślny poziom
+  logów - rzeczy, które NIE są przypisane do żadnej konkretnej wtyczki
+  (ustawienia per integracja - zakładka 🧩 Wtyczki). Wymaga zalogowania.
+</div>
+
+<div class="section" id="usersSection">
+  <h2>Konta administratorskie</h2>
+  <div class="section-hint">
+    Płaski model uprawnień - każde konto ma pełny dostęp do zapisu, nie ma
+    ról. Nie da się usunąć ostatniego konta (panel zostałby bez żadnego
+    dostępu).
+  </div>
+  <table>
+    <thead><tr><th>Nazwa użytkownika</th><th>Utworzone</th><th style="width:220px;">Nowe hasło</th><th style="width:60px;"></th></tr></thead>
+    <tbody id="usersTableBody"></tbody>
+  </table>
+  <div class="user-row-new">
+    <input type="text" id="newUsername" placeholder="nazwa nowego konta">
+    <input type="password" id="newPassword" placeholder="hasło (min. 8 znaków)">
+    <button type="button" id="addUserBtn">+ Dodaj konto</button>
+  </div>
+  <div id="usersMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="settingsSection">
+  <h2>Tryb logowania i poziom logów</h2>
+  <div class="conn-grid">
+    <div class="field-group">
+      <label>Limit nieudanych prób logowania przed blokadą</label>
+      <input type="number" id="maxFailedAttempts" min="1">
+    </div>
+    <div class="field-group">
+      <label>Czas blokady po przekroczeniu limitu (sekundy)</label>
+      <input type="number" id="lockoutSeconds" min="1">
+    </div>
+  </div>
+  <div class="checkbox-row">
+    <input type="checkbox" id="allowBasicAuth">
+    <label for="allowBasicAuth">Zezwól na logowanie HTTP Basic Auth (skrypty/curl/automatyzacja) - wyłączenie wymusza wyłącznie logowanie sesyjne przez /login</label>
+  </div>
+  <div class="field-group">
+    <label>Domyślny poziom logów (dla wtyczek bez własnego ustawienia - patrz 🧩 Wtyczki)</label>
+    <select id="defaultLogLevel">
+      <option value="DEBUG">DEBUG - wszystko, bardzo szczegółowe</option>
+      <option value="INFO">INFO - normalna praca (domyślne)</option>
+      <option value="WARNING">WARNING - tylko ostrzeżenia i błędy</option>
+      <option value="ERROR">ERROR - tylko błędy</option>
+    </select>
+  </div>
+  <div class="section-hint">
+    Czas serwera: <span id="serverTime">-</span> (strefa czasowa: <span id="tzEnv">-</span>).
+    To tylko podgląd - synchronizacja zegara dzieje się na hoście Dockera,
+    nie da się jej bezpiecznie ustawić z wnętrza kontenera (patrz README,
+    sekcja "Synchronizacja czasu").
+  </div>
+  <div class="actions-bar">
+    <button id="saveSettingsBtn" type="button">Zapisz ustawienia</button>
+  </div>
+  <div id="settingsMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="logsSection">
+  <h2>🐞 Logi</h2>
+  <div class="section-hint">
+    Przechwycone logi obu procesów (bridge + panel) - poziom szczegółowości
+    ustawia się globalnie wyżej albo per wtyczka (zakładka 🧩 Wtyczki).
+  </div>
+  <div class="log-filters">
+    <select id="logComponent">
+      <option value="">wszystkie procesy</option>
+      <option value="bridge">bridge</option>
+      <option value="dashboard">panel</option>
+    </select>
+    <select id="logLevel">
+      <option value="">wszystkie poziomy</option>
+      <option value="DEBUG">DEBUG+</option>
+      <option value="INFO">INFO+</option>
+      <option value="WARNING">WARNING+</option>
+      <option value="ERROR">ERROR+</option>
+    </select>
+    <input type="text" id="logLogger" placeholder="logger, np. bridge.satel">
+    <button type="button" class="secondary" id="refreshLogsBtn">🔄 Odśwież</button>
+    <label class="checkbox-row" style="margin:0;"><input type="checkbox" id="autoRefreshLogs" checked> Auto-odświeżanie (10s)</label>
+  </div>
+  <div class="log-table">
+    <table>
+      <thead><tr><th style="width:150px;">Czas</th><th style="width:80px;">Proces</th><th style="width:70px;">Poziom</th><th style="width:160px;">Logger</th><th>Wiadomość</th></tr></thead>
+      <tbody id="logsTableBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+async function authorizedFetch(url, options = {}) {
+  const resp = await fetch(url, options);
+  if (resp.status === 401) {
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname);
+    throw new Error('Wymagane zalogowanie - przekierowuję na /login...');
+  }
+  return resp;
+}
+
+async function refreshAuthNav() {
+  const link = document.getElementById('authNavLink');
+  try {
+    const status = await (await fetch('/api/auth/status')).json();
+    if (status.logged_in) {
+      link.textContent = status.username ? `🔓 Wyloguj (${status.username})` : '🔓 Wyloguj';
+      link.href = '#';
+      link.onclick = async (e) => {
+        e.preventDefault();
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.reload();
+      };
+    } else {
+      link.textContent = '🔒 Zaloguj';
+      link.href = '/login?next=' + encodeURIComponent(location.pathname);
+      link.onclick = null;
+    }
+  } catch (e) {
+    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+  }
+}
+refreshAuthNav();
+
+function showMsg(elId, ok, text) {
+  const el = document.getElementById(elId);
+  el.className = 'msg-box ' + (ok ? 'ok' : 'error');
+  el.style.display = '';
+  el.textContent = (ok ? '✅ ' : '❌ ') + text;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ------------------------------------------------------------------
+// Konta użytkowników
+// ------------------------------------------------------------------
+async function loadUsers() {
+  const resp = await authorizedFetch('/api/system/users');
+  const users = await resp.json();
+  const tbody = document.getElementById('usersTableBody');
+  tbody.innerHTML = users.map(u => `
+    <tr data-id="${u.id}">
+      <td>${escapeHtml(u.username)}</td>
+      <td>${new Date(u.created_ts * 1000).toLocaleDateString()}</td>
+      <td><input type="password" class="user-new-password" placeholder="(bez zmian)"></td>
+      <td><button type="button" class="row-remove" data-id="${u.id}">✕</button></td>
+    </tr>`).join('');
+
+  tbody.querySelectorAll('.user-new-password').forEach(input => {
+    input.addEventListener('change', async () => {
+      if (!input.value) return;
+      if (input.value.length < 8) { showMsg('usersMsg', false, 'Hasło: minimum 8 znaków'); return; }
+      const id = input.closest('tr').dataset.id;
+      const resp = await authorizedFetch(`/api/system/users/${id}/password`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: input.value }),
+      });
+      const data = await resp.json();
+      showMsg('usersMsg', resp.ok, resp.ok ? data.message : (data.error || 'Błąd'));
+      input.value = '';
+    });
+  });
+  tbody.querySelectorAll('.row-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Usunąć to konto?')) return;
+      const resp = await authorizedFetch(`/api/system/users/${btn.dataset.id}`, { method: 'DELETE' });
+      const data = await resp.json();
+      if (!resp.ok) { showMsg('usersMsg', false, data.error || 'Błąd'); return; }
+      loadUsers();
+    });
+  });
+}
+loadUsers();
+
+document.getElementById('addUserBtn').addEventListener('click', async () => {
+  const username = document.getElementById('newUsername').value.trim();
+  const password = document.getElementById('newPassword').value;
+  if (!username) { showMsg('usersMsg', false, 'Nazwa użytkownika jest wymagana'); return; }
+  if (password.length < 8) { showMsg('usersMsg', false, 'Hasło: minimum 8 znaków'); return; }
+  const resp = await authorizedFetch('/api/system/users', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { showMsg('usersMsg', false, data.error || 'Błąd'); return; }
+  document.getElementById('newUsername').value = '';
+  document.getElementById('newPassword').value = '';
+  showMsg('usersMsg', true, `Dodano konto "${data.username}"`);
+  loadUsers();
+});
+
+// ------------------------------------------------------------------
+// Tryb logowania / poziom logów
+// ------------------------------------------------------------------
+async function loadSettings() {
+  const resp = await authorizedFetch('/api/system/settings');
+  const data = await resp.json();
+  document.getElementById('maxFailedAttempts').value = data.max_failed_attempts;
+  document.getElementById('lockoutSeconds').value = data.lockout_seconds;
+  document.getElementById('allowBasicAuth').checked = data.allow_basic_auth;
+  document.getElementById('defaultLogLevel').value = data.default_log_level;
+  document.getElementById('serverTime').textContent = data.server_time;
+  document.getElementById('tzEnv').textContent = data.timezone_env;
+}
+loadSettings();
+
+document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
+  const payload = {
+    max_failed_attempts: document.getElementById('maxFailedAttempts').value,
+    lockout_seconds: document.getElementById('lockoutSeconds').value,
+    allow_basic_auth: document.getElementById('allowBasicAuth').checked,
+    default_log_level: document.getElementById('defaultLogLevel').value,
+  };
+  const resp = await authorizedFetch('/api/system/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    const details = data.details ? ' - ' + data.details.join('; ') : '';
+    showMsg('settingsMsg', false, (data.error || 'Błąd zapisu') + details);
+  } else {
+    showMsg('settingsMsg', true, data.message);
+  }
+});
+
+// ------------------------------------------------------------------
+// Logi
+// ------------------------------------------------------------------
+let logsAutoTimer = null;
+
+async function loadLogs() {
+  const params = new URLSearchParams();
+  const component = document.getElementById('logComponent').value;
+  const level = document.getElementById('logLevel').value;
+  const loggerName = document.getElementById('logLogger').value.trim();
+  if (component) params.set('component', component);
+  if (level) params.set('level', level);
+  if (loggerName) params.set('logger', loggerName);
+  params.set('limit', '300');
+
+  const resp = await authorizedFetch('/api/system/logs?' + params.toString());
+  const logs = await resp.json();
+  const tbody = document.getElementById('logsTableBody');
+  tbody.innerHTML = logs.map(l => `
+    <tr>
+      <td>${new Date(l.ts * 1000).toLocaleTimeString()}</td>
+      <td>${escapeHtml(l.component)}</td>
+      <td><span class="log-level ${l.level}">${l.level}</span></td>
+      <td>${escapeHtml(l.logger)}</td>
+      <td>${escapeHtml(l.message)}</td>
+    </tr>`).join('') || '<tr><td colspan="5" style="color:var(--muted);">Brak wpisów pasujących do filtrów.</td></tr>';
+}
+document.getElementById('refreshLogsBtn').addEventListener('click', loadLogs);
+document.getElementById('logComponent').addEventListener('change', loadLogs);
+document.getElementById('logLevel').addEventListener('change', loadLogs);
+
+function setupAutoRefresh() {
+  if (logsAutoTimer) clearInterval(logsAutoTimer);
+  if (document.getElementById('autoRefreshLogs').checked) {
+    logsAutoTimer = setInterval(loadLogs, 10000);
+  }
+}
+document.getElementById('autoRefreshLogs').addEventListener('change', setupAutoRefresh);
+setupAutoRefresh();
+loadLogs();
+</script>
+</body>
+</html>

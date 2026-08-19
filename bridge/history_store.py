@@ -71,7 +71,25 @@ CREATE TABLE IF NOT EXISTS commands (
     done_ts REAL
 );
 CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status);
+
+CREATE TABLE IF NOT EXISTS logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    component TEXT NOT NULL,   -- 'bridge' | 'dashboard' - który proces
+    logger TEXT NOT NULL,      -- np. 'bridge.satel'
+    level TEXT NOT NULL,       -- DEBUG | INFO | WARNING | ERROR | CRITICAL
+    message TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
 """
+
+_LOG_LEVEL_ORDER = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+# minimalny_poziom -> lista poziomów "co najmniej tak poważnych" - do
+# filtrowania get_logs(level=...) po WWW (np. level="WARNING" pokazuje też
+# ERROR/CRITICAL, nie tylko dokładnie WARNING).
+LOG_LEVELS_AT_OR_ABOVE = {
+    level: _LOG_LEVEL_ORDER[i:] for i, level in enumerate(_LOG_LEVEL_ORDER)
+}
 
 
 @dataclass
@@ -254,3 +272,58 @@ class HistoryStore:
             }
             for r in rows
         ]
+
+    # -- logi (przechwytywane z modułu logging, patrz bridge/log_capture.py) --
+    def write_log(self, component: str, logger_name: str, level: str, message: str,
+                   ts: float | None = None) -> None:
+        ts = ts if ts is not None else time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO logs (ts, component, logger, level, message) VALUES (?, ?, ?, ?, ?)",
+                (ts, component, logger_name, level, message),
+            )
+            self._conn.commit()
+
+    def get_logs(self, component: str | None = None, logger_name: str | None = None,
+                  level: str | None = None, ts_from: float | None = None, limit: int = 300) -> list[dict]:
+        query = "SELECT id, ts, component, logger, level, message FROM logs WHERE 1=1"
+        params: list = []
+        if component:
+            query += " AND component = ?"
+            params.append(component)
+        if logger_name:
+            query += " AND logger = ?"
+            params.append(logger_name)
+        if level:
+            # poziom "co najmniej tak poważne jak X" - alfabetyczna
+            # kolejność nazw akurat NIE odpowiada powadze (CRITICAL < DEBUG
+            # alfabetycznie), więc filtrujemy po jawnej liście dopuszczonych
+            # poziomów zamiast liczyć na sortowanie tekstowe.
+            allowed = LOG_LEVELS_AT_OR_ABOVE.get(level.upper())
+            if allowed:
+                placeholders = ",".join("?" * len(allowed))
+                query += f" AND level IN ({placeholders})"
+                params.extend(allowed)
+        if ts_from is not None:
+            query += " AND ts >= ?"
+            params.append(ts_from)
+        query += " ORDER BY ts DESC LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [
+            {"id": r[0], "ts": r[1], "component": r[2], "logger": r[3], "level": r[4], "message": r[5]}
+            for r in rows
+        ]
+
+    def prune_logs(self, keep: int = 10000) -> None:
+        """Trzyma tylko `keep` najnowszych wpisów - logi (zwłaszcza na
+        DEBUG) mogą rosnąć dużo szybciej niż zdarzenia/odczyty, więc
+        przycinanie po LICZBIE wierszy (nie tylko wieku, jak
+        bridge/maintenance.py dla reszty tabel) jest tu ważniejsze."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY ts DESC LIMIT ?)",
+                (keep,),
+            )
+            self._conn.commit()

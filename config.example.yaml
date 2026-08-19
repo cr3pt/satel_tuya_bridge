@@ -11,7 +11,22 @@
 #      automatycznie do config.db (i zmienia nazwę na config.yaml.migrated).
 #      Dalsze zmiany rób z panelu albo przez eksport/import YAML
 #      (`/api/config/export-yaml` / `/api/config/import-yaml`).
+#
+# WŁĄCZ/WYŁĄCZ WTYCZEK I POZIOM LOGOWANIA: prawie każda sekcja niżej (satel,
+# tuya, ebus, home_assistant, unifi_protect, notifications, mqtt_publish)
+# przyjmuje teraz też pola "enabled: true/false" i "log_level: DEBUG/INFO/
+# WARNING/ERROR/CRITICAL" - w praktyce ustawia się je z panelu (zakładka
+# 🧩 Wtyczki albo sekcja "⚙ Ustawienia wtyczki" na stronie każdej wtyczki,
+# patrz README), nie ręczną edycją tego pliku. Wyjątek: tuya_zigbee (dzieli
+# sekcję "tuya" z Tuya lokalnie, nie ma własnego enabled) i
+# presence_simulation (żyje w automations.yaml/dokumencie "automations",
+# nie tutaj).
 # ============================================================================
+
+# Domyślny poziom logowania (nadpisywany per wtyczka polem "log_level"
+# wyżej) - patrz README, sekcja "Poziom logowania per wtyczka".
+logging:
+  default_level: "INFO"   # DEBUG/INFO/WARNING/ERROR/CRITICAL
 
 satel:
   # Integration protocol (odczyt stanu wejść/wyjść, sterowanie wyjściami,
@@ -295,6 +310,11 @@ dashboard:
     password_hash: ""   # puste = akcje zmieniające stan są ZABLOKOWANE, dopóki nie ustawisz hasła
     max_failed_attempts: 5
     lockout_seconds: 300
+    allow_basic_auth: true   # wyłącz, żeby wymusić logowanie WYŁĄCZNIE przez /login (patrz README: Ustawienia ogólne)
+    # UWAGA: to jest jedyne konto z ręcznej edycji tego pliku - kolejne
+    # konta (wiele użytkowników) dodaje się już tylko z panelu, zakładka
+    # ⚙ Ustawienia ogólne (tabela "users" w config.db, patrz
+    # bridge/config_store.py) - nie ma dla nich odpowiednika w tym pliku.
 
   # UWAGA: Basic Auth przez zwykłe HTTP koduje hasło tylko w Base64, nie
   # szyfruje go - wystarczające w zaufanej sieci domowej, ale jeśli

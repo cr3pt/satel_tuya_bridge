@@ -718,30 +718,44 @@ obecności, powiadomienia push) w jednym czytelnym miejscu - każda jako
 karta z ikoną, opisem, stanem (Włączona/Wyłączona/Nieskonfigurowana) i
 liczbą skonfigurowanych elementów (np. "3 urządzenia").
 
-To **przegląd i przełącznik, nie edytor** - część integracji (Satel, Tuya
-lokalnie/Zigbee, eBUS, UniFi Protect, powiadomienia) jest włączona/
-wyłączona samą OBECNOŚCIĄ konfiguracji (np. dodanie choć jednego
-urządzenia Tuya) i pokazuje się tu tylko do odczytu, z linkiem "⚙
-Konfiguruj" do właściwego miejsca. Trzy integracje (Satel, Tuya lokalnie +
-bramki Zigbee, eBUS) mają WŁASNĄ, dedykowaną stronę konfiguracji pod
-`plugins/<id>/` (`/plugins/satel`, `/plugins/tuya`, `/plugins/ebus`) - patrz
-"Struktura projektu" niżej i docstring `plugins/__init__.py`; reszta wciąż
-kieruje do zakładki 🔌 Połączenia/🎬 Automatyzacje. Cztery integracje mają
-osobną, zapisaną flagę
-`enabled`, którą da się przełączyć bezpośrednio z tego ekranu (bez
-przechodzenia do innej zakładki): **Tuya Cloud**, **Home Assistant**,
-**publikacja stanu do MQTT** i **symulacja obecności** - ale WŁĄCZENIE
-integracji, która nigdy wcześniej nie miała podanych wymaganych danych
-(np. Tuya Cloud bez zapisanego Access ID), nadal wymaga najpierw
+To **przegląd i szybki przełącznik** - **WSZYSTKIE dziewięć integracji ma
+już własną, dedykowaną stronę konfiguracji** pod `/plugins/<id>/` (Satel,
+Tuya lokalnie/Zigbee współdzielą jedną stronę `/plugins/tuya`, eBUS, Tuya
+Cloud, Home Assistant, publikacja MQTT, UniFi Protect, powiadomienia,
+symulacja obecności) - link "⚙ Konfiguruj" w każdej karcie prowadzi tam;
+patrz "Struktura projektu" niżej i docstring `plugins/__init__.py`.
+**Osiem z dziewięciu integracji** (wszystkie oprócz Tuya Zigbee, które
+dzieli połączenie/runtime z Tuya lokalnie i nie ma niezależnego cyklu
+życia) ma osobną, zapisaną flagę `enabled`, którą da się przełączyć
+bezpośrednio z tego ekranu (bez przechodzenia do innej zakładki) ALBO z
+własnej strony wtyczki, w sekcji "⚙ Ustawienia wtyczki" (razem z poziomem
+logowania - patrz niżej) - WŁĄCZENIE integracji, która nigdy wcześniej
+nie miała podanych wymaganych danych (np. Tuya Cloud bez zapisanego
+Access ID, UniFi Protect bez hosta kontrolera), nadal wymaga najpierw
 uzupełnienia ich we właściwej zakładce (przełącznik odrzuci taką próbę z
 czytelnym błędem).
 
-Trzy z czterech przełączalnych integracji (Tuya Cloud, Home Assistant,
-publikacja MQTT) żyją w dokumencie `config` i **wymagają pełnego
-restartu** procesu bridge'a, tak samo jak zmiany w zakładce 🔌 Połączenia
-(widać to jako odznakę "wymaga restartu" na karcie). Symulacja obecności
-jest wyjątkiem - żyje w dokumencie `automations` i włącza/wyłącza się na
-żywo w ciągu ok. 1-2s, bez restartu (patrz "Zmiany działają od razu" wyżej).
+Sześć przełączalnych integracji (Satel, Tuya lokalnie, eBUS, Tuya Cloud,
+Home Assistant, publikacja MQTT, UniFi Protect, powiadomienia - żyją w
+dokumencie `config`) **wymaga pełnego restartu** procesu bridge'a, żeby
+włączenie/wyłączenie faktycznie zadziałało (widać to jako odznakę "wymaga
+restartu" na karcie) - żywe połączenie sieciowe (TCP do centrali, klient
+MQTT, Tuya Cloud Pulsar) startuje tylko raz, przy starcie procesu (patrz
+`bridge/rules_engine.py: start()`). Symulacja obecności jest wyjątkiem -
+żyje w dokumencie `automations` i włącza/wyłącza się na żywo w ciągu ok.
+1-2s, bez restartu (patrz "Zmiany działają od razu" wyżej).
+
+### Poziom logowania per wtyczka
+
+Każda wtyczka (na swojej dedykowanej stronie, sekcja "⚙ Ustawienia
+wtyczki") ma pole **"Poziom logowania zdarzeń"** (DEBUG/INFO/WARNING/
+ERROR/CRITICAL albo "domyślny globalny") - nadpisuje globalny domyślny
+poziom (ustawiany w zakładce ⚙ Ustawienia ogólne, patrz niżej) TYLKO dla
+loggera tej konkretnej integracji. Przydatne przy diagnozowaniu problemu z
+jedną integracją (np. `DEBUG` dla Tuya lokalnie) bez zalewania logów
+szczegółami reszty systemu. Działa na żywo, bez restartu procesu (patrz
+`bridge/logging_config.py: apply_log_levels`, wywoływane przy starcie i
+przy każdym przeładowaniu konfiguracji).
 
 **Interwał odpytywania (Satel i Tuya lokalnie).** Te dwie karty mają
 dodatkowo pole "Interwał odpytywania" - jak często bridge SAM dopytuje o
@@ -756,6 +770,59 @@ synchronizacji panelu/MQTT. W odróżnieniu od włączania/wyłączania
 integracji - **to zawsze działa na żywo, bez restartu** (minimum 3s, żeby
 nie zalewać centrali/urządzeń zapytaniami przy pomyłce we wpisanej
 wartości).
+
+### Zakładka ⚙ Ustawienia ogólne - konta, logowanie, logi
+
+`/system` zbiera wszystko, co konfiguruje się raz i nie jest przypisane
+do żadnej konkretnej wtyczki - konta administratorskie, tryb logowania i
+przegląd logów całego systemu. Wymaga zalogowania (jak reszta panelu poza
+odczytem stanu).
+
+**Konta użytkowników.** Panel obsługuje **wiele niezależnych kont**
+(tabela `users` w `config.db`, patrz `bridge/config_store.py`) - płaski
+model uprawnień: każde zalogowane konto ma pełny dostęp do zapisu, nie ma
+ról ani ograniczeń per-konto. Z tej sekcji dodasz nowe konto (login +
+hasło, minimum 8 znaków), zmienisz hasło dowolnego istniejącego konta
+albo usuniesz konto - poza **ostatnim** (panel zawsze musi mieć co
+najmniej jedno konto, inaczej nikt nie mógłby się zalogować). Pierwsze
+konto powstaje w kreatorze `/setup` przy pierwszym uruchomieniu; starsze
+instalacje z pojedynczym hasłem `dashboard.auth.password_hash` migrują
+się na tę tabelę automatycznie i jednorazowo przy starcie (patrz
+`ConfigStore.migrate_single_admin_to_users`).
+
+**Tryby logowania.** Dwa niezależne ustawienia:
+- **Limit nieudanych prób logowania** (`max_failed_attempts`, domyślnie
+  5) i **czas blokady** (`lockout_seconds`, domyślnie 300s) - ochrona
+  przed próbami odgadnięcia hasła siłowo, per adres IP.
+- **Zezwól na Basic Auth** (`allow_basic_auth`, domyślnie włączone) -
+  poza logowaniem sesyjnym (formularz `/login`, ciasteczko) panel
+  akceptuje też nagłówek `Authorization: Basic` na każdym zapisującym
+  endpoincie (przydatne do skryptów/curl) - wyłącz, jeśli chcesz wymusić
+  logowanie WYŁĄCZNIE przez `/login`.
+
+Czas trwania sesji (`session_ttl_seconds`) i bieżący czas serwera/strefa
+czasowa (`TZ`) są tu pokazane **wyłącznie informacyjnie** - synchronizacja
+zegara dzieje się na hoście, nie w kontenerze (patrz "Synchronizacja
+czasu" niżej), a długość sesji nie jest jeszcze konfigurowalna z panelu.
+
+**Domyślny poziom logowania** (`logging.default_level`, domyślnie
+`INFO`) - poziom loggera-rodzica `bridge` (patrz
+`bridge/logging_config.py`), obejmuje rdzeń (silnik reguł, odporność na
+awarie) i każdą wtyczkę BEZ własnego, jawnie ustawionego poziomu (patrz
+"Poziom logowania per wtyczka" wyżej).
+
+**Przegląd logów.** Wszystkie logi przechwycone z obu procesów (`bridge`
+i `dashboard` - osobne komponenty na filtrze) trafiają do tabeli `logs` w
+`bridge_history.db` (patrz `bridge/log_capture.py: HistoryLogHandler`,
+podłączony do loggera `bridge` przy starcie każdego procesu) - w
+odróżnieniu od dziennika zdarzeń na stronie głównej (tylko zdarzenia
+domenowe: alarmy, zmiany stanu), to SUROWE logi Pythona ze wszystkich
+modułów, przydatne przy diagnozowaniu awarii/wyjątków. Filtry: komponent
+(bridge/dashboard), logger (pełna nazwa, np. `bridge.satel`), minimalny
+poziom (pokazuje też poważniejsze) i liczba ostatnich godzin - z opcją
+auto-odświeżania co 10s. Tabela jest **automatycznie przycinana** do
+ostatnich 10 000 wpisów (patrz `KEEP_LOGS` w `bridge/log_capture.py`), co
+200 zapisów - nie rośnie bez ograniczeń.
 
 ### Publikacja stanu do MQTT (niezależnie od Home Assistant)
 
@@ -1385,6 +1452,38 @@ stąd wymóg `chown` katalogu `data/` przed pierwszym uruchomieniem
 Tuya, hasła) trafiają wyłącznie do zamontowanego `./data/config.db` -
 nigdy do obrazu ani do warstw builda.
 
+### Ruch sieciowy PODCZAS BUILDA (pobieranie pakietów Python)
+
+Sam **build** obrazu (`docker compose build`/`up -d --build`) łączy się
+WYCHODZĄCO z PyPI (`pypi.org`/`files.pythonhosted.org`, serwowane przez
+CDN Fastly - stąd adres IP bywa różny w zależności od tego, który węzeł
+brzegowy CDN jest najbliżej Twojego łącza) - to `RUN pip install -r
+requirements.txt` w `Dockerfile`, zwyczajne i wymagane pobieranie
+zależności (PyYAML, aiohttp, tinytuya, satel-integra, paho-mqtt,
+uiprotect, tuya-connector-python, Flask, waitress, astral). **Sam bridge
+w trakcie DZIAŁANIA nie kontaktuje żadnego z tych adresów** - łączy się
+tylko z tym, co wpiszesz w panelu (centrala Satel, urządzenia Tuya,
+broker MQTT), a opcjonalnie z Tuya Cloud (`openapi.tuya*.com`, tylko
+jeśli włączysz integrację Tuya Cloud w zakładce 🧩 Wtyczki) i z serwerem
+ntfy (tylko jeśli skonfigurujesz powiadomienia). Jeśli widzisz ruch do
+nieznanego adresu IP z kontenera/hosta w trakcie zwykłej pracy (nie
+builda) - to NIE jest żaden z modułów tego repo; sprawdź inne procesy na
+tej samej maszynie.
+
+`requirements.txt` celowo używa `>=` (nie dokładnie przypiętych wersji,
+poza górnym ograniczeniem `satel-integra<1.0.0` - patrz komentarz w
+pliku), więc **każdy build bez cache'u Dockera i tak pobiera najnowsze
+zgodne wersje** z PyPI. Warstwa `RUN pip install` jest jednak
+cache'owana przez Docker dopóki `requirements.txt` się nie zmieni - żeby
+wymusić świeże pobranie pakietów Python mimo niezmienionego
+`requirements.txt` (np. żeby dociągnąć łatkę bezpieczeństwa wydaną od
+ostatniego builda), użyj pełnego rebuildu bez cache'u (patrz punkt 5
+wyżej):
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
 ## Struktura projektu
 
 ```
@@ -1433,10 +1532,19 @@ satel_tuya_bridge/
     templates/automations.html # edytor scen/reguł ruchu/symulacji obecności (wymaga hasła do zapisu)
     templates/setup.html      # kreator pierwszej konfiguracji (krok po kroku, autozapis postępu)
     templates/plugins.html    # przegląd wszystkich integracji (włącz/wyłącz, interwały)
-  plugins/                   # wtyczki z WŁASNĄ stroną konfiguracji, jeden podkatalog na integrację
-    satel/routes.py           # /plugins/satel - strefy/wyjścia/partycje + skanowanie, patrz plugins/__init__.py
+    templates/system.html     # ⚙ Ustawienia ogólne - konta, logowanie/blokady, poziom logów, przegląd logów
+  plugins/                   # wtyczki z WŁASNĄ stroną konfiguracji, jeden podkatalog na integrację -
+                              # każda ma sekcję "⚙ Ustawienia wtyczki" (włącznik + poziom logowania,
+                              # patrz plugins/__init__.py: register_settings_route) plus własne pola
+    satel/routes.py           # /plugins/satel - strefy/wyjścia/partycje + skanowanie
     tuya_local/routes.py      # /plugins/tuya - urządzenia + bramki Zigbee, skan LAN + import z Tuya Cloud
     ebus/routes.py            # /plugins/ebus - czujniki kotła + wykrywanie tematów MQTT (blokujące i w tle)
+    tuya_cloud/routes.py      # /plugins/tuya_cloud - poświadczenia API (Access ID/Secret, endpointy)
+    home_assistant/routes.py  # /plugins/home_assistant - broker MQTT + prefiksy discovery/stanu
+    mqtt_publish/routes.py    # /plugins/mqtt_publish - tematy MQTT (Satel/Tuya)
+    unifi_protect/routes.py   # /plugins/unifi_protect - host/login/hasło kontrolera UniFi OS
+    notifications/routes.py   # /plugins/notifications - adres tematu ntfy + okres ciszy
+    presence_simulation/routes.py  # /plugins/presence_simulation - włącznik/log_level (lista urządzeń w /automations)
   tests/                     # testy pytest (patrz sekcja "Testy automatyczne")
   .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.9/3.11/3.12
   maintenance.py              # CLI do rotacji/backupu bazy (do crona, patrz sekcja "Rotacja i backup bazy")
