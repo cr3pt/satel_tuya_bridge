@@ -647,7 +647,13 @@ document.getElementById('eventTypeSelect').addEventListener('change', () => { if
   await loadSatelFieldTypes();
   await refreshAll();
   setInterval(refreshAll, 30000);  // odświeżanie w tle co 30s (wykres/zdarzenia/alarmy) - bez przeładowania strony
-  setInterval(loadStatuses, 5000); // stany wejść/wyjść Satela i Tuya odświeżają się częściej - "na żywo"
+  // Stany wejść/wyjść Satela i Tuya odświeżają się częściej - "na żywo".
+  // 2s (nie mniej - RPi Zero W to jeden słaby rdzeń, a to 5 zapytań SQLite
+  // na obrót) - i tak dokłada minimalny narzut do faktycznego opóźnienia:
+  // backend zapisuje status w HistoryStore NATYCHMIAST po zdarzeniu z
+  // centrali (broadcast, patrz RulesEngine._on_zone_change/_on_output_change),
+  // więc to pollowanie tylko odbiera już zapisaną wartość, nie czeka na nią.
+  setInterval(loadStatuses, 2000);
 })();
 </script>
 </body>
