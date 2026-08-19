@@ -27,6 +27,10 @@ class FakeTuya:
     def __init__(self):
         self.calls: list[tuple] = []
         self.fail_devices: set[str] = set()  # symulacja niedostępnych urządzeń
+        # Puste domyślnie - potrzebne przez RulesEngine._seed_tuya_status_labels()
+        # (patrz start()), które iteruje po tym atrybucie tak samo jak
+        # prawdziwy TuyaLocalController.
+        self.devices_cfg: dict = {}
 
     async def turn_on(self, device, dimmer_level_percent=None):
         if device in self.fail_devices:

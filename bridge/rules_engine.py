@@ -685,9 +685,19 @@ class RulesEngine:
         # - celowo, żeby reload_config() (patrz niżej) mogło podmienić
         # numery/nazwy stref-wyjść-partycji w locie i te zamknięcia od razu
         # zobaczyły nowe wartości, bez ponownego rejestrowania callbacków.
-        async def _on_zone_change(zones: dict) -> None:
+        async def _on_zone_change(status: dict) -> None:
+            # UWAGA: biblioteka satel_integra woła ten callback z PEŁNYM
+            # obiektem `{"zones": {numer: 0/1, ...}}` (patrz
+            # AsyncSatel._zone_violated() w satel_integra/satel_integra.py),
+            # NIE z samym wewnętrznym słownikiem numer->stan - bez tego
+            # `.get("zones", ...)` poniższa pętla iterowałaby po SAMYM
+            # kluczu "zones" (jedna fałszywa "zmiana" o numerze-stringu
+            # "zones", zawsze potraktowana jako naruszona, bo niepusty
+            # słownik jest prawdziwy w Pythonie) - a PRAWDZIWE numery stref
+            # nigdy nie dostawałyby zapisu statusu, więc panel zamrażałby
+            # się na wartości z zasiania (_seed_satel_status_labels).
             zone_name_by_number = {v: k for k, v in self.satel.monitored_zones.items()}
-            for zone_number, violated in zones.items():
+            for zone_number, violated in status.get("zones", {}).items():
                 self.history.set_status(
                     f"satel_input:{zone_number}", "satel_input",
                     "naruszone" if violated else "OK",
@@ -706,9 +716,11 @@ class RulesEngine:
                 if violated:
                     await self.handle_motion("satel_zone", zone_number)
 
-        async def _on_output_change(outputs: dict) -> None:
+        async def _on_output_change(status: dict) -> None:
+            # Analogicznie do _on_zone_change wyżej - biblioteka woła z
+            # `{"outputs": {numer: 0/1, ...}}`.
             output_name_by_number = {v: k for k, v in self.satel.monitored_outputs.items()}
-            for output_number, active in outputs.items():
+            for output_number, active in status.get("outputs", {}).items():
                 self.history.set_status(
                     f"satel_output:{output_number}", "satel_output",
                     "włączone" if active else "wyłączone",
