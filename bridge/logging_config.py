@@ -30,7 +30,7 @@ PLUGIN_LOGGERS: dict[str, list[str]] = {
 }
 
 
-def _plugin_config_section(config_raw: dict, plugin_id: str) -> dict:
+def plugin_config_section(config_raw: dict, plugin_id: str) -> dict:
     """Sekcja configu, w której dana wtyczka trzyma swoje pole `log_level`
     - patrz też PLUGIN_DEFS/list_plugins w dashboard/setup.py po ten sam
     podział na sekcje."""
@@ -61,7 +61,7 @@ def apply_log_levels(config_raw: dict) -> None:
     logging.getLogger("bridge").setLevel(default_level)
 
     for plugin_id, logger_names in PLUGIN_LOGGERS.items():
-        level = _plugin_config_section(config_raw, plugin_id).get("log_level") or default_level
+        level = plugin_config_section(config_raw, plugin_id).get("log_level") or default_level
         if level not in VALID_LEVELS:
             level = default_level
         for name in logger_names:

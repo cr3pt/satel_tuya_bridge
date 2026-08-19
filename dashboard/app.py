@@ -705,6 +705,18 @@ _CONNECTIONS_PLUGIN_IDS_LIVE = {"satel", "tuya_local"}
 _CONNECTIONS_PLUGIN_IDS = _CONNECTIONS_PLUGIN_IDS_RESTART | _CONNECTIONS_PLUGIN_IDS_LIVE
 _AUTOMATIONS_PLUGIN_IDS = {"presence_simulation"}
 
+# Wtyczki, które mają już własną, dedykowaną stronę konfiguracji pod
+# /plugins/<id>/ (patrz plugins/__init__.py) - tu przełączamy WYŁĄCZNIE pole
+# "enabled" w ich sekcji config.yaml, bez dotykania reszty ustawień (host/
+# klucze zostają, jak są). Zawsze wymaga pełnego restartu procesu - żywe
+# połączenie sieciowe (TCP do centrali/MQTT/itd.) startuje tylko raz, przy
+# starcie RulesEngine (patrz rules_engine.py: start()).
+_TOGGLE_ONLY_PLUGIN_IDS = {"satel", "tuya_local", "ebus", "unifi_protect", "notifications"}
+_TOGGLE_ONLY_CONFIG_KEY = {
+    "satel": "satel", "tuya_local": "tuya", "ebus": "ebus",
+    "unifi_protect": "unifi_protect", "notifications": "notifications",
+}
+
 
 @app.route("/plugins")
 def plugins_page():
@@ -723,22 +735,40 @@ def api_plugins_get():
 @require_auth()
 def api_plugins_post():
     """Przełącza WYŁĄCZNIE pole "enabled" (tuya_cloud/home_assistant/
-    mqtt_publish/presence_simulation) albo interwał odpytywania (satel/
-    tuya_local) wskazanych wtyczek (patrz _CONNECTIONS_PLUGIN_IDS_RESTART/
-    _CONNECTIONS_PLUGIN_IDS_LIVE/_AUTOMATIONS_PLUGIN_IDS wyżej) - reszta
-    ustawień danej integracji (host/klucze/urządzenia/itd.) zostaje
-    nietknięta. Do PEŁNEJ konfiguracji (np. pierwsze podanie poświadczeń
-    Tuya Cloud) wciąż trzeba przejść do właściwej zakładki (🔌 Połączenia /
-    🎬 Automatyzacje) - to przełącznik/regulator, nie edytor."""
+    mqtt_publish/presence_simulation/satel/tuya_local/ebus/unifi_protect/
+    notifications) albo interwał odpytywania (satel/tuya_local) wskazanych
+    wtyczek (patrz _CONNECTIONS_PLUGIN_IDS_RESTART/_CONNECTIONS_PLUGIN_IDS_LIVE/
+    _AUTOMATIONS_PLUGIN_IDS/_TOGGLE_ONLY_PLUGIN_IDS wyżej) - reszta ustawień
+    danej integracji (host/klucze/urządzenia/itd.) zostaje nietknięta. Do
+    PEŁNEJ konfiguracji (np. pierwsze podanie poświadczeń Tuya Cloud czy
+    hosta UniFi Protect) wciąż trzeba przejść do właściwej zakładki (własna
+    strona wtyczki / 🔌 Połączenia / 🎬 Automatyzacje) - to przełącznik/
+    regulator, nie edytor."""
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return jsonify({"error": "Nieprawidłowe dane"}), 400
 
-    unknown = set(body) - _CONNECTIONS_PLUGIN_IDS - _AUTOMATIONS_PLUGIN_IDS
+    unknown = set(body) - _CONNECTIONS_PLUGIN_IDS - _AUTOMATIONS_PLUGIN_IDS - _TOGGLE_ONLY_PLUGIN_IDS
     if unknown:
         return jsonify({"error": f"Nieznane/nieprzełączalne wtyczki: {', '.join(sorted(unknown))}"}), 400
 
     saved = {}
+
+    toggle_only_body = {
+        k: v for k, v in body.items()
+        if k in _TOGGLE_ONLY_PLUGIN_IDS and (v or {}).get("enabled") is not None
+    }
+    if toggle_only_body:
+        current = config_store.get("config")
+        for plugin_id, patch in toggle_only_body.items():
+            config_key = _TOGGLE_ONLY_CONFIG_KEY[plugin_id]
+            if current.get(config_key) is None:
+                return jsonify({
+                    "error": f"Najpierw skonfiguruj wtyczkę '{plugin_id}' w jej zakładce, zanim ją włączysz.",
+                }), 400
+            current[config_key]["enabled"] = bool(patch.get("enabled"))
+        config_store.set("config", current)
+        saved.update(toggle_only_body)
 
     connections_body = {k: v for k, v in body.items() if k in _CONNECTIONS_PLUGIN_IDS}
     if connections_body:
@@ -790,7 +820,7 @@ def api_plugins_post():
     if automations_body or live_connections_ids:
         _enqueue_bridge_reload()
 
-    restart_ids = set(connections_body) & _CONNECTIONS_PLUGIN_IDS_RESTART
+    restart_ids = (set(connections_body) & _CONNECTIONS_PLUGIN_IDS_RESTART) | set(toggle_only_body)
     message = "Zapisano."
     if restart_ids:
         message += (" Zmiany dla " + ", ".join(sorted(restart_ids)) + " wymagają pełnego restartu "

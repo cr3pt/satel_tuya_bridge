@@ -41,6 +41,13 @@ class RulesEngine:
         # połączenia ('system_health') widoczny w panelu.
         self.history = HistoryStore(config.raw.get("dashboard", {}).get("db_path", "bridge_history.db"))
         notify_cfg = config.raw.get("notifications")
+        # Wyłączenie z zakładki 🧩 Wtyczki (notifications.enabled=False) -
+        # notify_cfg trafia jako None wszędzie indziej w tym pliku, co już
+        # jest normalnie tolerowane (powiadomienia są od zawsze opcjonalne -
+        # patrz każde `notify_cfg=notify_cfg` niżej, NotificationSender
+        # samo nic nie robi bez ntfy_topic_url).
+        if notify_cfg and not notify_cfg.get("enabled", True):
+            notify_cfg = None
         self.alarms = AlarmEngine(
             config.raw.get("alarm_rules", []),
             self.history,
@@ -726,8 +733,27 @@ class RulesEngine:
         # każde samo się podnosi po awarii (patrz bridge/resilience.py).
         # Awaria jednego komponentu (np. Satel chwilowo nieosiągalny) nie
         # blokuje ani nie zatrzymuje pozostałych.
-        asyncio.create_task(self.satel.run_forever())
-        asyncio.create_task(self._tuya_status_poll_loop())
+        #
+        # Satel/Tuya lokalnie/eBUS mają teraz też flagę "enabled" (zakładka
+        # 🧩 Wtyczki, tak samo jak Tuya Cloud/Home Assistant/publikacja MQTT
+        # od dawna) - obiekty (self.satel/self.tuya/self.ebus_listener)
+        # ZAWSZE istnieją (konstrukcja w __init__ nie robi żadnego I/O,
+        # więc reszta kodu, która się do nich odwołuje - sceny, reguły,
+        # komendy z panelu - nie musi sprawdzać None), ale ich ŻYWA pętla
+        # połączenia startuje TYLKO gdy włączone. Wyłączenie/włączenie
+        # wymaga pełnego restartu procesu (restart_required: True) - patrz
+        # PLUGIN_DEFS w dashboard/setup.py po uzasadnienie (bezpieczne
+        # zamknięcie/odtworzenie żywych połączeń W TRAKCIE działania byłoby
+        # dużo ryzykowniejszą przebudową niż warte tego dla rzadko
+        # przełączanej flagi).
+        if self.config.satel.get("enabled", True):
+            asyncio.create_task(self.satel.run_forever())
+        else:
+            logger.info("Satel wyłączony w ustawieniach (🧩 Wtyczki) - pomijam nawiązanie połączenia")
+        if self.config.tuya.get("enabled", True):
+            asyncio.create_task(self._tuya_status_poll_loop())
+        else:
+            logger.info("Tuya lokalnie wyłączone w ustawieniach (🧩 Wtyczki) - pomijam odpytywanie")
         asyncio.create_task(self.presence_simulation.run_forever())
         asyncio.create_task(self._command_poll_loop())
         asyncio.create_task(self._maintenance_loop())
@@ -735,12 +761,17 @@ class RulesEngine:
         # eBUS / kocioł (paho-mqtt ma wbudowany reconnect - patrz ebus_client.py)
         # Trzymane na self (nie jako lokalna zmienna) - reload_config()
         # potrzebuje do niej dostępu, żeby zaktualizować listę czujników
-        # bez zrywania połączenia MQTT.
-        self.ebus_listener = EbusMqttListener(
-            self.config.ebus, self.handle_boiler_value, history=self.history,
-            notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
-        )
-        self.ebus_listener.start()
+        # bez zrywania połączenia MQTT. self.ebus_listener zostaje None,
+        # jeśli wyłączone - reszta kodu już to toleruje (patrz
+        # reload_config: "if self.ebus_listener is not None").
+        if self.config.ebus.get("enabled", True):
+            self.ebus_listener = EbusMqttListener(
+                self.config.ebus, self.handle_boiler_value, history=self.history,
+                notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
+            )
+            self.ebus_listener.start()
+        else:
+            logger.info("eBUS wyłączony w ustawieniach (🧩 Wtyczki) - pomijam połączenie MQTT")
 
         # Kamera Tuya (opcjonalnie, jeśli skonfigurowana)
         if "cloud" in self.config.tuya:
@@ -753,8 +784,8 @@ class RulesEngine:
             )
             asyncio.create_task(camera_listener.run_forever())
 
-        # Kamera UniFi Protect (opcjonalnie)
-        if self.config.unifi_protect:
+        # Kamera UniFi Protect (opcjonalnie, wyłączalna z 🧩 Wtyczki)
+        if self.config.unifi_protect and self.config.unifi_protect.get("enabled", True):
             unifi_listener = UnifiProtectMotionListener(
                 self.config.unifi_protect,
                 lambda cam_id: self.handle_camera_motion("unifi_protect", cam_id),

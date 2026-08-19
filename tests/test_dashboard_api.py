@@ -652,11 +652,16 @@ class TestConnectionsEndpoint:
 
 class TestPluginsEndpoint:
     """Zakładka 🧩 Wtyczki - spójny przegląd wszystkich integracji
-    (patrz dashboard/setup.py: list_plugins) i przełącznik TYLKO dla pól
-    "enabled" (tuya_cloud/home_assistant/mqtt_publish/presence_simulation) -
-    reszta integracji (Satel, Tuya lokalnie/Zigbee, eBUS, UniFi Protect,
-    powiadomienia) jest włączona/wyłączona przez samą obecność konfiguracji
-    i wciąż wymaga przejścia do właściwej zakładki."""
+    (patrz dashboard/setup.py: list_plugins) i przełącznik pola "enabled" -
+    dla tuya_cloud/home_assistant/mqtt_publish/presence_simulation przez
+    pełny formularz Połączeń/Automatyzacji (_CONNECTIONS_PLUGIN_IDS_RESTART/
+    _AUTOMATIONS_PLUGIN_IDS), a dla satel/tuya_local/ebus/unifi_protect/
+    notifications - wtyczek z już własną, dedykowaną stroną - bezpośrednim
+    przełącznikiem "enabled" w ich sekcji configu (_TOGGLE_ONLY_PLUGIN_IDS w
+    dashboard/app.py), o ile ta sekcja w ogóle istnieje (inaczej nie ma czego
+    włączać - patrz test_post_enabling_unconfigured_unifi_protect_is_rejected).
+    Jedyny wyjątek bez własnego przełącznika to tuya_zigbee (dzieli
+    połączenie/runtime z tuya_local)."""
 
     def test_get_no_auth_required(self, client):
         assert client.get("/api/plugins").status_code == 200
@@ -682,23 +687,44 @@ class TestPluginsEndpoint:
 
     def test_post_unknown_plugin_id_rejected(self, client):
         resp = client.post(
-            "/api/plugins", json={"unifi_protect": {"enabled": False}}, headers=_basic_auth_header("test_haslo_123"),
+            "/api/plugins", json={"does_not_exist": {"enabled": False}}, headers=_basic_auth_header("test_haslo_123"),
         )
         assert resp.status_code == 400
 
-    def test_post_satel_enabled_field_is_ignored_not_toggleable(self, client):
-        """satel jest rdzeniem (zawsze aktywny) - ma tylko regulowalny
-        interwał odpytywania, "enabled" nie jest dla niego obsługiwane i
-        zostaje po cichu zignorowane (nie jest to błąd - satel to
-        prawidłowe id, tylko bez pola enabled)."""
+    def test_post_enabling_unconfigured_unifi_protect_is_rejected(self, client):
+        """UniFi Protect nie ma żadnej sekcji w CONFIG_TEMPLATE (brak hosta/
+        loginu) - włączanie nieskonfigurowanej integracji musi być odrzucone
+        z czytelnym błędem, nie zapisane w połowie."""
+        resp = client.post(
+            "/api/plugins", json={"unifi_protect": {"enabled": True}}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_post_toggles_satel_enabled_without_touching_host(self, client):
+        """satel ma już własną, dedykowaną stronę (/plugins/satel) - "enabled"
+        jest tu obsługiwane bezpośrednio (bez przechodzenia przez formularz
+        Połączeń), reszta pól (host/klucz/itd.) zostaje nietknięta."""
         import dashboard.app as app_module
 
         resp = client.post(
             "/api/plugins", json={"satel": {"enabled": False}}, headers=_basic_auth_header("test_haslo_123"),
         )
         assert resp.status_code == 200
+        assert "wymagają pełnego restartu" in resp.get_json()["message"]
         saved = app_module.config_store.get("config")
-        assert saved["satel"]["host"] == "127.0.0.1"  # nietknięte, wciąż działa
+        assert saved["satel"]["enabled"] is False
+        assert saved["satel"]["host"] == "127.0.0.1"  # nietknięte
+
+    def test_post_toggles_ebus_enabled(self, client):
+        import dashboard.app as app_module
+
+        resp = client.post(
+            "/api/plugins", json={"ebus": {"enabled": False}}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")
+        assert saved["ebus"]["enabled"] is False
+        assert saved["ebus"]["mqtt_host"] == "127.0.0.1"  # nietknięte
 
     def test_post_updates_satel_poll_interval_live(self, client):
         import dashboard.app as app_module
