@@ -107,10 +107,38 @@ async def discover_active_zones_and_outputs(host: str, port: int, timeout_second
     monitor_task = asyncio.ensure_future(
         client.monitor_status(zone_changed_callback=_on_zone, output_changed_callback=_on_output)
     )
+    # Zamiast pojedynczego wait_for() - odpytujemy `client.connected` co 2s
+    # (ten sam trik co watchdog w SatelClient._connect_and_monitor, patrz
+    # tamtejszy obszerny komentarz): centrala Satel Integra obsługuje TYLKO
+    # JEDNEGO klienta integracji naraz (port 7094) - jeśli w tle działa już
+    # bridge (albo DLOADX/GUARDX), NASZE połączenie zostanie przyjęte na
+    # poziomie TCP, ale zerwane zaraz po pierwszej komendzie, a biblioteka
+    # SAMA, WEWNĄTRZ monitor_status(), ponawia je w nieskończoność - funkcja
+    # bez tego zwróciłaby po prostu puste wyniki, nie do odróżnienia od
+    # "nikt fizycznie nie wyzwolił żadnej czujki" (patrz UCZCIWIE w
+    # docstringu). `connected` (właściwość biblioteki: `_writer and
+    # _reader`) wraca do False dokładnie w takim zerwaniu - stąd 2 kolejne
+    # "nie" pozwalają to odróżnić z zewnątrz.
+    busy_suspected = False
+    consecutive_disconnected = 0
+    elapsed = 0.0
+    # Skalowane do timeout_seconds (max 2s, min kilka ticków na całe okno)
+    # - żeby krótkie okna nasłuchu (np. w testach) nie czekały pełne 2s na
+    # pierwszy odczyt `connected`, a mimo to zdążyły złapać 2 kolejne "nie"
+    # potrzebne do wykrycia zajętej centrali (patrz komentarz wyżej).
+    poll_interval = max(0.01, min(2.0, timeout_seconds / 5))
     try:
-        await asyncio.wait_for(asyncio.shield(monitor_task), timeout=timeout_seconds)
-    except asyncio.TimeoutError:
-        pass  # oczekiwane - monitor_status() działa w nieskończoność, dopóki go nie przerwiemy
+        while elapsed < timeout_seconds:
+            if monitor_task.done():
+                break
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+            if not getattr(client, "connected", False):
+                consecutive_disconnected += 1
+            else:
+                consecutive_disconnected = 0
+            if consecutive_disconnected >= 2:
+                busy_suspected = True
     finally:
         monitor_task.cancel()
         try:
@@ -120,7 +148,17 @@ async def discover_active_zones_and_outputs(host: str, port: int, timeout_second
         if client._writer is not None:
             client._writer.close()
 
-    return {"zones": sorted(seen_zones), "outputs": sorted(seen_outputs)}
+    result = {"zones": sorted(seen_zones), "outputs": sorted(seen_outputs)}
+    if busy_suspected and not seen_zones and not seen_outputs:
+        result["warning"] = (
+            "Nie wykryto żadnej aktywności, a połączenie z centralą zrywało się "
+            "podczas nasłuchu - to zwykle oznacza, że centrala ma już otwarte inne "
+            "połączenie integracji (np. działający bridge, DLOADX/GUARDX). Centrala "
+            "Satel Integra obsługuje TYLKO JEDNEGO klienta integracji naraz. "
+            "Zatrzymaj na chwilę kontener/proces bridge'a (docker compose stop bridge) "
+            "i spróbuj ponownie."
+        )
+    return result
 
 
 class SatelVirtualInputTrigger:

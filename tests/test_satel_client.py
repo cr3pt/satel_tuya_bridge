@@ -148,6 +148,13 @@ class FakeAsyncSatelDiscovery:
         self._connect_result = connect_result
         self.violated_zones: list[int] = []
         self.violated_outputs: list[int] = []
+        # Odzwierciedla `AsyncSatel.connected` (właściwość: `_writer and
+        # _reader`) - domyślnie stabilne połączenie (jak w prawdziwym
+        # udanym scenariuszu), żeby watchdog w
+        # discover_active_zones_and_outputs (patrz "busy_suspected") nie
+        # fałszywie zgłaszał zajętej centrali w testach, które w ogóle
+        # tego nie symulują.
+        self.connected = connect_result
 
     async def connect(self):
         return self._connect_result
@@ -210,6 +217,45 @@ class TestDiscoverActiveZonesAndOutputs:
         result = await discover_active_zones_and_outputs("127.0.0.1", 7094, timeout_seconds=0.2)
         assert result["zones"] == [1, 3, 5]
         assert result["outputs"] == [2, 9]
+
+    async def test_repeated_disconnects_with_no_activity_add_busy_warning(self, monkeypatch):
+        """Reprodukcja zgłoszonego przypadku: centrala Satel Integra
+        obsługuje TYLKO JEDNEGO klienta integracji naraz - gdy bridge już
+        trzyma połączenie, NASZE (drugie) połączenie jest przyjmowane na
+        poziomie TCP, ale zrywane zaraz po pierwszej komendzie, w kółko
+        (biblioteka ponawia WEWNĘTRZNIE, nigdy nie rzucając wyjątku) - bez
+        watchdoga funkcja zwróciłaby puste wyniki nie do odróżnienia od
+        "nikt fizycznie nie wyzwolił żadnej czujki"."""
+        class Fake(FakeAsyncSatelDiscovery):
+            _events = []
+
+            async def monitor_status(self, zone_changed_callback=None, output_changed_callback=None):
+                # `connected` opada od razu i zostaje False - jak przy
+                # ciągłym zrywaniu połączenia przez centralę.
+                self.connected = False
+                await asyncio.sleep(999)
+
+        import satel_integra.satel_integra as satel_module
+        monkeypatch.setattr(satel_module, "AsyncSatel", lambda host, port, loop: Fake(host, port, loop))
+
+        result = await discover_active_zones_and_outputs("127.0.0.1", 7094, timeout_seconds=0.06)
+        assert result["zones"] == []
+        assert result["outputs"] == []
+        assert "warning" in result
+        assert "jednego klienta integracji" in result["warning"].lower()
+
+    async def test_stable_connection_with_no_activity_has_no_busy_warning(self, monkeypatch):
+        """Kontrast do testu wyżej: gdy połączenie jest stabilne (nie
+        opada), brak aktywności NIE powinien dawać ostrzeżenia o zajętej
+        centrali - to normalny, oczekiwany wynik (nikt nic nie wyzwolił)."""
+        class Fake(FakeAsyncSatelDiscovery):
+            _events = []
+
+        import satel_integra.satel_integra as satel_module
+        monkeypatch.setattr(satel_module, "AsyncSatel", lambda host, port, loop: Fake(host, port, loop))
+
+        result = await discover_active_zones_and_outputs("127.0.0.1", 7094, timeout_seconds=0.06)
+        assert result == {"zones": [], "outputs": []}
 
 
 class FakeAsyncSatelKeepAlive:
