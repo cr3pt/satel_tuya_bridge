@@ -671,6 +671,46 @@ class TestSetupSave:
         assert resp.status_code == 400
         assert "details" in resp.get_json()
 
+    def test_save_with_non_numeric_field_returns_json_400_not_html_500(self, setup_client):
+        """Reprodukcja zgłoszonego błędu: pole "liczbowe" (tu: numer strefy)
+        z tekstem zamiast liczby nie może lecieć jako nieobsłużony wyjątek
+        (HTML 500 - JS robi `await resp.json()`, więc dostawałby
+        `SyntaxError: Unexpected token '<'` bez żadnej wskazówki) - musi
+        wrócić jako czytelny JSON 400. `validate()` świadomie nie sprawdza
+        formatu KAŻDEGO pola liczbowego (za dużo miejsc), więc to
+        `build_config_dict` (przez `int()`) naturalnie rzuca ValueError -
+        `api_setup_save` musi to złapać (patrz dashboard/app.py)."""
+        client, _ = setup_client
+        bad_form = {
+            **VALID_FORM,
+            "partitions": [{"name": "Dom", "number": "niejestem_liczbą"}],
+        }
+        resp = client.post("/api/setup/save", json=bad_form)
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert "details" in data
+        assert "liczbow" in data["details"][0].lower()
+
+    def test_unexpected_error_in_api_route_returns_json_not_html(self, setup_client, monkeypatch):
+        """Zabezpieczenie ogólne (handle_unexpected_error w dashboard/app.py)
+        - NIEZALEŻNIE od tego, gdzie dokładnie wybuchnie, każdy endpoint
+        /api/* musi zwrócić JSON, nie domyślną stronę HTML Flaska."""
+        import dashboard.setup as setup_module
+
+        client, _ = setup_client
+
+        def _boom(form):
+            raise RuntimeError("symulowany nieoczekiwany błąd")
+
+        monkeypatch.setattr(setup_module, "build_config_dict", _boom)
+        import dashboard.app as app_module
+        monkeypatch.setattr(app_module, "build_config_dict", _boom)
+
+        resp = client.post("/api/setup/save", json=VALID_FORM)
+        assert resp.status_code == 500
+        assert resp.content_type.startswith("application/json")
+        assert "błąd serwera" in resp.get_json()["error"].lower()
+
     def test_dashboard_usable_immediately_after_save(self, setup_client):
         """Po zapisie panel powinien być od razu dostępny w TYM SAMYM
         procesie, bez ręcznego restartu dashboardu."""
