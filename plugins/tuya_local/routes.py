@@ -12,7 +12,7 @@ from bridge.tuya_local import scan_network as scan_tuya_network, fetch_cloud_dev
 from dashboard.setup import (
     build_tuya_devices_dict, validate_tuya_devices, tuya_devices_to_rows, zigbee_gateways_to_rows,
 )
-from plugins import PluginMeta
+from plugins import PluginMeta, register_settings_route
 
 META = PluginMeta(
     id="tuya_local",
@@ -95,5 +95,26 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         except Exception as exc:
             return jsonify({"error": f"Błąd importu z Tuya Cloud: {exc}"}), 502
         return jsonify({"devices": devices})
+
+    def _get_tuya_section() -> dict:
+        # STORED sekcja z dokumentu "config" - NIE scalony widok
+        # get_config_raw() (tam "devices"/"zigbee_gateways" nadpisane są z
+        # osobnego dokumentu "tuya_devices", patrz plugins/satel/routes.py
+        # po ten sam komentarz o dlaczego).
+        return get_config_store().get("config").get("tuya", {})
+
+    def _save_tuya_section(section: dict) -> None:
+        current = get_config_store().get("config")
+        current["tuya"] = section
+        get_config_store().set("config", current)
+
+    # Współdzielone przez tuya_local i tuya_zigbee (ta sama sekcja "tuya" w
+    # configu - patrz dashboard/setup.py: PLUGIN_DEFS, tuya_zigbee nie ma
+    # własnego przełącznika/wpisu tutaj, bo dzieli runtime z tuya_local).
+    register_settings_route(
+        app, "tuya_local", require_auth=require_auth, get_auth_guard=get_auth_guard,
+        get_section=_get_tuya_section, save_section=_save_tuya_section,
+        reload_bridge_config=reload_bridge_config, enqueue_bridge_reload=enqueue_bridge_reload,
+    )
 
     return META

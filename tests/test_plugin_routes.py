@@ -101,6 +101,66 @@ class TestSatelPluginPage:
         resp = client.post("/api/plugins/satel/scan", json={"host": "127.0.0.1", "timeout_seconds": 0.1})
         assert resp.status_code == 502
 
+    def test_settings_get_no_auth_required(self, client):
+        resp = client.get("/api/plugins/satel/settings")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"enabled": True, "log_level": ""}
+
+    def test_settings_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/satel/settings", json={"log_level": "DEBUG"}).status_code == 401
+
+    def test_settings_post_sets_log_level_without_touching_host(self, client):
+        import dashboard.app as app_module
+
+        resp = client.post(
+            "/api/plugins/satel/settings", json={"log_level": "debug"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert "bez restartu" in resp.get_json()["message"]
+        saved = app_module.config_store.get("config")["satel"]
+        assert saved["log_level"] == "DEBUG"
+        assert saved["host"] == "127.0.0.1"  # nietknięte
+
+    def test_settings_post_rejects_invalid_log_level(self, client):
+        resp = client.post(
+            "/api/plugins/satel/settings", json={"log_level": "LOUD"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_settings_post_toggles_enabled_and_reports_restart_required(self, client):
+        import dashboard.app as app_module
+
+        resp = client.post(
+            "/api/plugins/satel/settings", json={"enabled": False},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert "restartu" in resp.get_json()["message"]
+        assert app_module.config_store.get("config")["satel"]["enabled"] is False
+
+    def test_settings_post_does_not_clobber_fields_saved_via_satel_fields_doc(self, client):
+        """Po zapisie przez /api/plugins/satel/fields, monitored_zones/
+        partitions żyją w OSOBNYM dokumencie satel_fields (nadpisują to,
+        co w configu - patrz BridgeConfig.load) - zapis /settings (log_level/
+        enabled) nie może cofnąć tej zmiany, bo bierze/zapisuje sekcję
+        "satel" wprost z dokumentu "config", nie ze scalonego widoku."""
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/satel/fields", json={"partitions": [{"name": "Piwnica", "number": "9"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/satel/settings", json={"log_level": "INFO"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert app_module.config_store.get("config")["satel"]["log_level"] == "INFO"
+        # scalony widok wciąż pokazuje partycję zapisaną przez /fields,
+        # NIE tę wciąż leżącą (nieaktualną) w samym dokumencie "config"
+        assert {"name": "Piwnica", "number": 9} in client.get("/api/plugins/satel/fields").get_json()["partitions"]
+
 
 class TestTuyaLocalPluginPage:
     def test_page_loads(self, client):
@@ -152,6 +212,37 @@ class TestTuyaLocalPluginPage:
         )
         assert resp.status_code == 200
         assert resp.get_json()["devices"][0]["name"] == "Nowe"
+
+    def test_settings_get_no_auth_required(self, client):
+        resp = client.get("/api/plugins/tuya_local/settings")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"enabled": True, "log_level": ""}
+
+    def test_settings_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/tuya_local/settings", json={"log_level": "DEBUG"}).status_code == 401
+
+    def test_settings_post_does_not_clobber_devices_saved_via_tuya_devices_doc(self, client):
+        """Tak jak dla satel - po zapisie przez /api/plugins/tuya/devices,
+        zapis /settings (enabled/log_level) nie może cofnąć zmiany
+        urządzeń, bo bierze/zapisuje sekcję "tuya" wprost z dokumentu
+        "config", nie ze scalonego widoku (gdzie devices nadpisane są z
+        osobnego dokumentu tuya_devices)."""
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/tuya/devices",
+            json={"tuya_devices": [{"name": "trwale", "id": "d3", "ip": "1.2.3.6", "local_key": "k3", "type": "socket"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = client.post(
+            "/api/plugins/tuya_local/settings", json={"enabled": False, "log_level": "WARNING"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        stored_tuya = app_module.config_store.get("config")["tuya"]
+        assert stored_tuya["enabled"] is False
+        assert stored_tuya["log_level"] == "WARNING"
+        assert any(d["name"] == "trwale" for d in client.get("/api/plugins/tuya/devices").get_json()["devices"])
 
 
 class TestEbusPluginPage:
@@ -236,3 +327,24 @@ class TestEbusPluginPage:
 
         resp = client.post("/api/plugins/ebus/discover/start", json={})
         assert resp.status_code == 400
+
+    def test_settings_get_no_auth_required(self, client):
+        resp = client.get("/api/plugins/ebus/settings")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"enabled": True, "log_level": ""}
+
+    def test_settings_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/ebus/settings", json={"log_level": "DEBUG"}).status_code == 401
+
+    def test_settings_post_does_not_duplicate_sensors_into_config_doc(self, client):
+        import dashboard.app as app_module
+
+        resp = client.post(
+            "/api/plugins/ebus/settings", json={"log_level": "ERROR"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        stored_ebus = app_module.config_store.get("config")["ebus"]
+        assert stored_ebus["log_level"] == "ERROR"
+        assert "sensors" not in stored_ebus
+        assert stored_ebus["mqtt_host"] == "127.0.0.1"

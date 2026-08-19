@@ -9,7 +9,7 @@ from flask import Flask, jsonify, render_template, request
 
 from bridge.ebus_client import discover_topics as discover_ebus_topics, BackgroundTopicDiscovery
 from dashboard.setup import clean_sensors_payload
-from plugins import PluginMeta
+from plugins import PluginMeta, register_settings_route
 
 META = PluginMeta(
     id="ebus",
@@ -108,5 +108,23 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
     @app.route("/api/plugins/ebus/discover/stop", methods=["POST"])
     def api_plugin_ebus_discover_stop():
         return jsonify(_background_discovery.stop())
+
+    def _get_ebus_section() -> dict:
+        # STORED sekcja z dokumentu "config" - lista czujników żyje osobno
+        # w dokumencie "sensors" (patrz get_config_raw()["ebus"]["sensors"]
+        # wyżej, scalane dopiero przez BridgeConfig.load - to samo
+        # zastrzeżenie co w plugins/satel/routes.py).
+        return get_config_store().get("config").get("ebus", {})
+
+    def _save_ebus_section(section: dict) -> None:
+        current = get_config_store().get("config")
+        current["ebus"] = section
+        get_config_store().set("config", current)
+
+    register_settings_route(
+        app, "ebus", require_auth=require_auth, get_auth_guard=get_auth_guard,
+        get_section=_get_ebus_section, save_section=_save_ebus_section,
+        reload_bridge_config=reload_bridge_config, enqueue_bridge_reload=enqueue_bridge_reload,
+    )
 
     return META
