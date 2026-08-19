@@ -157,6 +157,45 @@ class TestMotionRules:
         assert len(events) == 1
 
 
+class TestSatelZoneOutputCallbackShape:
+    """Regresja dla zgłoszonego z prawdziwej centrali błędu: strefy/wyjścia
+    na głównej stronie nigdy nie zmieniały stanu (zamrożone na wartości z
+    zasiania), a zamiast tego pojawiał się jeden fałszywy wpis z dziwnym
+    numerem. Przyczyna: satel_integra woła zarejestrowany callback z
+    PEŁNYM obiektem `{"zones": {numer: 0/1, ...}}` / `{"outputs": {...}}`
+    (patrz AsyncSatel._zone_violated()/_output_changed() w
+    satel_integra/satel_integra.py), NIE z samym wewnętrznym słownikiem -
+    _on_zone_change/_on_output_change w rules_engine.py (zarejestrowane w
+    start()) muszą to rozpakować przez `.get("zones"/"outputs", {})`."""
+
+    async def test_zone_change_updates_correct_zone_not_bogus_key(self, engine, fake_satel):
+        fake_satel.monitored_zones = {"Czujka salon": 12}
+        await engine.start()
+        await fake_satel._zone_cb({"zones": {12: 1}})
+
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("satel_input")}
+        assert statuses["satel_input:12"] == "naruszone"
+        assert "satel_input:zones" not in statuses
+
+    async def test_output_change_updates_correct_output_not_bogus_key(self, engine, fake_satel):
+        fake_satel.monitored_outputs = {"Brama": 9}
+        await engine.start()
+        await fake_satel._output_cb({"outputs": {9: 1}})
+
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("satel_output")}
+        assert statuses["satel_output:9"] == "włączone"
+        assert "satel_output:outputs" not in statuses
+
+    async def test_zone_violation_still_triggers_motion_rule(self, engine, fake_satel, fake_tuya):
+        """_on_zone_change wywołuje też handle_motion() dla reguł ruchu -
+        musi to nadal działać po rozpakowaniu "zones"."""
+        fake_satel.monitored_zones = {"Czujka": 12}
+        await engine.start()
+        await fake_satel._zone_cb({"zones": {12: 1}})
+        await asyncio.sleep(0)
+        assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+
 class TestLightToSatelRule:
     async def test_light_on_triggers_virtual_input(self, engine, fake_virtual_inputs):
         await engine.handle_light_state_change("gniazdko_salon", True)
