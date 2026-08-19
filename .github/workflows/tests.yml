@@ -11,9 +11,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 3.9 to najstarszy Python realnie spotykany na Raspberry Pi OS
-        # (Bullseye), 3.11/3.12 to nowsze obrazy - testujemy oba krańce
-        python-version: ["3.9", "3.11", "3.12"]
+        # Projekt nie jest już ograniczony do RPi Zero (stąd brak 3.9 -
+        # część zależności, np. uiprotect>=6.0, i tak już wymaga >=3.10,
+        # więc 3.9 nie da się zainstalować - patrz requirements.txt).
+        # 3.13 to najnowsza stabilna gałąź - testujemy ją razem z 3.11/3.12.
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
