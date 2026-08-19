@@ -67,7 +67,7 @@ def test_missing_required_section_raises(tmp_path):
 def test_convenience_properties(config_dir):
     config = BridgeConfig.load(config_dir / "config.yaml")
     assert config.satel["host"] == "127.0.0.1"
-    assert config.tuya == {"devices": {}, "zigbee_gateways": {}}
+    assert config.tuya == {"devices": {}, "zigbee_gateways": {}, "cloud_devices": {}}
     assert config.motion_rules == []
     assert config.boiler_output == {"mode": "mqtt"}  # wartość domyślna gdy sekcja nieobecna
     assert config.unifi_protect is None

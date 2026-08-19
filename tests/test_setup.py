@@ -8,6 +8,7 @@ import yaml
 from dashboard.setup import (
     build_config_dict, validate, build_automations_dict, validate_automations,
     build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
+    validate_cloud_devices, cloud_devices_to_rows,
     build_connections_patch, validate_connections, connections_to_form, list_plugins,
     draft_path_for, load_draft, save_draft, delete_draft,
 )
@@ -278,6 +279,7 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
                 "gniazdko": {"id": "d1", "ip": "1.2.3.4", "local_key": "k", "version": 3.4, "type": "socket"},
             },
             "zigbee_gateways": {},
+            "cloud_devices": {},
         }
 
     def test_build_tuya_devices_zigbee_sub_device_has_no_ip_or_local_key(self):
@@ -315,7 +317,7 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         assert devices["devices"]["d"]["dimmer_range"] == [10, 1000]
 
     def test_build_tuya_devices_empty_form(self):
-        assert build_tuya_devices_dict({}) == {"devices": {}, "zigbee_gateways": {}}
+        assert build_tuya_devices_dict({}) == {"devices": {}, "zigbee_gateways": {}, "cloud_devices": {}}
 
     def test_validate_tuya_devices_no_errors_when_complete(self):
         form = {"tuya_devices": [{"name": "x", "id": "i", "ip": "1.2.3.4", "local_key": "k"}]}
@@ -350,6 +352,60 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         dumped_tuya = yaml.safe_dump(build_tuya_devices_dict(form), allow_unicode=True, sort_keys=False)
         assert yaml.safe_load(dumped_satel)["partitions"] == {"Dom": 1}
         assert yaml.safe_load(dumped_tuya)["devices"]["d"]["ip"] == "1.2.3.4"
+
+
+class TestCloudDevicesBuilder:
+    """Urządzenia sterowane WYŁĄCZNIE przez Tuya Cloud (bez local_key/IP) -
+    zgłoszony błąd: import z Tuya Cloud dawał "nazwa, ID, adres IP i
+    local_key są wymagane" dla KAŻDEGO urządzenia bez local_key/IP, bo
+    lądowały w walidacji urządzeń lokalnych (validate_tuya_devices) zamiast
+    tutaj (validate_cloud_devices, wymaga tylko nazwy i ID)."""
+
+    def test_build_cloud_devices_requires_only_name_and_id(self):
+        form = {"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]}
+        devices = build_tuya_devices_dict(form)["cloud_devices"]
+        assert devices == {"lampa_taras": {"id": "c1", "category": "", "switch_code": "switch_1"}}
+
+    def test_build_cloud_devices_keeps_category_and_switch_code(self):
+        form = {"cloud_devices": [{"name": "wentylator", "id": "c2", "category": "fs", "switch_code": "switch"}]}
+        devices = build_tuya_devices_dict(form)["cloud_devices"]
+        assert devices["wentylator"] == {"id": "c2", "category": "fs", "switch_code": "switch"}
+
+    def test_build_cloud_devices_skips_incomplete_rows(self):
+        form = {"cloud_devices": [{"name": "", "id": "c1"}, {"name": "x", "id": ""}]}
+        assert build_tuya_devices_dict(form)["cloud_devices"] == {}
+
+    def test_validate_cloud_devices_no_errors_when_name_and_id_present(self):
+        form = {"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]}
+        assert validate_cloud_devices(form) == []
+
+    def test_validate_cloud_devices_does_not_require_ip_or_local_key(self):
+        """To jest sedno naprawy - w odróżnieniu od validate_tuya_devices,
+        BRAK ip/local_key nie jest błędem tutaj."""
+        form = {"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]}
+        errors = validate_cloud_devices(form)
+        assert not any("local_key" in e or "adres IP" in e for e in errors)
+
+    def test_validate_cloud_devices_missing_name_is_error(self):
+        form = {"cloud_devices": [{"name": "", "id": "c1"}]}
+        errors = validate_cloud_devices(form)
+        assert any("nazwa i ID" in e for e in errors)
+
+    def test_cloud_devices_to_rows_roundtrip(self):
+        devices = {"lampa_taras": {"id": "c1", "category": "kg", "switch_code": "switch_1"}}
+        assert cloud_devices_to_rows(devices) == [
+            {"name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1"},
+        ]
+
+    def test_build_tuya_devices_dict_includes_cloud_devices_key(self):
+        """Reprodukcja pełnego zgłoszonego formularza z 40 urządzeniami bez
+        local_key/IP - żaden nie powinien dawać błędu walidacji, wszystkie
+        powinny wylądować w cloud_devices, nie w devices."""
+        form = {"cloud_devices": [{"name": f"urzadzenie_{i}", "id": f"id{i}"} for i in range(40)]}
+        assert validate_cloud_devices(form) == []
+        result = build_tuya_devices_dict(form)
+        assert len(result["cloud_devices"]) == 40
+        assert result["devices"] == {}
 
 
 class TestConnectionsBuilder:

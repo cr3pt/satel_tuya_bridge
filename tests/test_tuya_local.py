@@ -173,7 +173,7 @@ class TestFetchCloudDevices:
         monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
         devices = fetch_cloud_devices("eu", "access_id", "access_secret")
         assert devices == [{
-            "id": "d1", "name": "Gniazdko", "local_key": "localkey1", "ip": "", "version": "",
+            "id": "d1", "name": "Gniazdko", "local_key": "localkey1", "ip": "", "version": "", "category": "",
             "gateway_id": "", "node_id": "",
         }]
 
