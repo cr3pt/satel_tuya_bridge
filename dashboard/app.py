@@ -931,8 +931,16 @@ def api_config_automation_context():
     config.yaml (panel /automations tylko ODCZYTUJE te rzeczy, nie edytuje
     - edycja urządzeń/wejść/stref zostaje ręczna w config.yaml/zakładce
     Wtyczki, patrz README). Publiczny - same nazwy nie są wrażliwe (bez
-    local_key/kluczy)."""
-    tuya_devices = list(config_raw.get("tuya", {}).get("devices", {}).keys())
+    local_key/kluczy).
+
+    "tuya_devices" łączy urządzenia lokalne (tuya.devices) I chmurowe
+    (tuya.cloud_devices, zakładka ☁ Tuya Cloud) - obie sterowane przez
+    ten sam TuyaController (bridge/tuya_dispatch.py), więc oba rodzaje
+    muszą dać się wybrać jako cel sceny/reguły ruchu, inaczej urządzenia
+    sterowane wyłącznie przez chmurę nigdy nie dałoby się użyć w
+    automatyzacji mimo że REALNIE da się nim sterować."""
+    tuya = config_raw.get("tuya", {})
+    tuya_devices = sorted(set(tuya.get("devices", {})) | set(tuya.get("cloud_devices", {})))
     virtual_inputs = list(config_raw.get("satel", {}).get("virtual_inputs", {}).get("inputs", {}).keys())
     satel_partitions = config_raw.get("satel", {}).get("partitions", {})
     return jsonify({"tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs, "satel_partitions": satel_partitions})
