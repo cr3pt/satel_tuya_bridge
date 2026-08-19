@@ -84,17 +84,20 @@
 <h1>🧩 Wtyczki</h1>
 <div class="hint">
   Jeden spójny przegląd wszystkich integracji. <strong>Przełącznik działa
-  TYLKO dla wtyczek, które już mają zapisane wymagane dane</strong>
-  (np. Tuya Cloud potrzebuje wcześniej wpisanego Access ID w zakładce
-  <code>🔌 Połączenia</code>) - to przełącznik włącz/wyłącz, nie edytor.
-  Pełna konfiguracja każdej integracji (adresy, klucze, urządzenia, reguły)
-  zostaje w jej właściwej zakładce - link w każdej karcie niżej.
+  TYLKO dla wtyczek, które już mają zapisane wymagane dane</strong> (np.
+  Tuya Cloud potrzebuje wcześniej wpisanego Access ID na jej własnej stronie,
+  link "⚙ Konfiguruj" w karcie niżej) - to przełącznik włącz/wyłącz, nie
+  edytor. Pełna konfiguracja każdej integracji (adresy, klucze, urządzenia,
+  reguły) zostaje na jej właściwej, dedykowanej stronie.
   <span class="restart-badge">wymaga restartu</span> oznacza, że zmiana
   zadziała dopiero po pełnym restarcie procesu bridge'a - reszta włącza
   się na żywo w ciągu ok. 1-2s. Centrala Satel i Tuya (lokalnie) mają
   dodatkowo pole <strong>"Interwał odpytywania"</strong> - jak często
   bridge sam dopytuje o bieżący stan (niezależnie od tego, czy centrala/
   urządzenie same zgłoszą zmianę) - to zawsze działa na żywo, bez restartu.
+  Każda karta ma też pole <strong>"Poziom logowania"</strong> - zapisuje
+  się od razu przy zmianie (bez osobnego przycisku), niezależnie od
+  domyślnego poziomu globalnego (zakładka ⚙ Ustawienia ogólne).
 </div>
 
 <div id="pluginsMsg" class="msg-box"></div>
@@ -158,6 +161,13 @@ const PLUGIN_CONFIG_LINKS = {
   presence_simulation: { href: '/plugins/presence_simulation', label: '⚙ Konfiguruj →' },
   notifications: { href: '/plugins/notifications', label: '⚙ Konfiguruj →' },
 };
+
+// tuya_zigbee dzieli logger (bridge.tuya_local) i sekcję configu z Tuya
+// lokalnie - nie ma WŁASNEGO /api/plugins/tuya_zigbee/settings (patrz
+// plugins/tuya_local/routes.py) - poziom logowania ustawia się więc przez
+// endpoint tuya_local, tak samo jak konfigurację (patrz PLUGIN_CONFIG_LINKS
+// wyżej, ten sam wyjątek).
+const PLUGIN_SETTINGS_ENDPOINT_ID = { tuya_zigbee: 'tuya_local' };
 
 let pendingChanges = {};  // {plugin_id: {enabled?: bool, status_poll_interval_seconds?: number}} - zebrane, ale jeszcze niezapisane zmiany
 
@@ -225,6 +235,20 @@ function renderPlugin(p) {
         <span class="live-badge">● działa na żywo, bez restartu</span>
       </div>
     ` : ''}
+    ${p.has_log_level ? `
+      <div class="poll-interval-row">
+        <span>Poziom logowania:</span>
+        <select class="log-level-select">
+          <option value="">(domyślny globalny)</option>
+          <option value="DEBUG">DEBUG</option>
+          <option value="INFO">INFO</option>
+          <option value="WARNING">WARNING</option>
+          <option value="ERROR">ERROR</option>
+          <option value="CRITICAL">CRITICAL</option>
+        </select>
+        <span class="live-badge log-level-saved" style="display:none;">✓ zapisano</span>
+      </div>
+    ` : ''}
   `;
 
   if (p.toggleable) {
@@ -240,6 +264,36 @@ function renderPlugin(p) {
     input.addEventListener('change', () => {
       const value = parseInt(input.value, 10);
       setPendingField(p.id, 'status_poll_interval_seconds', value, p.poll_interval_seconds);
+    });
+  }
+
+  if (p.has_log_level) {
+    // Osobny endpoint od reszty karty (nie idzie przez pendingChanges/
+    // "Zapisz zmiany" wyżej) - /api/plugins/<id>/settings to ten sam,
+    // wspólny wzorzec co na dedykowanej stronie każdej wtyczki (patrz
+    // plugins/__init__.py: register_settings_route) - zapisuje się od
+    // razu przy zmianie, bez osobnego przycisku.
+    const select = card.querySelector('.log-level-select');
+    const savedBadge = card.querySelector('.log-level-saved');
+    select.value = p.log_level || '';
+    select.addEventListener('change', async () => {
+      const endpointId = PLUGIN_SETTINGS_ENDPOINT_ID[p.id] || p.id;
+      try {
+        const resp = await authorizedFetch(`/api/plugins/${endpointId}/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ log_level: select.value }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          showMsg(false, data.error || 'Błąd zapisu poziomu logowania');
+          return;
+        }
+        savedBadge.style.display = '';
+        setTimeout(() => { savedBadge.style.display = 'none'; }, 2000);
+      } catch (e) {
+        showMsg(false, 'Błąd komunikacji z serwerem: ' + e);
+      }
     });
   }
 
