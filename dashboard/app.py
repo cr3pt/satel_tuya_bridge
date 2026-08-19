@@ -19,6 +19,7 @@ import asyncio
 import logging
 import os
 import pathlib
+import sqlite3
 import threading
 import time
 
@@ -76,6 +77,20 @@ def handle_unexpected_error(exc: Exception):
         raise exc
     if isinstance(exc, HTTPException):
         return jsonify({"error": exc.description or exc.name}), exc.code
+    if isinstance(exc, (PermissionError, sqlite3.OperationalError)):
+        # Najczęstsza przyczyna w Dockerze: wolumen z danymi (./data ->
+        # /config) nie jest zapisywalny dla użytkownika appuser (UID 1000),
+        # bo pominięto `chown 1000:1000 data` przed pierwszym uruchomieniem
+        # (patrz README, sekcja "Uruchomienie w Dockerze") - bez tej
+        # gałęzi leciałoby jako nieczytelny "nieoczekiwany błąd serwera".
+        logger.exception("Nieoczekiwany błąd serwera (%s %s)", request.method, request.path)
+        return jsonify({
+            "error": "Brak dostępu do katalogu/pliku z konfiguracją (uprawnienia systemu plików). "
+                     "W Dockerze: katalog danych (./data, montowany jako /config) musi być "
+                     "zapisywalny dla użytkownika o UID 1000 - uruchom na hoście "
+                     "`sudo chown -R 1000:1000 data` i zrestartuj kontenery "
+                     "(patrz README, sekcja \"Uruchomienie w Dockerze\").",
+        }), 500
     logger.exception("Nieoczekiwany błąd serwera (%s %s)", request.method, request.path)
     return jsonify({
         "error": "Wystąpił nieoczekiwany błąd serwera. Sprawdź dziennik logów "
