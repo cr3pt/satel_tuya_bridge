@@ -711,6 +711,29 @@ class TestSetupSave:
         assert resp.content_type.startswith("application/json")
         assert "błąd serwera" in resp.get_json()["error"].lower()
 
+    def test_permission_error_in_api_route_returns_actionable_message(self, setup_client, monkeypatch):
+        """Reprodukcja realnego zgłoszonego przypadku: wolumen danych w
+        Dockerze niezapisywalny dla appuser (UID 1000) - PermissionError
+        (np. z save_draft) musi wrócić jako JSON z konkretną wskazówką
+        o uprawnieniach/chown, nie ogólnikowe "nieoczekiwany błąd"."""
+        import dashboard.setup as setup_module
+
+        client, _ = setup_client
+
+        def _boom(path, data):
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(setup_module, "save_draft", _boom)
+        import dashboard.app as app_module
+        monkeypatch.setattr(app_module, "save_draft", _boom)
+
+        resp = client.post("/api/setup/draft", json={"step": 1})
+        assert resp.status_code == 500
+        assert resp.content_type.startswith("application/json")
+        error = resp.get_json()["error"].lower()
+        assert "uprawnie" in error
+        assert "chown" in error
+
     def test_dashboard_usable_immediately_after_save(self, setup_client):
         """Po zapisie panel powinien być od razu dostępny w TYM SAMYM
         procesie, bez ręcznego restartu dashboardu."""
