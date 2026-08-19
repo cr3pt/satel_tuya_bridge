@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import pathlib
 import threading
@@ -23,6 +24,7 @@ import time
 
 import yaml
 from flask import Flask, jsonify, redirect, render_template, request, url_for
+from werkzeug.exceptions import HTTPException
 from werkzeug.security import generate_password_hash
 
 from bridge.config import BridgeConfig
@@ -45,12 +47,41 @@ from dashboard.setup import (
 )
 
 app = Flask(__name__)
+# "bridge.dashboard" (nie "dashboard.app"/__name__) - żeby trafiał pod
+# logger-rodzica "bridge" i był przechwytywany przez HistoryLogHandler
+# (patrz bridge/log_capture.py: attach_log_capture, podpięte pod logger
+# "bridge" w create_app() niżej) - widoczny w zakładce ⚙ Ustawienia ogólne
+# -> Logi, komponent "panel".
+logger = logging.getLogger("bridge.dashboard")
 history: HistoryStore | None = None  # ustawiane w create_app()
 config_store: ConfigStore | None = None  # ustawiane w create_app() - baza z dokumentami config/sensors/automations/satel_fields/tuya_devices
 auth_guard: AuthGuard | None = None  # ustawiane w create_app()
 satel_partitions_cfg: dict = {}  # nazwa -> numer strefy, ustawiane w create_app()
 config_raw: dict = {}  # ostatnio wczytany config.raw (do odczytu automatyzacji/kontekstu), ustawiane w create_app()
 config_path: pathlib.Path | None = None  # ustawiane w main() - ścieżka do bazy config.db, potrzebna, zanim w ogóle istnieje
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(exc: Exception):
+    """Bez tego NIEOCZEKIWANY wyjątek w dowolnym endponcie /api/* (np. zły
+    format liczby w jednym z wielu pól formularza kreatora - patrz walidacja
+    w dashboard/setup.py, która nie sprawdza WSZYSTKICH pól) leciałby przez
+    domyślny handler Flaska, który zwraca stronę HTML z kodem 500 - a JS
+    panelu wszędzie robi `await resp.json()`, więc taka odpowiedź kończy się
+    kompletnie nieczytelnym `SyntaxError: Unexpected token '<'` w
+    przeglądarce, bez żadnej wskazówki, co faktycznie poszło nie tak.
+    Strony HTML (nie /api/*) zostają nietknięte - tam strona błędu Flaska
+    ma sens."""
+    if not request.path.startswith("/api/"):
+        raise exc
+    if isinstance(exc, HTTPException):
+        return jsonify({"error": exc.description or exc.name}), exc.code
+    logger.exception("Nieoczekiwany błąd serwera (%s %s)", request.method, request.path)
+    return jsonify({
+        "error": "Wystąpił nieoczekiwany błąd serwera. Sprawdź dziennik logów "
+                 "(zakładka ⚙ Ustawienia ogólne -> Logi, komponent \"panel\") po szczegóły.",
+    }), 500
+
 
 # Endpointy dostępne, ZANIM config.yaml istnieje (kreator + statyka) -
 # wszystko inne przekierowuje na /setup, dopóki konfiguracja nie powstanie.
@@ -342,10 +373,29 @@ def api_setup_save():
     if errors:
         return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
-    config_dict = build_config_dict(form)
-    automations_dict = build_automations_dict(form)
-    satel_fields_dict = build_satel_fields_dict(form)
-    tuya_devices_dict = build_tuya_devices_dict(form)
+    # `validate()` sprawdza WYMAGANE pola (niepuste), ale świadomie nie
+    # sprawdza formatu WSZYSTKICH pól liczbowych (numery stref/wyjść/wejść,
+    # porty, czas trwania w scenach/regułach ruchu, szerokość/długość
+    # geograficzna itd.) - jest ich zbyt wiele, żeby dublować to osobno w
+    # dwóch miejscach. Builder (int()/float()) rzuciłby więc ValueError na
+    # np. wpisaną literką zamiast liczby, co bez tego try/except leciałoby
+    # jako nieobsłużony wyjątek -> HTML 500 zamiast JSON-a, którego oczekuje
+    # JS (patrz handle_unexpected_error wyżej - to i tak złapałby wyjątek,
+    # ale tu dajemy dokładniejszy, faktycznie pomocny komunikat).
+    try:
+        config_dict = build_config_dict(form)
+        automations_dict = build_automations_dict(form)
+        satel_fields_dict = build_satel_fields_dict(form)
+        tuya_devices_dict = build_tuya_devices_dict(form)
+    except (ValueError, TypeError) as exc:
+        logger.warning("Błąd budowania configu z formularza kreatora: %s", exc)
+        return jsonify({
+            "error": "Popraw błędy:",
+            "details": [
+                f"Jedno z pól liczbowych (numer strefy/wyjścia/wejścia, port, czas trwania, "
+                f"współrzędne itd.) ma nieprawidłowy format: {exc}",
+            ],
+        }), 400
 
     # Pierwszy zapis tworzy plik bazy config.db pod ścieżką z --config (patrz
     # main()) - wszystkie "dokumenty" (config/sensors/automations/
