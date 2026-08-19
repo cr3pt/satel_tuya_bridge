@@ -721,8 +721,13 @@ liczbą skonfigurowanych elementów (np. "3 urządzenia").
 To **przegląd i przełącznik, nie edytor** - część integracji (Satel, Tuya
 lokalnie/Zigbee, eBUS, UniFi Protect, powiadomienia) jest włączona/
 wyłączona samą OBECNOŚCIĄ konfiguracji (np. dodanie choć jednego
-urządzenia Tuya) i pokazuje się tu tylko do odczytu, z linkiem do
-właściwej zakładki. Cztery integracje mają osobną, zapisaną flagę
+urządzenia Tuya) i pokazuje się tu tylko do odczytu, z linkiem "⚙
+Konfiguruj" do właściwego miejsca. Trzy integracje (Satel, Tuya lokalnie +
+bramki Zigbee, eBUS) mają WŁASNĄ, dedykowaną stronę konfiguracji pod
+`plugins/<id>/` (`/plugins/satel`, `/plugins/tuya`, `/plugins/ebus`) - patrz
+"Struktura projektu" niżej i docstring `plugins/__init__.py`; reszta wciąż
+kieruje do zakładki 🔌 Połączenia/🎬 Automatyzacje. Cztery integracje mają
+osobną, zapisaną flagę
 `enabled`, którą da się przełączyć bezpośrednio z tego ekranu (bez
 przechodzenia do innej zakładki): **Tuya Cloud**, **Home Assistant**,
 **publikacja stanu do MQTT** i **symulacja obecności** - ale WŁĄCZENIE
@@ -732,11 +737,11 @@ uzupełnienia ich we właściwej zakładce (przełącznik odrzuci taką próbę 
 czytelnym błędem).
 
 Trzy z czterech przełączalnych integracji (Tuya Cloud, Home Assistant,
-publikacja MQTT) żyją w `config.yaml` i **wymagają pełnego restartu**
-procesu bridge'a, tak samo jak zmiany w zakładce 🔌 Połączenia (widać to
-jako odznakę "wymaga restartu" na karcie). Symulacja obecności jest
-wyjątkiem - żyje w `automations.yaml` i włącza/wyłącza się na żywo w
-ciągu ok. 1-2s, bez restartu (patrz "Zmiany działają od razu" wyżej).
+publikacja MQTT) żyją w dokumencie `config` i **wymagają pełnego
+restartu** procesu bridge'a, tak samo jak zmiany w zakładce 🔌 Połączenia
+(widać to jako odznakę "wymaga restartu" na karcie). Symulacja obecności
+jest wyjątkiem - żyje w dokumencie `automations` i włącza/wyłącza się na
+żywo w ciągu ok. 1-2s, bez restartu (patrz "Zmiany działają od razu" wyżej).
 
 **Interwał odpytywania (Satel i Tuya lokalnie).** Te dwie karty mają
 dodatkowo pole "Interwał odpytywania" - jak często bridge SAM dopytuje o
@@ -1430,6 +1435,8 @@ satel_tuya_bridge/
     templates/plugins.html    # przegląd wszystkich integracji (włącz/wyłącz, interwały)
   plugins/                   # wtyczki z WŁASNĄ stroną konfiguracji, jeden podkatalog na integrację
     satel/routes.py           # /plugins/satel - strefy/wyjścia/partycje + skanowanie, patrz plugins/__init__.py
+    tuya_local/routes.py      # /plugins/tuya - urządzenia + bramki Zigbee, skan LAN + import z Tuya Cloud
+    ebus/routes.py            # /plugins/ebus - czujniki kotła + wykrywanie tematów MQTT (blokujące i w tle)
   tests/                     # testy pytest (patrz sekcja "Testy automatyczne")
   .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.9/3.11/3.12
   maintenance.py              # CLI do rotacji/backupu bazy (do crona, patrz sekcja "Rotacja i backup bazy")

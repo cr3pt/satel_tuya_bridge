@@ -45,8 +45,10 @@ def register_all(app: Flask, **deps) -> list[PluginMeta]:
     wyżej) - każdy plugins/<id>/routes.py bierze z niego tylko to, czego
     faktycznie potrzebuje."""
     from plugins.satel import routes as satel_routes
+    from plugins.tuya_local import routes as tuya_routes
+    from plugins.ebus import routes as ebus_routes
 
     metas = []
-    for routes_module in (satel_routes,):
+    for routes_module in (satel_routes, tuya_routes, ebus_routes):
         metas.append(routes_module.register(app, **deps))
     return metas

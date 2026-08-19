@@ -794,6 +794,42 @@ def build_tuya_devices_dict(form: dict) -> dict:
     return {"devices": _build_tuya_devices(form), "zigbee_gateways": _build_zigbee_gateways(form)}
 
 
+def clean_sensors_payload(payload) -> tuple[list | None, str | None]:
+    """Waliduje i normalizuje listę czujników eBUS przesłaną z panelu
+    (`/api/config/sensors` w dashboard/app.py i `/api/plugins/ebus/sensors`
+    w plugins/ebus/routes.py - ten sam kształt danych, więc jedna wspólna
+    funkcja). Walidacja jest celowo minimalna (tylko to, co faktycznie
+    zepsułoby resztę bridge'a przy starcie) - reszta pól ma sensowne
+    wartości domyślne. Zwraca (cleaned, None) albo (None, komunikat_błędu)."""
+    if not isinstance(payload, list):
+        return None, "Oczekiwano listy czujników w ciele żądania"
+
+    cleaned = []
+    seen_names = set()
+    for i, item in enumerate(payload):
+        name = (item.get("name") or "").strip()
+        mqtt_topic = (item.get("mqtt_topic") or "").strip()
+        if not name or not mqtt_topic:
+            return None, f"Wiersz {i + 1}: pola 'name' i 'mqtt_topic' są wymagane"
+        if name in seen_names:
+            return None, f"Zduplikowana nazwa czujnika: '{name}'"
+        seen_names.add(name)
+
+        targets = item.get("targets") or {}
+        cleaned.append({
+            "name": name,
+            "label": (item.get("label") or name).strip(),
+            "mqtt_topic": mqtt_topic,
+            "targets": {
+                "history": bool(targets.get("history", True)),
+                "mqtt_publish": bool(targets.get("mqtt_publish", False)),
+                "tuya_virtual_device": bool(targets.get("tuya_virtual_device", False)),
+                "tuya_dp": (targets.get("tuya_dp") or "").strip(),
+            },
+        })
+    return cleaned, None
+
+
 def build_automations_dict(form: dict) -> dict:
     """Buduje zawartość automations.yaml (sceny/reguły ruchu/symulacja
     obecności) - używane zarówno przez kreator (razem z build_config_dict),
