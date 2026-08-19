@@ -38,7 +38,7 @@ from dashboard.setup import (
     build_connections_patch, validate_connections, connections_to_form, list_plugins,
     draft_path_for, load_draft, save_draft, delete_draft,
     dict_to_name_number_rows, zones_to_rows, virtual_inputs_to_rows,
-    tuya_devices_to_rows, zigbee_gateways_to_rows,
+    tuya_devices_to_rows, zigbee_gateways_to_rows, clean_sensors_payload,
 )
 
 app = Flask(__name__)
@@ -101,10 +101,10 @@ def _enqueue_bridge_reload() -> None:
 
 # _dict_to_name_number_rows/_zones_to_rows/_virtual_inputs_to_rows/
 # _tuya_devices_to_rows/_zigbee_gateways_to_rows przeniesione do
-# dashboard/setup.py (patrz import wyżej) - żeby plugins/satel/routes.py i
-# plugins/tuya/routes.py mogły z nich korzystać bez importowania tego
-# modułu (dashboard.app), co dałoby cykl importów (ten moduł rejestruje
-# blueprinty tych wtyczek).
+# dashboard/setup.py (patrz import wyżej) - żeby plugins/satel/routes.py,
+# plugins/tuya_local/routes.py i plugins/ebus/routes.py mogły z nich
+# korzystać bez importowania tego modułu (dashboard.app), co dałoby cykl
+# importów (ten moduł rejestruje blueprinty tych wtyczek).
 
 
 def _reload_bridge_config_from_disk() -> None:
@@ -397,32 +397,9 @@ def api_config_sensors_post():
     celowo minimalna (tylko to, co faktycznie zepsułoby resztę bridge'a przy
     starcie) - reszta pól ma sensowne wartości domyślne."""
     payload = request.get_json(silent=True)
-    if not isinstance(payload, list):
-        return jsonify({"error": "Oczekiwano listy czujników w ciele żądania"}), 400
-
-    cleaned = []
-    seen_names = set()
-    for i, item in enumerate(payload):
-        name = (item.get("name") or "").strip()
-        mqtt_topic = (item.get("mqtt_topic") or "").strip()
-        if not name or not mqtt_topic:
-            return jsonify({"error": f"Wiersz {i + 1}: pola 'name' i 'mqtt_topic' są wymagane"}), 400
-        if name in seen_names:
-            return jsonify({"error": f"Zduplikowana nazwa czujnika: '{name}'"}), 400
-        seen_names.add(name)
-
-        targets = item.get("targets") or {}
-        cleaned.append({
-            "name": name,
-            "label": (item.get("label") or name).strip(),
-            "mqtt_topic": mqtt_topic,
-            "targets": {
-                "history": bool(targets.get("history", True)),
-                "mqtt_publish": bool(targets.get("mqtt_publish", False)),
-                "tuya_virtual_device": bool(targets.get("tuya_virtual_device", False)),
-                "tuya_dp": (targets.get("tuya_dp") or "").strip(),
-            },
-        })
+    cleaned, error = clean_sensors_payload(payload)
+    if error:
+        return jsonify({"error": error}), 400
 
     config_store.set("sensors", {"sensors": cleaned})
     _enqueue_bridge_reload()
