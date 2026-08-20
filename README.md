@@ -1151,7 +1151,7 @@ Dzięki temu autoryzacja zostaje jedna, spójna, i w jednym miejscu -
 zamiast dwóch równoległych ścieżek sterowania o różnym poziomie
 zabezpieczeń.
 
-## Automatyzacje: sceny, harmonogramy, eskalacja, symulacja obecności
+## Automatyzacje: sceny, harmonogramy, eskalacja, warunki, łańcuchy, symulacja obecności
 
 Oprócz prostych reguł "ruch -> włącz urządzenie", bridge wspiera bardziej
 złożoną automatykę - wszystko zbudowane na jednym wspólnym fundamencie:
@@ -1159,8 +1159,9 @@ złożoną automatykę - wszystko zbudowane na jednym wspólnym fundamencie:
 
 **W pełni konfigurowalne z przeglądarki, bez dotykania YAML-a** - zakładka
 **🎬 Automatyzacje** (`/automations`, link z górnego paska panelu) pozwala
-dodawać/edytować/usuwać sceny, reguły ruchu (harmonogram + eskalacja) i
-symulację obecności. Odczyt jest otwarty, **zapis wymaga hasła
+dodawać/edytować/usuwać sceny, reguły ruchu (harmonogram + eskalacja +
+dodatkowy warunek and/or/not + wyzwalanie łańcuchowe kolejnej reguły, patrz
+niżej) i symulację obecności. Odczyt jest otwarty, **zapis wymaga hasła
 administratora panelu** (tego samego z kroku "Hasło administratora panelu"
 w kreatorze - patrz sekcja "Bezpieczeństwo panelu" niżej). Alternatywnie:
 te same trzy rzeczy da się skonfigurować już **w kreatorze** przy
@@ -1249,6 +1250,79 @@ escalation:
 
 Naruszenia rozłożone w czasie (poza oknem) nie kumulują się - sprawdzone
 testem, że pojedyncze sporadyczne ruchy nie wywołują fałszywej eskalacji.
+
+### Dodatkowy warunek reguły (`condition`: and/or/not/state/time_window)
+
+Każda reguła ruchu może mieć opcjonalne pole `condition` - dowolnie
+zagnieżdżony warunek logiczny (AND/OR/NOT), analogiczny do `condition:` w
+Home Assistant, który MUSI być spełniony, żeby reguła zadziałała (poza
+zwykłym dopasowaniem strefy i `time_window` wyżej - te działają zawsze
+razem). Dwa typy liścia:
+
+- `state` - porównanie aktualnej wartości DOWOLNEGO statusu widocznego na
+  panelu głównym (wejście/wyjście Satela, urządzenie Tuya, czujnik kotła -
+  ten sam klucz, co w kolumnie "key" pod `/api/status`, np.
+  `satel_input:3`, `tuya:gniazdko_salon`) z zadaną wartością - `equals` albo
+  `not_equals`.
+- `time_window` - dokładnie ten sam format co pole `time_window` reguły
+  wyżej (w tym `sunset`/`sunrise`), ale jako warunek podrzędny (przydatne
+  wewnątrz `not`, żeby wyrazić "poza tym oknem").
+
+```yaml
+reguły_ruchu:
+  - source: satel_zone
+    zone_number: 12
+    target_device: gniazdko_salon
+    duration_seconds: 60
+    condition:
+      type: and
+      conditions:
+        - {type: state, key: "satel_input:9", equals: "naruszone"}   # ktoś jest w przedpokoju
+        - type: not
+          conditions:
+            - {type: time_window, start: "22:00", end: "06:00"}       # ...ale NIE w nocy
+```
+
+Edytor w panelu (`/automations`, sekcja "Reguły ruchu") ma do tego
+graficzny konstruktor grup AND/OR/NOT z dowolnym zagnieżdżaniem - klucze
+statusu wybiera się z listy (to, co panel akurat odczytał), zamiast wpisywać
+je ręcznie. Warunek z błędem (np. nieznany typ) jest odrzucany przy
+zapisie; warunek, który w trakcie działania nie da się obliczyć (np.
+odwołuje się do klucza, który zniknął z configu), traktowany jest jako
+NIESPEŁNIONY (reguła bezpiecznie się nie uruchamia, zamiast wywalić cały
+proces bridge'a) - sprawdzone testem.
+
+### Wyzwalanie łańcuchowe (`then_trigger_rule`)
+
+Reguła ruchu może mieć nazwę (`name`) i opcjonalne pole
+`then_trigger_rule` wskazujące na nazwę INNEJ reguły - po zadziałaniu
+(włącznie z eskalacją) ta pierwsza reguła od razu uruchamia drugą,
+dokładnie tak, jakby druga zareagowała na własny trigger. Druga reguła
+nadal respektuje WŁASNY `time_window`/`condition` - łańcuch tylko ją
+wywołuje, nie omija jej warunków.
+
+```yaml
+reguły_ruchu:
+  - name: wejscie_do_domu
+    source: satel_zone
+    zone_number: 3
+    target_device: swiatlo_przedpokoj
+    duration_seconds: 120
+    then_trigger_rule: powiadom_o_wejsciu
+
+  - name: powiadom_o_wejsciu
+    source: satel_zone
+    zone_number: 3            # nieużywane przy wyzwoleniu łańcuchowym -
+                               # reguła i tak potrzebuje pasować do jakiegoś
+                               # source/zone_number, żeby przejść walidację
+    scene: powiadomienie_wejscie
+```
+
+Limit głębokości łańcucha (5 poziomów) chroni przed nieskończoną pętlą,
+gdyby dwie reguły wskazywały wzajemnie na siebie (`A -> B -> A -> ...`) -
+sprawdzone testem, że taki cykl kończy się (z ostrzeżeniem w logu), zamiast
+zawiesić proces. Panel (`/automations`) waliduje przy zapisie, że nazwa
+docelowa istnieje i że reguła nie wskazuje sama na siebie.
 
 ### Symulacja obecności
 

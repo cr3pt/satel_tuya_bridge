@@ -61,6 +61,16 @@
   .action-fields { display: flex; gap: 8px; flex: 2; flex-wrap: wrap; }
   .action-fields input, .action-fields select { flex: 1; min-width: 100px; }
   .empty-hint { color: var(--muted); font-size: 13px; font-style: italic; }
+  .cond-group { border: 1px dashed var(--border); border-radius: 8px; padding: 10px; margin-top: 6px; }
+  .cond-group-header { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .cond-group-header select.cond-op { max-width: 230px; }
+  .cond-group-header .add-row-btn { padding: 6px 10px; font-size: 12.5px; }
+  .cond-children { display: flex; flex-direction: column; gap: 6px; }
+  .cond-row { display: flex; gap: 6px; align-items: flex-start; background: #1d2129; border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+  .cond-leaf-fields { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; }
+  .cond-leaf-fields select, .cond-leaf-fields input { flex: 1; min-width: 110px; }
+  .cond-row .cond-nested { flex: 1; margin-top: 0; }
+  .cond-empty-hint { font-size: 12px; margin-top: 4px; }
   button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 10px 18px; font-size: 14px; cursor: pointer; font-weight: 500; }
   button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
   .save-bar { position: sticky; bottom: 0; background: var(--bg); padding: 16px 0; border-top: 1px solid var(--border); margin-top: 8px; }
@@ -100,9 +110,14 @@
   <div class="section-hint">
     Naruszenie wejścia Satela → włącz urządzenie na czas (albo uruchom
     scenę). Opcjonalnie: <b>harmonogram</b> - reguła aktywna tylko w
-    wybranych godzinach, oraz <b>eskalacja</b> - kilka naruszeń w krótkim
-    czasie wywołuje mocniejszą scenę. (Reguły dla ruchu z czujek Tuya PIR i
-    reguły kamer da się dodać tylko ręcznie w <code>config.yaml</code>.)
+    wybranych godzinach, <b>eskalacja</b> - kilka naruszeń w krótkim czasie
+    wywołuje mocniejszą scenę, <b>dodatkowy warunek</b> - dowolnie
+    zagnieżdżone AND/OR/NOT porównujące aktualny stan innych wejść/wyjść/
+    urządzeń (jak w Home Assistant), oraz <b>wyzwól kolejną regułę</b> - po
+    zadziałaniu ta reguła może od razu uruchomić inną, nazwaną regułę
+    (reguły muszą mieć nadaną nazwę, żeby dało się je tak połączyć).
+    (Reguły dla ruchu z czujek Tuya PIR i reguły kamer da się dodać tylko
+    ręcznie w <code>config.yaml</code>.)
   </div>
   <div id="motionRulesContainer"></div>
   <div id="rulesEmptyHint" class="empty-hint">Brak zdefiniowanych reguł ruchu.</div>
@@ -141,7 +156,7 @@
 </div>
 
 <script>
-let context = { tuya_devices: [], virtual_inputs: [], satel_partitions: {} };
+let context = { tuya_devices: [], virtual_inputs: [], satel_partitions: {}, status_keys: [], motion_rule_names: [] };
 
 // Autoryzacja tylko dla zapisu (POST) - sesja przez /login (ciasteczko
 // HttpOnly, tak samo jak /config - patrz dashboard/auth.py).
@@ -237,6 +252,9 @@ function refreshDependentDropdowns() {
     const curScene = sceneSel.value; sceneSel.innerHTML = sceneOptionsHtml(curScene); sceneSel.value = curScene;
     const escSel = card.querySelector('.mr-esc-scene');
     const curEsc = escSel.value; escSel.innerHTML = sceneOptionsHtml(curEsc); escSel.value = curEsc;
+    const chainSel = card.querySelector('.mr-then-trigger');
+    const nameEl = card.querySelector('.mr-name');
+    const curChain = chainSel.value; chainSel.innerHTML = thenTriggerRuleOptionsHtml(curChain, nameEl); chainSel.value = curChain;
   });
   refreshEmptyHints();
 }
@@ -359,6 +377,146 @@ function collectScenes() {
 }
 
 // ------------------------------------------------------------------
+// Dodatkowy warunek reguły (and/or/not/state/time_window) - zagnieżdżony
+// dowolnie głęboko, analogicznie do `condition:` w Home Assistant. Kształt
+// budowany/odczytywany tutaj musi być identyczny z tym, co waliduje
+// dashboard/setup.py: _build_condition/_validate_condition i ewaluuje
+// bridge/conditions.py: evaluate_condition.
+// ------------------------------------------------------------------
+function stateKeyOptionsHtml(selected) {
+  const known = context.status_keys || [];
+  const opts = known.map(s =>
+    `<option value="${escapeHtml(s.key)}" ${s.key === selected ? 'selected' : ''}>${escapeHtml(s.label)} (${escapeHtml(s.category)})</option>`
+  ).join('');
+  const hasSelected = selected && known.some(s => s.key === selected);
+  // Zapisany klucz może już nie występować wśród aktualnych statusów (np.
+  // urządzenie usunięte z configu, albo panel jeszcze nic nie odczytał od
+  // startu) - dokładamy go jako dodatkową opcję, żeby edycja reguły nie
+  // pogubiła po cichu istniejącej wartości.
+  const extra = (selected && !hasSelected)
+    ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (obecnie brak danych)</option>` : '';
+  const placeholder = `<option value="">${known.length ? '(wybierz status)' : '(panel jeszcze nic nie odczytał - wpisz klucz ręcznie niżej albo odśwież po chwili)'}</option>`;
+  return placeholder + opts + extra;
+}
+
+function buildConditionLeafFieldsHtml(type, initial) {
+  initial = initial || {};
+  if (type === 'state') {
+    return `
+      <select class="cond-state-key">${stateKeyOptionsHtml(initial.key)}</select>
+      <select class="cond-state-op" style="max-width:130px;">
+        <option value="equals" ${!initial.not_equals ? 'selected' : ''}>równa się</option>
+        <option value="not_equals" ${initial.not_equals ? 'selected' : ''}>różna od</option>
+      </select>
+      <input type="text" class="cond-state-value" placeholder="wartość, np. naruszone / włączone" value="${escapeHtml(initial.equals ?? initial.not_equals ?? '')}">`;
+  }
+  if (type === 'time_window') {
+    return `
+      <input type="text" class="cond-tw-start" placeholder="początek, np. 22:00 albo sunset-15" value="${escapeHtml(initial.start || '')}">
+      <input type="text" class="cond-tw-end" placeholder="koniec, np. 06:00" value="${escapeHtml(initial.end || '')}">`;
+  }
+  return '';
+}
+
+function buildConditionGroupEl(groupData) {
+  groupData = groupData || { type: 'and', conditions: [] };
+  const el = document.createElement('div');
+  el.className = 'cond-group';
+  el.innerHTML = `
+    <div class="cond-group-header">
+      <select class="cond-op">
+        <option value="and">Spełnione WSZYSTKIE (AND)</option>
+        <option value="or">Spełniony DOWOLNY (OR)</option>
+        <option value="not">NIE / ŻADEN (NOT)</option>
+      </select>
+      <button type="button" class="secondary add-row-btn cond-add-state">+ stan</button>
+      <button type="button" class="secondary add-row-btn cond-add-window">+ okno czasowe</button>
+      <button type="button" class="secondary add-row-btn cond-add-group">+ grupa zagnieżdżona</button>
+    </div>
+    <div class="cond-children"></div>
+    <div class="cond-empty-hint empty-hint">Brak warunków w tej grupie - traktowana jako spełniona.</div>`;
+  el.querySelector('.cond-op').value = groupData.type || 'and';
+  const childrenEl = el.querySelector('.cond-children');
+  const emptyHintEl = el.querySelector('.cond-empty-hint');
+
+  function refreshEmpty() {
+    emptyHintEl.style.display = childrenEl.children.length ? 'none' : '';
+  }
+
+  function addChildRow(kind, initial) {
+    const row = document.createElement('div');
+    row.className = 'cond-row';
+    if (kind === 'group') {
+      const nested = buildConditionGroupEl(initial);
+      nested.classList.add('cond-nested');
+      row.appendChild(nested);
+    } else {
+      const fields = document.createElement('div');
+      fields.className = 'cond-leaf-fields';
+      fields.dataset.condType = kind;
+      fields.innerHTML = buildConditionLeafFieldsHtml(kind, initial);
+      row.appendChild(fields);
+    }
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'row-remove';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', () => { row.remove(); refreshEmpty(); });
+    row.appendChild(removeBtn);
+    childrenEl.appendChild(row);
+    refreshEmpty();
+  }
+
+  el.querySelector('.cond-add-state').addEventListener('click', () => addChildRow('state'));
+  el.querySelector('.cond-add-window').addEventListener('click', () => addChildRow('time_window'));
+  el.querySelector('.cond-add-group').addEventListener('click', () => addChildRow('group', { type: 'and', conditions: [] }));
+
+  (groupData.conditions || []).forEach(c => {
+    if (c.type === 'and' || c.type === 'or' || c.type === 'not') addChildRow('group', c);
+    else addChildRow(c.type, c);
+  });
+  refreshEmpty();
+  return el;
+}
+
+function collectConditionGroup(groupEl) {
+  const type = groupEl.querySelector(':scope > .cond-group-header .cond-op').value;
+  const childrenEl = groupEl.querySelector(':scope > .cond-children');
+  const conditions = Array.from(childrenEl.children).map(row => {
+    const nestedGroup = row.querySelector(':scope > .cond-nested');
+    if (nestedGroup) return collectConditionGroup(nestedGroup);
+    const fields = row.querySelector(':scope > .cond-leaf-fields');
+    const condType = fields.dataset.condType;
+    if (condType === 'state') {
+      const leaf = { type: 'state', key: fields.querySelector('.cond-state-key').value.trim() };
+      const value = fields.querySelector('.cond-state-value').value.trim();
+      if (fields.querySelector('.cond-state-op').value === 'not_equals') leaf.not_equals = value;
+      else leaf.equals = value;
+      return leaf;
+    }
+    if (condType === 'time_window') {
+      return {
+        type: 'time_window',
+        start: fields.querySelector('.cond-tw-start').value.trim(),
+        end: fields.querySelector('.cond-tw-end').value.trim(),
+      };
+    }
+    return null;
+  }).filter(Boolean);
+  return { type, conditions };
+}
+
+function getMotionRuleNames() {
+  return Array.from(document.querySelectorAll('#motionRulesContainer .mr-name')).map(el => el.value.trim()).filter(Boolean);
+}
+function thenTriggerRuleOptionsHtml(selected, ownNameEl) {
+  const ownName = ownNameEl ? ownNameEl.value.trim() : '';
+  const names = getMotionRuleNames().filter(n => n !== ownName);
+  const placeholder = `<option value="">(brak - nie wyzwalaj kolejnej reguły)</option>`;
+  return placeholder + names.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+}
+
+// ------------------------------------------------------------------
 // Reguły ruchu
 // ------------------------------------------------------------------
 function addMotionRuleCard(initial) {
@@ -411,7 +569,32 @@ function addMotionRuleCard(initial) {
         <div class="field"><label>W oknie (sekundy)</label><input type="number" class="mr-esc-window" value="${escalation.window_seconds ?? 120}"></div>
         <div class="field"><label>Wywołaj scenę</label><select class="mr-esc-scene">${sceneOptionsHtml(escalation.escalated_scene)}</select></div>
       </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field"><label>Nazwa reguły (opcjonalna - wymagana, żeby inna reguła mogła wyzwolić tę)</label>
+        <input type="text" class="mr-name" placeholder="np. wejscie_do_salonu" value="${escapeHtml(initial.name || '')}"></div>
+      <div class="field"><label>Po zadziałaniu wyzwól też regułę</label>
+        <select class="mr-then-trigger"></select></div>
+    </div>
+
+    <div class="checkbox-row"><input type="checkbox" class="mr-condition-enabled" ${initial.condition ? 'checked' : ''}>
+      <label>Dodatkowy warunek (if/and/or/not) - reguła zadziała tylko, gdy jest spełniony</label></div>
+    <div class="optional-content mr-condition-fields ${initial.condition ? 'show' : ''}">
+      <div class="mr-condition-container"></div>
     </div>`;
+
+  const conditionContainer = card.querySelector('.mr-condition-container');
+  conditionContainer.appendChild(buildConditionGroupEl(initial.condition || { type: 'and', conditions: [] }));
+
+  const nameInput = card.querySelector('.mr-name');
+  const chainSelect = card.querySelector('.mr-then-trigger');
+  chainSelect.innerHTML = thenTriggerRuleOptionsHtml(initial.then_trigger_rule, nameInput);
+  nameInput.addEventListener('input', refreshDependentDropdowns);
+
+  card.querySelector('.mr-condition-enabled').addEventListener('change', (e) => {
+    card.querySelector('.mr-condition-fields').classList.toggle('show', e.target.checked);
+  });
 
   const deviceFields = card.querySelector('.mr-device-fields');
   const sceneFields = card.querySelector('.mr-scene-fields');
@@ -458,6 +641,14 @@ function collectMotionRules() {
       window_seconds: card.querySelector('.mr-esc-window').value.trim(),
       escalated_scene: card.querySelector('.mr-esc-scene').value.trim(),
     };
+    rule.name = card.querySelector('.mr-name').value.trim();
+    rule.then_trigger_rule = card.querySelector('.mr-then-trigger').value.trim();
+    if (card.querySelector('.mr-condition-enabled').checked) {
+      const groupRoot = card.querySelector('.mr-condition-container').firstElementChild;
+      rule.condition = collectConditionGroup(groupRoot);
+    } else {
+      rule.condition = null;
+    }
     return rule;
   });
 }

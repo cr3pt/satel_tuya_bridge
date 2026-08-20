@@ -24,6 +24,7 @@ from .history_store import HistoryStore
 from .alarms import AlarmEngine
 from .resilience import HealthReporter
 from .scheduling import is_within_window
+from .conditions import evaluate_condition
 from .scenes import SceneRunner
 from .presence_simulation import PresenceSimulation
 from .boiler_automation import BoilerAutomation
@@ -102,6 +103,13 @@ class RulesEngine:
         # potrzebna tylko jeśli jakaś reguła używa time_window z "sunset"/"sunrise"
         self._location_cfg = config.raw.get("location")
 
+        # Nazwa reguły ruchu -> jej indeks w config.motion_rules - potrzebne
+        # do "then_trigger_rule" (patrz _chain_trigger niżej): reguła
+        # odwołuje się do KOLEJNEJ reguły po nazwie (nie po indeksie, bo ten
+        # zmienia się przy każdej edycji listy), więc trzymamy mapowanie
+        # zbudowane raz i odświeżane przy reload_config().
+        self._rule_name_index = self._build_rule_name_index()
+
         # Sceny - wspólny fundament dla harmonogramów, eskalacji i
         # automatyki kotła (patrz bridge/scenes.py)
         self.scenes = SceneRunner(
@@ -151,6 +159,36 @@ class RulesEngine:
                 entities=[], history=self.history, notify_cfg=notify_cfg, grace_seconds=grace_seconds,
             )
 
+    def _build_rule_name_index(self) -> dict[str, int]:
+        return {
+            rule["name"]: idx
+            for idx, rule in enumerate(self.config.motion_rules)
+            if rule.get("name")
+        }
+
+    def _rule_gate_open(self, rule: dict, now: datetime) -> bool:
+        """Sprawdza time_window ORAZ warunek "condition" (and/or/not/state) -
+        wspólne dla zwykłego uruchomienia reguły i dla then_trigger_rule
+        (patrz _chain_trigger), żeby wyzwolona łańcuchowo reguła respektowała
+        WŁASNE ograniczenia dokładnie tak samo, jak gdyby zadziałała wprost
+        ze swojego triggera."""
+        if not is_within_window(rule.get("time_window"), self._location_cfg, now):
+            return False
+        condition = rule.get("condition")
+        if not condition:
+            return True
+        try:
+            return evaluate_condition(
+                condition, get_status_value=self.history.get_status_value,
+                location_cfg=self._location_cfg, now=now,
+            )
+        except Exception:
+            logger.exception(
+                "Błąd ewaluacji warunku reguły ruchu '%s' - traktuję jako niespełniony",
+                rule.get("name", "?"),
+            )
+            return False
+
     # ------------------------------------------------------------------
     # Ruch -> włączenie urządzenia Tuya na czas (LUB scena, LUB eskalacja
     # przy powtarzających się naruszeniach - patrz config.yaml)
@@ -164,60 +202,112 @@ class RulesEngine:
                 continue
             # dla source == "tuya_pir" dopasowanie po device_id analogicznie
 
-            if not is_within_window(rule.get("time_window"), self._location_cfg, now):
-                continue  # poza skonfigurowanym oknem czasowym - reguła teraz nieaktywna
+            if not self._rule_gate_open(rule, now):
+                continue  # poza oknem czasowym albo warunek (condition) niespełniony
 
-            rule_key = f"motion_rule_{idx}"
+            await self._fire_motion_rule(rule, f"motion_rule_{idx}", source, zone_or_device_id)
 
-            # Eskalacja: licz naruszenia w ruchomym oknie czasowym,
-            # niezależnie od zwykłej akcji. Po przekroczeniu progu -
-            # mocniejsza scena ZAMIAST zwykłej akcji (nie oba naraz).
-            escalation_cfg = rule.get("escalation")
-            if escalation_cfg:
-                history = self._escalation_history.setdefault(rule_key, [])
-                history.append(time.time())
-                cutoff = time.time() - escalation_cfg["window_seconds"]
-                history[:] = [t for t in history if t >= cutoff]
-                if len(history) >= escalation_cfg["threshold_count"]:
-                    logger.warning(
-                        "Eskalacja reguły ruchu '%s': %d naruszeń w %ds -> scena '%s'",
-                        rule_key, len(history), escalation_cfg["window_seconds"], escalation_cfg["escalated_scene"],
-                    )
-                    self.history.write_event(
-                        "escalation", source=f"{source}:{zone_or_device_id}",
-                        detail={"count": len(history), "scene": escalation_cfg["escalated_scene"]},
-                    )
-                    await self.scenes.run(escalation_cfg["escalated_scene"])
-                    history.clear()  # reset po eskalacji, żeby nie spamować tej samej sceny co naruszenie
-                    continue
-
-            if "scene" in rule:
-                await self.scenes.run(rule["scene"])
-                self.history.write_event(
-                    "motion", source=f"{source}:{zone_or_device_id}", detail={"scene": rule["scene"]},
+    async def _fire_motion_rule(
+        self, rule: dict, rule_key: str, source: str, zone_or_device_id, _chain_depth: int = 0,
+    ) -> None:
+        """Wykonuje akcję JEDNEJ reguły ruchu (scena/eskalacja/urządzenie
+        docelowe) - wydzielone z handle_motion(), żeby ten sam kod obsługiwał
+        zarówno zwykłe wyzwolenie (z pętli w handle_motion), jak i wyzwolenie
+        łańcuchowe przez then_trigger_rule innej reguły (patrz
+        _chain_trigger)."""
+        # Eskalacja: licz naruszenia w ruchomym oknie czasowym,
+        # niezależnie od zwykłej akcji. Po przekroczeniu progu -
+        # mocniejsza scena ZAMIAST zwykłej akcji (nie oba naraz).
+        escalation_cfg = rule.get("escalation")
+        if escalation_cfg:
+            history = self._escalation_history.setdefault(rule_key, [])
+            history.append(time.time())
+            cutoff = time.time() - escalation_cfg["window_seconds"]
+            history[:] = [t for t in history if t >= cutoff]
+            if len(history) >= escalation_cfg["threshold_count"]:
+                logger.warning(
+                    "Eskalacja reguły ruchu '%s': %d naruszeń w %ds -> scena '%s'",
+                    rule_key, len(history), escalation_cfg["window_seconds"], escalation_cfg["escalated_scene"],
                 )
-                continue
+                self.history.write_event(
+                    "escalation", source=f"{source}:{zone_or_device_id}",
+                    detail={"count": len(history), "scene": escalation_cfg["escalated_scene"]},
+                )
+                await self.scenes.run(escalation_cfg["escalated_scene"])
+                history.clear()  # reset po eskalacji, żeby nie spamować tej samej sceny co naruszenie
+                await self._chain_trigger(rule, _chain_depth)
+                return
 
-            device = rule["target_device"]
-            duration = rule["duration_seconds"]
-            dimmer = rule.get("dimmer_level_percent")
-
-            # jeśli timer już trwa dla tego urządzenia - zresetuj go
-            # (kolejny ruch przedłuża włączenie, zamiast nakładać zadania)
-            if device in self._active_timers and not self._active_timers[device].done():
-                self._active_timers[device].cancel()
-
-            self._active_timers[device] = asyncio.create_task(
-                self.tuya.turn_on_for_duration(device, duration, dimmer)
-            )
-            logger.info(
-                "Reguła ruchu: %s(%s) -> %s na %ss",
-                source, zone_or_device_id, device, duration,
-            )
+        if "scene" in rule:
+            await self.scenes.run(rule["scene"])
             self.history.write_event(
-                "motion", source=f"{source}:{zone_or_device_id}",
-                detail={"target_device": device, "duration_seconds": duration, "dimmer_level_percent": dimmer},
+                "motion", source=f"{source}:{zone_or_device_id}", detail={"scene": rule["scene"]},
             )
+            await self._chain_trigger(rule, _chain_depth)
+            return
+
+        device = rule["target_device"]
+        duration = rule["duration_seconds"]
+        dimmer = rule.get("dimmer_level_percent")
+
+        # jeśli timer już trwa dla tego urządzenia - zresetuj go
+        # (kolejny ruch przedłuża włączenie, zamiast nakładać zadania)
+        if device in self._active_timers and not self._active_timers[device].done():
+            self._active_timers[device].cancel()
+
+        self._active_timers[device] = asyncio.create_task(
+            self.tuya.turn_on_for_duration(device, duration, dimmer)
+        )
+        logger.info(
+            "Reguła ruchu: %s(%s) -> %s na %ss",
+            source, zone_or_device_id, device, duration,
+        )
+        self.history.write_event(
+            "motion", source=f"{source}:{zone_or_device_id}",
+            detail={"target_device": device, "duration_seconds": duration, "dimmer_level_percent": dimmer},
+        )
+        await self._chain_trigger(rule, _chain_depth)
+
+    # ------------------------------------------------------------------
+    # then_trigger_rule: reguła po zadziałaniu może wyzwolić KOLEJNĄ regułę
+    # ruchu po nazwie (np. "wejście do salonu" -> "wieczorna scena" ->
+    # (jeśli po 22:00) "eskalacja - dodatkowe światło na korytarzu"),
+    # zamiast dublować tę samą logikę pod dwoma osobnymi triggerami.
+    # Limit głębokości chroni przed nieskończoną pętlą przy A -> B -> A.
+    # ------------------------------------------------------------------
+    async def _chain_trigger(self, rule: dict, _chain_depth: int) -> None:
+        chain_name = (rule.get("then_trigger_rule") or "").strip()
+        if not chain_name:
+            return
+        if _chain_depth >= 5:
+            logger.warning(
+                "Łańcuch reguł ruchu przerwany (then_trigger_rule) - zbyt duża głębokość "
+                "(możliwa pętla) przed wyzwoleniem '%s'", chain_name,
+            )
+            return
+
+        idx = self._rule_name_index.get(chain_name)
+        if idx is None or idx >= len(self.config.motion_rules):
+            logger.warning(
+                "Reguła '%s' ma then_trigger_rule wskazujące na nieznaną/usuniętą regułę '%s'",
+                rule.get("name", "?"), chain_name,
+            )
+            return
+
+        target = self.config.motion_rules[idx]
+        now = datetime.now()
+        if not self._rule_gate_open(target, now):
+            logger.debug(
+                "Łańcuchowe wyzwolenie '%s' pominięte - okno czasowe/warunek docelowej reguły niespełniony",
+                chain_name,
+            )
+            return
+
+        logger.info(
+            "Reguła ruchu '%s' wyzwala kolejną regułę '%s' (then_trigger_rule)",
+            rule.get("name", "?"), chain_name,
+        )
+        await self._fire_motion_rule(target, f"motion_rule_{idx}", "chain", rule.get("name", "?"), _chain_depth + 1)
 
     # ------------------------------------------------------------------
     # Zmiana stanu światła Tuya -> wirtualne wejście ETHM
@@ -429,6 +519,7 @@ class RulesEngine:
         new_config = BridgeConfig.load(self.config.db_path)
         self.config = new_config
         apply_log_levels(new_config.raw)
+        self._rule_name_index = self._build_rule_name_index()
 
         # Tuya (lokalne + chmurowe) - bezpieczne do podmiany w całości: ani
         # TuyaLocalController, ani TuyaCloudController nie trzymają żywego

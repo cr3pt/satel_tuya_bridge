@@ -152,6 +152,15 @@ class HistoryStore:
             )
             self._conn.commit()
 
+    def get_status_value(self, key: str) -> str | None:
+        """Pojedyncza wartość statusu po kluczu (np. "satel_input:3") -
+        używane przez bridge/conditions.py do ewaluacji warunków typu
+        "state" w regułach ruchu, gdzie liczy się jedna konkretna wartość,
+        nie cała lista jak w get_status()."""
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM status WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
     def get_status(self, category: str | None = None) -> list[dict]:
         query = "SELECT key, category, label, value, ts FROM status"
         params: list = []

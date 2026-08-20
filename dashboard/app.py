@@ -943,7 +943,22 @@ def api_config_automation_context():
     tuya_devices = sorted(set(tuya.get("devices", {})) | set(tuya.get("cloud_devices", {})))
     virtual_inputs = list(config_raw.get("satel", {}).get("virtual_inputs", {}).get("inputs", {}).keys())
     satel_partitions = config_raw.get("satel", {}).get("partitions", {})
-    return jsonify({"tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs, "satel_partitions": satel_partitions})
+    # Klucze statusów (wejścia/wyjścia Satela, Tuya, kocioł...) - do budowy
+    # warunków typu "state" (patrz bridge/conditions.py) w edytorze reguł:
+    # użytkownik wybiera z listy zamiast pamiętać dokładny klucz jak
+    # "satel_input:3". Nazwy reguł ruchu - do wyboru celu "wyzwól kolejną
+    # regułę" (then_trigger_rule, patrz RulesEngine._chain_trigger).
+    status_keys = [
+        {"key": s["key"], "label": s["label"], "category": s["category"]}
+        for s in history.get_status()
+    ]
+    motion_rule_names = [
+        r["name"] for r in config_raw.get("reguły_ruchu", []) if r.get("name")
+    ]
+    return jsonify({
+        "tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs, "satel_partitions": satel_partitions,
+        "status_keys": status_keys, "motion_rule_names": motion_rule_names,
+    })
 
 
 @app.route("/api/config/automations", methods=["GET"])

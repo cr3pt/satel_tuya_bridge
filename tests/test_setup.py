@@ -936,6 +936,77 @@ class TestValidationAdvanced:
         assert any("Wirtualne wejście" in e for e in errors)
 
 
+class TestConditionAndChainingValidation:
+    """Walidacja nowych pól reguły ruchu: nazwa (do wyzwalania łańcuchowego),
+    then_trigger_rule i dodatkowy warunek (and/or/not/state/time_window) -
+    patrz dashboard/setup.py: _validate_condition/_validate_motion_rules."""
+
+    def test_duplicate_rule_names_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "name": "dup"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule, {**rule}]}
+        errors = validate(form)
+        assert any("nazwa 'dup' powtarza się" in e for e in errors)
+
+    def test_then_trigger_rule_unknown_name_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "then_trigger_rule": "nie_istnieje"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("nieistniejącą nazwę reguły" in e for e in errors)
+
+    def test_then_trigger_rule_self_reference_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "name": "siebie", "then_trigger_rule": "siebie"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("samej siebie" in e for e in errors)
+
+    def test_then_trigger_rule_valid_reference_is_ok(self):
+        rule_a = {**FORM_WITH_ADVANCED["motion_rules"][0], "name": "a", "then_trigger_rule": "b"}
+        rule_b = {**FORM_WITH_ADVANCED["motion_rules"][0], "name": "b"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule_a, rule_b]}
+        assert validate(form) == []
+
+    def test_state_condition_missing_key_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {"type": "state", "equals": "x"}}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("wymaga wybrania statusu" in e for e in errors)
+
+    def test_state_condition_missing_value_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {"type": "state", "key": "satel_input:3"}}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("wartości porównania" in e for e in errors)
+
+    def test_time_window_condition_missing_end_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {"type": "time_window", "start": "22:00", "end": ""}}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("wymaga początku i końca" in e for e in errors)
+
+    def test_composite_condition_without_children_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {"type": "and", "conditions": []}}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("wymaga co najmniej jednego warunku podrzędnego" in e for e in errors)
+
+    def test_unknown_condition_type_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {"type": "bogus"}}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("nieznany typ warunku" in e for e in errors)
+
+    def test_valid_nested_condition_has_no_errors(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {
+            "type": "and",
+            "conditions": [
+                {"type": "state", "key": "satel_input:3", "equals": "naruszone"},
+                {"type": "not", "conditions": [{"type": "time_window", "start": "22:00", "end": "06:00"}]},
+            ],
+        }}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        assert validate(form) == []
+
+
 class TestPresenceSimulation:
     """presence_simulation nie jest częścią formularza kreatora, ale JEST
     częścią panelu /automations - build_automations_dict/validate_automations
@@ -1080,7 +1151,58 @@ class TestBuildConfigDictAdvanced:
         automations = build_automations_dict(form)
         built = automations["reguły_ruchu"][0]
         assert "time_window" not in built
-        assert "escalation" not in built
+
+    def test_name_and_then_trigger_rule_are_built(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "name": "wejscie_salon", "then_trigger_rule": "korytarz"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        built = build_automations_dict(form)["reguły_ruchu"][0]
+        assert built["name"] == "wejscie_salon"
+        assert built["then_trigger_rule"] == "korytarz"
+
+    def test_blank_name_and_then_trigger_rule_are_omitted(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "name": "  ", "then_trigger_rule": ""}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        built = build_automations_dict(form)["reguły_ruchu"][0]
+        assert "name" not in built
+        assert "then_trigger_rule" not in built
+
+    def test_nested_condition_is_built_and_normalized(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {
+            "type": "and",
+            "conditions": [
+                {"type": "state", "key": "satel_input:3", "equals": "naruszone"},
+                {"type": "not", "conditions": [{"type": "time_window", "start": " 22:00 ", "end": " 06:00 "}]},
+            ],
+        }}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        built = build_automations_dict(form)["reguły_ruchu"][0]
+        assert built["condition"] == {
+            "type": "and",
+            "conditions": [
+                {"type": "state", "key": "satel_input:3", "equals": "naruszone"},
+                {"type": "not", "conditions": [{"type": "time_window", "start": "22:00", "end": "06:00"}]},
+            ],
+        }
+
+    def test_condition_with_not_equals_is_built(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {
+            "type": "state", "key": "satel_output:5", "not_equals": "włączone",
+        }}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        built = build_automations_dict(form)["reguły_ruchu"][0]
+        assert built["condition"] == {"type": "state", "key": "satel_output:5", "not_equals": "włączone"}
+
+    def test_empty_condition_is_omitted(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {"type": "and", "conditions": []}}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        built = build_automations_dict(form)["reguły_ruchu"][0]
+        assert "condition" not in built
+
+    def test_no_condition_key_is_omitted(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0]}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        built = build_automations_dict(form)["reguły_ruchu"][0]
+        assert "condition" not in built
 
     def test_advanced_result_is_yaml_serializable(self):
         config = build_config_dict(FORM_WITH_ADVANCED)

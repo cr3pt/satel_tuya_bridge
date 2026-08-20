@@ -189,12 +189,59 @@ def _validate_scenes(scenes: list[dict]) -> list[str]:
     return errors
 
 
+_CONDITION_COMPOSITE_TYPES = ("and", "or", "not")
+_CONDITION_LEAF_TYPES = ("state", "time_window")
+
+
+def _validate_condition(condition: dict | None, label: str, depth: int = 0) -> list[str]:
+    """Rekurencyjnie waliduje warunek and/or/not/state/time_window - patrz
+    bridge/conditions.py po opis dokładnie tego samego kształtu, który tu
+    weryfikujemy PRZED zapisem (evaluate_condition w bridge zakłada, że
+    warunek jest już poprawny)."""
+    errors: list[str] = []
+    if not condition:
+        return errors
+    if depth > 10:
+        errors.append(f"{label}: warunek zagnieżdżony zbyt głęboko (maksymalnie 10 poziomów)")
+        return errors
+
+    ctype = condition.get("type")
+    if ctype in _CONDITION_COMPOSITE_TYPES:
+        sub_conditions = condition.get("conditions") or []
+        if not sub_conditions:
+            errors.append(f"{label}: warunek '{ctype}' wymaga co najmniej jednego warunku podrzędnego")
+        for i, sub in enumerate(sub_conditions):
+            errors.extend(_validate_condition(sub, f"{label} -> {ctype}[{i + 1}]", depth + 1))
+    elif ctype == "state":
+        if not (condition.get("key") or "").strip():
+            errors.append(f"{label}: warunek 'state' wymaga wybrania statusu/urządzenia")
+        if condition.get("equals") in (None, "") and condition.get("not_equals") in (None, ""):
+            errors.append(f"{label}: warunek 'state' wymaga wartości porównania (równa się / różna od)")
+    elif ctype == "time_window":
+        if not condition.get("start") or not condition.get("end"):
+            errors.append(f"{label}: warunek 'okno czasowe' wymaga początku i końca")
+    else:
+        errors.append(f"{label}: nieznany typ warunku '{ctype}'")
+    return errors
+
+
 def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str]:
     errors = []
+    rule_names = {(r.get("name") or "").strip() for r in rules if (r.get("name") or "").strip()}
+    seen_names = set()
     for i, rule in enumerate(rules):
         label = f"Reguła ruchu #{i + 1}"
         if not rule.get("zone_number"):
             errors.append(f"{label}: numer wejścia Satela jest wymagany")
+
+        name = (rule.get("name") or "").strip()
+        if name:
+            if name in seen_names:
+                errors.append(
+                    f"{label}: nazwa '{name}' powtarza się - nazwy reguł muszą być unikalne "
+                    f"(potrzebne do wyzwalania łańcuchowego)"
+                )
+            seen_names.add(name)
 
         uses_scene = bool((rule.get("scene") or "").strip())
         if uses_scene:
@@ -223,6 +270,17 @@ def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str
                 errors.append(f"{label}: eskalacja - wybierz scenę wywoływaną po przekroczeniu progu")
             elif escalated_scene not in scene_names:
                 errors.append(f"{label}: eskalacja - scena '{escalated_scene}' nie istnieje wśród zdefiniowanych scen")
+
+        errors.extend(_validate_condition(rule.get("condition"), f"{label}: warunek"))
+
+        chain_target = (rule.get("then_trigger_rule") or "").strip()
+        if chain_target:
+            if chain_target == name:
+                errors.append(f"{label}: reguła nie może wyzwalać (then_trigger_rule) samej siebie")
+            elif chain_target not in rule_names:
+                errors.append(
+                    f"{label}: 'wyzwól kolejną regułę' wskazuje na nieistniejącą nazwę reguły '{chain_target}'"
+                )
     return errors
 
 
@@ -288,12 +346,56 @@ def _build_scenes(scenes_form: list[dict]) -> list[dict]:
     ]
 
 
+def _build_condition(condition: dict | None, depth: int = 0) -> dict | None:
+    """Odwrotność _validate_condition - normalizuje warunek and/or/not/
+    state/time_window do kształtu, jaki oczekuje bridge/conditions.py.
+    Puste/niekompletne warunki podrzędne są pomijane (przefiltrowane), a
+    kompozyt bez ŻADNEGO poprawnego warunku podrzędnego znika w całości -
+    to samo (brak warunku = zawsze spełniony), co explicit brak sekcji
+    "condition" w ogóle."""
+    if not condition or depth > 10:
+        return None
+    ctype = condition.get("type")
+
+    if ctype in _CONDITION_COMPOSITE_TYPES:
+        sub_conditions = [
+            built for built in (
+                _build_condition(sub, depth + 1) for sub in condition.get("conditions", [])
+            ) if built
+        ]
+        if not sub_conditions:
+            return None
+        return {"type": ctype, "conditions": sub_conditions}
+    if ctype == "state":
+        key = (condition.get("key") or "").strip()
+        if not key:
+            return None
+        built = {"type": "state", "key": key}
+        if condition.get("equals") not in (None, ""):
+            built["equals"] = condition["equals"]
+        elif condition.get("not_equals") not in (None, ""):
+            built["not_equals"] = condition["not_equals"]
+        else:
+            return None
+        return built
+    if ctype == "time_window":
+        start, end = condition.get("start"), condition.get("end")
+        if not start or not end:
+            return None
+        return {"type": "time_window", "start": start.strip(), "end": end.strip()}
+    return None
+
+
 def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
     rules = []
     for rule in rules_form:
         if not rule.get("zone_number"):
             continue
         built = {"source": "satel_zone", "zone_number": int(rule["zone_number"])}
+
+        name = (rule.get("name") or "").strip()
+        if name:
+            built["name"] = name
 
         scene_name = (rule.get("scene") or "").strip()
         if scene_name:
@@ -316,6 +418,14 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
                 "window_seconds": int(escalation["window_seconds"]),
                 "escalated_scene": escalation["escalated_scene"].strip(),
             }
+
+        condition = _build_condition(rule.get("condition"))
+        if condition:
+            built["condition"] = condition
+
+        chain_target = (rule.get("then_trigger_rule") or "").strip()
+        if chain_target:
+            built["then_trigger_rule"] = chain_target
 
         rules.append(built)
     return rules

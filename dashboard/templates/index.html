@@ -501,21 +501,60 @@ function statusCardTypeInfo(category, label) {
   return { icon: '', typeLabel: '' };
 }
 
+// Doładowuje karty statusów zamiast przeładowywać cały kontener co 2s
+// (setInterval(loadStatuses, ...) niżej) - podmienia tylko tekst/klasę
+// istniejących węzłów DOM po kluczu (etykieta), więc karty, które się nie
+// zmieniły, w ogóle nie są dotykane. Wcześniej pełny innerHTML co 2s
+// niszczył i tworzył wszystkie karty na nowo - stąd widoczne "mruganie"
+// całej siatki nawet gdy zmieniała się jedna wartość.
 function renderStatusGrid(elementId, items) {
   const el = document.getElementById(elementId);
   if (items.length === 0) {
-    el.innerHTML = '<div style="color: var(--muted); font-size: 13px;">Brak danych — jeszcze nic nie odczytano.</div>';
+    if (el.dataset.empty !== '1') {
+      el.innerHTML = '<div style="color: var(--muted); font-size: 13px;">Brak danych — jeszcze nic nie odczytano.</div>';
+      el.dataset.empty = '1';
+    }
     return;
   }
-  el.innerHTML = items.map(s => {
+  if (el.dataset.empty === '1' || el.querySelector('.status-card') === null) {
+    el.innerHTML = '';
+  }
+  el.dataset.empty = '0';
+
+  const seenKeys = new Set();
+  items.forEach((s, idx) => {
+    const key = s.label;
+    seenKeys.add(key);
     const { icon, typeLabel } = statusCardTypeInfo(s.category, s.label);
-    return `
-    <div class="status-card ${statusCardClass(s.category, s.value)}">
-      <div class="label">${icon ? icon + ' ' : ''}${s.label}${typeLabel ? `<span class="type-tag">${typeLabel}</span>` : ''}</div>
-      <div class="value">${s.value}</div>
-      <div class="ts">${fmtTime(s.ts)}</div>
-    </div>`;
-  }).join('');
+    const wantedClass = 'status-card' + (statusCardClass(s.category, s.value) ? ' ' + statusCardClass(s.category, s.value) : '');
+    const labelHtml = `${icon ? icon + ' ' : ''}${s.label}${typeLabel ? `<span class="type-tag">${typeLabel}</span>` : ''}`;
+    const tsText = fmtTime(s.ts);
+
+    let card = el.querySelector(`.status-card[data-key="${CSS.escape(key)}"]`);
+    if (!card) {
+      card = document.createElement('div');
+      card.dataset.key = key;
+      card.innerHTML = '<div class="label"></div><div class="value"></div><div class="ts"></div>';
+    }
+    if (card.className !== wantedClass) card.className = wantedClass;
+    const labelEl = card.querySelector('.label');
+    if (labelEl.innerHTML !== labelHtml) labelEl.innerHTML = labelHtml;
+    const valueEl = card.querySelector('.value');
+    if (valueEl.textContent !== String(s.value)) valueEl.textContent = s.value;
+    const tsEl = card.querySelector('.ts');
+    if (tsEl.textContent !== tsText) tsEl.textContent = tsText;
+
+    // Ustaw kartę na właściwej pozycji tylko jeśli faktycznie nie tam jest
+    // (insertBefore z tym samym miejscem docelowym to no-op w DOM, ale
+    // porównanie z góry pozwala uniknąć zbędnego wywołania przy każdym ticku).
+    if (el.children[idx] !== card) {
+      el.insertBefore(card, el.children[idx] || null);
+    }
+  });
+
+  el.querySelectorAll('.status-card[data-key]').forEach(card => {
+    if (!seenKeys.has(card.dataset.key)) card.remove();
+  });
 }
 
 async function loadStatuses() {
