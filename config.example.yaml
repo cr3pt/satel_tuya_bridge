@@ -256,6 +256,30 @@ reguły_ruchu:
       window_seconds: 120
       escalated_scene: "wykryto_intruza"
 
+  - name: wejscie_do_domu             # nazwa - potrzebna do then_trigger_rule niżej
+    source: satel_zone
+    zone_number: 3
+    target_device: swiatlo_przedpokoj
+    duration_seconds: 120
+    condition:
+      # Dodatkowy warunek (and/or/not/state/time_window, zagnieżdżony
+      # dowolnie głęboko - jak condition: w Home Assistant) - reguła
+      # zadziała TYLKO, gdy warunek jest spełniony (poza zwykłym
+      # dopasowaniem source/zone_number i time_window wyżej, które
+      # obowiązują zawsze razem z warunkiem).
+      type: and
+      conditions:
+        - {type: state, key: "satel_input:9", equals: "naruszone"}  # ktoś jest w przedpokoju
+        - type: not
+          conditions:
+            - {type: time_window, start: "22:00", end: "06:00"}      # ...ale NIE w nocy
+    then_trigger_rule: powiadom_o_wejsciu   # po zadziałaniu wyzwól też tę regułę
+
+  - name: powiadom_o_wejsciu
+    source: satel_zone
+    zone_number: 3                  # wymagane przez schemat, nieużywane przy wyzwoleniu łańcuchowym
+    scene: "wieczorne_powitanie"
+
 reguły_swiatlo_do_satela:
   # Włączenie danego urządzenia Tuya -> naruszenie wirtualnego wejścia ETHM
   - source_device: swiatlo_korytarz

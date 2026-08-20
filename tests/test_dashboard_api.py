@@ -358,6 +358,31 @@ class TestAutomationContextEndpoint:
         assert "gniazdko" in data["tuya_devices"]  # lokalne, nietknięte
         assert "T & H Sensor" in data["tuya_devices"]
 
+    def test_context_includes_status_keys_for_condition_builder(self, client):
+        """Edytor warunków (and/or/not/state) w /automations potrzebuje
+        listy aktualnych kluczy statusu (patrz bridge/conditions.py: warunek
+        "state"), żeby użytkownik mógł wybrać status z listy zamiast
+        pamiętać dokładny klucz jak "satel_input:3"."""
+        import dashboard.app as app_module
+        app_module.history.set_status("satel_input:3", "satel_input", "naruszone", label="Salon")
+        data = client.get("/api/config/automation-context").get_json()
+        assert {"key": "satel_input:3", "label": "Salon", "category": "satel_input"} in data["status_keys"]
+
+    def test_context_includes_motion_rule_names_for_chaining_ui(self, client):
+        client.post(
+            "/api/config/automations",
+            json={
+                "scenes": [],
+                "motion_rules": [
+                    {"zone_number": "12", "name": "wejscie_do_salonu", "target_device": "gniazdko", "duration_seconds": "30"},
+                ],
+                "presence_simulation": {"enabled": False},
+            },
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        data = client.get("/api/config/automation-context").get_json()
+        assert data["motion_rule_names"] == ["wejscie_do_salonu"]
+
 
 class TestAutomationsEndpoint:
     def test_automations_page_loads(self, client):

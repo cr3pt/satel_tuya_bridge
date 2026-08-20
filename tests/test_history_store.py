@@ -82,6 +82,18 @@ class TestStatus:
         assert len(history.get_status("tuya")) == 1
         assert len(history.get_status()) == 2
 
+    def test_get_status_value_returns_current_value(self, history):
+        history.set_status("satel_input:3", "satel_input", "naruszone")
+        assert history.get_status_value("satel_input:3") == "naruszone"
+
+    def test_get_status_value_reflects_latest_update(self, history):
+        history.set_status("satel_input:3", "satel_input", "naruszone")
+        history.set_status("satel_input:3", "satel_input", "OK")
+        assert history.get_status_value("satel_input:3") == "OK"
+
+    def test_get_status_value_unknown_key_is_none(self, history):
+        assert history.get_status_value("brak_takiego_klucza") is None
+
 
 class TestCommandQueue:
     def test_enqueue_and_fetch_pending(self, history):

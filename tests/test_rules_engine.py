@@ -104,6 +104,23 @@ async def engine(tmp_path, fake_tuya, fake_satel, fake_virtual_inputs):
     return rules_engine
 
 
+def _repatch_fakes(engine, fake_tuya=None, fake_satel=None, fake_virtual_inputs=None):
+    """reload_config() odtwarza self.tuya/self.scenes od zera z PRAWDZIWYCH
+    kontrolerów (patrz RulesEngine.reload_config) - testy, które wywołują
+    reload_config() i PO NIM sprawdzają wywołania na fałszywkach (fake_tuya
+    itd.), muszą je podłączyć na nowo, dokładnie jak robi to fixture
+    `engine` wyżej zaraz po konstrukcji."""
+    if fake_tuya is not None:
+        engine.tuya = fake_tuya
+        engine.scenes.tuya = fake_tuya
+    if fake_satel is not None:
+        engine.satel = fake_satel
+        engine.scenes.satel = fake_satel
+    if fake_virtual_inputs is not None:
+        engine.satel_virtual_inputs = fake_virtual_inputs
+        engine.scenes.satel_virtual_inputs = fake_virtual_inputs
+
+
 class TestMotionRules:
     async def test_basic_motion_turns_on_device(self, engine, fake_tuya):
         await engine.handle_motion("satel_zone", 12)
@@ -155,6 +172,194 @@ class TestMotionRules:
         await engine.handle_motion("satel_zone", 14)
         events = engine.history.get_events("escalation", 0, time.time() + 1)
         assert len(events) == 1
+
+
+class TestMotionRuleCondition:
+    """Dodatkowy warunek (condition: and/or/not/state/time_window) reguły
+    ruchu - patrz bridge/conditions.py. Reguła jest wstrzykiwana przez
+    config_store.set + reload_config() (tak jak w TestReloadConfig niżej),
+    bo condition musi przejść przez pełną ścieżkę BridgeConfig.load()."""
+
+    async def _reload_with_rule(self, engine, rule: dict, fake_tuya=None, fake_satel=None, fake_virtual_inputs=None):
+        engine.config.store.set("automations", {
+            "scenes": [], "reguły_ruchu": [rule], "presence_simulation": {"enabled": False},
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya, fake_satel, fake_virtual_inputs)
+
+    async def test_state_condition_blocks_when_not_met(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "satel_zone", "zone_number": 20,
+            "target_device": "gniazdko_salon", "duration_seconds": 5,
+            "condition": {"type": "state", "key": "satel_input:9", "equals": "naruszone"},
+        }, fake_tuya=fake_tuya)
+        await engine.handle_motion("satel_zone", 20)
+        assert fake_tuya.calls == []
+
+    async def test_state_condition_allows_when_met(self, engine, fake_tuya):
+        engine.history.set_status("satel_input:9", "satel_input", "naruszone")
+        await self._reload_with_rule(engine, {
+            "source": "satel_zone", "zone_number": 20,
+            "target_device": "gniazdko_salon", "duration_seconds": 5,
+            "condition": {"type": "state", "key": "satel_input:9", "equals": "naruszone"},
+        }, fake_tuya=fake_tuya)
+        await engine.handle_motion("satel_zone", 20)
+        await asyncio.sleep(0)
+        assert any(c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+    async def test_nested_and_not_condition(self, engine, fake_tuya):
+        engine.history.set_status("satel_input:9", "satel_input", "naruszone")
+        engine.history.set_status("satel_output:5", "satel_output", "wyłączone")
+        await self._reload_with_rule(engine, {
+            "source": "satel_zone", "zone_number": 20,
+            "target_device": "gniazdko_salon", "duration_seconds": 5,
+            "condition": {
+                "type": "and",
+                "conditions": [
+                    {"type": "state", "key": "satel_input:9", "equals": "naruszone"},
+                    {"type": "not", "conditions": [
+                        {"type": "state", "key": "satel_output:5", "equals": "włączone"},
+                    ]},
+                ],
+            },
+        }, fake_tuya=fake_tuya)
+        await engine.handle_motion("satel_zone", 20)
+        await asyncio.sleep(0)
+        assert any(c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+    async def test_nested_and_not_condition_blocks_when_negated_part_true(self, engine, fake_tuya):
+        engine.history.set_status("satel_input:9", "satel_input", "naruszone")
+        engine.history.set_status("satel_output:5", "satel_output", "włączone")
+        await self._reload_with_rule(engine, {
+            "source": "satel_zone", "zone_number": 20,
+            "target_device": "gniazdko_salon", "duration_seconds": 5,
+            "condition": {
+                "type": "and",
+                "conditions": [
+                    {"type": "state", "key": "satel_input:9", "equals": "naruszone"},
+                    {"type": "not", "conditions": [
+                        {"type": "state", "key": "satel_output:5", "equals": "włączone"},
+                    ]},
+                ],
+            },
+        }, fake_tuya=fake_tuya)
+        await engine.handle_motion("satel_zone", 20)
+        assert fake_tuya.calls == []
+
+    async def test_malformed_condition_fails_safe_without_crashing(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "satel_zone", "zone_number": 20,
+            "target_device": "gniazdko_salon", "duration_seconds": 5,
+            "condition": {"type": "state"},  # brak "key" - KeyError wewnątrz evaluate_condition
+        }, fake_tuya=fake_tuya)
+        await engine.handle_motion("satel_zone", 20)  # nie powinno rzucić wyjątku
+        assert fake_tuya.calls == []
+
+
+class TestMotionRuleChaining:
+    """then_trigger_rule - po zadziałaniu reguła może wyzwolić KOLEJNĄ
+    nazwaną regułę ruchu (patrz RulesEngine._chain_trigger)."""
+
+    async def _reload_with_rules(self, engine, rules: list[dict], fake_tuya=None, fake_satel=None, fake_virtual_inputs=None):
+        engine.config.store.set("automations", {
+            "scenes": [{"name": "wykryto_intruza", "actions": [{"type": "tuya_on", "device": "gniazdko_salon"}]}],
+            "reguły_ruchu": rules, "presence_simulation": {"enabled": False},
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya, fake_satel, fake_virtual_inputs)
+
+    async def test_chain_triggers_second_rule(self, engine, fake_tuya):
+        await self._reload_with_rules(engine, [
+            {
+                "source": "satel_zone", "zone_number": 21, "name": "regula_a",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+                "then_trigger_rule": "regula_b",
+            },
+            {
+                "source": "satel_zone", "zone_number": 22, "name": "regula_b",
+                "scene": "wykryto_intruza",
+            },
+        ], fake_tuya=fake_tuya)
+        await engine.handle_motion("satel_zone", 21)
+        await asyncio.sleep(0)
+        assert any(c == ("on_for", "gniazdko_salon", 5, None) for c in fake_tuya.calls)
+        assert ("on", "gniazdko_salon", None) in fake_tuya.calls  # scena "wykryto_intruza" z regula_b
+
+    async def test_chain_logs_event_with_chain_source(self, engine):
+        await self._reload_with_rules(engine, [
+            {
+                "source": "satel_zone", "zone_number": 21, "name": "regula_a",
+                "scene": "wykryto_intruza", "then_trigger_rule": "regula_b",
+            },
+            {
+                "source": "satel_zone", "zone_number": 22, "name": "regula_b",
+                "scene": "wykryto_intruza",
+            },
+        ])
+        await engine.handle_motion("satel_zone", 21)
+        events = engine.history.get_events("motion", 0, time.time() + 1)
+        assert any(e["source"] == "chain:regula_a" for e in events)
+
+    async def test_unknown_chain_target_logs_warning_but_first_rule_still_fires(self, engine, fake_tuya, caplog):
+        await self._reload_with_rules(engine, [
+            {
+                "source": "satel_zone", "zone_number": 21, "name": "regula_a",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+                "then_trigger_rule": "nie_istnieje",
+            },
+        ], fake_tuya=fake_tuya)
+        with caplog.at_level("WARNING", logger="bridge.rules"):
+            await engine.handle_motion("satel_zone", 21)
+        await asyncio.sleep(0)
+        assert any(c[0] == "on_for" for c in fake_tuya.calls)
+        assert any("nieznaną/usuniętą" in r.message for r in caplog.records)
+
+    async def test_chain_respects_target_rule_time_window(self, engine, fake_tuya, monkeypatch):
+        import datetime as dt
+        import bridge.rules_engine as re_module
+
+        class FixedDatetime(dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return dt.datetime(2026, 1, 15, 20, 0)  # poza oknem 08:00-09:00 regula_b
+
+        monkeypatch.setattr(re_module, "datetime", FixedDatetime)
+        await self._reload_with_rules(engine, [
+            {
+                "source": "satel_zone", "zone_number": 21, "name": "regula_a",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+                "then_trigger_rule": "regula_b",
+            },
+            {
+                "source": "satel_zone", "zone_number": 22, "name": "regula_b",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+                "time_window": {"start": "08:00", "end": "09:00"},
+            },
+        ], fake_tuya=fake_tuya)
+        await engine.handle_motion("satel_zone", 21)
+        await asyncio.sleep(0)
+        # tylko JEDNO wywołanie (od regula_a) - regula_b poza oknem czasowym
+        assert len([c for c in fake_tuya.calls if c[0] == "on_for"]) == 1
+
+    async def test_cycle_is_bounded_by_depth_guard(self, engine, caplog):
+        """Bez limitu głębokości pętla regula_a -> regula_b -> regula_a ->
+        ... nigdy by się nie skończyła (test by zawiesił cały proces
+        testowy) - _chain_trigger zatrzymuje się po 5 poziomach."""
+        await self._reload_with_rules(engine, [
+            {
+                "source": "satel_zone", "zone_number": 21, "name": "regula_a",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+                "then_trigger_rule": "regula_b",
+            },
+            {
+                "source": "satel_zone", "zone_number": 22, "name": "regula_b",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+                "then_trigger_rule": "regula_a",
+            },
+        ])
+        with caplog.at_level("WARNING", logger="bridge.rules"):
+            await engine.handle_motion("satel_zone", 21)
+        assert any("zbyt duża głębokość" in r.message for r in caplog.records)
 
 
 class TestSatelZoneOutputCallbackShape:
