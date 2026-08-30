@@ -930,6 +930,18 @@ class TestValidationAdvanced:
         errors = validate(form)
         assert any("harmonogram" in e for e in errors)
 
+    def test_motion_rule_turn_off_action_does_not_require_duration(self):
+        rule = {"zone_number": "15", "trigger_on": "restored", "target_device": "swiatlo_korytarz", "action": "turn_off"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert not any("czas włączenia" in e for e in errors)
+
+    def test_motion_rule_unknown_trigger_on_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "trigger_on": "cos_innego"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("wyzwalacz" in e for e in errors)
+
     def test_incomplete_virtual_input_is_error(self):
         form = {**FORM_WITH_ADVANCED, "virtual_inputs": [{"name": "x", "number": "", "key": ""}]}
         errors = validate(form)
@@ -1134,6 +1146,28 @@ class TestBuildConfigDictAdvanced:
         assert "target_device" not in rule
         assert "time_window" not in rule
         assert "escalation" not in rule
+
+    def test_motion_rule_turn_off_action_omits_duration_and_dimmer(self):
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {
+                "zone_number": "15", "trigger_on": "restored", "target_device": "swiatlo_korytarz",
+                "action": "turn_off", "time_window": {}, "escalation": {},
+            },
+        ]}
+        automations = build_automations_dict(form)
+        rule = automations["reguły_ruchu"][0]
+        assert rule["target_device"] == "swiatlo_korytarz"
+        assert rule["action"] == "turn_off"
+        assert rule["trigger_on"] == "restored"
+        assert "duration_seconds" not in rule
+        assert "dimmer_level_percent" not in rule
+
+    def test_motion_rule_default_trigger_on_is_omitted(self):
+        """trigger_on nieobecne w wybudowanej regule = domyślne "violated" -
+        nie zapisujemy go jawnie, żeby nie zaśmiecać configu istniejących
+        (starszych) reguł bez zmiany zachowania."""
+        automations = build_automations_dict(FORM_WITH_ADVANCED)
+        assert "trigger_on" not in automations["reguły_ruchu"][0]
 
     def test_virtual_inputs_built_into_satel_fields(self):
         satel_fields = build_satel_fields_dict(FORM_WITH_ADVANCED)

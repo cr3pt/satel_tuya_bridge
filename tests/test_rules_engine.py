@@ -44,6 +44,12 @@ reguły_ruchu:
     duration_seconds: 60
     escalation: {{threshold_count: 3, window_seconds: 5, escalated_scene: "wykryto_intruza"}}
 
+  - source: satel_zone
+    zone_number: 15
+    trigger_on: restored
+    target_device: gniazdko_salon
+    action: turn_off
+
 reguły_swiatlo_do_satela:
   - source_device: gniazdko_salon
     virtual_input: test_input
@@ -130,6 +136,33 @@ class TestMotionRules:
     async def test_unmatched_zone_does_nothing(self, engine, fake_tuya):
         await engine.handle_motion("satel_zone", 999)
         assert fake_tuya.calls == []
+
+    async def test_default_violated_rule_ignores_restored_trigger(self, engine, fake_tuya):
+        """Reguła bez trigger_on (domyślnie "violated") nie ma się wyzwalać
+        na wyzwolenie "restored" - inaczej stara reguła "ruch -> włącz"
+        odpaliłaby się też, gdy naruszenie ustaje, co byłoby zaskakujące."""
+        await engine.handle_motion("satel_zone", 12, trigger="restored")
+        assert fake_tuya.calls == []
+
+    async def test_turn_off_action_fires_on_restored_trigger(self, engine, fake_tuya):
+        await engine.handle_motion("satel_zone", 15, trigger="restored")
+        assert ("off", "gniazdko_salon") in fake_tuya.calls
+
+    async def test_turn_off_rule_does_not_fire_on_violated_trigger(self, engine, fake_tuya):
+        await engine.handle_motion("satel_zone", 15, trigger="violated")
+        assert fake_tuya.calls == []
+
+    async def test_turn_off_action_replaces_pending_on_timer(self, engine, fake_tuya):
+        """Jeśli dla urządzenia istnieje wpis w _active_timers z wcześniejszej
+        akcji "włącz na czas", wyzwolenie "wyłącz urządzenie" nie powinno
+        wywalić się na próbie anulowania (nawet gdy timer już się zakończył)
+        i musi mimo to wykonać samo wyłączenie."""
+        await engine.handle_motion("satel_zone", 12)  # zakłada wpis w _active_timers dla gniazdko_salon
+        await asyncio.sleep(0)
+        assert "gniazdko_salon" in engine._active_timers
+
+        await engine.handle_motion("satel_zone", 15, trigger="restored")
+        assert ("off", "gniazdko_salon") in fake_tuya.calls
 
     async def test_time_window_outside_blocks_rule(self, engine, fake_tuya, monkeypatch):
         import datetime as dt
@@ -399,6 +432,24 @@ class TestSatelZoneOutputCallbackShape:
         await fake_satel._zone_cb({"zones": {12: 1}})
         await asyncio.sleep(0)
         assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+    async def test_zone_restore_triggers_restored_rule(self, engine, fake_satel, fake_tuya):
+        """Zdarzenie ustania naruszenia (violated=0) też musi trafiać do
+        handle_motion(), z osobnym wyzwalaczem "restored" - to jedyny
+        sposób, w jaki reguła z trigger_on: restored (np. "wyłącz
+        urządzenie") w ogóle może się kiedykolwiek odpalić."""
+        fake_satel.monitored_zones = {"Czujka": 15}
+        await engine.start()
+        await fake_satel._zone_cb({"zones": {15: 0}})
+        await asyncio.sleep(0)
+        assert ("off", "gniazdko_salon") in fake_tuya.calls
+
+    async def test_zone_violation_does_not_fire_restored_only_rule(self, engine, fake_satel, fake_tuya):
+        fake_satel.monitored_zones = {"Czujka": 15}
+        await engine.start()
+        await fake_satel._zone_cb({"zones": {15: 1}})
+        await asyncio.sleep(0)
+        assert fake_tuya.calls == []
 
 
 class TestLightToSatelRule:

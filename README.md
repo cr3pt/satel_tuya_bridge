@@ -1365,6 +1365,32 @@ który zniknął z configu), traktowany jest jako NIESPEŁNIONY (reguła
 bezpiecznie się nie uruchamia, zamiast wywalić cały proces bridge'a) -
 sprawdzone testem.
 
+### Wyzwalacz reguły: naruszenie czy jego ustanie (`trigger_on`)
+
+Domyślnie reguła ruchu wyzwala się w momencie **naruszenia** czujki
+(`trigger_on: violated` - też domyślne, gdy pole w ogóle nie występuje,
+więc stare configi działają bez zmian). Opcjonalne `trigger_on: restored`
+odwraca to - reguła wyzwala się dopiero, gdy czujka **wraca do stanu OK**
+(np. czujnik ruchu przestaje wykrywać ruch, kontraktron drzwi/okna się
+zamyka). Przydatne do zgaszenia światła dokładnie wtedy, gdy naruszenie
+faktycznie ustało, zamiast zgadywać stały czas w `duration_seconds`:
+
+```yaml
+reguły_ruchu:
+  - zone_number: 12
+    trigger_on: restored
+    target_device: swiatlo_korytarz
+    action: turn_off
+```
+
+`action: turn_off` (dostępne tylko dla akcji na pojedynczym urządzeniu,
+nie dla scen) wyłącza `target_device` natychmiast, bez `duration_seconds`/
+`dimmer_level_percent` - w przeciwieństwie do domyślnej akcji (włączenie
+na czas), która i tak już samodzielnie gasi urządzenie po upływie
+`duration_seconds`. W edytorze (`/automations`) odpowiada temu pole
+"Wyzwalacz" (Naruszenie czujki / Ustanie naruszenia) obok pola "Akcja",
+gdzie doszła nowa opcja "Wyłącz urządzenie".
+
 ### Wyzwalanie łańcuchowe (`then_trigger_rule`)
 
 Reguła ruchu może mieć nazwę (`name`) i opcjonalne pole

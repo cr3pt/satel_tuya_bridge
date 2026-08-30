@@ -193,7 +193,7 @@ class RulesEngine:
     # Ruch -> włączenie urządzenia Tuya na czas (LUB scena, LUB eskalacja
     # przy powtarzających się naruszeniach - patrz config.yaml)
     # ------------------------------------------------------------------
-    async def handle_motion(self, source: str, zone_or_device_id) -> None:
+    async def handle_motion(self, source: str, zone_or_device_id, trigger: str = "violated") -> None:
         now = datetime.now()
         for idx, rule in enumerate(self.config.motion_rules):
             if rule["source"] != source:
@@ -201,6 +201,13 @@ class RulesEngine:
             if source == "satel_zone" and rule.get("zone_number") != zone_or_device_id:
                 continue
             # dla source == "tuya_pir" dopasowanie po device_id analogicznie
+
+            # trigger_on: "violated" (domyślnie, wsteczna kompatybilność ze
+            # starymi regułami bez tego pola) albo "restored" - pozwala np.
+            # wyłączyć światło dopiero PO ustaniu naruszenia czujki, zamiast
+            # tylko po stałym czasie (patrz też akcja "turn_off" niżej).
+            if rule.get("trigger_on", "violated") != trigger:
+                continue
 
             if not self._rule_gate_open(rule, now):
                 continue  # poza oknem czasowym albo warunek (condition) niespełniony
@@ -247,14 +254,29 @@ class RulesEngine:
             return
 
         device = rule["target_device"]
-        duration = rule["duration_seconds"]
-        dimmer = rule.get("dimmer_level_percent")
 
-        # jeśli timer już trwa dla tego urządzenia - zresetuj go
-        # (kolejny ruch przedłuża włączenie, zamiast nakładać zadania)
+        # jeśli timer już trwa dla tego urządzenia - zawsze go anuluj
+        # (kolejne wyzwolenie reguły "włącz na czas" przedłuża włączenie
+        # zamiast nakładać zadania; wyzwolenie "wyłącz urządzenie" po
+        # prostu porzuca odliczanie, bo urządzenie i tak zaraz zgaśnie).
         if device in self._active_timers and not self._active_timers[device].done():
             self._active_timers[device].cancel()
 
+        if rule.get("action") == "turn_off":
+            await self.tuya.turn_off(device)
+            logger.info(
+                "Reguła ruchu: %s(%s) -> wyłączenie %s",
+                source, zone_or_device_id, device,
+            )
+            self.history.write_event(
+                "motion", source=f"{source}:{zone_or_device_id}",
+                detail={"target_device": device, "action": "turn_off"},
+            )
+            await self._chain_trigger(rule, _chain_depth)
+            return
+
+        duration = rule["duration_seconds"]
+        dimmer = rule.get("dimmer_level_percent")
         self._active_timers[device] = asyncio.create_task(
             self.tuya.turn_on_for_duration(device, duration, dimmer)
         )
@@ -829,8 +851,10 @@ class RulesEngine:
                         f"{self._satel_mqtt_topic}/input/{zone_number}/state",
                         "ON" if violated else "OFF",
                     )
-                if violated:
-                    await self.handle_motion("satel_zone", zone_number)
+                await self.handle_motion(
+                    "satel_zone", zone_number,
+                    trigger="violated" if violated else "restored",
+                )
 
         async def _on_output_change(status: dict) -> None:
             # Analogicznie do _on_zone_change wyżej - biblioteka woła z

@@ -657,7 +657,8 @@ function addMotionRuleCard(initial, startCollapsed) {
   initial = initial || {};
   const window_ = initial.time_window || {};
   const escalation = initial.escalation || {};
-  const actionKind = initial.scene ? 'scene' : 'device';
+  const actionKind = initial.scene ? 'scene' : (initial.action === 'turn_off' ? 'device_off' : 'device');
+  const triggerOn = initial.trigger_on === 'restored' ? 'restored' : 'violated';
   const container = document.getElementById('motionRulesContainer');
   const card = document.createElement('div');
   card.className = 'sub-card';
@@ -669,17 +670,23 @@ function addMotionRuleCard(initial, startCollapsed) {
     </div>
     <div class="mr-body">
     <div class="field-row">
-      <div class="field"><label>Numer wejścia w Satelu (naruszenie wywoła regułę)</label>
+      <div class="field"><label>Numer wejścia w Satelu</label>
         <input type="number" class="mr-zone" value="${initial.zone_number ?? ''}"></div>
+      <div class="field"><label>Wyzwalacz</label>
+        <select class="mr-trigger">
+          <option value="violated" ${triggerOn === 'violated' ? 'selected' : ''}>Naruszenie czujki</option>
+          <option value="restored" ${triggerOn === 'restored' ? 'selected' : ''}>Ustanie naruszenia (czujka wróciła do OK)</option>
+        </select></div>
       <div class="field"><label>Akcja</label>
         <select class="mr-action-kind">
           <option value="device" ${actionKind === 'device' ? 'selected' : ''}>Włącz urządzenie na czas</option>
+          <option value="device_off" ${actionKind === 'device_off' ? 'selected' : ''}>Wyłącz urządzenie</option>
           <option value="scene" ${actionKind === 'scene' ? 'selected' : ''}>Uruchom scenę</option>
         </select></div>
     </div>
     <div class="field-row mr-device-fields">
       <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${deviceOptionsHtml(initial.target_device)}</select></div>
-      <div class="field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" value="${initial.duration_seconds ?? ''}"></div>
+      <div class="field mr-duration-field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" value="${initial.duration_seconds ?? ''}"></div>
       <div class="field mr-dimmer-field" style="${(context.dimmer_devices || []).includes(initial.target_device) ? '' : 'display:none;'}">
         <label>Jasność % (ściemniacz)</label><input type="number" class="mr-dimmer" value="${initial.dimmer_level_percent ?? ''}"></div>
     </div>
@@ -732,10 +739,21 @@ function addMotionRuleCard(initial, startCollapsed) {
 
   const deviceFields = card.querySelector('.mr-device-fields');
   const sceneFields = card.querySelector('.mr-scene-fields');
+  const durationField = card.querySelector('.mr-duration-field');
+  const dimmerField = card.querySelector('.mr-dimmer-field');
   function syncActionKind() {
     const kind = card.querySelector('.mr-action-kind').value;
-    deviceFields.style.display = kind === 'device' ? '' : 'none';
+    deviceFields.style.display = (kind === 'device' || kind === 'device_off') ? '' : 'none';
     sceneFields.style.display = kind === 'scene' ? '' : 'none';
+    // "Wyłącz urządzenie" nie ma czasu ani jasności - urządzenie po
+    // prostu gaśnie natychmiast po wyzwoleniu reguły.
+    durationField.style.display = kind === 'device' ? '' : 'none';
+    if (kind === 'device_off') {
+      dimmerField.style.display = 'none';
+    } else if (kind === 'device') {
+      const isDimmer = (context.dimmer_devices || []).includes(card.querySelector('.mr-target-device').value);
+      dimmerField.style.display = isDimmer ? '' : 'none';
+    }
   }
   card.querySelector('.mr-action-kind').addEventListener('change', syncActionKind);
   syncActionKind();
@@ -744,10 +762,7 @@ function addMotionRuleCard(initial, startCollapsed) {
   // context.dimmer_devices, /api/config/automation-context) - pokaż to
   // pole tylko po wybraniu takiego urządzenia, żeby nie sugerować
   // ściemniania na zwykłym gniazdku/przekaźniku.
-  card.querySelector('.mr-target-device').addEventListener('change', (e) => {
-    const isDimmer = (context.dimmer_devices || []).includes(e.target.value);
-    card.querySelector('.mr-dimmer-field').style.display = isDimmer ? '' : 'none';
-  });
+  card.querySelector('.mr-target-device').addEventListener('change', syncActionKind);
 
   wireTimeSpecToggles(card);
 
@@ -771,9 +786,15 @@ document.getElementById('addMotionRuleBtn').addEventListener('click', () => { ad
 function collectMotionRules() {
   return Array.from(document.querySelectorAll('#motionRulesContainer .sub-card')).map(card => {
     const kind = card.querySelector('.mr-action-kind').value;
-    const rule = { zone_number: card.querySelector('.mr-zone').value.trim() };
+    const rule = {
+      zone_number: card.querySelector('.mr-zone').value.trim(),
+      trigger_on: card.querySelector('.mr-trigger').value,
+    };
     if (kind === 'scene') {
       rule.scene = card.querySelector('.mr-scene').value.trim();
+    } else if (kind === 'device_off') {
+      rule.target_device = card.querySelector('.mr-target-device').value.trim();
+      rule.action = 'turn_off';
     } else {
       rule.target_device = card.querySelector('.mr-target-device').value.trim();
       rule.duration_seconds = card.querySelector('.mr-duration').value.trim();
