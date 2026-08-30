@@ -65,7 +65,29 @@ CI (`.github/workflows/tests.yml`) uruchamia cały zestaw na Pythonie
 RPi Zero, więc macierz testuje nowsze, aktualnie wspierane wersje (część
 zależności, np. `uiprotect>=6.0`, i tak już wymaga Python ≥3.10).
 
-## Instalacja na RPi Zero W
+## Instalacja
+
+**Zalecany sposób: Docker** (działa tak samo na RPi Zero W jak i na
+zwykłym Linuksie/amd64 - jeden obraz budowany **lokalnie**, z
+`docker-compose.yml` w tym repo, nic nigdzie nie jest publikowane):
+
+```bash
+mkdir -p data
+sudo chown 1000:1000 data
+docker compose up -d --build
+```
+
+Otwórz `http://<adres-hosta>:8090/setup` w przeglądarce i przejdź kreator.
+Pełny opis (rebuild po `git pull`, logi, profile, sieć LAN, bezpieczeństwo
+obrazu) - patrz sekcja "Uruchomienie w Dockerze" niżej.
+
+### Alternatywa: bez Dockera (venv)
+
+Dla instalacji bezpośrednio na hoście (bez kontenerów) - wymaga ręcznego
+zarządzania zależnościami Pythona i (opcjonalnie) usługą systemd
+(patrz "Uruchomienie jako usługa systemd" niżej, żeby proces wstawał po
+restarcie - Docker Compose robi to automatycznie przez `restart:
+unless-stopped`, więc przy Dockerze ten krok nie jest potrzebny):
 
 ```bash
 sudo apt update && sudo apt install -y python3-venv python3-pip
@@ -73,9 +95,6 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
-
-Alternatywa bez instalowania Pythona/zależności ręcznie - patrz sekcja
-"Uruchomienie w Dockerze" niżej.
 
 ## Konfiguracja
 
@@ -1393,6 +1412,11 @@ zamierzone i normalne.
 
 ## Uruchomienie jako usługa systemd
 
+Dotyczy tylko instalacji **bez Dockera** (patrz "Alternatywa: bez Dockera
+(venv)" w sekcji "Instalacja" wyżej) - przy Dockerze auto-restart po
+awarii/restarcie hosta załatwia `restart: unless-stopped` w
+`docker-compose.yml`, ten krok jest wtedy zbędny.
+
 ```ini
 # /etc/systemd/system/satel-tuya-bridge.service
 [Unit]
@@ -1422,12 +1446,19 @@ Analogicznie dla panelu webowego (drugi plik `.service`, np.
 
 ## Uruchomienie w Dockerze
 
-Alternatywa dla instalacji przez `venv`/systemd wyżej - jeden obraz
-(`Dockerfile`), dwa kontenery z `docker-compose.yml` (bridge + panel
+**To jest zalecany, główny sposób uruchomienia** (patrz też skrócony
+szybki start w sekcji "Instalacja" wyżej) - jeden obraz (`Dockerfile`),
+budowany **w całości lokalnie** poleceniem `docker compose build`/`up
+--build` z plików w tym repo (nic nie jest publikowane ani pobierane z
+żadnego prywatnego rejestru - obraz bazowy `python:3.11-slim` pochodzi z
+oficjalnego, publicznego Docker Hub, tak jak w praktycznie każdym
+Dockerfile). Dwa kontenery z `docker-compose.yml` (bridge + panel
 webowy), dzielące wspólny wolumen na dane (`config.db` - cała
 konfiguracja, patrz "Konfiguracja w bazie danych" wyżej - plus
 `bridge_history.db` i backupy). Działa tak samo na RPi (arm64/armv7) jak
 na amd64 - `python:3.11-slim` ma gotowe obrazy dla obu architektur.
+Instalacja bezpośrednio na hoście (`venv`/systemd, patrz "Instalacja"
+wyżej) zostaje jako alternatywa dla tych, którzy wolą nie używać Dockera.
 
 ### Pierwsze uruchomienie
 
