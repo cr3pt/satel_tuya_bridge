@@ -224,35 +224,29 @@ def _redirect_to_setup_if_unconfigured():
         return redirect(url_for("setup_page"))
 
 
-# Sterowanie alarmem I widoczność jakichkolwiek ustawień wymagają
-# zalogowania - w odróżnieniu od wcześniejszej, celowo "wąskiej" polityki
-# (patrz historyczny już docstring modułu dashboard/auth.py: autoryzacja
-# tylko dla akcji ZMIENIAJĄCYCH stan, samo przeglądanie otwarte), TERAZ
-# także sam WGLĄD w ustawienia (/config, /automations, /plugins i
-# wszystkie ich podstrony, /system) oraz sekcja sterowania alarmem na
-# stronie głównej wymagają zalogowania - nie tylko faktyczny zapis/
-# uzbrojenie.
+# Zalogowanie jest wymagane dla WSZYSTKIEGO - łącznie z samym oglądaniem
+# strony głównej (status na żywo, historia, dziennik zdarzeń, alarmy
+# progowe). Wcześniej strona główna (podgląd, bez ustawień/sterowania)
+# była celowo publiczna - na wyraźną prośbę zarzucone na rzecz zasady
+# "przed zalogowaniem nic nie jest widoczne".
 #
 # Zaprojektowane jako DOMYŚLNIE ZABRONIONE (allowlist rzeczy jawnie
 # publicznych) zamiast odwrotnie (lista rzeczy do ochrony) - żeby nowy
 # endpoint dodany w przyszłości (w tym w KAŻDEJ wtyczce pod plugins/) był
 # bezpieczny z definicji, bez pamiętania o dopisaniu go do jakiejś listy.
-# Publiczna zostaje TYLKO strona główna (status na żywo, historia,
-# dziennik zdarzeń, alarmy progowe - właściwa funkcja "podglądu" panelu,
-# bez żadnych ustawień/sterowania) i to, co musi działać PRZED
-# zalogowaniem (logowanie, kreator pierwszej konfiguracji, healthcheck).
+# Publiczne zostaje TYLKO to, co musi działać PRZED zalogowaniem: sama
+# strona/mechanika logowania, kreator pierwszej konfiguracji (nie ma
+# jeszcze żadnego konta, więc nie da się tego zgate'ować logowaniem),
+# statyka (CSS/JS/logo/favicon - potrzebne, żeby w ogóle wyrenderować
+# stronę logowania) i healthcheck (zewnętrzny monitoring typu
+# uptime-kuma/systemd nie wysyła poświadczeń panelu).
 _PUBLIC_PATHS = {
-    "/", "/login", "/api/login", "/api/logout", "/api/auth/status",
+    "/login", "/api/login", "/api/logout", "/api/auth/status",
     "/setup", "/api/setup/draft", "/api/setup/test-satel-connection", "/api/setup/save",
     "/api/discover/satel", "/api/discover/tuya", "/api/discover/tuya-cloud",
     "/healthz",
-    # Dane operacyjne strony głównej (status na żywo/historia/dziennik/
-    # alarmy) - NIE "ustawienia", więc zostają publiczne razem z nią.
-    "/api/sensors", "/api/history", "/api/events",
-    "/api/alerts/active", "/api/alerts/history", "/api/status",
-    "/api/satel/zone-types",
 }
-_PUBLIC_PATH_PREFIXES = ("/static/", "/api/commands/")
+_PUBLIC_PATH_PREFIXES = ("/static/",)
 
 
 def _is_public_path(path: str) -> bool:
@@ -1229,9 +1223,10 @@ def api_satel_disarm():
 @app.route("/api/commands/<int:command_id>")
 def api_command_status(command_id: int):
     """Odczyt statusu wcześniej zleconej komendy (do polowania z frontendu,
-    żeby pokazać czy uzbrojenie faktycznie się powiodło) - samo zlecenie
-    komendy wymagało hasła, sam odczyt statusu jest nieszkodliwy (nie
-    pozwala niczego zmienić), więc zostaje publiczny."""
+    żeby pokazać czy uzbrojenie faktycznie się powiodło) - chronione tak
+    samo jak reszta panelu przez globalny hook
+    (_require_login_for_settings_and_control), mimo że sam odczyt statusu
+    jest nieszkodliwy (nie pozwala niczego zmienić)."""
     cmd = history.get_command(command_id)
     if cmd is None:
         return jsonify({"error": "Nie znaleziono komendy"}), 404

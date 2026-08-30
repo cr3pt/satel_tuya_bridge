@@ -613,12 +613,12 @@ Uruchomienie (osobny proces od głównego bridge'a):
 python -m dashboard.app --config config.db --port 8090
 ```
 
-Panel dostępny pod `http://<adres-rpi>:8090/`. Dwie zakładki dostępne z
-górnego paska: **⚙ Ustawienia** (`/config` - czujniki eBUS, pola Satela,
-urządzenia Tuya, patrz niżej) i **🎬 Automatyzacje** (`/automations` -
-sceny/reguły ruchu/harmonogramy/eskalacja/symulacja obecności, patrz
-sekcja "Automatyzacje" niżej) - obie odczytują bez hasła, zapis wymaga
-hasła administratora.
+Panel dostępny pod `http://<adres-rpi>:8090/` - **wymaga zalogowania od
+razu, przed zobaczeniem czegokolwiek** (patrz sekcja "Bezpieczeństwo
+panelu" niżej). Dwie zakładki dostępne z górnego paska: **⚙ Ustawienia**
+(`/config` - czujniki eBUS, pola Satela, urządzenia Tuya, patrz niżej) i
+**🎬 Automatyzacje** (`/automations` - sceny/reguły ruchu/harmonogramy/
+eskalacja/symulacja obecności, patrz sekcja "Automatyzacje" niżej).
 
 ### Wykres historii - wybór wielu czujników naraz
 
@@ -924,31 +924,28 @@ się jako czerwony baner w panelu i - jeśli skonfigurujesz
 `notifications.ntfy_topic_url` - jako powiadomienie push przez
 [ntfy.sh](https://ntfy.sh) (darmowe, można też self-hostować).
 
-### Bezpieczeństwo panelu - logowanie wymagane dla ustawień i sterowania alarmem
+### Bezpieczeństwo panelu - logowanie wymagane dla wszystkiego
 
-Panel jest podzielony na dwie strefy:
-
-- **Otwarte bez hasła**: TYLKO podgląd na stronie głównej - historia,
-  statusy urządzeń (wejścia/wyjścia Satela, Tuya, kocioł), dziennik
-  zdarzeń, aktywne alarmy progowe. Żadnego sterowania, żadnych ustawień.
-- **Wymaga zalogowania**: WSZYSTKO inne - nie tylko sam zapis, ale już sam
-  **wgląd** w jakiekolwiek ustawienia (strony `/config`, `/automations`,
-  `/plugins` i wszystkie podstrony wtyczek, `/system`, razem z
-  odpowiadającymi im API) oraz **sama sekcja sterowania alarmem** na
-  stronie głównej (uzbrojenie/rozbrojenie) - niezalogowany widz widzi tam
-  tylko podpowiedź "🔒 Zaloguj się, aby sterować alarmem", bez checkboxów
-  stref ani przycisków. Stan uzbrojenia (tekst "uzbrojona"/"rozbrojona")
-  nadal widać na liście statusów - to podgląd, nie sterowanie.
+**Przed zalogowaniem nic nie jest widoczne** - żaden status, żadna
+historia, żadne ustawienia, żadne sterowanie. Jedyne, co działa bez
+zalogowania, to sama mechanika logowania (`/login`), kreator pierwszej
+konfiguracji (`/setup` - nie ma jeszcze żadnego konta, więc nie da się go
+zgate'ować logowaniem), statyka (CSS/JS/logo/favicon - potrzebne, żeby w
+ogóle wyrenderować stronę logowania) i healthcheck (`/healthz` -
+zewnętrzny monitoring typu uptime-kuma/systemd nie wysyła poświadczeń
+panelu). Dotyczy to WSZYSTKIEGO innego, łącznie z samym **podglądem**
+strony głównej (status na żywo, historia, dziennik zdarzeń, alarmy
+progowe) - wcześniej ta strona była celowo publiczna (tylko podgląd, bez
+ustawień/sterowania), na wyraźną prośbę zniesione na rzecz zasady "nic
+przed zalogowaniem".
 
 Implementacja: `dashboard/app.py:
 _require_login_for_settings_and_control` - jeden globalny hook
 (`before_request`) z jawną listą tego, co WOLNO zobaczyć bez logowania
-(strona główna i to, co musi działać przed zalogowaniem - logowanie,
-kreator pierwszej konfiguracji, healthcheck) - wszystko inne domyślnie
-chronione, także przyszłe endpointy dodane w nowych wtyczkach, bez
-pamiętania o dopisaniu ich do jakiejkolwiek listy. Próba wejścia na
-chronioną STRONĘ bez sesji przekierowuje na `/login?next=...`; chronione
-API zwraca `401`.
+(wymienioną wyżej) - wszystko inne domyślnie chronione, także przyszłe
+endpointy dodane w nowych wtyczkach, bez pamiętania o dopisaniu ich do
+jakiejkolwiek listy. Próba wejścia na chronioną STRONĘ bez sesji
+przekierowuje na `/login?next=...`; chronione API zwraca `401`.
 
 #### Konfiguracja konta administratora (nazwa użytkownika + hasło)
 
@@ -1213,9 +1210,10 @@ złożoną automatykę - wszystko zbudowane na jednym wspólnym fundamencie:
 **🎬 Automatyzacje** (`/automations`, link z górnego paska panelu) pozwala
 dodawać/edytować/usuwać sceny, reguły ruchu (harmonogram + eskalacja +
 dodatkowy warunek and/or/not + wyzwalanie łańcuchowe kolejnej reguły, patrz
-niżej) i symulację obecności. Odczyt jest otwarty, **zapis wymaga hasła
-administratora panelu** (tego samego z kroku "Hasło administratora panelu"
-w kreatorze - patrz sekcja "Bezpieczeństwo panelu" niżej). Alternatywnie:
+niżej) i symulację obecności. **Wymaga zalogowania administratora
+panelu** (tego samego hasła z kroku "Hasło administratora panelu"
+w kreatorze - patrz sekcja "Bezpieczeństwo panelu" niżej) - dotyczy
+zarówno przeglądania, jak i zapisu. Alternatywnie:
 te same trzy rzeczy da się skonfigurować już **w kreatorze** przy
 pierwszym uruchomieniu (kroki "Sceny" i "Reguły ruchu"), albo przez
 import YAML (patrz "Konfiguracja w bazie danych" wyżej) - wszystkie trzy
