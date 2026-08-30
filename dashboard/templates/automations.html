@@ -170,7 +170,10 @@
 </div>
 
 <script>
-let context = { tuya_devices: [], virtual_inputs: [], satel_partitions: {}, status_keys: [], motion_rule_names: [], dimmer_devices: [] };
+let context = {
+  tuya_devices: [], virtual_inputs: [], satel_partitions: {}, status_keys: [], motion_rule_names: [],
+  dimmer_devices: [], satel_outputs: [],
+};
 
 // Autoryzacja tylko dla zapisu (POST) - sesja przez /login (ciasteczko
 // HttpOnly, tak samo jak /config - patrz dashboard/auth.py).
@@ -291,6 +294,22 @@ function deviceOptionsHtml(selected) {
   return context.tuya_devices.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
 }
 
+// "Urządzenie docelowe" akcji reguły ruchu wybiera się dwuetapowo: najpierw
+// system (Tuya / Satel - wyjście), potem coś z tego systemu - Tuya
+// urządzenie po nazwie (jak dotąd) albo Satel wyjście po nazwie (klucz w
+// satel.monitored_outputs, zakładka ⚙ Ustawienia -> Satel). "target_system"
+// puste/"tuya" = stare zachowanie, bez zmian.
+function targetDeviceOptionsHtml(system, selected) {
+  if (system === 'satel_output') {
+    const outputs = context.satel_outputs || [];
+    if (outputs.length === 0) {
+      return `<option value="">(brak zdefiniowanych wyjść Satela - zakładka ⚙ Ustawienia)</option>`;
+    }
+    return outputs.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+  }
+  return deviceOptionsHtml(selected);
+}
+
 function getSceneNames() {
   return Array.from(document.querySelectorAll('#scenesContainer .scene-name')).map(el => el.value.trim()).filter(Boolean);
 }
@@ -314,7 +333,8 @@ function refreshDependentDropdowns() {
   });
   document.querySelectorAll('#motionRulesContainer .sub-card').forEach(card => {
     const deviceSel = card.querySelector('.mr-target-device');
-    const curDevice = deviceSel.value; deviceSel.innerHTML = deviceOptionsHtml(curDevice); deviceSel.value = curDevice;
+    const curSystem = card.querySelector('.mr-target-system').value;
+    const curDevice = deviceSel.value; deviceSel.innerHTML = targetDeviceOptionsHtml(curSystem, curDevice); deviceSel.value = curDevice;
     const sceneSel = card.querySelector('.mr-scene');
     const curScene = sceneSel.value; sceneSel.innerHTML = sceneOptionsHtml(curScene); sceneSel.value = curScene;
     const escSel = card.querySelector('.mr-esc-scene');
@@ -706,9 +726,14 @@ function addMotionRuleCard(initial, startCollapsed) {
         </select></div>
     </div>
     <div class="field-row mr-device-fields">
-      <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${deviceOptionsHtml(initial.target_device)}</select></div>
+      <div class="field"><label>System</label>
+        <select class="mr-target-system">
+          <option value="tuya" ${(initial.target_system || 'tuya') === 'tuya' ? 'selected' : ''}>Tuya</option>
+          <option value="satel_output" ${initial.target_system === 'satel_output' ? 'selected' : ''}>Satel (wyjście)</option>
+        </select></div>
+      <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${targetDeviceOptionsHtml(initial.target_system || 'tuya', initial.target_device)}</select></div>
       <div class="field mr-duration-field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" placeholder="puste = do ustania naruszenia" value="${initial.duration_seconds ?? ''}"></div>
-      <div class="field mr-dimmer-field" style="${(context.dimmer_devices || []).includes(initial.target_device) ? '' : 'display:none;'}">
+      <div class="field mr-dimmer-field" style="${(initial.target_system || 'tuya') === 'tuya' && (context.dimmer_devices || []).includes(initial.target_device) ? '' : 'display:none;'}">
         <label>Jasność % (ściemniacz)</label><input type="number" class="mr-dimmer" value="${initial.dimmer_level_percent ?? ''}"></div>
     </div>
     <div class="field-row mr-scene-fields">
@@ -764,12 +789,15 @@ function addMotionRuleCard(initial, startCollapsed) {
   const dimmerField = card.querySelector('.mr-dimmer-field');
   function syncActionKind() {
     const kind = card.querySelector('.mr-action-kind').value;
+    const system = card.querySelector('.mr-target-system').value;
     deviceFields.style.display = (kind === 'device' || kind === 'device_off') ? '' : 'none';
     sceneFields.style.display = kind === 'scene' ? '' : 'none';
     // "Wyłącz urządzenie" nie ma czasu ani jasności - urządzenie po
     // prostu gaśnie natychmiast po wyzwoleniu reguły.
     durationField.style.display = kind === 'device' ? '' : 'none';
-    if (kind === 'device_off') {
+    // Jasność % istnieje tylko dla ściemniaczy Tuya - wyjścia Satela to
+    // zwykły przekaźnik on/off, więc pole zawsze ukryte dla tego systemu.
+    if (kind === 'device_off' || system === 'satel_output') {
       dimmerField.style.display = 'none';
     } else if (kind === 'device') {
       const isDimmer = (context.dimmer_devices || []).includes(card.querySelector('.mr-target-device').value);
@@ -784,6 +812,16 @@ function addMotionRuleCard(initial, startCollapsed) {
   // pole tylko po wybraniu takiego urządzenia, żeby nie sugerować
   // ściemniania na zwykłym gniazdku/przekaźniku.
   card.querySelector('.mr-target-device').addEventListener('change', syncActionKind);
+
+  // System (Tuya / Satel-wyjście) zmienia, CO pokazuje "Urządzenie
+  // docelowe" - przy zmianie systemu lista musi się przeładować (inna
+  // pula nazw), a wybrane urządzenie/wyjście z poprzedniego systemu nie
+  // ma sensu, więc zaczynamy od pustego wyboru.
+  card.querySelector('.mr-target-system').addEventListener('change', (e) => {
+    const deviceSel = card.querySelector('.mr-target-device');
+    deviceSel.innerHTML = targetDeviceOptionsHtml(e.target.value, '');
+    syncActionKind();
+  });
 
   wireTimeSpecToggles(card);
 
@@ -824,9 +862,11 @@ function collectMotionRules() {
       rule.scene = card.querySelector('.mr-scene').value.trim();
     } else if (kind === 'device_off') {
       rule.target_device = card.querySelector('.mr-target-device').value.trim();
+      rule.target_system = card.querySelector('.mr-target-system').value;
       rule.action = 'turn_off';
     } else {
       rule.target_device = card.querySelector('.mr-target-device').value.trim();
+      rule.target_system = card.querySelector('.mr-target-system').value;
       rule.duration_seconds = card.querySelector('.mr-duration').value.trim();
       rule.dimmer_level_percent = card.querySelector('.mr-dimmer').value.trim();
     }

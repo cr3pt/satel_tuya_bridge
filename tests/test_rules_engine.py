@@ -70,6 +70,23 @@ reguły_ruchu:
     duration_seconds: 30
     then_trigger_rule: "regula_wylaczona"
 
+  - source: satel_zone
+    zone_number: 19
+    target_system: satel_output
+    target_device: "Brama"
+    duration_seconds: 0.01
+
+  - source: satel_zone
+    zone_number: 20
+    target_system: satel_output
+    target_device: "Brama"
+    action: turn_off
+
+  - source: satel_zone
+    zone_number: 21
+    target_system: satel_output
+    target_device: "Brama"
+
 reguły_swiatlo_do_satela:
   - source_device: gniazdko_salon
     virtual_input: test_input
@@ -268,6 +285,40 @@ class TestMotionRules:
         await engine.handle_motion("satel_zone", 14)
         events = engine.history.get_events("escalation", 0, time.time() + 1)
         assert len(events) == 1
+
+
+class TestSatelOutputTarget:
+    """target_system: "satel_output" - "Urządzenie docelowe" akcji reguły
+    ruchu może być wyjściem Satela (po nazwie, klucz w
+    satel.monitored_outputs), nie tylko urządzeniem Tuya. Reguły
+    zone_number=19/20/21 w CONFIG_TEMPLATE celują w wyjście "Brama"."""
+
+    async def test_fixed_duration_turns_output_on_then_off(self, engine, fake_satel, fake_tuya):
+        fake_satel.monitored_outputs = {"Brama": 5}
+        await engine.handle_motion("satel_zone", 19)
+        await asyncio.sleep(0.05)  # dłużej niż duration_seconds: 0.01 w configu
+        assert fake_satel.calls == [("output", 5, True), ("output", 5, False)]
+        assert fake_tuya.calls == []  # nic nie poszło do Tuya
+
+    async def test_turn_off_action_sets_output_false(self, engine, fake_satel):
+        fake_satel.monitored_outputs = {"Brama": 5}
+        await engine.handle_motion("satel_zone", 20)
+        assert ("output", 5, False) in fake_satel.calls
+
+    async def test_until_restored_toggles_output_with_zone(self, engine, fake_satel):
+        fake_satel.monitored_outputs = {"Brama": 5}
+        await engine.handle_motion("satel_zone", 21, trigger="violated")
+        assert ("output", 5, True) in fake_satel.calls
+        await engine.handle_motion("satel_zone", 21, trigger="restored")
+        assert ("output", 5, False) in fake_satel.calls
+
+    async def test_unknown_output_name_is_skipped_without_crash(self, engine, fake_satel):
+        """satel.monitored_outputs nie zna "Brama" (np. usunięta/przemianowana
+        w ⚙ Ustawienia po zapisaniu reguły) - reguła nie powinna wywalić
+        wyjątku, tylko zalogować ostrzeżenie i nic nie zrobić."""
+        fake_satel.monitored_outputs = {}
+        await engine.handle_motion("satel_zone", 20)  # nie powinno rzucić wyjątku
+        assert fake_satel.calls == []
 
 
 class TestAutomationRunningStatus:

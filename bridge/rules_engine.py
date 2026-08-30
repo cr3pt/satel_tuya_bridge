@@ -280,6 +280,13 @@ class RulesEngine:
             return
 
         device = rule["target_device"]
+        # target_system: "tuya" (domyślne, wsteczna kompatybilność ze
+        # starymi regułami bez tego pola) albo "satel_output" - `device`
+        # jest wtedy NAZWĄ wyjścia (klucz w satel.monitored_outputs), nie
+        # urządzeniem Tuya. Patrz _set_target_state/_run_on_for_duration
+        # niżej - to one rozróżniają system, reszta tej metody jest
+        # wspólna dla obu.
+        target_system = rule.get("target_system", "tuya")
 
         # jeśli timer już trwa dla tego urządzenia - zawsze go anuluj
         # (kolejne wyzwolenie reguły "włącz na czas" przedłuża włączenie
@@ -289,14 +296,14 @@ class RulesEngine:
             self._active_timers[device].cancel()
 
         if rule.get("action") == "turn_off":
-            await self.tuya.turn_off(device)
+            await self._set_target_state(target_system, device, False)
             logger.info(
-                "Reguła ruchu: %s(%s) -> wyłączenie %s",
-                source, zone_or_device_id, device,
+                "Reguła ruchu: %s(%s) -> wyłączenie %s (%s)",
+                source, zone_or_device_id, device, target_system,
             )
             self.history.write_event(
                 "motion", source=f"{source}:{zone_or_device_id}",
-                detail={"target_device": device, "action": "turn_off"},
+                detail={"target_device": device, "target_system": target_system, "action": "turn_off"},
             )
             await self._chain_trigger(rule, trigger, _chain_depth)
             return
@@ -311,49 +318,85 @@ class RulesEngine:
             # które nie niosą prawdziwego "restored" - patrz _chain_trigger),
             # wyłącz na "restored". _rule_matches_trigger() wyżej gwarantuje,
             # że ta sama reguła zobaczy OBA wyzwolenia.
-            if trigger == "restored":
-                await self.tuya.turn_off(device)
-            else:
-                await self.tuya.turn_on(device, dimmer)
+            await self._set_target_state(target_system, device, trigger != "restored", dimmer)
             logger.info(
-                "Reguła ruchu: %s(%s) -> %s %s (do ustania naruszenia)",
-                source, zone_or_device_id, "wyłączenie" if trigger == "restored" else "włączenie", device,
+                "Reguła ruchu: %s(%s) -> %s %s (%s, do ustania naruszenia)",
+                source, zone_or_device_id, "wyłączenie" if trigger == "restored" else "włączenie",
+                device, target_system,
             )
             self.history.write_event(
                 "motion", source=f"{source}:{zone_or_device_id}",
-                detail={"target_device": device, "until_restored": True, "trigger": trigger},
+                detail={
+                    "target_device": device, "target_system": target_system,
+                    "until_restored": True, "trigger": trigger,
+                },
             )
             await self._chain_trigger(rule, trigger, _chain_depth)
             return
 
         rule_name = rule.get("name")
         self._active_timers[device] = asyncio.create_task(
-            self._run_turn_on_for_duration(device, duration, dimmer, rule_name)
+            self._run_on_for_duration(target_system, device, duration, dimmer, rule_name)
         )
         logger.info(
-            "Reguła ruchu: %s(%s) -> %s na %ss",
-            source, zone_or_device_id, device, duration,
+            "Reguła ruchu: %s(%s) -> %s (%s) na %ss",
+            source, zone_or_device_id, device, target_system, duration,
         )
         self.history.write_event(
             "motion", source=f"{source}:{zone_or_device_id}",
-            detail={"target_device": device, "duration_seconds": duration, "dimmer_level_percent": dimmer},
+            detail={
+                "target_device": device, "target_system": target_system,
+                "duration_seconds": duration, "dimmer_level_percent": dimmer,
+            },
         )
         await self._chain_trigger(rule, trigger, _chain_depth)
 
-    async def _run_turn_on_for_duration(
-        self, device: str, duration: float, dimmer: int | None, rule_name: str | None,
+    async def _set_target_state(
+        self, target_system: str, device: str, on: bool, dimmer: int | None = None,
     ) -> None:
-        """Owija tuya.turn_on_for_duration() zapisem statusu
-        "automation:<nazwa reguły>" (kategoria "automation") na czas trwania
-        włączenia - dzięki temu inna reguła/scena może w warunku (state)
-        sprawdzić "czy TA reguła jest właśnie aktywna" (patrz analogiczny
-        mechanizm w SceneRunner.run(), bridge/scenes.py). Tylko dla
-        NAZWANYCH reguł - bez nazwy nie ma pod jakim kluczem tego zapisać,
-        a to i tak jedyny sposób, żeby ktokolwiek mógł się do niej odwołać."""
+        """Włącza/wyłącza CEL akcji reguły ruchu - Tuya (domyślnie) albo
+        wyjście Satela (target_system: "satel_output", `device` to wtedy
+        NAZWA wyjścia, klucz w satel.monitored_outputs, nie numer). Jeden
+        wspólny punkt dla obu systemów, z którego korzystają akcja "wyłącz
+        urządzenie", tryb "aż do ustania naruszenia" i _run_on_for_duration
+        niżej - żadne z nich nie musi osobno rozróżniać systemu."""
+        if target_system == "satel_output":
+            output_number = self.satel.monitored_outputs.get(device)
+            if output_number is None:
+                logger.warning(
+                    "Reguła ruchu wskazuje na nieznane wyjście Satela '%s' (sprawdź zakładkę "
+                    "⚙ Ustawienia -> Satel) - pomijam", device,
+                )
+                return
+            await self.satel.set_output(output_number, on)
+        elif on:
+            await self.tuya.turn_on(device, dimmer)
+        else:
+            await self.tuya.turn_off(device)
+
+    async def _run_on_for_duration(
+        self, target_system: str, device: str, duration: float, dimmer: int | None, rule_name: str | None,
+    ) -> None:
+        """Włącza cel na czas `duration`, potem sam wyłącza - dla Tuya
+        deleguje do tuya.turn_on_for_duration() (własna logika), dla
+        wyjścia Satela robi to samodzielnie (AsyncSatel nie ma
+        odpowiednika: włącz -> śpij -> wyłącz). Owija to zapisem statusu
+        "automation:<nazwa reguły>" (kategoria "automation") na czas
+        trwania włączenia - dzięki temu inna reguła/scena może w warunku
+        (state) sprawdzić "czy TA reguła jest właśnie aktywna" (patrz
+        analogiczny mechanizm w SceneRunner.run(), bridge/scenes.py).
+        Tylko dla NAZWANYCH reguł - bez nazwy nie ma pod jakim kluczem tego
+        zapisać, a to i tak jedyny sposób, żeby ktokolwiek mógł się do niej
+        odwołać."""
         if rule_name:
             self.history.set_status(f"automation:{rule_name}", "automation", "uruchomiona", label=rule_name)
         try:
-            await self.tuya.turn_on_for_duration(device, duration, dimmer)
+            if target_system == "satel_output":
+                await self._set_target_state(target_system, device, True)
+                await asyncio.sleep(duration)
+                await self._set_target_state(target_system, device, False)
+            else:
+                await self.tuya.turn_on_for_duration(device, duration, dimmer)
         finally:
             if rule_name:
                 self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)

@@ -1300,6 +1300,42 @@ z powrotem do tego samego formatu tekstowego co wyżej (`"22:00"`/
 `"sunset-15"`) - identycznie dla harmonogramu reguły, warunku `time_window`
 w edytorze warunków (patrz niżej) i okna symulacji obecności.
 
+### System urządzenia docelowego: Tuya albo wyjście Satela (`target_system`)
+
+"Urządzenie docelowe" akcji reguły ruchu ("Włącz urządzenie na czas"/
+"Wyłącz urządzenie") domyślnie odnosi się do urządzenia Tuya
+(`target_system: tuya`, też domyślne gdy pole w ogóle nie występuje - stare
+configi działają bez zmian). Opcjonalne `target_system: satel_output`
+przełącza cel na **wyjście Satela** - wtedy `target_device` jest NAZWĄ
+wyjścia (klucz w `satel.monitored_outputs`, zakładka ⚙ Ustawienia -> Satel,
+np. brama, syrena, przekaźnik oświetlenia podłączony do centrali), nie
+urządzeniem Tuya:
+
+```yaml
+reguły_ruchu:
+  - source: satel_zone
+    zone_number: 7
+    target_system: satel_output
+    target_device: "Brama garażowa"
+    duration_seconds: 15
+```
+
+Działa identycznie z każdym trybem akcji opisanym wyżej - stały czas
+włączenia, "Wyłącz urządzenie" (`action: turn_off`) i "aż do ustania
+naruszenia" (puste `duration_seconds`) - tyle że zamiast
+`tuya.turn_on/turn_off/turn_on_for_duration` wywołuje
+`satel.set_output(numer, stan)` pod spodem
+(`RulesEngine._set_target_state`/`_run_on_for_duration`). Pole "Jasność %"
+nie ma zastosowania dla wyjścia Satela (zwykły przekaźnik on/off, bez
+ściemniania) - w edytorze znika po wybraniu tego systemu. Nazwa wyjścia,
+która zniknęła z configu (np. usunięta/przemianowana w ⚙ Ustawienia),
+skutkuje ostrzeżeniem w logu zamiast wywalenia procesu.
+
+W edytorze (`/automations`) wybór jest dwuetapowy - pole **"System"**
+(Tuya / Satel - wyjście) obok "Urządzenia docelowego", które podpowiada
+listę zależną od wybranego systemu (urządzenia Tuya albo nazwane wyjścia
+Satela).
+
 ### Eskalacja przy powtarzających się naruszeniach
 
 Reguła ruchu z sekcją `escalation` liczy naruszenia w ruchomym oknie

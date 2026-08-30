@@ -501,6 +501,15 @@ class TestAutomationContextEndpoint:
         assert data["tuya_devices"] == ["gniazdko"]
         assert data["virtual_inputs"] == ["motion_hall"]
 
+    def test_context_returns_satel_output_names_for_target_system_ui(self, client):
+        """"Urządzenie docelowe" akcji reguły ruchu wybiera się dwuetapowo -
+        system (Tuya/Satel), potem coś z tego systemu. Dla Satela to nazwy
+        wyjść (satel.monitored_outputs), np. do sterowania bramą/syreną."""
+        data = client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        ).get_json()
+        assert data["satel_outputs"] == ["Syrena"]  # z CONFIG_TEMPLATE
+
     def test_context_returns_satel_partitions_for_scene_action_ui(self, client):
         """Zakładka /automations potrzebuje nazwanych stref, żeby akcje
         'Uzbrój strefę(y)'/'Rozbrój strefę(y)' w edytorze scen mogły dać
