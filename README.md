@@ -65,7 +65,29 @@ CI (`.github/workflows/tests.yml`) uruchamia cały zestaw na Pythonie
 RPi Zero, więc macierz testuje nowsze, aktualnie wspierane wersje (część
 zależności, np. `uiprotect>=6.0`, i tak już wymaga Python ≥3.10).
 
-## Instalacja na RPi Zero W
+## Instalacja
+
+**Zalecany sposób: Docker** (działa tak samo na RPi Zero W jak i na
+zwykłym Linuksie/amd64 - jeden obraz budowany **lokalnie**, z
+`docker-compose.yml` w tym repo, nic nigdzie nie jest publikowane):
+
+```bash
+mkdir -p data
+sudo chown 1000:1000 data
+docker compose up -d --build
+```
+
+Otwórz `http://<adres-hosta>:8090/setup` w przeglądarce i przejdź kreator.
+Pełny opis (rebuild po `git pull`, logi, profile, sieć LAN, bezpieczeństwo
+obrazu) - patrz sekcja "Uruchomienie w Dockerze" niżej.
+
+### Alternatywa: bez Dockera (venv)
+
+Dla instalacji bezpośrednio na hoście (bez kontenerów) - wymaga ręcznego
+zarządzania zależnościami Pythona i (opcjonalnie) usługą systemd
+(patrz "Uruchomienie jako usługa systemd" niżej, żeby proces wstawał po
+restarcie - Docker Compose robi to automatycznie przez `restart:
+unless-stopped`, więc przy Dockerze ten krok nie jest potrzebny):
 
 ```bash
 sudo apt update && sudo apt install -y python3-venv python3-pip
@@ -73,9 +95,6 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
-
-Alternatywa bez instalowania Pythona/zależności ręcznie - patrz sekcja
-"Uruchomienie w Dockerze" niżej.
 
 ## Konfiguracja
 
@@ -196,7 +215,7 @@ automatycznie do bazy jednorazowo** i zmieniają nazwy starych plików na
 `*.migrated` (żeby było jasne, że przestały być czytane - patrz sekcja
 "Konfiguracja w bazie danych"). PO pierwszym uruchomieniu ręczna edycja
 tych plików już nic nie robi - dalsze zmiany rób z panelu albo przez
-import YAML (`/api/config/import-yaml`, patrz niżej).
+import archiwum .zip (`/api/config/import-zip`, patrz niżej).
 
 1. `cp config.example.yaml config.yaml`
 2. `cp sensors.example.yaml sensors.yaml` (lista czujników eBUS - można
@@ -223,8 +242,8 @@ Cała konfiguracja (połączenia, strefy/wyjścia Satela, urządzenia Tuya -
 razem z `local_key` - sceny/reguły/harmonogramy, hasło administratora)
 żyje w jednym pliku SQLite: **`config.db`** (w tym samym katalogu, co
 wcześniej `config.yaml`, wskazywanym przez `--config`). To NIE jest plik
-do ręcznej edycji tekstowej - patrz "Import/eksport YAML" niżej po
-sposób na wgląd/edycję poza panelem.
+do ręcznej edycji tekstowej - patrz "Kopia zapasowa (eksport/import .zip)"
+niżej po sposób na wgląd/edycję/backup poza panelem.
 
 **Dlaczego baza, a nie pliki `.yaml`:** `local_key` urządzeń Tuya (i inne
 sekrety - hasła MQTT, Tuya Cloud Access Secret, kod integracji Satela) to
@@ -244,18 +263,37 @@ plików na `*.migrated` (zostają na dysku do wglądu, ale przestają być
 czytane - dalsza ręczna edycja `config.yaml` po tym momencie nic już nie
 robi).
 
-**Import/eksport YAML** - furtka bezpieczeństwa, żeby baza nikogo nie
-zamykała bez wyjścia:
-- **Eksport**: przycisk "⬇ Eksportuj konfigurację" w zakładce
-  ⚙ Ustawienia -> Połączenia (albo `GET /api/config/export-yaml`, wymaga
-  zalogowania) - pobiera plik JSON z rekonstrukcją wszystkich dokumentów
-  jako tekst YAML (`{"config.yaml": "...", "satel_fields.yaml": "...", ...}`)
-  - do backupu, wglądu, migracji na inny serwer.
-- **Import**: przycisk "⬆ Importuj konfigurację" (albo
-  `POST /api/config/import-yaml` z tym samym JSON-em) - nadpisuje
-  wskazane dokumenty w bazie. Zmiany połączeń (host/port/klucze) wymagają
-  potem pełnego restartu (przycisk "🔄 Zrestartuj bridge i panel teraz",
-  ta sama zakładka).
+**Kopia zapasowa (eksport/import .zip)** - furtka bezpieczeństwa, żeby
+baza nikogo nie zamykała bez wyjścia, w zakładce ⚙ Ustawienia ->
+Połączenia:
+- **Eksport**: przycisk "⬇ Eksportuj konfigurację (.zip)" (albo
+  `GET /api/config/export-zip`, wymaga zalogowania) - pobiera prawdziwe
+  archiwum `.zip` z rekonstrukcją wszystkich dokumentów jako osobne pliki
+  `.yaml` w środku (`config.yaml`, `satel_fields.yaml`, `tuya_devices.yaml`,
+  `automations.yaml`, `sensors.yaml`) - do backupu, wglądu dowolnym
+  programem, migracji na inny serwer.
+- **Import**: przycisk "⬆ Importuj konfigurację (.zip)" (albo
+  `POST /api/config/import-zip`, plik jako `multipart/form-data`, pole
+  `file`) - nadpisuje wskazane dokumenty w bazie, ale dopiero **po
+  podwójnym sprawdzeniu**, że archiwum się zgadza i bridge z nim
+  wystartuje:
+  1. **Składnia** - każdy rozpoznany plik w archiwum musi być poprawnym
+     YAML-em reprezentującym słownik.
+  2. **"Czy zadziała"** - wynikowa konfiguracja (aktualna zawartość bazy +
+     nadpisania z importu) jest budowana na TYMCZASOWEJ kopii bazy i
+     przepuszczana przez `BridgeConfig.load()` - dokładnie tę samą ścieżkę
+     kodu, którą bridge/panel uruchamiają przy prawdziwym starcie procesu -
+     plus jawne sprawdzenie `satel.host`/`satel.port`/
+     `satel.integration_key` (pól, bez których proces i tak zaraz
+     wywaliłby się `KeyError`-em, a których sama obecność sekcji `satel`
+     jeszcze nie gwarantuje).
+
+  Jeśli którekolwiek z tych dwóch sprawdzeń się nie powiedzie, **nic nie
+  jest zapisywane** - import jest odrzucany w całości z czytelnym opisem
+  błędu, zamiast zapisać część dokumentów, a resztę pominąć (patrz
+  `bridge/config_store.py: import_yaml_bundle_validated`). Zmiany połączeń
+  (host/port/klucze) po udanym imporcie wciąż wymagają pełnego restartu
+  (przycisk "🔄 Zrestartuj bridge i panel teraz", ta sama zakładka).
 
 ## Konto Tuya Cloud (Access ID / Access Secret)
 
@@ -886,17 +924,31 @@ się jako czerwony baner w panelu i - jeśli skonfigurujesz
 `notifications.ntfy_topic_url` - jako powiadomienie push przez
 [ntfy.sh](https://ntfy.sh) (darmowe, można też self-hostować).
 
-### Bezpieczeństwo panelu - autoryzacja tylko dla akcji zmieniających stan
+### Bezpieczeństwo panelu - logowanie wymagane dla ustawień i sterowania alarmem
 
-Panel jest **celowo** podzielony na dwie strefy:
+Panel jest podzielony na dwie strefy:
 
-- **Otwarte bez hasła**: cały podgląd - historia, statusy urządzeń,
-  dziennik zdarzeń, aktywne alarmy. To świadomy wybór, nie przeoczenie -
-  w domowej sieci LAN podgląd stanu domu nie jest tak wrażliwy jak
-  możliwość jego ZMIANY.
-- **Wymaga zalogowania**: zapis ustawień czujników (`/config`,
-  `/automations`) oraz uzbrajanie/rozbrajanie stref alarmowych z panelu
-  głównego.
+- **Otwarte bez hasła**: TYLKO podgląd na stronie głównej - historia,
+  statusy urządzeń (wejścia/wyjścia Satela, Tuya, kocioł), dziennik
+  zdarzeń, aktywne alarmy progowe. Żadnego sterowania, żadnych ustawień.
+- **Wymaga zalogowania**: WSZYSTKO inne - nie tylko sam zapis, ale już sam
+  **wgląd** w jakiekolwiek ustawienia (strony `/config`, `/automations`,
+  `/plugins` i wszystkie podstrony wtyczek, `/system`, razem z
+  odpowiadającymi im API) oraz **sama sekcja sterowania alarmem** na
+  stronie głównej (uzbrojenie/rozbrojenie) - niezalogowany widz widzi tam
+  tylko podpowiedź "🔒 Zaloguj się, aby sterować alarmem", bez checkboxów
+  stref ani przycisków. Stan uzbrojenia (tekst "uzbrojona"/"rozbrojona")
+  nadal widać na liście statusów - to podgląd, nie sterowanie.
+
+Implementacja: `dashboard/app.py:
+_require_login_for_settings_and_control` - jeden globalny hook
+(`before_request`) z jawną listą tego, co WOLNO zobaczyć bez logowania
+(strona główna i to, co musi działać przed zalogowaniem - logowanie,
+kreator pierwszej konfiguracji, healthcheck) - wszystko inne domyślnie
+chronione, także przyszłe endpointy dodane w nowych wtyczkach, bez
+pamiętania o dopisaniu ich do jakiejkolwiek listy. Próba wejścia na
+chronioną STRONĘ bez sesji przekierowuje na `/login?next=...`; chronione
+API zwraca `401`.
 
 #### Konfiguracja konta administratora (nazwa użytkownika + hasło)
 
@@ -1218,6 +1270,13 @@ wywoływać scenę zamiast pojedynczej akcji - wystarczy dodać pole `scene:
 "nazwa"`. Błąd jednej akcji w scenie (np. martwe urządzenie) nie przerywa
 pozostałych - sprawdzone testem.
 
+Pole "Jasność %" (`dimmer_level_percent`) w edytorze pojawia się TYLKO po
+wybraniu urządzenia skonfigurowanego jako ściemniacz (`tuya.devices[].type:
+dimmer`, patrz zakładka 🔌 Tuya) - dla zwykłego gniazdka/przekaźnika nie ma
+sensu i tylko myliłoby. Dotyczy zarówno akcji scen (`tuya_on`/
+`tuya_on_for_duration`), jak i akcji "Włącz urządzenie na czas" w regule
+ruchu niżej.
+
 ### Harmonogramy czasowe (`time_window`)
 
 Dowolna reguła ruchu lub kamery może mieć opcjonalne pole `time_window`,
@@ -1234,6 +1293,14 @@ zewnętrznego API pogodowego) - wymaga sekcji `location` (szerokość/
 długość geograficzna) w `config.yaml`. Okna przechodzące przez północ
 (np. `22:00`-`06:00`) działają poprawnie - sprawdzone testem na kilku
 przypadkach brzegowych.
+
+**W panelu (`/automations`) harmonogram jest "wyklikiwany"**, nie wpisywany
+ręcznie - wybierasz z listy "Stały czas" / "Zachód słońca" / "Wschód
+słońca" i odpowiednio zwykły zegar (`<input type="time">`) albo
+przesunięcie w minutach (może być ujemne - "przed"). Panel serializuje to
+z powrotem do tego samego formatu tekstowego co wyżej (`"22:00"`/
+`"sunset-15"`) - identycznie dla harmonogramu reguły, warunku `time_window`
+w edytorze warunków (patrz niżej) i okna symulacji obecności.
 
 ### Eskalacja przy powtarzających się naruszeniach
 
@@ -1286,11 +1353,43 @@ reguły_ruchu:
 Edytor w panelu (`/automations`, sekcja "Reguły ruchu") ma do tego
 graficzny konstruktor grup AND/OR/NOT z dowolnym zagnieżdżaniem - klucze
 statusu wybiera się z listy (to, co panel akurat odczytał), zamiast wpisywać
-je ręcznie. Warunek z błędem (np. nieznany typ) jest odrzucany przy
-zapisie; warunek, który w trakcie działania nie da się obliczyć (np.
-odwołuje się do klucza, który zniknął z configu), traktowany jest jako
-NIESPEŁNIONY (reguła bezpiecznie się nie uruchamia, zamiast wywalić cały
-proces bridge'a) - sprawdzone testem.
+je ręcznie. **Pole wartości też jest listą wyboru zależną od wybranego
+statusu** - dla wejścia/wyjścia Satela, urządzenia Tuya czy strefy panel
+sam podpowiada właściwe słowa (`naruszone`/`OK`, `włączone`/`wyłączone`,
+`uzbrojona`/`rozbrojona`...), więc nie da się przekręcić literówką wartości,
+która i tak nigdy by się nie dopasowała. Dla statusów bez skończonego
+zbioru wartości (np. odczyt liczbowy z kotła) zostaje zwykłe pole tekstowe.
+Warunek z błędem (np. nieznany typ) jest odrzucany przy zapisie; warunek,
+który w trakcie działania nie da się obliczyć (np. odwołuje się do klucza,
+który zniknął z configu), traktowany jest jako NIESPEŁNIONY (reguła
+bezpiecznie się nie uruchamia, zamiast wywalić cały proces bridge'a) -
+sprawdzone testem.
+
+### Wyzwalacz reguły: naruszenie czy jego ustanie (`trigger_on`)
+
+Domyślnie reguła ruchu wyzwala się w momencie **naruszenia** czujki
+(`trigger_on: violated` - też domyślne, gdy pole w ogóle nie występuje,
+więc stare configi działają bez zmian). Opcjonalne `trigger_on: restored`
+odwraca to - reguła wyzwala się dopiero, gdy czujka **wraca do stanu OK**
+(np. czujnik ruchu przestaje wykrywać ruch, kontraktron drzwi/okna się
+zamyka). Przydatne do zgaszenia światła dokładnie wtedy, gdy naruszenie
+faktycznie ustało, zamiast zgadywać stały czas w `duration_seconds`:
+
+```yaml
+reguły_ruchu:
+  - zone_number: 12
+    trigger_on: restored
+    target_device: swiatlo_korytarz
+    action: turn_off
+```
+
+`action: turn_off` (dostępne tylko dla akcji na pojedynczym urządzeniu,
+nie dla scen) wyłącza `target_device` natychmiast, bez `duration_seconds`/
+`dimmer_level_percent` - w przeciwieństwie do domyślnej akcji (włączenie
+na czas), która i tak już samodzielnie gasi urządzenie po upływie
+`duration_seconds`. W edytorze (`/automations`) odpowiada temu pole
+"Wyzwalacz" (Naruszenie czujki / Ustanie naruszenia) obok pola "Akcja",
+gdzie doszła nowa opcja "Wyłącz urządzenie".
 
 ### Wyzwalanie łańcuchowe (`then_trigger_rule`)
 
@@ -1323,6 +1422,14 @@ gdyby dwie reguły wskazywały wzajemnie na siebie (`A -> B -> A -> ...`) -
 sprawdzone testem, że taki cykl kończy się (z ostrzeżeniem w logu), zamiast
 zawiesić proces. Panel (`/automations`) waliduje przy zapisie, że nazwa
 docelowa istnieje i że reguła nie wskazuje sama na siebie.
+
+**Zwijane karty reguł w panelu** - przy wielu regułach edytor w
+`/automations` łatwo zaśmiecić długimi, rozwiniętymi formularzami. Pole
+nazwy reguły siedzi teraz w nagłówku karty (po lewej stronie przycisku
+"▼ Zwiń"/"▶ Rozwiń"), więc widać je nawet po zwinięciu. Reguły wczytane z
+serwera (już zapisane) startują zwinięte; nowo dodana reguła ("+ Dodaj
+regułę") zostaje rozwinięta do edycji, a po kliknięciu "Zapisz
+automatyzacje" wszystkie karty zwijają się razem.
 
 ### Symulacja obecności
 
@@ -1393,6 +1500,11 @@ zamierzone i normalne.
 
 ## Uruchomienie jako usługa systemd
 
+Dotyczy tylko instalacji **bez Dockera** (patrz "Alternatywa: bez Dockera
+(venv)" w sekcji "Instalacja" wyżej) - przy Dockerze auto-restart po
+awarii/restarcie hosta załatwia `restart: unless-stopped` w
+`docker-compose.yml`, ten krok jest wtedy zbędny.
+
 ```ini
 # /etc/systemd/system/satel-tuya-bridge.service
 [Unit]
@@ -1422,12 +1534,19 @@ Analogicznie dla panelu webowego (drugi plik `.service`, np.
 
 ## Uruchomienie w Dockerze
 
-Alternatywa dla instalacji przez `venv`/systemd wyżej - jeden obraz
-(`Dockerfile`), dwa kontenery z `docker-compose.yml` (bridge + panel
+**To jest zalecany, główny sposób uruchomienia** (patrz też skrócony
+szybki start w sekcji "Instalacja" wyżej) - jeden obraz (`Dockerfile`),
+budowany **w całości lokalnie** poleceniem `docker compose build`/`up
+--build` z plików w tym repo (nic nie jest publikowane ani pobierane z
+żadnego prywatnego rejestru - obraz bazowy `python:3.11-slim` pochodzi z
+oficjalnego, publicznego Docker Hub, tak jak w praktycznie każdym
+Dockerfile). Dwa kontenery z `docker-compose.yml` (bridge + panel
 webowy), dzielące wspólny wolumen na dane (`config.db` - cała
 konfiguracja, patrz "Konfiguracja w bazie danych" wyżej - plus
 `bridge_history.db` i backupy). Działa tak samo na RPi (arm64/armv7) jak
 na amd64 - `python:3.11-slim` ma gotowe obrazy dla obu architektur.
+Instalacja bezpośrednio na hoście (`venv`/systemd, patrz "Instalacja"
+wyżej) zostaje jako alternatywa dla tych, którzy wolą nie używać Dockera.
 
 ### Pierwsze uruchomienie
 
@@ -1442,9 +1561,9 @@ Otwórz `http://<adres-hosta>:8090/setup` w przeglądarce i przejdź kreator
 dokładnie tak samo, jak przy uruchomieniu bez Dockera - `config.db` i
 `bridge_history.db` wylądują w `./data/` na hoście (a nie w kontenerze),
 więc przetrwają przebudowę/aktualizację obrazu (do backupu/wglądu poza
-panelem - patrz "Import/eksport YAML" wyżej). Po zapisaniu w kreatorze
-kontener `bridge` trzeba zrestartować, żeby wczytał świeżo zapisaną
-konfigurację:
+panelem - patrz "Kopia zapasowa (eksport/import .zip)" wyżej). Po
+zapisaniu w kreatorze kontener `bridge` trzeba zrestartować, żeby wczytał
+świeżo zapisaną konfigurację:
 
 ```bash
 docker compose restart bridge

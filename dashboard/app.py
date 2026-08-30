@@ -16,15 +16,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import logging
 import os
 import pathlib
 import sqlite3
 import threading
 import time
+import zipfile
 
 import yaml
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, send_file, url_for
 from werkzeug.exceptions import HTTPException, InternalServerError
 from werkzeug.security import generate_password_hash
 
@@ -220,6 +222,62 @@ def _redirect_to_setup_if_unconfigured():
         return
     if not is_configured():
         return redirect(url_for("setup_page"))
+
+
+# Sterowanie alarmem I widoczność jakichkolwiek ustawień wymagają
+# zalogowania - w odróżnieniu od wcześniejszej, celowo "wąskiej" polityki
+# (patrz historyczny już docstring modułu dashboard/auth.py: autoryzacja
+# tylko dla akcji ZMIENIAJĄCYCH stan, samo przeglądanie otwarte), TERAZ
+# także sam WGLĄD w ustawienia (/config, /automations, /plugins i
+# wszystkie ich podstrony, /system) oraz sekcja sterowania alarmem na
+# stronie głównej wymagają zalogowania - nie tylko faktyczny zapis/
+# uzbrojenie.
+#
+# Zaprojektowane jako DOMYŚLNIE ZABRONIONE (allowlist rzeczy jawnie
+# publicznych) zamiast odwrotnie (lista rzeczy do ochrony) - żeby nowy
+# endpoint dodany w przyszłości (w tym w KAŻDEJ wtyczce pod plugins/) był
+# bezpieczny z definicji, bez pamiętania o dopisaniu go do jakiejś listy.
+# Publiczna zostaje TYLKO strona główna (status na żywo, historia,
+# dziennik zdarzeń, alarmy progowe - właściwa funkcja "podglądu" panelu,
+# bez żadnych ustawień/sterowania) i to, co musi działać PRZED
+# zalogowaniem (logowanie, kreator pierwszej konfiguracji, healthcheck).
+_PUBLIC_PATHS = {
+    "/", "/login", "/api/login", "/api/logout", "/api/auth/status",
+    "/setup", "/api/setup/draft", "/api/setup/test-satel-connection", "/api/setup/save",
+    "/api/discover/satel", "/api/discover/tuya", "/api/discover/tuya-cloud",
+    "/healthz",
+    # Dane operacyjne strony głównej (status na żywo/historia/dziennik/
+    # alarmy) - NIE "ustawienia", więc zostają publiczne razem z nią.
+    "/api/sensors", "/api/history", "/api/events",
+    "/api/alerts/active", "/api/alerts/history", "/api/status",
+    "/api/satel/zone-types",
+}
+_PUBLIC_PATH_PREFIXES = ("/static/", "/api/commands/")
+
+
+def _is_public_path(path: str) -> bool:
+    return path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PATH_PREFIXES)
+
+
+@app.before_request
+def _require_login_for_settings_and_control():
+    if request.endpoint is None:
+        return  # ścieżka niedopasowana do żadnej trasy - niech Flask zwróci normalne 404
+    if _is_public_path(request.path):
+        return
+    if not is_configured() or auth_guard is None:
+        return  # _redirect_to_setup_if_unconfigured() wyżej i tak to obsłuży
+    ok, _message = auth_guard.check()
+    if ok:
+        return
+    if request.path.startswith("/api/"):
+        response = jsonify({
+            "error": "Wymagane zalogowanie - ta treść jest dostępna tylko dla zalogowanych administratorów panelu",
+        })
+        response.status_code = 401
+        response.headers["WWW-Authenticate"] = 'Basic realm="Panel administracyjny"'
+        return response
+    return redirect(url_for("login_page", next=request.path))
 
 
 def _parse_range() -> tuple[float, float]:
@@ -773,6 +831,62 @@ def api_config_import_yaml():
     })
 
 
+@app.route("/api/config/export-zip", methods=["GET"])
+@require_auth()
+def api_config_export_zip():
+    """Jak export-yaml wyżej, ale jako prawdziwe archiwum .zip (pliki
+    .yaml w środku, do rozpakowania/wglądu dowolnym programem) zamiast
+    jednego pliku JSON z zaszytym tekstem YAML w wartościach - wygodniejsze
+    jako format kopii zapasowej "do ręki"."""
+    bundle = config_store.export_yaml_bundle()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for filename, content in bundle.items():
+            zf.writestr(filename, content)
+    buf.seek(0)
+    download_name = f"satel-tuya-bridge-config-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name=download_name)
+
+
+@app.route("/api/config/import-zip", methods=["POST"])
+@require_auth()
+def api_config_import_zip():
+    """Odwrotność export-zip wyżej - PODWÓJNIE sprawdza importowaną
+    konfigurację PRZED zapisem (patrz bridge/config_store.py:
+    import_yaml_bundle_validated - składnia YAML + realny start procesu
+    na tymczasowej kopii bazy), więc uszkodzone/niekompletne archiwum jest
+    odrzucane w całości, zanim cokolwiek trafi do prawdziwej bazy."""
+    uploaded = request.files.get("file")
+    if uploaded is None or not uploaded.filename:
+        return jsonify({"error": "Nie przesłano pliku .zip"}), 400
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(uploaded.read())) as zf:
+            files = {
+                name: zf.read(name).decode("utf-8")
+                for name in zf.namelist()
+                if name.endswith(".yaml") and not name.endswith("/")
+            }
+    except zipfile.BadZipFile:
+        return jsonify({"error": "Przesłany plik nie jest poprawnym archiwum .zip"}), 400
+
+    try:
+        imported = config_store.import_yaml_bundle_validated(files)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+    _enqueue_bridge_reload()
+
+    return jsonify({
+        "imported": imported,
+        "message": "Zaimportowano (zweryfikowano składnię i start procesu przed zapisem). "
+                    "Zmiany połączeń (host/klucze) wymagają pełnego restartu - "
+                    "użyj przycisku restartu w zakładce Połączenia.",
+    })
+
+
 # Które z przełączalnych/regulowalnych wtyczek (patrz PLUGIN_DEFS w
 # dashboard/setup.py) żyją w config.yaml (zakładka 🔌 Połączenia) a które w
 # automations.yaml (zakładka 🎬 Automatyzacje, podłapywane na żywo przez
@@ -955,9 +1069,18 @@ def api_config_automation_context():
     motion_rule_names = [
         r["name"] for r in config_raw.get("reguły_ruchu", []) if r.get("name")
     ]
+    # Urządzenia ze ściemniaczem (tuya.devices[].type == "dimmer") - edytor
+    # pokazuje pole "Jasność %" TYLKO dla takich urządzeń, żeby nie sugerować
+    # ściemniania na zwykłym gniazdku/przekaźniku. Tylko urządzenia LOKALNE
+    # mogą mieć ten typ (chmurowe sterowanie jest wyłącznie on/off - patrz
+    # TuyaCloudController).
+    dimmer_devices = sorted(
+        name for name, cfg in tuya.get("devices", {}).items() if cfg.get("type") == "dimmer"
+    )
     return jsonify({
         "tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs, "satel_partitions": satel_partitions,
         "status_keys": status_keys, "motion_rule_names": motion_rule_names,
+        "dimmer_devices": dimmer_devices,
     })
 
 
@@ -1058,11 +1181,27 @@ def api_status():
     return jsonify(history.get_status(category))
 
 
+@app.route("/api/satel/zone-types", methods=["GET"])
+def api_satel_zone_types():
+    """Publiczny podzbiór /api/config/satel-fields (patrz niżej, teraz
+    wymaga zalogowania - zawiera m.in. klucz wirtualnych wejść) - TYLKO
+    mapy nazwa -> rodzaj (np. "drzwi"/"ruch"), których panel główny
+    (index.html, celowo publiczny - patrz _require_login_for_settings
+    poniżej) potrzebuje do ikon/etykiet rodzaju przy statusach wejść/
+    wyjść. Same nazwy rodzajów nie są niczym wrażliwym."""
+    satel = config_raw.get("satel", {})
+    return jsonify({
+        "zone_types": satel.get("zone_types", {}),
+        "output_types": satel.get("output_types", {}),
+    })
+
+
 @app.route("/api/satel/partitions")
 def api_satel_partitions():
-    """Lista nazwanych stref do wyboru w panelu - samo nazewnictwo nie jest
-    wrażliwe, więc ten endpoint zostaje publiczny (bez autoryzacji).
-    Faktyczne uzbrojenie/rozbrojenie wymaga hasła - patrz endpointy niżej."""
+    """Lista nazwanych stref do wyboru w panelu - WYMAGA zalogowania (patrz
+    _require_login_for_settings_and_control niżej): sterowanie alarmem
+    (i sama sekcja kontrolek na stronie głównej) jest dostępne tylko po
+    zalogowaniu, nie tylko samo wysłanie komendy uzbrojenia/rozbrojenia."""
     return jsonify(satel_partitions_cfg)
 
 

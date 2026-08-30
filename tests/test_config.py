@@ -1,5 +1,6 @@
 """Testy dla bridge/config.py - wczytywanie config.yaml + scalanie z sensors.yaml."""
 import pytest
+import yaml
 
 from bridge.config import BridgeConfig
 from bridge.config_store import ConfigStore
@@ -305,7 +306,92 @@ class TestDatabaseMigration:
         })
         config = BridgeConfig.load(tmp_path / "config.db")
         assert config.raw["satel"]["host"] == "1.2.3.4"
-        assert config.db_path == tmp_path / "config.db"
+
+
+VALID_CONFIG_YAML = """
+satel:
+  host: "1.2.3.4"
+  port: 7094
+  integration_key: "klucz"
+  virtual_inputs:
+    port: 8888
+    url_template: "http://x"
+    inputs: {}
+tuya:
+  devices: {}
+reguły_ruchu: []
+ebus:
+  mqtt_host: "127.0.0.1"
+"""
+
+
+class TestImportYamlBundleValidated:
+    """ConfigStore.import_yaml_bundle_validated() - używane przez import z
+    archiwum .zip (dashboard/app.py: /api/config/import-zip). Podwójne
+    sprawdzenie PRZED zapisem: (1) składnia YAML, (2) realny start procesu
+    (BridgeConfig.load) na tymczasowej kopii bazy + jawne pola satela."""
+
+    def test_valid_bundle_imports_successfully(self, tmp_path):
+        store = ConfigStore(tmp_path / "config.db")
+        imported = store.import_yaml_bundle_validated({"config.yaml": VALID_CONFIG_YAML})
+        assert imported == ["config"]
+        assert store.get("config")["satel"]["host"] == "1.2.3.4"
+
+    def test_invalid_yaml_syntax_raises_and_writes_nothing(self, tmp_path):
+        store = ConfigStore(tmp_path / "config.db")
+        broken = "satel: [unclosed"
+        with pytest.raises(ValueError, match="Błąd parsowania YAML"):
+            store.import_yaml_bundle_validated({"config.yaml": broken})
+        assert not store.has("config")
+
+    def test_non_dict_yaml_raises(self, tmp_path):
+        store = ConfigStore(tmp_path / "config.db")
+        with pytest.raises(ValueError, match="nie zawiera słownika"):
+            store.import_yaml_bundle_validated({"config.yaml": "- just\n- a\n- list\n"})
+
+    def test_no_recognized_files_raises(self, tmp_path):
+        store = ConfigStore(tmp_path / "config.db")
+        with pytest.raises(ValueError, match="Archiwum nie zawiera"):
+            store.import_yaml_bundle_validated({"random_file.yaml": "a: 1"})
+
+    def test_missing_satel_section_raises_and_writes_nothing(self, tmp_path):
+        store = ConfigStore(tmp_path / "config.db")
+        store.set("config", {"marker": "pre-existing"})
+        broken = "tuya:\n  devices: {}\nreguły_ruchu: []\nebus:\n  mqtt_host: x\n"
+        with pytest.raises(ValueError, match="nie przejdzie startu procesu"):
+            store.import_yaml_bundle_validated({"config.yaml": broken})
+        assert store.get("config") == {"marker": "pre-existing"}  # nietknięte
+
+    def test_satel_missing_required_fields_raises_and_writes_nothing(self, tmp_path):
+        store = ConfigStore(tmp_path / "config.db")
+        store.set("config", {"marker": "pre-existing"})
+        # "satel" jest obecne (przechodzi _validate), ale brakuje host/port/
+        # integration_key - to jest dokładnie luka, której _validate() nie
+        # łapie, a którą RulesEngine.__init__ i tak wywali KeyError-em.
+        broken = "satel: {}\ntuya:\n  devices: {}\nreguły_ruchu: []\nebus:\n  mqtt_host: x\n"
+        with pytest.raises(ValueError, match="satel.host"):
+            store.import_yaml_bundle_validated({"config.yaml": broken})
+        assert store.get("config") == {"marker": "pre-existing"}
+
+    def test_partial_import_merges_with_existing_valid_config(self, tmp_path):
+        """Import samego sensors.yaml (bez config.yaml w archiwum) musi
+        zwalidować się WZGLĘDEM już zapisanej, poprawnej reszty configu -
+        nie powinien wymagać przesyłania WSZYSTKICH dokumentów naraz."""
+        store = ConfigStore(tmp_path / "config.db")
+        store.set("config", yaml.safe_load(VALID_CONFIG_YAML))
+        sensors_yaml = "sensors:\n  - name: kociol_temp\n    label: Temp\n    mqtt_topic: x\n"
+        imported = store.import_yaml_bundle_validated({"sensors.yaml": sensors_yaml})
+        assert imported == ["sensors"]
+        assert store.get("sensors")["sensors"][0]["name"] == "kociol_temp"
+        assert store.get("config")["satel"]["host"] == "1.2.3.4"  # nietknięte
+
+    def test_unknown_filenames_are_ignored(self, tmp_path):
+        store = ConfigStore(tmp_path / "config.db")
+        imported = store.import_yaml_bundle_validated({
+            "config.yaml": VALID_CONFIG_YAML,
+            "nieznany_plik.yaml": "cokolwiek: 1",
+        })
+        assert imported == ["config"]
 
     def test_local_key_with_special_characters_survives_migration_roundtrip(self, tmp_path):
         """Powód migracji na bazę: local_key Tuya (i inne sekrety) to

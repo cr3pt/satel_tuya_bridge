@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Automatyzacje - Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 <style>
   :root {
     --bg: #14161a; --card: #1d2026; --border: #2c3038;
@@ -57,6 +58,10 @@
   }
   .sub-card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
   .sub-card-header input[type=text] { font-weight: 600; }
+  .sub-card.collapsed { margin-bottom: 8px; }
+  .sub-card.collapsed .sub-card-header { margin-bottom: 0; }
+  .sub-card.collapsed .mr-body { display: none; }
+  .mr-toggle-collapse { flex-shrink: 0; padding: 6px 10px; font-size: 12.5px; }
   .action-row { background: #1d2129; border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
   .action-fields { display: flex; gap: 8px; flex: 2; flex-wrap: wrap; }
   .action-fields input, .action-fields select { flex: 1; min-width: 100px; }
@@ -71,6 +76,8 @@
   .cond-leaf-fields select, .cond-leaf-fields input { flex: 1; min-width: 110px; }
   .cond-row .cond-nested { flex: 1; margin-top: 0; }
   .cond-empty-hint { font-size: 12px; margin-top: 4px; }
+  .timespec { display: inline-flex; gap: 6px; flex: 1; min-width: 220px; }
+  .timespec select, .timespec input { flex: 1; min-width: 90px; }
   button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 10px 18px; font-size: 14px; cursor: pointer; font-weight: 500; }
   button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
   .save-bar { position: sticky; bottom: 0; background: var(--bg); padding: 16px 0; border-top: 1px solid var(--border); margin-top: 8px; }
@@ -83,7 +90,7 @@
 </head>
 <body>
 <div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/config">⚙ Ustawienia czujników eBUS</a> &nbsp;·&nbsp; <a href="/plugins">🧩 Wtyczki</a> &nbsp;·&nbsp; <a href="/system">⚙ Ustawienia ogólne</a> &nbsp;·&nbsp; <a id="authNavLink" href="/login"></a></div>
-<h1>🎬 Automatyzacje</h1>
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🎬 Automatyzacje</h1>
 <div class="hint">
   Sceny, reguły ruchu (harmonogram + eskalacja) i symulacja obecności -
   zapisywane razem, w całości, do <code>automations.yaml</code>. Odczyt jest
@@ -143,8 +150,8 @@
     <div class="checkbox-row"><input type="checkbox" id="presence_window_enabled"><label for="presence_window_enabled">Ogranicz do okna czasowego (harmonogram)</label></div>
     <div class="optional-content" id="presenceWindowContent">
       <div class="field-row">
-        <div class="field"><label>Początek (HH:MM albo sunset/sunrise ± minuty)</label><input type="text" id="presence_window_start" placeholder="np. sunset"></div>
-        <div class="field"><label>Koniec</label><input type="text" id="presence_window_end" placeholder="np. 23:30"></div>
+        <div class="field"><label>Początek</label><span id="presence_window_start_field"></span></div>
+        <div class="field"><label>Koniec</label><span id="presence_window_end_field"></span></div>
       </div>
     </div>
   </div>
@@ -156,7 +163,7 @@
 </div>
 
 <script>
-let context = { tuya_devices: [], virtual_inputs: [], satel_partitions: {}, status_keys: [], motion_rule_names: [] };
+let context = { tuya_devices: [], virtual_inputs: [], satel_partitions: {}, status_keys: [], motion_rule_names: [], dimmer_devices: [] };
 
 // Autoryzacja tylko dla zapisu (POST) - sesja przez /login (ciasteczko
 // HttpOnly, tak samo jak /config - patrz dashboard/auth.py).
@@ -196,6 +203,59 @@ function escapeHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+// ------------------------------------------------------------------
+// Harmonogram (time_window) - "wyklikiwany" widget zamiast wolnego
+// tekstu: wybór stały czas / wschód / zachód słońca + odpowiednie pole
+// (godzina albo przesunięcie w minutach). Format zapisu w configu (i to,
+// co wysyłamy do API) zostaje BEZ ZMIAN - "HH:MM" albo "sunset"/"sunrise"
+// z opcjonalnym "+N"/"-N" (patrz bridge/scheduling.py) - zmienia się
+// tylko sposób WPROWADZANIA tego w przeglądarce.
+// ------------------------------------------------------------------
+function parseTimeSpec(value) {
+  value = (value || '').trim();
+  const m = value.match(/^(sunset|sunrise)([+-]\d+)?$/);
+  if (m) return { type: m[1], fixed: '', offset: m[2] ? parseInt(m[2], 10) : 0 };
+  if (/^\d{2}:\d{2}$/.test(value)) return { type: 'fixed', fixed: value, offset: 0 };
+  return { type: 'fixed', fixed: '', offset: 0 };
+}
+
+function timeSpecFieldHtml(cls, value) {
+  const spec = parseTimeSpec(value);
+  return `
+    <span class="timespec">
+      <select class="${cls}-type timespec-type">
+        <option value="fixed" ${spec.type === 'fixed' ? 'selected' : ''}>Stały czas</option>
+        <option value="sunset" ${spec.type === 'sunset' ? 'selected' : ''}>Zachód słońca</option>
+        <option value="sunrise" ${spec.type === 'sunrise' ? 'selected' : ''}>Wschód słońca</option>
+      </select>
+      <input type="time" class="${cls}-fixed timespec-fixed" value="${escapeHtml(spec.fixed)}"
+        style="${spec.type === 'fixed' ? '' : 'display:none;'}">
+      <input type="number" class="${cls}-offset timespec-offset" placeholder="przesunięcie (min)" value="${spec.offset}"
+        style="${spec.type === 'fixed' ? 'display:none;' : ''}" title="Minuty przed (ujemne) albo po (dodatnie)">
+    </span>`;
+}
+
+function wireTimeSpecToggles(root) {
+  root.querySelectorAll('.timespec').forEach(el => {
+    const typeSel = el.querySelector('.timespec-type');
+    const fixedInput = el.querySelector('.timespec-fixed');
+    const offsetInput = el.querySelector('.timespec-offset');
+    typeSel.addEventListener('change', () => {
+      const isFixed = typeSel.value === 'fixed';
+      fixedInput.style.display = isFixed ? '' : 'none';
+      offsetInput.style.display = isFixed ? 'none' : '';
+    });
+  });
+}
+
+function collectTimeSpec(cls, root) {
+  const type = root.querySelector(`.${cls}-type`).value;
+  if (type === 'fixed') return root.querySelector(`.${cls}-fixed`).value.trim();
+  const offset = parseInt(root.querySelector(`.${cls}-offset`).value.trim() || '0', 10) || 0;
+  if (!offset) return type;
+  return `${type}${offset > 0 ? '+' : ''}${offset}`;
 }
 
 // ------------------------------------------------------------------
@@ -266,10 +326,21 @@ function renderActionFields(fieldsEl, type, initial) {
     if (type === 'tuya_on_for_duration') {
       html += `<input type="number" class="af-duration" placeholder="czas (s)" value="${initial.duration_seconds || ''}">`;
     }
+    // Jasność % ma sens tylko dla urządzeń ze ściemniaczem (patrz
+    // context.dimmer_devices) - ukryta domyślnie, pokazuje się po
+    // wybraniu takiego urządzenia (listener niżej).
     if (type !== 'tuya_off') {
-      html += `<input type="number" class="af-dimmer" placeholder="jasność % (opcjonalnie)" value="${initial.dimmer_level_percent ?? ''}">`;
+      const isDimmer = (context.dimmer_devices || []).includes(initial.device);
+      html += `<span class="af-dimmer-wrap" style="flex:1; min-width:100px; ${isDimmer ? '' : 'display:none;'}">
+        <input type="number" class="af-dimmer" placeholder="jasność %" value="${initial.dimmer_level_percent ?? ''}"></span>`;
     }
     fieldsEl.innerHTML = html;
+    if (type !== 'tuya_off') {
+      fieldsEl.querySelector('.af-device').addEventListener('change', (e) => {
+        const isDimmerNow = (context.dimmer_devices || []).includes(e.target.value);
+        fieldsEl.querySelector('.af-dimmer-wrap').style.display = isDimmerNow ? '' : 'none';
+      });
+    }
   } else if (type === 'satel_output') {
     fieldsEl.innerHTML = `
       <input type="number" class="af-output-number" placeholder="nr wyjścia" value="${initial.output_number ?? ''}">
@@ -382,7 +453,45 @@ function collectScenes() {
 // budowany/odczytywany tutaj musi być identyczny z tym, co waliduje
 // dashboard/setup.py: _build_condition/_validate_condition i ewaluuje
 // bridge/conditions.py: evaluate_condition.
+//
+// Wartości oczekiwane dla poszczególnych kategorii statusu - DOKŁADNIE te
+// same literały, które bridge zapisuje jako wartość statusu (patrz
+// bridge/rules_engine.py: "naruszone"/"OK", "włączone"/"wyłączone",
+// "uzbrojona"/"rozbrojona", "niedostępne", "połączono") - dzięki temu pole
+// wartości w warunku "state" jest listą wyboru zależną od wybranego
+// statusu, zamiast wolnego tekstu, który łatwo przekręcić literówką (a
+// warunek z literówką po prostu nigdy się nie spełni, bez żadnego błędu).
+// Kategorie spoza tej mapy (np. "boiler" - liczby/tekst z kotła) zostają
+// wolnym tekstem, bo nie mają skończonego zbioru wartości.
 // ------------------------------------------------------------------
+const STATE_VALUE_OPTIONS = {
+  satel_input: ['naruszone', 'OK'],
+  satel_output: ['włączone', 'wyłączone'],
+  satel_partition: ['uzbrojona', 'rozbrojona'],
+  tuya: ['włączone', 'wyłączone', 'niedostępne'],
+  system_health: ['połączono'],
+};
+
+function statusKeyCategory(key) {
+  const found = (context.status_keys || []).find(s => s.key === key);
+  return found ? found.category : null;
+}
+
+function stateValueFieldHtml(category, selectedValue) {
+  const options = STATE_VALUE_OPTIONS[category];
+  if (!options) {
+    return `<input type="text" class="cond-state-value" placeholder="wartość (np. liczba dla kotła)" value="${escapeHtml(selectedValue || '')}">`;
+  }
+  const hasSelected = selectedValue && options.includes(selectedValue);
+  const extra = (selectedValue && !hasSelected)
+    ? `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>` : '';
+  return `<select class="cond-state-value">
+    <option value="">(wybierz wartość)</option>
+    ${options.map(v => `<option value="${escapeHtml(v)}" ${v === selectedValue ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
+    ${extra}
+  </select>`;
+}
+
 function stateKeyOptionsHtml(selected) {
   const known = context.status_keys || [];
   const opts = known.map(s =>
@@ -402,18 +511,20 @@ function stateKeyOptionsHtml(selected) {
 function buildConditionLeafFieldsHtml(type, initial) {
   initial = initial || {};
   if (type === 'state') {
+    const selectedValue = initial.equals ?? initial.not_equals ?? '';
+    const category = statusKeyCategory(initial.key);
     return `
       <select class="cond-state-key">${stateKeyOptionsHtml(initial.key)}</select>
       <select class="cond-state-op" style="max-width:130px;">
         <option value="equals" ${!initial.not_equals ? 'selected' : ''}>równa się</option>
         <option value="not_equals" ${initial.not_equals ? 'selected' : ''}>różna od</option>
       </select>
-      <input type="text" class="cond-state-value" placeholder="wartość, np. naruszone / włączone" value="${escapeHtml(initial.equals ?? initial.not_equals ?? '')}">`;
+      <span class="cond-state-value-wrap">${stateValueFieldHtml(category, selectedValue)}</span>`;
   }
   if (type === 'time_window') {
     return `
-      <input type="text" class="cond-tw-start" placeholder="początek, np. 22:00 albo sunset-15" value="${escapeHtml(initial.start || '')}">
-      <input type="text" class="cond-tw-end" placeholder="koniec, np. 06:00" value="${escapeHtml(initial.end || '')}">`;
+      ${timeSpecFieldHtml('cond-tw-start', initial.start)}
+      ${timeSpecFieldHtml('cond-tw-end', initial.end)}`;
   }
   return '';
 }
@@ -456,6 +567,15 @@ function buildConditionGroupEl(groupData) {
       fields.dataset.condType = kind;
       fields.innerHTML = buildConditionLeafFieldsHtml(kind, initial);
       row.appendChild(fields);
+      if (kind === 'state') {
+        fields.querySelector('.cond-state-key').addEventListener('change', (e) => {
+          const category = statusKeyCategory(e.target.value);
+          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '');
+        });
+      }
+      if (kind === 'time_window') {
+        wireTimeSpecToggles(fields);
+      }
     }
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
@@ -497,8 +617,8 @@ function collectConditionGroup(groupEl) {
     if (condType === 'time_window') {
       return {
         type: 'time_window',
-        start: fields.querySelector('.cond-tw-start').value.trim(),
-        end: fields.querySelector('.cond-tw-end').value.trim(),
+        start: collectTimeSpec('cond-tw-start', fields),
+        end: collectTimeSpec('cond-tw-end', fields),
       };
     }
     return null;
@@ -519,32 +639,56 @@ function thenTriggerRuleOptionsHtml(selected, ownNameEl) {
 // ------------------------------------------------------------------
 // Reguły ruchu
 // ------------------------------------------------------------------
-function addMotionRuleCard(initial) {
+function setMotionRuleCollapsed(card, collapsed) {
+  card.classList.toggle('collapsed', collapsed);
+  card.querySelector('.mr-toggle-collapse').textContent = collapsed ? '▶ Rozwiń' : '▼ Zwiń';
+}
+
+function collapseAllMotionRules() {
+  document.querySelectorAll('#motionRulesContainer .sub-card').forEach(card => setMotionRuleCollapsed(card, true));
+}
+
+// startCollapsed=true dla reguł wczytanych z serwera (już zapisane -
+// nie trzeba ich mieć rozwinięte, żeby nie zaśmiecały widoku przy wielu
+// regułach) - nowo dodana reguła ("+ Dodaj regułę") zostaje rozwinięta,
+// bo właśnie się ją edytuje. Po zapisie (patrz saveBtn niżej)
+// collapseAllMotionRules() zwija WSZYSTKIE karty naraz.
+function addMotionRuleCard(initial, startCollapsed) {
   initial = initial || {};
   const window_ = initial.time_window || {};
   const escalation = initial.escalation || {};
-  const actionKind = initial.scene ? 'scene' : 'device';
+  const actionKind = initial.scene ? 'scene' : (initial.action === 'turn_off' ? 'device_off' : 'device');
+  const triggerOn = initial.trigger_on === 'restored' ? 'restored' : 'violated';
   const container = document.getElementById('motionRulesContainer');
   const card = document.createElement('div');
   card.className = 'sub-card';
   card.innerHTML = `
     <div class="sub-card-header">
-      <b style="color: var(--muted); font-size: 13px;">Reguła ruchu</b>
+      <input type="text" class="mr-name" placeholder="Nazwa reguły (opcjonalnie - potrzebna do wyzwalania łańcuchowego)" value="${escapeHtml(initial.name || '')}" style="flex:1;">
+      <button type="button" class="secondary mr-toggle-collapse">▼ Zwiń</button>
       <button type="button" class="row-remove">✕ usuń regułę</button>
     </div>
+    <div class="mr-body">
     <div class="field-row">
-      <div class="field"><label>Numer wejścia w Satelu (naruszenie wywoła regułę)</label>
+      <div class="field"><label>Numer wejścia w Satelu</label>
         <input type="number" class="mr-zone" value="${initial.zone_number ?? ''}"></div>
+      <div class="field"><label>Wyzwalacz</label>
+        <select class="mr-trigger">
+          <option value="violated" ${triggerOn === 'violated' ? 'selected' : ''}>Naruszenie czujki</option>
+          <option value="restored" ${triggerOn === 'restored' ? 'selected' : ''}>Ustanie naruszenia (czujka wróciła do OK)</option>
+        </select></div>
       <div class="field"><label>Akcja</label>
         <select class="mr-action-kind">
           <option value="device" ${actionKind === 'device' ? 'selected' : ''}>Włącz urządzenie na czas</option>
+          <option value="device_off" ${actionKind === 'device_off' ? 'selected' : ''}>Wyłącz urządzenie</option>
           <option value="scene" ${actionKind === 'scene' ? 'selected' : ''}>Uruchom scenę</option>
         </select></div>
     </div>
     <div class="field-row mr-device-fields">
       <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${deviceOptionsHtml(initial.target_device)}</select></div>
-      <div class="field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" value="${initial.duration_seconds ?? ''}"></div>
-      <div class="field"><label>Jasność % (ściemniacz, opcjonalnie)</label><input type="number" class="mr-dimmer" value="${initial.dimmer_level_percent ?? ''}"></div>
+      <div class="field mr-duration-field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" value="${initial.duration_seconds ?? ''}"></div>
+      <div class="field mr-dimmer-field" style="${(context.dimmer_devices || []).includes(initial.target_device) ? '' : 'display:none;'}">
+        <label>Jasność % (ściemniacz)</label><input type="number" class="mr-dimmer" value="${initial.dimmer_level_percent ?? ''}"></div>
     </div>
     <div class="field-row mr-scene-fields">
       <div class="field"><label>Scena</label><select class="mr-scene">${sceneOptionsHtml(initial.scene)}</select></div>
@@ -554,10 +698,8 @@ function addMotionRuleCard(initial) {
       <label>Harmonogram - reguła aktywna tylko w oknie czasowym</label></div>
     <div class="optional-content mr-window-fields ${window_.start ? 'show' : ''}">
       <div class="field-row">
-        <div class="field"><label>Początek (HH:MM albo sunset/sunrise ± minuty)</label>
-          <input type="text" class="mr-window-start" placeholder="np. 22:00 albo sunset-15" value="${escapeHtml(window_.start || '')}"></div>
-        <div class="field"><label>Koniec</label>
-          <input type="text" class="mr-window-end" placeholder="np. 06:00" value="${escapeHtml(window_.end || '')}"></div>
+        <div class="field"><label>Początek</label>${timeSpecFieldHtml('mr-window-start', window_.start)}</div>
+        <div class="field"><label>Koniec</label>${timeSpecFieldHtml('mr-window-end', window_.end)}</div>
       </div>
     </div>
 
@@ -572,8 +714,6 @@ function addMotionRuleCard(initial) {
     </div>
 
     <div class="field-row">
-      <div class="field"><label>Nazwa reguły (opcjonalna - wymagana, żeby inna reguła mogła wyzwolić tę)</label>
-        <input type="text" class="mr-name" placeholder="np. wejscie_do_salonu" value="${escapeHtml(initial.name || '')}"></div>
       <div class="field"><label>Po zadziałaniu wyzwól też regułę</label>
         <select class="mr-then-trigger"></select></div>
     </div>
@@ -582,6 +722,7 @@ function addMotionRuleCard(initial) {
       <label>Dodatkowy warunek (if/and/or/not) - reguła zadziała tylko, gdy jest spełniony</label></div>
     <div class="optional-content mr-condition-fields ${initial.condition ? 'show' : ''}">
       <div class="mr-condition-container"></div>
+    </div>
     </div>`;
 
   const conditionContainer = card.querySelector('.mr-condition-container');
@@ -598,13 +739,32 @@ function addMotionRuleCard(initial) {
 
   const deviceFields = card.querySelector('.mr-device-fields');
   const sceneFields = card.querySelector('.mr-scene-fields');
+  const durationField = card.querySelector('.mr-duration-field');
+  const dimmerField = card.querySelector('.mr-dimmer-field');
   function syncActionKind() {
     const kind = card.querySelector('.mr-action-kind').value;
-    deviceFields.style.display = kind === 'device' ? '' : 'none';
+    deviceFields.style.display = (kind === 'device' || kind === 'device_off') ? '' : 'none';
     sceneFields.style.display = kind === 'scene' ? '' : 'none';
+    // "Wyłącz urządzenie" nie ma czasu ani jasności - urządzenie po
+    // prostu gaśnie natychmiast po wyzwoleniu reguły.
+    durationField.style.display = kind === 'device' ? '' : 'none';
+    if (kind === 'device_off') {
+      dimmerField.style.display = 'none';
+    } else if (kind === 'device') {
+      const isDimmer = (context.dimmer_devices || []).includes(card.querySelector('.mr-target-device').value);
+      dimmerField.style.display = isDimmer ? '' : 'none';
+    }
   }
   card.querySelector('.mr-action-kind').addEventListener('change', syncActionKind);
   syncActionKind();
+
+  // Jasność % ma sens tylko dla urządzeń ze ściemniaczem (patrz
+  // context.dimmer_devices, /api/config/automation-context) - pokaż to
+  // pole tylko po wybraniu takiego urządzenia, żeby nie sugerować
+  // ściemniania na zwykłym gniazdku/przekaźniku.
+  card.querySelector('.mr-target-device').addEventListener('change', syncActionKind);
+
+  wireTimeSpecToggles(card);
 
   card.querySelector('.mr-window-enabled').addEventListener('change', (e) => {
     card.querySelector('.mr-window-fields').classList.toggle('show', e.target.checked);
@@ -613,6 +773,10 @@ function addMotionRuleCard(initial) {
     card.querySelector('.mr-escalation-fields').classList.toggle('show', e.target.checked);
   });
   card.querySelector('.row-remove').addEventListener('click', () => { card.remove(); refreshEmptyHints(); });
+  card.querySelector('.mr-toggle-collapse').addEventListener('click', () => {
+    setMotionRuleCollapsed(card, !card.classList.contains('collapsed'));
+  });
+  setMotionRuleCollapsed(card, !!startCollapsed);
 
   container.appendChild(card);
   refreshEmptyHints();
@@ -622,9 +786,15 @@ document.getElementById('addMotionRuleBtn').addEventListener('click', () => { ad
 function collectMotionRules() {
   return Array.from(document.querySelectorAll('#motionRulesContainer .sub-card')).map(card => {
     const kind = card.querySelector('.mr-action-kind').value;
-    const rule = { zone_number: card.querySelector('.mr-zone').value.trim() };
+    const rule = {
+      zone_number: card.querySelector('.mr-zone').value.trim(),
+      trigger_on: card.querySelector('.mr-trigger').value,
+    };
     if (kind === 'scene') {
       rule.scene = card.querySelector('.mr-scene').value.trim();
+    } else if (kind === 'device_off') {
+      rule.target_device = card.querySelector('.mr-target-device').value.trim();
+      rule.action = 'turn_off';
     } else {
       rule.target_device = card.querySelector('.mr-target-device').value.trim();
       rule.duration_seconds = card.querySelector('.mr-duration').value.trim();
@@ -632,8 +802,8 @@ function collectMotionRules() {
     }
     rule.time_window = {
       enabled: card.querySelector('.mr-window-enabled').checked,
-      start: card.querySelector('.mr-window-start').value.trim(),
-      end: card.querySelector('.mr-window-end').value.trim(),
+      start: collectTimeSpec('mr-window-start', card),
+      end: collectTimeSpec('mr-window-end', card),
     };
     rule.escalation = {
       enabled: card.querySelector('.mr-escalation-enabled').checked,
@@ -677,8 +847,12 @@ function populatePresence(ps) {
   const window_ = ps.window || {};
   document.getElementById('presence_window_enabled').checked = !!window_.start;
   document.getElementById('presenceWindowContent').classList.toggle('show', !!window_.start);
-  document.getElementById('presence_window_start').value = window_.start || '';
-  document.getElementById('presence_window_end').value = window_.end || '';
+  const startField = document.getElementById('presence_window_start_field');
+  const endField = document.getElementById('presence_window_end_field');
+  startField.innerHTML = timeSpecFieldHtml('presence-window-start', window_.start);
+  endField.innerHTML = timeSpecFieldHtml('presence-window-end', window_.end);
+  wireTimeSpecToggles(startField);
+  wireTimeSpecToggles(endField);
 }
 
 document.getElementById('presence_enabled').addEventListener('change', (e) => {
@@ -696,8 +870,8 @@ function collectPresence() {
     max_interval_minutes: document.getElementById('presence_max_interval').value.trim(),
     window: {
       enabled: document.getElementById('presence_window_enabled').checked,
-      start: document.getElementById('presence_window_start').value.trim(),
-      end: document.getElementById('presence_window_end').value.trim(),
+      start: collectTimeSpec('presence-window-start', document.getElementById('presence_window_start_field')),
+      end: collectTimeSpec('presence-window-end', document.getElementById('presence_window_end_field')),
     },
   };
 }
@@ -718,7 +892,7 @@ async function loadAll() {
 
   const data = await (await fetch('/api/config/automations')).json();
   (data.scenes || []).forEach(s => addSceneCard(s));
-  (data.motion_rules || []).forEach(r => addMotionRuleCard(r));
+  (data.motion_rules || []).forEach(r => addMotionRuleCard(r, true));
   populatePresence(data.presence_simulation);
   refreshDependentDropdowns();
 }
@@ -748,6 +922,7 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
     } else {
       msgEl.className = 'ok';
       msgEl.textContent = `✅ Zapisano (${data.saved.scenes} scen, ${data.saved.motion_rules} reguł ruchu). ${data.message}`;
+      collapseAllMotionRules();
     }
   } catch (e) {
     msgEl.className = 'error';

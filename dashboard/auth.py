@@ -1,7 +1,18 @@
-"""Autoryzacja panelu webowego - CELOWO wąska: chroni tylko akcje, które
-COŚ ZMIENIAJĄ (zapis konfiguracji czujników, uzbrajanie/rozbrajanie stref).
-Zwykłe przeglądanie panelu (historia, statusy, dziennik zdarzeń) zostaje
-otwarte - to był świadomy wybór, nie przez zapomnienie.
+"""Autoryzacja panelu webowego.
+
+Zalogowanie wymagane jest dla WSZYSTKIEGO poza samym podglądem strony
+głównej (status na żywo, historia, dziennik zdarzeń, alarmy progowe) i
+tego, co musi działać przed zalogowaniem (logowanie, kreator pierwszej
+konfiguracji, healthcheck) - patrz dashboard/app.py:
+_require_login_for_settings_and_control (allowlist stron/endpointów
+publicznych, wszystko inne domyślnie chronione). Dotyczy to zarówno
+SAMEGO WGLĄDU w ustawienia (/config, /automations, /plugins i wszystkie
+ich podstrony, /system), jak i sterowania alarmem (sekcja
+uzbrojenia/rozbrojenia na stronie głównej) - nie tylko faktycznego
+zapisu/wysłania komendy, tak jak to było wcześniej (świadomie węższa
+polityka, zarzucona na wyraźną prośbę: ukrywanie samych ustawień/
+kontrolek, nie tylko blokowanie zapisu, jest tym, czego chce właściciel
+instalacji).
 
 WIELE kont administratorskich (patrz bridge/config_store.py: tabela
 `users`) - płaski model uprawnień, każde zalogowane konto ma pełny dostęp

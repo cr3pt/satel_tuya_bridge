@@ -251,8 +251,12 @@ def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str
         else:
             if not rule.get("target_device"):
                 errors.append(f"{label}: wybierz urządzenie docelowe albo scenę")
-            if not rule.get("duration_seconds"):
+            if rule.get("action") != "turn_off" and not rule.get("duration_seconds"):
                 errors.append(f"{label}: czas włączenia (sekundy) jest wymagany")
+
+        trigger_on = (rule.get("trigger_on") or "violated").strip()
+        if trigger_on not in ("violated", "restored"):
+            errors.append(f"{label}: nieznany wyzwalacz '{trigger_on}'")
 
         window = rule.get("time_window") or {}
         if window.get("enabled"):
@@ -402,10 +406,17 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
             built["scene"] = scene_name
         else:
             built["target_device"] = rule["target_device"]
-            built["duration_seconds"] = int(rule["duration_seconds"])
-            built["dimmer_level_percent"] = (
-                int(rule["dimmer_level_percent"]) if rule.get("dimmer_level_percent") not in (None, "") else None
-            )
+            if rule.get("action") == "turn_off":
+                built["action"] = "turn_off"
+            else:
+                built["duration_seconds"] = int(rule["duration_seconds"])
+                built["dimmer_level_percent"] = (
+                    int(rule["dimmer_level_percent"]) if rule.get("dimmer_level_percent") not in (None, "") else None
+                )
+
+        trigger_on = (rule.get("trigger_on") or "violated").strip()
+        if trigger_on == "restored":
+            built["trigger_on"] = "restored"
 
         window = rule.get("time_window") or {}
         if window.get("enabled") and window.get("start") and window.get("end"):

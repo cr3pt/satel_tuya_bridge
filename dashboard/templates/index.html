@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root {
@@ -119,7 +120,7 @@
 </style>
 </head>
 <body>
-<h1>Panel Satel-Tuya-eBUS <a href="/config" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">⚙ Ustawienia czujników eBUS</a> <a href="/automations" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">🎬 Automatyzacje</a> <a href="/plugins" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">🧩 Wtyczki</a> <a href="/system" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">⚙ Ustawienia ogólne</a> <a id="authNavLink" href="/login" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;"></a></h1>
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">Panel Satel-Tuya-eBUS <a href="/config" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">⚙ Ustawienia czujników eBUS</a> <a href="/automations" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">🎬 Automatyzacje</a> <a href="/plugins" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">🧩 Wtyczki</a> <a href="/system" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">⚙ Ustawienia ogólne</a> <a id="authNavLink" href="/login" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;"></a></h1>
 
 <div id="alertsBanner" class="alerts-banner"></div>
 
@@ -232,10 +233,13 @@ async function authorizedFetch(url, options = {}) {
   return resp;
 }
 
+let isLoggedIn = false;  // patrz loadPartitionControls() - sterowanie alarmem wymaga zalogowania
+
 async function refreshAuthNav() {
   const link = document.getElementById('authNavLink');
   try {
     const status = await (await fetch('/api/auth/status')).json();
+    isLoggedIn = !!status.logged_in;
     if (status.logged_in) {
       link.textContent = '🔓 Wyloguj';
       link.href = '#';
@@ -272,9 +276,16 @@ let sensorMeta = {};        // nazwa -> {label, mqtt_topic} (z /api/config/senso
 let selectedSensors = new Set();
 
 async function loadSensors() {
+  // /api/config/sensors to "ustawienia" (etykiety/tematy MQTT czujników) -
+  // wymaga zalogowania (patrz dashboard/app.py:
+  // _require_login_for_settings_and_control), w odróżnieniu od
+  // /api/sensors (same nazwy czujników z historycznymi danymi - część
+  // publicznego podglądu). Niezalogowany widz i tak widzi wykres, tylko z
+  // surowymi nazwami zamiast ładnych etykiet - stąd `r.ok ? ... : []`
+  // zamiast wywalenia całej reszty strony na 401.
   const [names, configured] = await Promise.all([
     fetch('/api/sensors').then(r => r.json()),
-    fetch('/api/config/sensors').then(r => r.json()),
+    fetch('/api/config/sensors').then(r => r.ok ? r.json() : []),
   ]);
   const byName = Object.fromEntries(configured.map(s => [s.name, s]));
   sensorNames = names;
@@ -470,8 +481,12 @@ let satelZoneTypes = {};   // nazwa wejścia -> slug rodzaju (np. "drzwi")
 let satelOutputTypes = {}; // nazwa wyjścia -> slug rodzaju (np. "syrena")
 
 async function loadSatelFieldTypes() {
+  // /api/config/satel-fields (pełne ustawienia, w tym klucz wirtualnych
+  // wejść) teraz wymaga zalogowania - /api/satel/zone-types to jego
+  // publiczny podzbiór (same mapy nazwa -> rodzaj, bez niczego wrażliwego),
+  // wystarczający dla samych ikon/etykiet na stronie głównej.
   try {
-    const data = await (await fetch('/api/config/satel-fields')).json();
+    const data = await (await fetch('/api/satel/zone-types')).json();
     satelZoneTypes = data.zone_types || {};
     satelOutputTypes = data.output_types || {};
   } catch (e) {
@@ -572,15 +587,29 @@ async function loadStatuses() {
   renderStatusGrid('statusBoiler', boiler);
 }
 
-// --- Sterowanie alarmem (uzbrojenie/rozbrojenie) - jedyna sekcja poza
-// /config, która wymaga hasła (patrz authorizedFetch wyżej) ---
+// --- Sterowanie alarmem (uzbrojenie/rozbrojenie) - dostępne TYLKO po
+// zalogowaniu (patrz isLoggedIn/refreshAuthNav wyżej i
+// dashboard/app.py: _require_login_for_settings_and_control) - zarówno
+// sama sekcja kontrolek (checkboxy stref + przyciski), jak i faktyczne
+// wysłanie komendy. /api/satel/partitions wymaga teraz zalogowania, więc
+// dla niezalogowanego widza w ogóle go nie odpytujemy - stan uzbrojenia
+// nadal widać wyżej na liście statusów (kategoria satel_partition, część
+// publicznego podglądu), tylko bez możliwości zmiany.
 async function loadPartitionControls() {
+  const el = document.getElementById('partitionControls');
+  if (!isLoggedIn) {
+    el.innerHTML = `
+      <div style="color: var(--muted); font-size: 13px;">
+        🔒 Zaloguj się, aby sterować alarmem.
+        <a href="/login?next=${encodeURIComponent(location.pathname)}" style="color: var(--accent);">Zaloguj</a>
+      </div>`;
+    return;
+  }
   const [partitions, statuses] = await Promise.all([
     fetch('/api/satel/partitions').then(r => r.json()),
     fetch('/api/status?category=satel_partition').then(r => r.json()),
   ]);
   const stateByLabel = Object.fromEntries(statuses.map(s => [s.label, s.value]));
-  const el = document.getElementById('partitionControls');
   const entries = Object.entries(partitions);
   if (entries.length === 0) {
     el.innerHTML = '<div style="color: var(--muted); font-size: 13px;">Brak skonfigurowanych stref (satel.partitions w config.yaml)</div>';
@@ -669,6 +698,7 @@ document.getElementById('toggleEventsBtn').addEventListener('click', async () =>
 });
 
 async function refreshAll() {
+  await refreshAuthNav();  // stan zalogowania może się zmienić w innej karcie - odśwież przed sekcją alarmu
   await loadStatuses();
   await loadPartitionControls();
   await loadActiveAlerts();
