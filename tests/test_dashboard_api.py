@@ -510,6 +510,15 @@ class TestAutomationContextEndpoint:
         ).get_json()
         assert data["satel_outputs"] == ["Syrena"]  # z CONFIG_TEMPLATE
 
+    def test_context_returns_satel_zone_names_for_zone_number_ui(self, client):
+        """"Wejście w Satelu" (zona wyzwalająca regułę) wybiera się z listy
+        skonfigurowanych wejść (satel.monitored_zones), nie wpisuje gołego
+        numeru na pamięć."""
+        data = client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        ).get_json()
+        assert data["satel_zones"] == [{"name": "Salon", "number": 12}]  # z CONFIG_TEMPLATE
+
     def test_context_returns_satel_partitions_for_scene_action_ui(self, client):
         """Zakładka /automations potrzebuje nazwanych stref, żeby akcje
         'Uzbrój strefę(y)'/'Rozbrój strefę(y)' w edytorze scen mogły dać
