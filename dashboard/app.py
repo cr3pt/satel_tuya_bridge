@@ -1075,10 +1075,20 @@ def api_config_automation_context():
     # satel.monitored_outputs: {nazwa: numer}) - do wyboru jako "system:
     # Satel (wyjście)" celu akcji reguły ruchu, obok urządzeń Tuya.
     satel_outputs = sorted(config_raw.get("satel", {}).get("monitored_outputs", {}).keys())
+    # Nazwane wejścia Satela (satel.monitored_zones: {nazwa: numer}) - do
+    # wyboru "Numer wejścia w Satelu" z LISTY skonfigurowanych wejść,
+    # zamiast wpisywania gołego numeru ręcznie (ten sam powód co
+    # satel_outputs wyżej - lista już istnieje w ⚙ Ustawienia, więc trzeba
+    # z niej skorzystać zamiast prosić o numer na pamięć).
+    satel_zones = sorted(
+        ({"name": name, "number": number}
+         for name, number in config_raw.get("satel", {}).get("monitored_zones", {}).items()),
+        key=lambda z: z["name"],
+    )
     return jsonify({
         "tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs, "satel_partitions": satel_partitions,
         "status_keys": status_keys, "motion_rule_names": motion_rule_names,
-        "dimmer_devices": dimmer_devices, "satel_outputs": satel_outputs,
+        "dimmer_devices": dimmer_devices, "satel_outputs": satel_outputs, "satel_zones": satel_zones,
     })
 
 

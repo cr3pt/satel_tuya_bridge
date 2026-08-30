@@ -172,7 +172,7 @@
 <script>
 let context = {
   tuya_devices: [], virtual_inputs: [], satel_partitions: {}, status_keys: [], motion_rule_names: [],
-  dimmer_devices: [], satel_outputs: [],
+  dimmer_devices: [], satel_outputs: [], satel_zones: [],
 };
 
 // Autoryzacja tylko dla zapisu (POST) - sesja przez /login (ciasteczko
@@ -299,6 +299,29 @@ function deviceOptionsHtml(selected) {
 // urządzenie po nazwie (jak dotąd) albo Satel wyjście po nazwie (klucz w
 // satel.monitored_outputs, zakładka ⚙ Ustawienia -> Satel). "target_system"
 // puste/"tuya" = stare zachowanie, bez zmian.
+// "Numer wejścia w Satelu" (zona wyzwalająca regułę) - lista skonfigurowanych
+// wejść (satel.monitored_zones, zakładka ⚙ Ustawienia -> Satel) zamiast
+// gołego numeru do wpisania na pamięć - te wejścia i tak są już nazwane
+// i wybierane z listy wszędzie indziej w panelu (np. na stronie głównej).
+function zoneOptionsHtml(selected) {
+  const zones = context.satel_zones || [];
+  const selectedNum = selected === '' || selected === null || selected === undefined ? null : Number(selected);
+  if (zones.length === 0) {
+    return `<option value="">(brak skonfigurowanych wejść - zakładka ⚙ Ustawienia)</option>`;
+  }
+  const placeholder = `<option value="">(wybierz wejście)</option>`;
+  const opts = zones.map(z =>
+    `<option value="${z.number}" ${z.number === selectedNum ? 'selected' : ''}>${escapeHtml(z.name)} (#${z.number})</option>`
+  ).join('');
+  // Numer spoza aktualnej listy (np. wejście usunięte/przemianowane w
+  // ⚙ Ustawienia po zapisaniu reguły) - dodaj jako dodatkową opcję, żeby
+  // zapis nie podmienił cicho numeru na inny podczas samej edycji strony.
+  const known = zones.some(z => z.number === selectedNum);
+  const extra = (selectedNum !== null && !known)
+    ? `<option value="${selectedNum}" selected>#${selectedNum} (nieznane - sprawdź ⚙ Ustawienia)</option>` : '';
+  return placeholder + opts + extra;
+}
+
 function targetDeviceOptionsHtml(system, selected) {
   if (system === 'satel_output') {
     const outputs = context.satel_outputs || [];
@@ -711,8 +734,8 @@ function addMotionRuleCard(initial, startCollapsed) {
     </div>
     <div class="mr-body">
     <div class="field-row">
-      <div class="field"><label>Numer wejścia w Satelu</label>
-        <input type="number" class="mr-zone" value="${initial.zone_number ?? ''}"></div>
+      <div class="field"><label>Wejście w Satelu</label>
+        <select class="mr-zone">${zoneOptionsHtml(initial.zone_number ?? '')}</select></div>
       <div class="field"><label>Wyzwalacz</label>
         <select class="mr-trigger">
           <option value="violated" ${triggerOn === 'violated' ? 'selected' : ''}>Naruszenie czujki</option>

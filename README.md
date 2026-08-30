@@ -1334,7 +1334,10 @@ skutkuje ostrzeżeniem w logu zamiast wywalenia procesu.
 W edytorze (`/automations`) wybór jest dwuetapowy - pole **"System"**
 (Tuya / Satel - wyjście) obok "Urządzenia docelowego", które podpowiada
 listę zależną od wybranego systemu (urządzenia Tuya albo nazwane wyjścia
-Satela).
+Satela). Pole "Wejście w Satelu" (numer strefy wyzwalającej regułę) jest z
+tego samego powodu listą wyboru zamiast gołego numeru do wpisania na
+pamięć - podpowiada nazwane wejścia z `satel.monitored_zones` (zakładka
+⚙ Ustawienia -> Satel), dokładnie tak jak wybór urządzenia docelowego wyżej.
 
 ### Eskalacja przy powtarzających się naruszeniach
 
