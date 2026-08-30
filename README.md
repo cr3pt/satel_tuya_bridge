@@ -1330,7 +1330,8 @@ razem). Dwa typy liścia:
   panelu głównym (wejście/wyjście Satela, urządzenie Tuya, czujnik kotła -
   ten sam klucz, co w kolumnie "key" pod `/api/status`, np.
   `satel_input:3`, `tuya:gniazdko_salon`) z zadaną wartością - `equals` albo
-  `not_equals`.
+  `not_equals`. Ten sam mechanizm obsługuje też **"inna automatyzacja jest
+  uruchomiona"** - patrz osobny akapit niżej.
 - `time_window` - dokładnie ten sam format co pole `time_window` reguły
   wyżej (w tym `sunset`/`sunrise`), ale jako warunek podrzędny (przydatne
   wewnątrz `not`, żeby wyrazić "poza tym oknem").
@@ -1362,6 +1363,52 @@ zbioru wartości (np. odczyt liczbowy z kotła) zostaje zwykłe pole tekstowe.
 Warunek z błędem (np. nieznany typ) jest odrzucany przy zapisie; warunek,
 który w trakcie działania nie da się obliczyć (np. odwołuje się do klucza,
 który zniknął z configu), traktowany jest jako NIESPEŁNIONY (reguła
+bezpiecznie się nie uruchamia, zamiast wywalić cały proces bridge'a) -
+sprawdzone testem.
+
+### Warunek "inna automatyzacja jest uruchomiona"
+
+Zwykły warunek `state`, tyle że pod kluczem `automation:<nazwa>` (kategoria
+`automation`, wartości `uruchomiona`/`bezczynna`) - bez żadnego osobnego
+typu warunku, bo mechanizm statusu (ten sam co dla wejść Satela/urządzeń
+Tuya) już wystarcza. Każda **nazwana** scena i **nazwana** reguła ruchu z
+akcją "Włącz urządzenie na czas" zapisuje ten status: `uruchomiona` na
+czas wykonywania (sceny - cała lista akcji po kolei, włącznie z `delay`;
+reguły - cały czas trwania `duration_seconds`), `bezczynna` poza tym.
+Akcje natychmiastowe ("Wyłącz urządzenie", wyzwalacz "ustanie naruszenia")
+i reguły bez nazwy nie mają czego zaznaczać - nie dają się w ten sposób
+odpytać.
+
+```yaml
+scenes:
+  - name: "podlewanie_trawnika"
+    actions:
+      - {type: tuya_on_for_duration, device: zawor_ogrod, duration_seconds: 600}
+
+reguły_ruchu:
+  - source: satel_zone
+    zone_number: 5
+    name: "swiatlo_na_taras"
+    target_device: lampa_taras
+    duration_seconds: 120
+    condition:
+      type: not
+      conditions:
+        - {type: state, key: "automation:podlewanie_trawnika", equals: "uruchomiona"}
+```
+
+(powyżej: NIE zapalaj światła na tarasie, jeśli akurat leci podlewanie -
+np. żeby nie kusić czujki ruchu spryskiwaczem). W edytorze (`/automations`)
+klucz `automation:<nazwa>` pojawia się na liście warunku "state" tak samo
+jak każdy inny status - dopiero PO PIERWSZYM uruchomieniu bridge'a z tą
+sceną/regułą w configu (albo po `reload_config`), z wartością zasianą od
+razu jako `bezczynna`, żeby dało się warunek ułożyć zanim cokolwiek
+faktycznie się uruchomi. Nazwa sceny i nazwa reguły ruchu muszą być
+unikalne WZGLĘDEM SIEBIE (nie tylko w obrębie własnej listy) - obie dzielą
+jedną wspólną przestrzeń kluczy `automation:<nazwa>`, więc kolizja
+nadpisywałaby sobie nawzajem status; odrzucane przy zapisie.
+
+
 bezpiecznie się nie uruchamia, zamiast wywalić cały proces bridge'a) -
 sprawdzone testem.
 
