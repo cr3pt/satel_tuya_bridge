@@ -154,10 +154,24 @@ def validate_automations(form: dict) -> list[str]:
     wyżej), jak i samodzielnie przez panel /automations (dashboard/app.py),
     który nie ma (i nie potrzebuje) reszty pól kreatora."""
     scene_names = {s.get("name", "").strip() for s in form.get("scenes", []) if s.get("name", "").strip()}
+    rule_names = {r.get("name", "").strip() for r in form.get("motion_rules", []) if r.get("name", "").strip()}
     errors = []
     errors.extend(_validate_scenes(form.get("scenes", [])))
     errors.extend(_validate_motion_rules(form.get("motion_rules", []), scene_names))
     errors.extend(_validate_presence_simulation(form.get("presence_simulation", {})))
+    # Sceny i reguły ruchu dzielą JEDEN wspólny klucz statusu
+    # "automation:<nazwa>" (patrz warunek "state" z kategorią "automation" -
+    # bridge/rules_engine.py: _seed_automation_status_labels/SceneRunner.run)
+    # - kolizja nazw sprawiłaby, że stan sceny i reguły nadpisywałyby się
+    # nawzajem w tym samym kluczu, więc warunek "inna automatyzacja jest
+    # uruchomiona" wskazywałby na przypadkowy, mylący stan.
+    collision = scene_names & rule_names
+    if collision:
+        errors.append(
+            f"Nazwa(-y) {sorted(collision)} użyta(-e) jednocześnie jako nazwa sceny i reguły ruchu - "
+            f"nazwy scen i reguł ruchu muszą być unikalne między sobą (współdzielą jeden klucz statusu "
+            f"do warunku 'inna automatyzacja jest uruchomiona')"
+        )
     return errors
 
 

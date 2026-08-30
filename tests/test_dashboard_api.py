@@ -90,43 +90,62 @@ def client(tmp_path):
 
 
 class TestPublicEndpoints:
-    """Strona główna (status na żywo/historia/dziennik/alarmy) zostaje
-    publiczna - patrz TestSettingsRequireLogin niżej po WSZYSTKO, co teraz
-    (w odróżnieniu od wcześniejszej polityki) wymaga zalogowania, żeby w
-    ogóle zobaczyć: strony ustawień (/config, /automations, /plugins,
-    /system) i sterowanie alarmem."""
-
-    def test_index_page_loads(self, client):
-        assert client.get("/").status_code == 200
-
-    def test_status_endpoint(self, client):
-        assert client.get("/api/status").status_code == 200
+    """Jedyne, co ma prawo działać BEZ zalogowania - mechanika logowania,
+    kreator pierwszej konfiguracji i healthcheck (zewnętrzny monitoring nie
+    wysyła poświadczeń panelu). WSZYSTKO inne, łącznie z samym podglądem
+    strony głównej, wymaga zalogowania - patrz TestSettingsRequireLogin
+    niżej ("przed zalogowaniem nic nie jest widoczne")."""
 
     def test_healthz_ok_when_no_components_reported(self, client):
         resp = client.get("/healthz")
         assert resp.status_code == 200
         assert resp.get_json()["ok"] is True
 
-    def test_command_status_public(self, client):
-        resp = client.get("/api/commands/999")
-        assert resp.status_code == 404  # nie istnieje, ale endpoint jest dostępny bez auth
-
-    def test_satel_zone_types_public(self, client):
-        """Publiczny podzbiór /api/config/satel-fields (teraz chronione) -
-        panel główny potrzebuje ikon/etykiet rodzaju wejść/wyjść bez logowania."""
-        resp = client.get("/api/satel/zone-types")
-        assert resp.status_code == 200
-        assert resp.get_json() == {"zone_types": {}, "output_types": {}}
-
 
 class TestSettingsRequireLogin:
-    """Widoczność JAKICHKOLWIEK ustawień i sterowanie alarmem wymagają
-    zalogowania - nie tylko sam zapis/wysłanie komendy, jak to było
-    wcześniej (patrz dashboard/app.py:
-    _require_login_for_settings_and_control). Strony ustawień przekierowują
-    na /login (302), API zwraca 401 - dokładnie jak istniejące
-    @require_auth() dla akcji zapisu, żeby ta sama logika
-    authorizedFetch()/redirect-na-401 w JS działała identycznie."""
+    """Widoczność WSZYSTKIEGO (łącznie ze stroną główną - status na żywo/
+    historia/dziennik/alarmy) i sterowanie alarmem wymagają zalogowania -
+    nie tylko sam zapis/wysłanie komendy (patrz dashboard/app.py:
+    _require_login_for_settings_and_control). Strony przekierowują na
+    /login (302), API zwraca 401 - dokładnie jak istniejące @require_auth()
+    dla akcji zapisu, żeby ta sama logika authorizedFetch()/redirect-na-401
+    w JS działała identycznie."""
+
+    def test_index_page_redirects_to_login_without_auth(self, client):
+        resp = client.get("/", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_index_page_loads_when_authenticated_via_session(self, client):
+        login = client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
+        assert login.status_code == 200
+        assert client.get("/").status_code == 200
+
+    def test_status_endpoint_requires_auth(self, client):
+        assert client.get("/api/status").status_code == 401
+        resp = client.get("/api/status", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+
+    def test_live_dashboard_data_endpoints_require_auth(self, client):
+        """Dane strony głównej (status na żywo/historia/dziennik/alarmy) -
+        wcześniej celowo publiczne razem ze stroną, teraz chronione tak samo
+        jak reszta panelu (patrz TestPublicEndpoints wyżej)."""
+        for path in ("/api/sensors", "/api/history?sensor=x", "/api/events",
+                     "/api/alerts/active", "/api/alerts/history"):
+            assert client.get(path).status_code == 401, path
+            resp = client.get(path, headers=_basic_auth_header("test_haslo_123"))
+            assert resp.status_code == 200, path
+
+    def test_command_status_requires_auth(self, client):
+        assert client.get("/api/commands/999").status_code == 401
+        resp = client.get("/api/commands/999", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 404  # zalogowany, ale komenda o tym ID nie istnieje
+
+    def test_satel_zone_types_requires_auth(self, client):
+        assert client.get("/api/satel/zone-types").status_code == 401
+        resp = client.get("/api/satel/zone-types", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json() == {"zone_types": {}, "output_types": {}}
 
     def test_config_page_redirects_to_login_without_auth(self, client):
         resp = client.get("/config", follow_redirects=False)
@@ -322,7 +341,7 @@ class TestProtectedArmDisarmEndpoints:
             "/api/satel/arm", json={"partitions": [1]}, headers=_basic_auth_header("test_haslo_123"),
         )
         command_id = resp.get_json()["command_id"]
-        status_resp = client.get(f"/api/commands/{command_id}")
+        status_resp = client.get(f"/api/commands/{command_id}", headers=_basic_auth_header("test_haslo_123"))
         assert status_resp.status_code == 200
         assert status_resp.get_json()["status"] == "pending"
         assert status_resp.get_json()["command"] == "satel_arm"
@@ -330,7 +349,7 @@ class TestProtectedArmDisarmEndpoints:
     def test_arm_defaults_to_all_configured_partitions(self, client):
         resp = client.post("/api/satel/arm", json={}, headers=_basic_auth_header("test_haslo_123"))
         command_id = resp.get_json()["command_id"]
-        status_resp = client.get(f"/api/commands/{command_id}")
+        status_resp = client.get(f"/api/commands/{command_id}", headers=_basic_auth_header("test_haslo_123"))
         assert set(status_resp.get_json()["params"]["partitions"]) == {1, 2}
 
 
@@ -369,7 +388,7 @@ class TestSystemRestartEndpoint:
         assert "Restartuję" in resp.get_json()["message"]
 
         command_id = resp.get_json()["command_id"]
-        status_resp = client.get(f"/api/commands/{command_id}")
+        status_resp = client.get(f"/api/commands/{command_id}", headers=_basic_auth_header("test_haslo_123"))
         assert status_resp.get_json()["command"] == "restart_process"
 
     def test_schedules_delayed_self_exit_without_exiting_immediately(self, client, monkeypatch):

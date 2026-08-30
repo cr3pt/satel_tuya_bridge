@@ -29,6 +29,7 @@ tuya:
 reguły_ruchu:
   - source: satel_zone
     zone_number: 12
+    name: "regula_zone_12"
     target_device: gniazdko_salon
     duration_seconds: 60
 
@@ -205,6 +206,49 @@ class TestMotionRules:
         await engine.handle_motion("satel_zone", 14)
         events = engine.history.get_events("escalation", 0, time.time() + 1)
         assert len(events) == 1
+
+
+class TestAutomationRunningStatus:
+    """Status "automation:<nazwa>" (kategoria "automation") - pozwala
+    warunkowi (state) sprawdzić, czy inna nazwana scena/reguła ruchu jest
+    właśnie uruchomiona (patrz README: "Warunek 'inna automatyzacja jest
+    uruchomiona'"). Reguła zone_number=12 w CONFIG_TEMPLATE ma teraz
+    name="regula_zone_12"."""
+
+    async def test_seeded_as_idle_for_named_scene_and_duration_rule(self, engine):
+        """_seed_automation_status_labels() (wołane w start()/reload_config())
+        zapisuje "bezczynna" od razu, zanim cokolwiek się uruchomi - inaczej
+        klucz w ogóle nie pojawiłby się na liście warunków w edytorze."""
+        await engine.start()
+        assert engine.history.get_status_value("automation:regula_zone_12") == "bezczynna"
+        assert engine.history.get_status_value("automation:wykryto_intruza") == "bezczynna"
+
+    async def test_seed_does_not_overwrite_already_running_status(self, engine):
+        """Analogicznie do _seed_satel_status_labels/_seed_tuya_status_labels -
+        seedowanie NIE może nadpisać żywego, aktualnego stanu (np. gdy
+        reload_config() trafia w trakcie wykonywania automatyzacji)."""
+        engine.history.set_status("automation:regula_zone_12", "automation", "uruchomiona", label="regula_zone_12")
+        engine._seed_automation_status_labels()
+        assert engine.history.get_status_value("automation:regula_zone_12") == "uruchomiona"
+
+    async def test_unnamed_rule_is_not_seeded(self, engine):
+        """Reguła zone_number=13 (time_window) nie ma pola "name" - nie ma
+        pod jakim kluczem zapisać jej status, więc nic nie powinno powstać."""
+        await engine.start()
+        assert engine.history.get_status_value("automation:13") is None
+
+    async def test_named_duration_rule_ends_idle_after_firing(self, engine, fake_tuya):
+        await engine.handle_motion("satel_zone", 12)
+        await asyncio.sleep(0)
+        assert engine.history.get_status_value("automation:regula_zone_12") == "bezczynna"
+
+    async def test_scene_fired_via_rule_ends_idle_after_firing(self, engine, fake_tuya):
+        """Reguła zone_number=14 eskaluje do scena "wykryto_intruza" po 3.
+        naruszeniu - status tej sceny (nie reguły) musi wrócić na bezczynna."""
+        await engine.handle_motion("satel_zone", 14)
+        await engine.handle_motion("satel_zone", 14)
+        await engine.handle_motion("satel_zone", 14)
+        assert engine.history.get_status_value("automation:wykryto_intruza") == "bezczynna"
 
 
 class TestMotionRuleCondition:

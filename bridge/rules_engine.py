@@ -277,8 +277,9 @@ class RulesEngine:
 
         duration = rule["duration_seconds"]
         dimmer = rule.get("dimmer_level_percent")
+        rule_name = rule.get("name")
         self._active_timers[device] = asyncio.create_task(
-            self.tuya.turn_on_for_duration(device, duration, dimmer)
+            self._run_turn_on_for_duration(device, duration, dimmer, rule_name)
         )
         logger.info(
             "Reguła ruchu: %s(%s) -> %s na %ss",
@@ -289,6 +290,24 @@ class RulesEngine:
             detail={"target_device": device, "duration_seconds": duration, "dimmer_level_percent": dimmer},
         )
         await self._chain_trigger(rule, _chain_depth)
+
+    async def _run_turn_on_for_duration(
+        self, device: str, duration: float, dimmer: int | None, rule_name: str | None,
+    ) -> None:
+        """Owija tuya.turn_on_for_duration() zapisem statusu
+        "automation:<nazwa reguły>" (kategoria "automation") na czas trwania
+        włączenia - dzięki temu inna reguła/scena może w warunku (state)
+        sprawdzić "czy TA reguła jest właśnie aktywna" (patrz analogiczny
+        mechanizm w SceneRunner.run(), bridge/scenes.py). Tylko dla
+        NAZWANYCH reguł - bez nazwy nie ma pod jakim kluczem tego zapisać,
+        a to i tak jedyny sposób, żeby ktokolwiek mógł się do niej odwołać."""
+        if rule_name:
+            self.history.set_status(f"automation:{rule_name}", "automation", "uruchomiona", label=rule_name)
+        try:
+            await self.tuya.turn_on_for_duration(device, duration, dimmer)
+        finally:
+            if rule_name:
+                self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)
 
     # ------------------------------------------------------------------
     # then_trigger_rule: reguła po zadziałaniu może wyzwolić KOLEJNĄ regułę
@@ -614,6 +633,7 @@ class RulesEngine:
 
         self._seed_satel_status_labels()
         self._seed_tuya_status_labels()
+        self._seed_automation_status_labels()
 
         logger.info("Konfiguracja przeładowana bez restartu procesu")
         self.history.write_event("system", detail={"message": "Konfiguracja przeładowana (bez restartu procesu)"})
@@ -749,6 +769,29 @@ class RulesEngine:
             if key not in seen:
                 self.history.set_status(key, "tuya", "?", label=name)
 
+    def _seed_automation_status_labels(self) -> None:
+        """Zapisuje "bezczynna" dla każdej nazwanej sceny i (nazwanej)
+        reguły ruchu z akcją "włącz urządzenie na czas", żeby klucz
+        "automation:<nazwa>" był od razu widoczny na liście warunków (state)
+        w edytorze /automations - patrz warunek "inna automatyzacja jest
+        uruchomiona" i komentarz w SceneRunner.run()/_run_turn_on_for_duration
+        wyżej. Sceny wywoływane wyłącznie jako `scene:` w regule/eskalacji
+        (bez nazwy własnej) i akcje "wyłącz urządzenie"/"ustanie naruszenia"
+        (natychmiastowe, bez okna trwania) celowo pominięte - nie mają
+        sensownego stanu "uruchomiona" do zaznaczenia. Pomija już znane
+        klucze - patrz analogiczny komentarz w _seed_satel_status_labels()."""
+        seen = {s["key"] for s in self.history.get_status("automation")}
+        for scene_name in self.scenes.scenes:
+            key = f"automation:{scene_name}"
+            if key not in seen:
+                self.history.set_status(key, "automation", "bezczynna", label=scene_name)
+        for rule in self.config.motion_rules:
+            name = rule.get("name")
+            if name and "scene" not in rule and rule.get("action") != "turn_off":
+                key = f"automation:{name}"
+                if key not in seen:
+                    self.history.set_status(key, "automation", "bezczynna", label=name)
+
     async def _on_alarm_status_change(self) -> None:
         """Rzeczywisty callback rejestrowany przez register_alarm_status_callback
         (patrz start() niżej) - odbija (debounce'uje) wybuchy powiadomień w
@@ -811,6 +854,7 @@ class RulesEngine:
 
         self._seed_satel_status_labels()
         self._seed_tuya_status_labels()
+        self._seed_automation_status_labels()
 
         # Callback z centrali: zmiana wejść -> reguły ruchu (source=satel_zone)
         # + zapis statusu (widoczny w panelu jako "wejścia Satela").

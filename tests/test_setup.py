@@ -959,6 +959,16 @@ class TestConditionAndChainingValidation:
         errors = validate(form)
         assert any("nazwa 'dup' powtarza się" in e for e in errors)
 
+    def test_scene_and_rule_sharing_a_name_is_error(self):
+        """Sceny i reguły ruchu dzielą wspólny klucz statusu
+        "automation:<nazwa>" (warunek "inna automatyzacja jest uruchomiona")
+        - kolizja nazw nadpisywałaby sobie nawzajem status, więc musi być
+        odrzucona przy zapisie (patrz validate_automations)."""
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "name": "wykryto_intruza"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("wykryto_intruza" in e and "sceny i reguły ruchu" in e for e in errors)
+
     def test_then_trigger_rule_unknown_name_is_error(self):
         rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "then_trigger_rule": "nie_istnieje"}
         form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}

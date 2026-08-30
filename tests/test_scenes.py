@@ -1,4 +1,6 @@
 """Testy dla bridge/scenes.py - grupy akcji na wielu urządzeniach naraz."""
+import asyncio
+
 import pytest
 
 from bridge.scenes import SceneRunner
@@ -67,6 +69,44 @@ async def test_unknown_scene_does_not_raise(runner):
 async def test_arm_disarm_actions(runner, fake_satel):
     await runner.run("arm_disarm_test")
     assert fake_satel.calls == [("arm", 1, None), ("disarm", None)]
+
+
+async def test_scene_sets_running_status_during_execution_then_idle(runner, history):
+    """Status "automation:<nazwa>" (kategoria "automation") pozwala innej
+    regule/scenie sprawdzić w warunku (state), czy TA scena jest właśnie w
+    trakcie wykonywania - patrz README: warunek "inna automatyzacja jest
+    uruchomiona". Po zakończeniu (nawet z błędem akcji) status musi wrócić
+    na "bezczynna", inaczej warunek zostałby trwale zablokowany."""
+    await runner.run("wykryto_intruza")
+    assert history.get_status_value("automation:wykryto_intruza") == "bezczynna"
+
+
+async def test_scene_status_is_running_while_delay_action_pending(runner, history):
+    """Scena "wykryto_intruza" ma akcję {type: delay, seconds: 0.01} w
+    środku listy - w trakcie tego opóźnienia status powinien być
+    "uruchomiona", nie tylko na chwilę na samym początku."""
+    task = asyncio.create_task(runner.run("wykryto_intruza"))
+    await asyncio.sleep(0)  # oddaj sterowanie - scena zdąży dojść do delay
+    assert history.get_status_value("automation:wykryto_intruza") == "uruchomiona"
+    await task
+    assert history.get_status_value("automation:wykryto_intruza") == "bezczynna"
+
+
+async def test_scene_status_returns_idle_even_after_action_error(runner, history):
+    await runner.run("z_nieznana_akcja")
+    assert history.get_status_value("automation:z_nieznana_akcja") == "bezczynna"
+
+
+async def test_unknown_scene_does_not_write_any_automation_status(runner, history):
+    await runner.run("nieistniejaca_scena")
+    assert history.get_status_value("automation:nieistniejaca_scena") is None
+
+
+async def test_scene_without_history_does_not_crash(fake_tuya, fake_satel, fake_virtual_inputs):
+    """SceneRunner(history=None) - np. wywołania z testów/kontekstów, które
+    nie potrzebują historii - nie może wywalić się na próbie zapisu statusu."""
+    runner_no_history = SceneRunner(SCENES_CFG, fake_tuya, fake_satel, fake_virtual_inputs, history=None)
+    await runner_no_history.run("wykryto_intruza")  # nie powinno rzucić wyjątku
 
 
 async def test_arm_disarm_passes_explicit_partitions(runner, fake_satel):

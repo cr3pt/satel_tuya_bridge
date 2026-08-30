@@ -49,13 +49,26 @@ class SceneRunner:
         logger.info("Uruchamiam scenę '%s' (%d akcji)", scene_name, len(scene.get("actions", [])))
         if self.history:
             self.history.write_event("scene", source=scene_name, detail={"actions": len(scene.get("actions", []))})
-        for action in scene.get("actions", []):
-            try:
-                await self._run_action(action)
-            except Exception:
-                # Jedna nieudana akcja (np. martwe urządzenie Tuya) nie może
-                # przerwać reszty sceny - reszta akcji i tak powinna się wykonać.
-                logger.exception("Błąd akcji w scenie '%s': %s", scene_name, action)
+            # Status "automation:<nazwa>" (kategoria "automation") - pozwala
+            # innej regule/scenie sprawdzić w warunku (state), czy TA scena
+            # jest właśnie w trakcie wykonywania (patrz bridge/conditions.py:
+            # to zwykły warunek "state", bez żadnej specjalnej obsługi -
+            # wystarczy, że ktoś zapisuje i czyta ten sam klucz statusu).
+            # Okno "uruchomiona" obejmuje cały czas wykonywania akcji sceny
+            # PO KOLEI (włącznie z `delay`), NIE licząc ewentualnego
+            # wystrzelonego w tle `tuya_on_for_duration` (patrz niżej).
+            self.history.set_status(f"automation:{scene_name}", "automation", "uruchomiona", label=scene_name)
+        try:
+            for action in scene.get("actions", []):
+                try:
+                    await self._run_action(action)
+                except Exception:
+                    # Jedna nieudana akcja (np. martwe urządzenie Tuya) nie może
+                    # przerwać reszty sceny - reszta akcji i tak powinna się wykonać.
+                    logger.exception("Błąd akcji w scenie '%s': %s", scene_name, action)
+        finally:
+            if self.history:
+                self.history.set_status(f"automation:{scene_name}", "automation", "bezczynna", label=scene_name)
 
     async def _run_action(self, action: dict) -> None:
         kind = action["type"]
