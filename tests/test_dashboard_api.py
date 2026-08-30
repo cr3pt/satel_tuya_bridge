@@ -90,17 +90,14 @@ def client(tmp_path):
 
 
 class TestPublicEndpoints:
+    """Strona główna (status na żywo/historia/dziennik/alarmy) zostaje
+    publiczna - patrz TestSettingsRequireLogin niżej po WSZYSTKO, co teraz
+    (w odróżnieniu od wcześniejszej polityki) wymaga zalogowania, żeby w
+    ogóle zobaczyć: strony ustawień (/config, /automations, /plugins,
+    /system) i sterowanie alarmem."""
+
     def test_index_page_loads(self, client):
         assert client.get("/").status_code == 200
-
-    def test_config_page_loads(self, client):
-        assert client.get("/config").status_code == 200
-
-    def test_plugins_page_loads(self, client):
-        assert client.get("/plugins").status_code == 200
-
-    def test_get_sensors_no_auth_required(self, client):
-        assert client.get("/api/config/sensors").status_code == 200
 
     def test_status_endpoint(self, client):
         assert client.get("/api/status").status_code == 200
@@ -110,14 +107,67 @@ class TestPublicEndpoints:
         assert resp.status_code == 200
         assert resp.get_json()["ok"] is True
 
-    def test_satel_partitions_public(self, client):
-        resp = client.get("/api/satel/partitions")
-        assert resp.status_code == 200
-        assert resp.get_json() == {"Dom": 1, "Garaz": 2}
-
     def test_command_status_public(self, client):
         resp = client.get("/api/commands/999")
         assert resp.status_code == 404  # nie istnieje, ale endpoint jest dostępny bez auth
+
+    def test_satel_zone_types_public(self, client):
+        """Publiczny podzbiór /api/config/satel-fields (teraz chronione) -
+        panel główny potrzebuje ikon/etykiet rodzaju wejść/wyjść bez logowania."""
+        resp = client.get("/api/satel/zone-types")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"zone_types": {}, "output_types": {}}
+
+
+class TestSettingsRequireLogin:
+    """Widoczność JAKICHKOLWIEK ustawień i sterowanie alarmem wymagają
+    zalogowania - nie tylko sam zapis/wysłanie komendy, jak to było
+    wcześniej (patrz dashboard/app.py:
+    _require_login_for_settings_and_control). Strony ustawień przekierowują
+    na /login (302), API zwraca 401 - dokładnie jak istniejące
+    @require_auth() dla akcji zapisu, żeby ta sama logika
+    authorizedFetch()/redirect-na-401 w JS działała identycznie."""
+
+    def test_config_page_redirects_to_login_without_auth(self, client):
+        resp = client.get("/config", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_config_page_loads_when_authenticated_via_session(self, client):
+        login = client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
+        assert login.status_code == 200
+        resp = client.get("/config")
+        assert resp.status_code == 200
+
+    def test_plugins_page_redirects_to_login_without_auth(self, client):
+        resp = client.get("/plugins", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_automations_page_redirects_to_login_without_auth(self, client):
+        resp = client.get("/automations", follow_redirects=False)
+        assert resp.status_code == 302
+
+    def test_system_page_redirects_to_login_without_auth(self, client):
+        resp = client.get("/system", follow_redirects=False)
+        assert resp.status_code == 302
+
+    def test_config_sensors_requires_auth(self, client):
+        assert client.get("/api/config/sensors").status_code == 401
+        resp = client.get("/api/config/sensors", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+
+    def test_satel_partitions_requires_auth(self, client):
+        assert client.get("/api/satel/partitions").status_code == 401
+        resp = client.get("/api/satel/partitions", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json() == {"Dom": 1, "Garaz": 2}
+
+    def test_unknown_path_still_404s_not_redirected(self, client):
+        """Regresja: ścieżka niepasująca do ŻADNEJ trasy (request.endpoint
+        is None) musi zostać zwykłym 404, nie przekierowaniem na /login."""
+        resp = client.get("/nie-ma-takiej-strony", follow_redirects=False)
+        assert resp.status_code == 404
 
 
 class TestGlobalErrorHandlerNonApiRoutes:
@@ -244,7 +294,7 @@ class TestProtectedConfigEndpoint:
             "targets": {"history": True, "mqtt_publish": True, "tuya_virtual_device": False, "tuya_dp": ""},
         }]
         client.post("/api/config/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        resp = client.get("/api/config/sensors")
+        resp = client.get("/api/config/sensors", headers=_basic_auth_header("test_haslo_123"))
         names = [s["name"] for s in resp.get_json()]
         assert "trwaly_czujnik" in names
 
@@ -418,11 +468,17 @@ class TestConfigBackupZipEndpoints:
 
 
 class TestAutomationContextEndpoint:
-    def test_context_public_no_auth_required(self, client):
-        assert client.get("/api/config/automation-context").status_code == 200
+    """/automations i /api/config/automation-context teraz wymagają
+    zalogowania (patrz TestSettingsRequireLogin) - reszta testów loguje
+    się przez nagłówek Basic Auth, żeby sprawdzić właściwą treść."""
+
+    def test_context_requires_auth(self, client):
+        assert client.get("/api/config/automation-context").status_code == 401
 
     def test_context_returns_configured_device_and_virtual_input_names(self, client):
-        data = client.get("/api/config/automation-context").get_json()
+        data = client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        ).get_json()
         assert data["tuya_devices"] == ["gniazdko"]
         assert data["virtual_inputs"] == ["motion_hall"]
 
@@ -430,7 +486,9 @@ class TestAutomationContextEndpoint:
         """Zakładka /automations potrzebuje nazwanych stref, żeby akcje
         'Uzbrój strefę(y)'/'Rozbrój strefę(y)' w edytorze scen mogły dać
         wybrać KTÓRE strefy, zamiast zawsze dotykać tylko domyślnej."""
-        data = client.get("/api/config/automation-context").get_json()
+        data = client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        ).get_json()
         assert data["satel_partitions"] == {"Dom": 1, "Garaz": 2}  # z CONFIG_TEMPLATE
 
     def test_context_includes_cloud_only_devices(self, client):
@@ -444,7 +502,9 @@ class TestAutomationContextEndpoint:
             json={"cloud_devices": [{"name": "T & H Sensor", "id": "cloud1"}]},
             headers=_basic_auth_header("test_haslo_123"),
         )
-        data = client.get("/api/config/automation-context").get_json()
+        data = client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        ).get_json()
         assert "gniazdko" in data["tuya_devices"]  # lokalne, nietknięte
         assert "T & H Sensor" in data["tuya_devices"]
 
@@ -455,7 +515,9 @@ class TestAutomationContextEndpoint:
         pamiętać dokładny klucz jak "satel_input:3"."""
         import dashboard.app as app_module
         app_module.history.set_status("satel_input:3", "satel_input", "naruszone", label="Salon")
-        data = client.get("/api/config/automation-context").get_json()
+        data = client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        ).get_json()
         assert {"key": "satel_input:3", "label": "Salon", "category": "satel_input"} in data["status_keys"]
 
     def test_context_includes_motion_rule_names_for_chaining_ui(self, client):
@@ -470,16 +532,32 @@ class TestAutomationContextEndpoint:
             },
             headers=_basic_auth_header("test_haslo_123"),
         )
-        data = client.get("/api/config/automation-context").get_json()
+        data = client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        ).get_json()
         assert data["motion_rule_names"] == ["wejscie_do_salonu"]
+
+    def test_context_includes_dimmer_devices_for_brightness_field_gating(self, client):
+        """Edytor pokazuje pole "Jasność %" TYLKO dla urządzeń ze
+        ściemniaczem (type == "dimmer") - "gniazdko" z CONFIG_TEMPLATE jest
+        zwykłym gniazdkiem (type domyślny), więc nie powinno się tu pojawić."""
+        client.post(
+            "/api/config/tuya-devices",
+            json={"tuya_devices": [
+                {"name": "lampa_scienna", "id": "dimmer1", "ip": "1.2.3.9", "local_key": "k9",
+                 "type": "dimmer", "dimmer_dp": "3"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        data = client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        ).get_json()
+        assert data["dimmer_devices"] == ["lampa_scienna"]
 
 
 class TestAutomationsEndpoint:
-    def test_automations_page_loads(self, client):
-        assert client.get("/automations").status_code == 200
-
-    def test_get_automations_no_auth_required(self, client):
-        resp = client.get("/api/config/automations")
+    def test_get_automations_requires_auth(self, client):
+        resp = client.get("/api/config/automations", headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 200
         assert resp.get_json() == {"scenes": [], "motion_rules": [], "presence_simulation": {"enabled": False}}
 
@@ -527,7 +605,7 @@ class TestAutomationsEndpoint:
             },
         }
         client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        resp = client.get("/api/config/automations")
+        resp = client.get("/api/config/automations", headers=_basic_auth_header("test_haslo_123"))
         data = resp.get_json()
         assert data["scenes"][0]["name"] == "scena1"
         assert data["motion_rules"][0]["scene"] == "scena1"
@@ -562,14 +640,14 @@ class TestAutomationsEndpoint:
 
 
 class TestSatelFieldsEndpoint:
-    def test_get_satel_fields_no_auth_required(self, client):
-        assert client.get("/api/config/satel-fields").status_code == 200
+    def test_get_satel_fields_requires_auth(self, client):
+        assert client.get("/api/config/satel-fields").status_code == 401
 
     def test_get_satel_fields_reads_inline_values_when_no_fields_file(self, client):
         """CONFIG_TEMPLATE ma strefy/wyjścia/wejścia wpisane wprost - bez
         satel_fields.yaml na dysku - i to musi działać (wsteczna zgodność,
         patrz bridge/config.py)."""
-        data = client.get("/api/config/satel-fields").get_json()
+        data = client.get("/api/config/satel-fields", headers=_basic_auth_header("test_haslo_123")).get_json()
         assert {"name": "Dom", "number": 1} in data["partitions"]
         assert {"name": "Salon", "number": 12, "type": ""} in data["monitored_zones"]
         assert {"name": "Syrena", "number": 1, "type": ""} in data["monitored_outputs"]
@@ -610,7 +688,7 @@ class TestSatelFieldsEndpoint:
             "monitored_zones": [], "monitored_outputs": [], "virtual_inputs": [],
         }
         client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        resp = client.get("/api/config/satel-fields")
+        resp = client.get("/api/config/satel-fields", headers=_basic_auth_header("test_haslo_123"))
         assert {"name": "Piwnica", "number": 9} in resp.get_json()["partitions"]
 
     def test_saved_zone_and_output_types_round_trip(self, client):
@@ -622,7 +700,7 @@ class TestSatelFieldsEndpoint:
             "monitored_outputs": [{"name": "Syrena zew.", "number": "2", "type": "syrena"}],
         }
         client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        data = client.get("/api/config/satel-fields").get_json()
+        data = client.get("/api/config/satel-fields", headers=_basic_auth_header("test_haslo_123")).get_json()
         assert {"name": "Kuchnia", "number": 20, "type": "dym"} in data["monitored_zones"]
         assert {"name": "Syrena zew.", "number": 2, "type": "syrena"} in data["monitored_outputs"]
         assert data["zone_types"] == {"Kuchnia": "dym"}
@@ -642,11 +720,11 @@ class TestSatelFieldsEndpoint:
 
 
 class TestTuyaDevicesEndpoint:
-    def test_get_tuya_devices_no_auth_required(self, client):
-        assert client.get("/api/config/tuya-devices").status_code == 200
+    def test_get_tuya_devices_requires_auth(self, client):
+        assert client.get("/api/config/tuya-devices").status_code == 401
 
     def test_get_tuya_devices_reads_inline_values_when_no_devices_file(self, client):
-        data = client.get("/api/config/tuya-devices").get_json()
+        data = client.get("/api/config/tuya-devices", headers=_basic_auth_header("test_haslo_123")).get_json()
         assert any(d["name"] == "gniazdko" and d["ip"] == "1.2.3.4" for d in data["devices"])
 
     def test_post_tuya_devices_without_auth_returns_401(self, client):
@@ -680,7 +758,7 @@ class TestTuyaDevicesEndpoint:
             {"name": "trwale", "id": "d3", "ip": "1.2.3.6", "local_key": "k3", "type": "socket"},
         ]}
         client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        resp = client.get("/api/config/tuya-devices")
+        resp = client.get("/api/config/tuya-devices", headers=_basic_auth_header("test_haslo_123"))
         assert any(d["name"] == "trwale" for d in resp.get_json()["devices"])
         assert "trwale" in app_module.config_store.get("tuya_devices")["devices"]
 
@@ -700,7 +778,7 @@ class TestTuyaDevicesEndpoint:
         resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 200
 
-        data = client.get("/api/config/tuya-devices").get_json()
+        data = client.get("/api/config/tuya-devices", headers=_basic_auth_header("test_haslo_123")).get_json()
         assert {
             "name": "lampka_zigbee", "id": "sub1", "gateway": "brama_salon", "cid": "node1",
             "type": "socket", "ip": "", "local_key": "", "dimmer_dp": "",
@@ -740,7 +818,9 @@ class TestTuyaDevicesEndpoint:
             json={"tuya_devices": [{"name": "x", "id": "i", "ip": "1.2.3.4", "local_key": "k"}]},
             headers=_basic_auth_header("test_haslo_123"),
         )
-        cloud_after = client.get("/api/plugins/tuya_cloud/devices").get_json()
+        cloud_after = client.get(
+            "/api/plugins/tuya_cloud/devices", headers=_basic_auth_header("test_haslo_123"),
+        ).get_json()
         assert any(d["name"] == "lampa_taras" for d in cloud_after["devices"])
 
 
@@ -831,21 +911,21 @@ class TestPluginsEndpoint:
     Jedyny wyjątek bez własnego przełącznika to tuya_zigbee (dzieli
     połączenie/runtime z tuya_local)."""
 
-    def test_get_no_auth_required(self, client):
-        assert client.get("/api/plugins").status_code == 200
+    def test_get_requires_auth(self, client):
+        assert client.get("/api/plugins").status_code == 401
 
     def test_get_returns_satel_and_tuya_local_enabled_by_default(self, client):
-        by_id = {p["id"]: p for p in client.get("/api/plugins").get_json()}
+        by_id = {p["id"]: p for p in client.get("/api/plugins", headers=_basic_auth_header("test_haslo_123")).get_json()}
         assert by_id["satel"]["enabled"] is True
         assert by_id["tuya_local"]["enabled"] is True
         assert by_id["home_assistant"]["enabled"] is False
         assert by_id["presence_simulation"]["enabled"] is False
 
     def test_get_never_leaks_secrets(self, client):
-        """W odróżnieniu od /api/config/connections - ten endpoint jest
-        publiczny (bez hasła), więc absolutnie nie może zwrócić
-        integration_key/local_key/access_key."""
-        text = client.get("/api/plugins").get_data(as_text=True)
+        """Nawet zalogowanemu - to endpoint listujący WŁĄCZONE/WYŁĄCZONE
+        wtyczki (w odróżnieniu od /api/config/connections), więc absolutnie
+        nie powinien zwracać integration_key/local_key/access_key."""
+        text = client.get("/api/plugins", headers=_basic_auth_header("test_haslo_123")).get_data(as_text=True)
         assert '"x"' not in text  # integration_key z CONFIG_TEMPLATE
         assert '"k"' not in text  # local_key gniazdka z CONFIG_TEMPLATE
 
@@ -1002,9 +1082,10 @@ class TestDiscoveryEndpoints:
     i bridge/tuya_local.py mają własne testy jednostkowe z fake'ami -
     tutaj sprawdzamy tylko routing/obsługę błędów na poziomie endpointu)."""
 
-    def test_discover_ebus_no_auth_required(self, client, monkeypatch):
+    def test_discover_ebus_requires_auth(self, client, monkeypatch):
         monkeypatch.setattr("dashboard.app.discover_ebus_topics", lambda host, port: ["ebusd/bai/FlowTemp"])
-        resp = client.post("/api/discover/ebus", json={})
+        assert client.post("/api/discover/ebus", json={}).status_code == 401
+        resp = client.post("/api/discover/ebus", json={}, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 200
         assert resp.get_json()["topics"] == ["ebusd/bai/FlowTemp"]
 
@@ -1017,7 +1098,7 @@ class TestDiscoveryEndpoints:
             return []
 
         monkeypatch.setattr("dashboard.app.discover_ebus_topics", fake_discover)
-        client.post("/api/discover/ebus", json={})
+        client.post("/api/discover/ebus", json={}, headers=_basic_auth_header("test_haslo_123"))
         assert captured["host"] == "127.0.0.1"
 
     def test_discover_ebus_connection_error_returns_502(self, client, monkeypatch):
@@ -1025,7 +1106,7 @@ class TestDiscoveryEndpoints:
             raise ConnectionError("nie udało się połączyć")
 
         monkeypatch.setattr("dashboard.app.discover_ebus_topics", raise_connection_error)
-        resp = client.post("/api/discover/ebus", json={})
+        resp = client.post("/api/discover/ebus", json={}, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 502
 
     def test_discover_tuya_no_auth_required(self, client, monkeypatch):
@@ -1050,7 +1131,7 @@ class TestBackgroundEbusDiscoveryEndpoints:
     tylko routing/obsługa błędów na poziomie endpointu (podmieniamy metody
     singletona _ebus_background_discovery na fake'i)."""
 
-    def test_start_no_auth_required(self, client, monkeypatch):
+    def test_start_requires_auth(self, client, monkeypatch):
         import dashboard.app as app_module
 
         monkeypatch.setattr(app_module._ebus_background_discovery, "start", lambda *a, **kw: None)
@@ -1058,7 +1139,8 @@ class TestBackgroundEbusDiscoveryEndpoints:
             app_module._ebus_background_discovery, "status",
             lambda: {"running": True, "topics": [], "elapsed_seconds": 0, "duration_seconds": 300},
         )
-        resp = client.post("/api/discover/ebus/start", json={})
+        assert client.post("/api/discover/ebus/start", json={}).status_code == 401
+        resp = client.post("/api/discover/ebus/start", json={}, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 200
         assert resp.get_json()["running"] is True
 
@@ -1071,7 +1153,7 @@ class TestBackgroundEbusDiscoveryEndpoints:
             lambda host, port, duration_seconds=300.0: captured.update(host=host, port=port),
         )
         monkeypatch.setattr(app_module._ebus_background_discovery, "status", lambda: {})
-        client.post("/api/discover/ebus/start", json={})
+        client.post("/api/discover/ebus/start", json={}, headers=_basic_auth_header("test_haslo_123"))
         assert captured["host"] == "127.0.0.1"
 
     def test_start_connection_error_returns_502(self, client, monkeypatch):
@@ -1081,7 +1163,7 @@ class TestBackgroundEbusDiscoveryEndpoints:
             raise ConnectionError("nie udało się połączyć")
 
         monkeypatch.setattr(app_module._ebus_background_discovery, "start", raise_connection_error)
-        resp = client.post("/api/discover/ebus/start", json={})
+        resp = client.post("/api/discover/ebus/start", json={}, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 502
 
     def test_start_while_already_running_returns_409(self, client, monkeypatch):
@@ -1091,7 +1173,7 @@ class TestBackgroundEbusDiscoveryEndpoints:
             raise RuntimeError("Nasłuch już trwa")
 
         monkeypatch.setattr(app_module._ebus_background_discovery, "start", raise_running)
-        resp = client.post("/api/discover/ebus/start", json={})
+        resp = client.post("/api/discover/ebus/start", json={}, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 409
 
     def test_duration_seconds_is_capped(self, client, monkeypatch):
@@ -1103,28 +1185,33 @@ class TestBackgroundEbusDiscoveryEndpoints:
             lambda host, port, duration_seconds=300.0: captured.update(duration_seconds=duration_seconds),
         )
         monkeypatch.setattr(app_module._ebus_background_discovery, "status", lambda: {})
-        client.post("/api/discover/ebus/start", json={"duration_seconds": 99999})
+        client.post(
+            "/api/discover/ebus/start", json={"duration_seconds": 99999},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
         assert captured["duration_seconds"] == 600
 
-    def test_status_no_auth_required(self, client, monkeypatch):
+    def test_status_requires_auth(self, client, monkeypatch):
         import dashboard.app as app_module
 
         monkeypatch.setattr(
             app_module._ebus_background_discovery, "status",
             lambda: {"running": True, "topics": ["ebusd/bai/FlowTemp"], "elapsed_seconds": 5, "duration_seconds": 300},
         )
-        resp = client.get("/api/discover/ebus/status")
+        assert client.get("/api/discover/ebus/status").status_code == 401
+        resp = client.get("/api/discover/ebus/status", headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 200
         assert resp.get_json()["topics"] == ["ebusd/bai/FlowTemp"]
 
-    def test_stop_no_auth_required(self, client, monkeypatch):
+    def test_stop_requires_auth(self, client, monkeypatch):
         import dashboard.app as app_module
 
         monkeypatch.setattr(
             app_module._ebus_background_discovery, "stop",
             lambda: {"running": False, "topics": [], "elapsed_seconds": 5, "duration_seconds": 300},
         )
-        resp = client.post("/api/discover/ebus/stop")
+        assert client.post("/api/discover/ebus/stop").status_code == 401
+        resp = client.post("/api/discover/ebus/stop", headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 200
         assert resp.get_json()["running"] is False
 

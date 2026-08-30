@@ -924,17 +924,31 @@ się jako czerwony baner w panelu i - jeśli skonfigurujesz
 `notifications.ntfy_topic_url` - jako powiadomienie push przez
 [ntfy.sh](https://ntfy.sh) (darmowe, można też self-hostować).
 
-### Bezpieczeństwo panelu - autoryzacja tylko dla akcji zmieniających stan
+### Bezpieczeństwo panelu - logowanie wymagane dla ustawień i sterowania alarmem
 
-Panel jest **celowo** podzielony na dwie strefy:
+Panel jest podzielony na dwie strefy:
 
-- **Otwarte bez hasła**: cały podgląd - historia, statusy urządzeń,
-  dziennik zdarzeń, aktywne alarmy. To świadomy wybór, nie przeoczenie -
-  w domowej sieci LAN podgląd stanu domu nie jest tak wrażliwy jak
-  możliwość jego ZMIANY.
-- **Wymaga zalogowania**: zapis ustawień czujników (`/config`,
-  `/automations`) oraz uzbrajanie/rozbrajanie stref alarmowych z panelu
-  głównego.
+- **Otwarte bez hasła**: TYLKO podgląd na stronie głównej - historia,
+  statusy urządzeń (wejścia/wyjścia Satela, Tuya, kocioł), dziennik
+  zdarzeń, aktywne alarmy progowe. Żadnego sterowania, żadnych ustawień.
+- **Wymaga zalogowania**: WSZYSTKO inne - nie tylko sam zapis, ale już sam
+  **wgląd** w jakiekolwiek ustawienia (strony `/config`, `/automations`,
+  `/plugins` i wszystkie podstrony wtyczek, `/system`, razem z
+  odpowiadającymi im API) oraz **sama sekcja sterowania alarmem** na
+  stronie głównej (uzbrojenie/rozbrojenie) - niezalogowany widz widzi tam
+  tylko podpowiedź "🔒 Zaloguj się, aby sterować alarmem", bez checkboxów
+  stref ani przycisków. Stan uzbrojenia (tekst "uzbrojona"/"rozbrojona")
+  nadal widać na liście statusów - to podgląd, nie sterowanie.
+
+Implementacja: `dashboard/app.py:
+_require_login_for_settings_and_control` - jeden globalny hook
+(`before_request`) z jawną listą tego, co WOLNO zobaczyć bez logowania
+(strona główna i to, co musi działać przed zalogowaniem - logowanie,
+kreator pierwszej konfiguracji, healthcheck) - wszystko inne domyślnie
+chronione, także przyszłe endpointy dodane w nowych wtyczkach, bez
+pamiętania o dopisaniu ich do jakiejkolwiek listy. Próba wejścia na
+chronioną STRONĘ bez sesji przekierowuje na `/login?next=...`; chronione
+API zwraca `401`.
 
 #### Konfiguracja konta administratora (nazwa użytkownika + hasło)
 
@@ -1256,6 +1270,13 @@ wywoływać scenę zamiast pojedynczej akcji - wystarczy dodać pole `scene:
 "nazwa"`. Błąd jednej akcji w scenie (np. martwe urządzenie) nie przerywa
 pozostałych - sprawdzone testem.
 
+Pole "Jasność %" (`dimmer_level_percent`) w edytorze pojawia się TYLKO po
+wybraniu urządzenia skonfigurowanego jako ściemniacz (`tuya.devices[].type:
+dimmer`, patrz zakładka 🔌 Tuya) - dla zwykłego gniazdka/przekaźnika nie ma
+sensu i tylko myliłoby. Dotyczy zarówno akcji scen (`tuya_on`/
+`tuya_on_for_duration`), jak i akcji "Włącz urządzenie na czas" w regule
+ruchu niżej.
+
 ### Harmonogramy czasowe (`time_window`)
 
 Dowolna reguła ruchu lub kamery może mieć opcjonalne pole `time_window`,
@@ -1272,6 +1293,14 @@ zewnętrznego API pogodowego) - wymaga sekcji `location` (szerokość/
 długość geograficzna) w `config.yaml`. Okna przechodzące przez północ
 (np. `22:00`-`06:00`) działają poprawnie - sprawdzone testem na kilku
 przypadkach brzegowych.
+
+**W panelu (`/automations`) harmonogram jest "wyklikiwany"**, nie wpisywany
+ręcznie - wybierasz z listy "Stały czas" / "Zachód słońca" / "Wschód
+słońca" i odpowiednio zwykły zegar (`<input type="time">`) albo
+przesunięcie w minutach (może być ujemne - "przed"). Panel serializuje to
+z powrotem do tego samego formatu tekstowego co wyżej (`"22:00"`/
+`"sunset-15"`) - identycznie dla harmonogramu reguły, warunku `time_window`
+w edytorze warunków (patrz niżej) i okna symulacji obecności.
 
 ### Eskalacja przy powtarzających się naruszeniach
 
@@ -1324,11 +1353,17 @@ reguły_ruchu:
 Edytor w panelu (`/automations`, sekcja "Reguły ruchu") ma do tego
 graficzny konstruktor grup AND/OR/NOT z dowolnym zagnieżdżaniem - klucze
 statusu wybiera się z listy (to, co panel akurat odczytał), zamiast wpisywać
-je ręcznie. Warunek z błędem (np. nieznany typ) jest odrzucany przy
-zapisie; warunek, który w trakcie działania nie da się obliczyć (np.
-odwołuje się do klucza, który zniknął z configu), traktowany jest jako
-NIESPEŁNIONY (reguła bezpiecznie się nie uruchamia, zamiast wywalić cały
-proces bridge'a) - sprawdzone testem.
+je ręcznie. **Pole wartości też jest listą wyboru zależną od wybranego
+statusu** - dla wejścia/wyjścia Satela, urządzenia Tuya czy strefy panel
+sam podpowiada właściwe słowa (`naruszone`/`OK`, `włączone`/`wyłączone`,
+`uzbrojona`/`rozbrojona`...), więc nie da się przekręcić literówką wartości,
+która i tak nigdy by się nie dopasowała. Dla statusów bez skończonego
+zbioru wartości (np. odczyt liczbowy z kotła) zostaje zwykłe pole tekstowe.
+Warunek z błędem (np. nieznany typ) jest odrzucany przy zapisie; warunek,
+który w trakcie działania nie da się obliczyć (np. odwołuje się do klucza,
+który zniknął z configu), traktowany jest jako NIESPEŁNIONY (reguła
+bezpiecznie się nie uruchamia, zamiast wywalić cały proces bridge'a) -
+sprawdzone testem.
 
 ### Wyzwalanie łańcuchowe (`then_trigger_rule`)
 
