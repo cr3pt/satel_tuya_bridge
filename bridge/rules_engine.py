@@ -202,20 +202,46 @@ class RulesEngine:
                 continue
             # dla source == "tuya_pir" dopasowanie po device_id analogicznie
 
-            # trigger_on: "violated" (domyślnie, wsteczna kompatybilność ze
-            # starymi regułami bez tego pola) albo "restored" - pozwala np.
-            # wyłączyć światło dopiero PO ustaniu naruszenia czujki, zamiast
-            # tylko po stałym czasie (patrz też akcja "turn_off" niżej).
-            if rule.get("trigger_on", "violated") != trigger:
+            if not rule.get("enabled", True):
+                continue  # wyłączona w edytorze (przełącznik "Włączona")
+
+            if not self._rule_matches_trigger(rule, trigger):
                 continue
 
             if not self._rule_gate_open(rule, now):
                 continue  # poza oknem czasowym albo warunek (condition) niespełniony
 
-            await self._fire_motion_rule(rule, f"motion_rule_{idx}", source, zone_or_device_id)
+            await self._fire_motion_rule(rule, f"motion_rule_{idx}", source, zone_or_device_id, trigger)
+
+    @staticmethod
+    def _rule_matches_trigger(rule: dict, trigger: str) -> bool:
+        """Czy reguła ma zareagować na TO konkretne wyzwolenie (naruszenie
+        czy jego ustanie)?
+
+        Domyślnie: `trigger_on` reguły (domyślnie "violated" - wsteczna
+        kompatybilność ze starymi regułami bez tego pola) musi zgadzać się
+        z aktualnym wyzwoleniem - pozwala np. wyłączyć światło dopiero PO
+        ustaniu naruszenia czujki (akcja "turn_off"), zamiast tylko po
+        stałym czasie.
+
+        WYJĄTEK: reguła "Włącz urządzenie na czas" (nie scena, nie
+        "turn_off") z PUSTYM `duration_seconds` ("Czas włączenia (s)" nie
+        wypełniony w edytorze) reaguje na OBA wyzwolenia niezależnie od
+        `trigger_on` - to jedna reguła obsługuje "włącz przy naruszeniu,
+        wyłącz przy jego ustaniu" (patrz _fire_motion_rule niżej), więc musi
+        zobaczyć zarówno "violated", jak i "restored"."""
+        is_until_restored = (
+            "scene" not in rule
+            and rule.get("action") != "turn_off"
+            and rule.get("duration_seconds") is None
+        )
+        if is_until_restored:
+            return True
+        return rule.get("trigger_on", "violated") == trigger
 
     async def _fire_motion_rule(
-        self, rule: dict, rule_key: str, source: str, zone_or_device_id, _chain_depth: int = 0,
+        self, rule: dict, rule_key: str, source: str, zone_or_device_id,
+        trigger: str = "violated", _chain_depth: int = 0,
     ) -> None:
         """Wykonuje akcję JEDNEJ reguły ruchu (scena/eskalacja/urządzenie
         docelowe) - wydzielone z handle_motion(), żeby ten sam kod obsługiwał
@@ -242,7 +268,7 @@ class RulesEngine:
                 )
                 await self.scenes.run(escalation_cfg["escalated_scene"])
                 history.clear()  # reset po eskalacji, żeby nie spamować tej samej sceny co naruszenie
-                await self._chain_trigger(rule, _chain_depth)
+                await self._chain_trigger(rule, trigger, _chain_depth)
                 return
 
         if "scene" in rule:
@@ -250,10 +276,17 @@ class RulesEngine:
             self.history.write_event(
                 "motion", source=f"{source}:{zone_or_device_id}", detail={"scene": rule["scene"]},
             )
-            await self._chain_trigger(rule, _chain_depth)
+            await self._chain_trigger(rule, trigger, _chain_depth)
             return
 
         device = rule["target_device"]
+        # target_system: "tuya" (domyślne, wsteczna kompatybilność ze
+        # starymi regułami bez tego pola) albo "satel_output" - `device`
+        # jest wtedy NAZWĄ wyjścia (klucz w satel.monitored_outputs), nie
+        # urządzeniem Tuya. Patrz _set_target_state/_run_on_for_duration
+        # niżej - to one rozróżniają system, reszta tej metody jest
+        # wspólna dla obu.
+        target_system = rule.get("target_system", "tuya")
 
         # jeśli timer już trwa dla tego urządzenia - zawsze go anuluj
         # (kolejne wyzwolenie reguły "włącz na czas" przedłuża włączenie
@@ -263,48 +296,107 @@ class RulesEngine:
             self._active_timers[device].cancel()
 
         if rule.get("action") == "turn_off":
-            await self.tuya.turn_off(device)
+            await self._set_target_state(target_system, device, False)
             logger.info(
-                "Reguła ruchu: %s(%s) -> wyłączenie %s",
-                source, zone_or_device_id, device,
+                "Reguła ruchu: %s(%s) -> wyłączenie %s (%s)",
+                source, zone_or_device_id, device, target_system,
             )
             self.history.write_event(
                 "motion", source=f"{source}:{zone_or_device_id}",
-                detail={"target_device": device, "action": "turn_off"},
+                detail={"target_device": device, "target_system": target_system, "action": "turn_off"},
             )
-            await self._chain_trigger(rule, _chain_depth)
+            await self._chain_trigger(rule, trigger, _chain_depth)
             return
 
-        duration = rule["duration_seconds"]
+        duration = rule.get("duration_seconds")
         dimmer = rule.get("dimmer_level_percent")
+
+        if duration is None:
+            # "Czas włączenia" niewypełniony w edytorze - urządzenie zostaje
+            # włączone AŻ DO USTANIA NARUSZENIA czujki, zamiast na stały
+            # czas: włącz na "violated" (i wyzwolenia łańcuchowe/eskalacyjne,
+            # które nie niosą prawdziwego "restored" - patrz _chain_trigger),
+            # wyłącz na "restored". _rule_matches_trigger() wyżej gwarantuje,
+            # że ta sama reguła zobaczy OBA wyzwolenia.
+            await self._set_target_state(target_system, device, trigger != "restored", dimmer)
+            logger.info(
+                "Reguła ruchu: %s(%s) -> %s %s (%s, do ustania naruszenia)",
+                source, zone_or_device_id, "wyłączenie" if trigger == "restored" else "włączenie",
+                device, target_system,
+            )
+            self.history.write_event(
+                "motion", source=f"{source}:{zone_or_device_id}",
+                detail={
+                    "target_device": device, "target_system": target_system,
+                    "until_restored": True, "trigger": trigger,
+                },
+            )
+            await self._chain_trigger(rule, trigger, _chain_depth)
+            return
+
         rule_name = rule.get("name")
         self._active_timers[device] = asyncio.create_task(
-            self._run_turn_on_for_duration(device, duration, dimmer, rule_name)
+            self._run_on_for_duration(target_system, device, duration, dimmer, rule_name)
         )
         logger.info(
-            "Reguła ruchu: %s(%s) -> %s na %ss",
-            source, zone_or_device_id, device, duration,
+            "Reguła ruchu: %s(%s) -> %s (%s) na %ss",
+            source, zone_or_device_id, device, target_system, duration,
         )
         self.history.write_event(
             "motion", source=f"{source}:{zone_or_device_id}",
-            detail={"target_device": device, "duration_seconds": duration, "dimmer_level_percent": dimmer},
+            detail={
+                "target_device": device, "target_system": target_system,
+                "duration_seconds": duration, "dimmer_level_percent": dimmer,
+            },
         )
-        await self._chain_trigger(rule, _chain_depth)
+        await self._chain_trigger(rule, trigger, _chain_depth)
 
-    async def _run_turn_on_for_duration(
-        self, device: str, duration: float, dimmer: int | None, rule_name: str | None,
+    async def _set_target_state(
+        self, target_system: str, device: str, on: bool, dimmer: int | None = None,
     ) -> None:
-        """Owija tuya.turn_on_for_duration() zapisem statusu
-        "automation:<nazwa reguły>" (kategoria "automation") na czas trwania
-        włączenia - dzięki temu inna reguła/scena może w warunku (state)
-        sprawdzić "czy TA reguła jest właśnie aktywna" (patrz analogiczny
-        mechanizm w SceneRunner.run(), bridge/scenes.py). Tylko dla
-        NAZWANYCH reguł - bez nazwy nie ma pod jakim kluczem tego zapisać,
-        a to i tak jedyny sposób, żeby ktokolwiek mógł się do niej odwołać."""
+        """Włącza/wyłącza CEL akcji reguły ruchu - Tuya (domyślnie) albo
+        wyjście Satela (target_system: "satel_output", `device` to wtedy
+        NAZWA wyjścia, klucz w satel.monitored_outputs, nie numer). Jeden
+        wspólny punkt dla obu systemów, z którego korzystają akcja "wyłącz
+        urządzenie", tryb "aż do ustania naruszenia" i _run_on_for_duration
+        niżej - żadne z nich nie musi osobno rozróżniać systemu."""
+        if target_system == "satel_output":
+            output_number = self.satel.monitored_outputs.get(device)
+            if output_number is None:
+                logger.warning(
+                    "Reguła ruchu wskazuje na nieznane wyjście Satela '%s' (sprawdź zakładkę "
+                    "⚙ Ustawienia -> Satel) - pomijam", device,
+                )
+                return
+            await self.satel.set_output(output_number, on)
+        elif on:
+            await self.tuya.turn_on(device, dimmer)
+        else:
+            await self.tuya.turn_off(device)
+
+    async def _run_on_for_duration(
+        self, target_system: str, device: str, duration: float, dimmer: int | None, rule_name: str | None,
+    ) -> None:
+        """Włącza cel na czas `duration`, potem sam wyłącza - dla Tuya
+        deleguje do tuya.turn_on_for_duration() (własna logika), dla
+        wyjścia Satela robi to samodzielnie (AsyncSatel nie ma
+        odpowiednika: włącz -> śpij -> wyłącz). Owija to zapisem statusu
+        "automation:<nazwa reguły>" (kategoria "automation") na czas
+        trwania włączenia - dzięki temu inna reguła/scena może w warunku
+        (state) sprawdzić "czy TA reguła jest właśnie aktywna" (patrz
+        analogiczny mechanizm w SceneRunner.run(), bridge/scenes.py).
+        Tylko dla NAZWANYCH reguł - bez nazwy nie ma pod jakim kluczem tego
+        zapisać, a to i tak jedyny sposób, żeby ktokolwiek mógł się do niej
+        odwołać."""
         if rule_name:
             self.history.set_status(f"automation:{rule_name}", "automation", "uruchomiona", label=rule_name)
         try:
-            await self.tuya.turn_on_for_duration(device, duration, dimmer)
+            if target_system == "satel_output":
+                await self._set_target_state(target_system, device, True)
+                await asyncio.sleep(duration)
+                await self._set_target_state(target_system, device, False)
+            else:
+                await self.tuya.turn_on_for_duration(device, duration, dimmer)
         finally:
             if rule_name:
                 self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)
@@ -316,7 +408,7 @@ class RulesEngine:
     # zamiast dublować tę samą logikę pod dwoma osobnymi triggerami.
     # Limit głębokości chroni przed nieskończoną pętlą przy A -> B -> A.
     # ------------------------------------------------------------------
-    async def _chain_trigger(self, rule: dict, _chain_depth: int) -> None:
+    async def _chain_trigger(self, rule: dict, trigger: str, _chain_depth: int) -> None:
         chain_name = (rule.get("then_trigger_rule") or "").strip()
         if not chain_name:
             return
@@ -336,6 +428,11 @@ class RulesEngine:
             return
 
         target = self.config.motion_rules[idx]
+        if not target.get("enabled", True):
+            logger.debug(
+                "Łańcuchowe wyzwolenie '%s' pominięte - reguła docelowa wyłączona w edytorze", chain_name,
+            )
+            return
         now = datetime.now()
         if not self._rule_gate_open(target, now):
             logger.debug(
@@ -348,7 +445,9 @@ class RulesEngine:
             "Reguła ruchu '%s' wyzwala kolejną regułę '%s' (then_trigger_rule)",
             rule.get("name", "?"), chain_name,
         )
-        await self._fire_motion_rule(target, f"motion_rule_{idx}", "chain", rule.get("name", "?"), _chain_depth + 1)
+        await self._fire_motion_rule(
+            target, f"motion_rule_{idx}", "chain", rule.get("name", "?"), trigger, _chain_depth + 1,
+        )
 
     # ------------------------------------------------------------------
     # Zmiana stanu światła Tuya -> wirtualne wejście ETHM

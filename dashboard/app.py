@@ -1071,10 +1071,14 @@ def api_config_automation_context():
     dimmer_devices = sorted(
         name for name, cfg in tuya.get("devices", {}).items() if cfg.get("type") == "dimmer"
     )
+    # Nazwy skonfigurowanych wyjść Satela (zakładka ⚙ Ustawienia -> Satel,
+    # satel.monitored_outputs: {nazwa: numer}) - do wyboru jako "system:
+    # Satel (wyjście)" celu akcji reguły ruchu, obok urządzeń Tuya.
+    satel_outputs = sorted(config_raw.get("satel", {}).get("monitored_outputs", {}).keys())
     return jsonify({
         "tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs, "satel_partitions": satel_partitions,
         "status_keys": status_keys, "motion_rule_names": motion_rule_names,
-        "dimmer_devices": dimmer_devices,
+        "dimmer_devices": dimmer_devices, "satel_outputs": satel_outputs,
     })
 
 

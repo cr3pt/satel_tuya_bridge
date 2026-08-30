@@ -936,11 +936,29 @@ class TestValidationAdvanced:
         errors = validate(form)
         assert not any("czas włączenia" in e for e in errors)
 
+    def test_motion_rule_device_action_blank_duration_is_not_an_error(self):
+        """Puste "Czas włączenia" dla zwykłej akcji "włącz urządzenie" NIE
+        jest błędem - oznacza "aż do ustania naruszenia", patrz README."""
+        rule = {"zone_number": "16", "target_device": "swiatlo_korytarz", "duration_seconds": ""}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        assert validate(form) == []
+
     def test_motion_rule_unknown_trigger_on_is_error(self):
         rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "trigger_on": "cos_innego"}
         form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
         errors = validate(form)
         assert any("wyzwalacz" in e for e in errors)
+
+    def test_motion_rule_unknown_target_system_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "target_system": "cos_innego"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("system urządzenia docelowego" in e for e in errors)
+
+    def test_motion_rule_satel_output_target_is_not_an_error(self):
+        rule = {"zone_number": "22", "target_system": "satel_output", "target_device": "Brama"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        assert validate(form) == []
 
     def test_incomplete_virtual_input_is_error(self):
         form = {**FORM_WITH_ADVANCED, "virtual_inputs": [{"name": "x", "number": "", "key": ""}]}
@@ -1105,6 +1123,31 @@ class TestBuildConfigDictAdvanced:
         assert actions[2] == {"type": "delay", "seconds": 2.0}
         assert actions[3] == {"type": "satel_virtual_input", "virtual_input": "motion_hall_camera"}
 
+    def test_scene_enabled_default_is_omitted(self):
+        """enabled=true (przełącznik "Włączona" zaznaczony, domyślnie) NIE
+        jest zapisywane jawnie - żeby nie zaśmiecać configu istniejących
+        scen bez zmiany zachowania (patrz analogiczny wzorzec dla
+        trigger_on reguł ruchu)."""
+        automations = build_automations_dict(FORM_WITH_ADVANCED)
+        assert "enabled" not in automations["scenes"][0]
+
+    def test_scene_disabled_is_built(self):
+        form = {**VALID_FORM, "scenes": [
+            {"name": "scena_x", "enabled": False, "actions": [{"type": "tuya_on", "device": "x"}]},
+        ]}
+        scene = build_automations_dict(form)["scenes"][0]
+        assert scene["enabled"] is False
+
+    def test_motion_rule_enabled_default_is_omitted(self):
+        automations = build_automations_dict(FORM_WITH_ADVANCED)
+        assert "enabled" not in automations["reguły_ruchu"][0]
+
+    def test_motion_rule_disabled_is_built(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "enabled": False}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        built_rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert built_rule["enabled"] is False
+
     def test_arm_disarm_actions_capture_explicit_partitions(self):
         """Regresja: sceny wcześniej nie miały żadnego sposobu na wskazanie,
         KTÓRE strefy uzbroić/rozbroić - zawsze dotykały tylko domyślnej
@@ -1172,12 +1215,63 @@ class TestBuildConfigDictAdvanced:
         assert "duration_seconds" not in rule
         assert "dimmer_level_percent" not in rule
 
+    def test_motion_rule_blank_duration_omits_duration_seconds(self):
+        """Puste "Czas włączenia" ("duration_seconds": "") - NIE zapisujemy
+        klucza wcale (nie 0), bo jego BRAK jest tym, co RulesEngine
+        rozpoznaje jako "włącz aż do ustania naruszenia" (patrz README)."""
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {
+                "zone_number": "16", "target_device": "swiatlo_korytarz",
+                "duration_seconds": "", "time_window": {}, "escalation": {},
+            },
+        ]}
+        automations = build_automations_dict(form)
+        rule = automations["reguły_ruchu"][0]
+        assert rule["target_device"] == "swiatlo_korytarz"
+        assert "duration_seconds" not in rule
+        assert "action" not in rule
+
     def test_motion_rule_default_trigger_on_is_omitted(self):
         """trigger_on nieobecne w wybudowanej regule = domyślne "violated" -
         nie zapisujemy go jawnie, żeby nie zaśmiecać configu istniejących
         (starszych) reguł bez zmiany zachowania."""
         automations = build_automations_dict(FORM_WITH_ADVANCED)
         assert "trigger_on" not in automations["reguły_ruchu"][0]
+
+    def test_motion_rule_default_target_system_is_omitted(self):
+        """target_system nieobecny = domyślne "tuya" (jak dotąd) - nie
+        zapisujemy go jawnie, żeby nie zaśmiecać configu istniejących reguł."""
+        automations = build_automations_dict(FORM_WITH_ADVANCED)
+        assert "target_system" not in automations["reguły_ruchu"][0]
+
+    def test_motion_rule_satel_output_target_is_built(self):
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {
+                "zone_number": "22", "target_system": "satel_output", "target_device": "Brama",
+                "duration_seconds": "10", "dimmer_level_percent": "50",
+                "time_window": {}, "escalation": {},
+            },
+        ]}
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["target_system"] == "satel_output"
+        assert rule["target_device"] == "Brama"
+        assert rule["duration_seconds"] == 10
+        # Jasność nie ma zastosowania dla wyjścia Satela - pomijana nawet
+        # jeśli formularz jakoś ją przekazał (np. stary stan pola z Tuya).
+        assert "dimmer_level_percent" not in rule
+
+    def test_motion_rule_satel_output_turn_off_is_built(self):
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {
+                "zone_number": "22", "target_system": "satel_output", "target_device": "Brama",
+                "action": "turn_off", "time_window": {}, "escalation": {},
+            },
+        ]}
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["target_system"] == "satel_output"
+        assert rule["action"] == "turn_off"
+        assert "duration_seconds" not in rule
+        assert "dimmer_level_percent" not in rule
 
     def test_virtual_inputs_built_into_satel_fields(self):
         satel_fields = build_satel_fields_dict(FORM_WITH_ADVANCED)

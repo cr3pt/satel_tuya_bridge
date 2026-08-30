@@ -47,6 +47,13 @@
     border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-top: 4px;
   }
   .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .enabled-toggle {
+    display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--muted);
+    white-space: nowrap; cursor: pointer; flex-shrink: 0; user-select: none;
+  }
+  .enabled-toggle input { width: 15px; height: 15px; cursor: pointer; }
+  .sub-card.disabled { opacity: 0.55; }
+  .sub-card.disabled .sub-card-header { opacity: 1; }
   .checkbox-row input { width: 17px; height: 17px; }
   .checkbox-grid { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 8px 0 14px; }
   .checkbox-grid label { display: flex; align-items: center; gap: 6px; font-size: 13.5px; }
@@ -163,7 +170,10 @@
 </div>
 
 <script>
-let context = { tuya_devices: [], virtual_inputs: [], satel_partitions: {}, status_keys: [], motion_rule_names: [], dimmer_devices: [] };
+let context = {
+  tuya_devices: [], virtual_inputs: [], satel_partitions: {}, status_keys: [], motion_rule_names: [],
+  dimmer_devices: [], satel_outputs: [],
+};
 
 // Autoryzacja tylko dla zapisu (POST) - sesja przez /login (ciasteczko
 // HttpOnly, tak samo jak /config - patrz dashboard/auth.py).
@@ -284,6 +294,22 @@ function deviceOptionsHtml(selected) {
   return context.tuya_devices.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
 }
 
+// "Urządzenie docelowe" akcji reguły ruchu wybiera się dwuetapowo: najpierw
+// system (Tuya / Satel - wyjście), potem coś z tego systemu - Tuya
+// urządzenie po nazwie (jak dotąd) albo Satel wyjście po nazwie (klucz w
+// satel.monitored_outputs, zakładka ⚙ Ustawienia -> Satel). "target_system"
+// puste/"tuya" = stare zachowanie, bez zmian.
+function targetDeviceOptionsHtml(system, selected) {
+  if (system === 'satel_output') {
+    const outputs = context.satel_outputs || [];
+    if (outputs.length === 0) {
+      return `<option value="">(brak zdefiniowanych wyjść Satela - zakładka ⚙ Ustawienia)</option>`;
+    }
+    return outputs.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+  }
+  return deviceOptionsHtml(selected);
+}
+
 function getSceneNames() {
   return Array.from(document.querySelectorAll('#scenesContainer .scene-name')).map(el => el.value.trim()).filter(Boolean);
 }
@@ -307,7 +333,8 @@ function refreshDependentDropdowns() {
   });
   document.querySelectorAll('#motionRulesContainer .sub-card').forEach(card => {
     const deviceSel = card.querySelector('.mr-target-device');
-    const curDevice = deviceSel.value; deviceSel.innerHTML = deviceOptionsHtml(curDevice); deviceSel.value = curDevice;
+    const curSystem = card.querySelector('.mr-target-system').value;
+    const curDevice = deviceSel.value; deviceSel.innerHTML = targetDeviceOptionsHtml(curSystem, curDevice); deviceSel.value = curDevice;
     const sceneSel = card.querySelector('.mr-scene');
     const curScene = sceneSel.value; sceneSel.innerHTML = sceneOptionsHtml(curScene); sceneSel.value = curScene;
     const escSel = card.querySelector('.mr-esc-scene');
@@ -396,19 +423,29 @@ function addActionRow(actionsEl, initial) {
 
 function addSceneCard(initial) {
   initial = initial || {};
+  const isEnabled = initial.enabled !== false;
   const container = document.getElementById('scenesContainer');
   const card = document.createElement('div');
-  card.className = 'sub-card';
+  card.className = 'sub-card' + (isEnabled ? '' : ' disabled');
   card.innerHTML = `
     <div class="sub-card-header">
       <input type="text" class="scene-name" placeholder="nazwa sceny (np. wykryto_intruza)" style="flex:1;">
+      <label class="enabled-toggle"><input type="checkbox" class="scene-enabled" ${isEnabled ? 'checked' : ''}> Włączona</label>
       <button type="button" class="row-remove">✕ usuń scenę</button>
     </div>
     <div class="scene-actions"></div>
     <button type="button" class="secondary add-row-btn add-action-btn">+ Dodaj akcję</button>`;
   card.querySelector('.scene-name').value = initial.name || '';
   card.querySelector('.scene-name').addEventListener('input', refreshDependentDropdowns);
-  card.querySelector('.row-remove').addEventListener('click', () => { card.remove(); refreshDependentDropdowns(); });
+  card.querySelector('.scene-enabled').addEventListener('change', (e) => {
+    card.classList.toggle('disabled', !e.target.checked);
+  });
+  card.querySelector('.row-remove').addEventListener('click', () => {
+    const name = card.querySelector('.scene-name').value.trim();
+    if (!confirm(`Na pewno usunąć scenę „${name || '(bez nazwy)'}”? Tej operacji nie można cofnąć.`)) return;
+    card.remove();
+    refreshDependentDropdowns();
+  });
   const actionsEl = card.querySelector('.scene-actions');
   card.querySelector('.add-action-btn').addEventListener('click', () => addActionRow(actionsEl));
   (initial.actions || []).forEach(a => addActionRow(actionsEl, a));
@@ -421,6 +458,7 @@ document.getElementById('addSceneBtn').addEventListener('click', () => { addScen
 function collectScenes() {
   return Array.from(document.querySelectorAll('#scenesContainer .sub-card')).map(card => ({
     name: card.querySelector('.scene-name').value.trim(),
+    enabled: card.querySelector('.scene-enabled').checked,
     actions: Array.from(card.querySelectorAll('.action-row')).map(row => {
       const type = row.querySelector('.action-type').value;
       const f = row.querySelector('.action-fields');
@@ -660,12 +698,14 @@ function addMotionRuleCard(initial, startCollapsed) {
   const escalation = initial.escalation || {};
   const actionKind = initial.scene ? 'scene' : (initial.action === 'turn_off' ? 'device_off' : 'device');
   const triggerOn = initial.trigger_on === 'restored' ? 'restored' : 'violated';
+  const isEnabled = initial.enabled !== false;
   const container = document.getElementById('motionRulesContainer');
   const card = document.createElement('div');
-  card.className = 'sub-card';
+  card.className = 'sub-card' + (isEnabled ? '' : ' disabled');
   card.innerHTML = `
     <div class="sub-card-header">
       <input type="text" class="mr-name" placeholder="Nazwa reguły (opcjonalnie - potrzebna do wyzwalania łańcuchowego)" value="${escapeHtml(initial.name || '')}" style="flex:1;">
+      <label class="enabled-toggle"><input type="checkbox" class="mr-enabled" ${isEnabled ? 'checked' : ''}> Włączona</label>
       <button type="button" class="secondary mr-toggle-collapse">▼ Zwiń</button>
       <button type="button" class="row-remove">✕ usuń regułę</button>
     </div>
@@ -686,9 +726,14 @@ function addMotionRuleCard(initial, startCollapsed) {
         </select></div>
     </div>
     <div class="field-row mr-device-fields">
-      <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${deviceOptionsHtml(initial.target_device)}</select></div>
-      <div class="field mr-duration-field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" value="${initial.duration_seconds ?? ''}"></div>
-      <div class="field mr-dimmer-field" style="${(context.dimmer_devices || []).includes(initial.target_device) ? '' : 'display:none;'}">
+      <div class="field"><label>System</label>
+        <select class="mr-target-system">
+          <option value="tuya" ${(initial.target_system || 'tuya') === 'tuya' ? 'selected' : ''}>Tuya</option>
+          <option value="satel_output" ${initial.target_system === 'satel_output' ? 'selected' : ''}>Satel (wyjście)</option>
+        </select></div>
+      <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${targetDeviceOptionsHtml(initial.target_system || 'tuya', initial.target_device)}</select></div>
+      <div class="field mr-duration-field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" placeholder="puste = do ustania naruszenia" value="${initial.duration_seconds ?? ''}"></div>
+      <div class="field mr-dimmer-field" style="${(initial.target_system || 'tuya') === 'tuya' && (context.dimmer_devices || []).includes(initial.target_device) ? '' : 'display:none;'}">
         <label>Jasność % (ściemniacz)</label><input type="number" class="mr-dimmer" value="${initial.dimmer_level_percent ?? ''}"></div>
     </div>
     <div class="field-row mr-scene-fields">
@@ -744,12 +789,15 @@ function addMotionRuleCard(initial, startCollapsed) {
   const dimmerField = card.querySelector('.mr-dimmer-field');
   function syncActionKind() {
     const kind = card.querySelector('.mr-action-kind').value;
+    const system = card.querySelector('.mr-target-system').value;
     deviceFields.style.display = (kind === 'device' || kind === 'device_off') ? '' : 'none';
     sceneFields.style.display = kind === 'scene' ? '' : 'none';
     // "Wyłącz urządzenie" nie ma czasu ani jasności - urządzenie po
     // prostu gaśnie natychmiast po wyzwoleniu reguły.
     durationField.style.display = kind === 'device' ? '' : 'none';
-    if (kind === 'device_off') {
+    // Jasność % istnieje tylko dla ściemniaczy Tuya - wyjścia Satela to
+    // zwykły przekaźnik on/off, więc pole zawsze ukryte dla tego systemu.
+    if (kind === 'device_off' || system === 'satel_output') {
       dimmerField.style.display = 'none';
     } else if (kind === 'device') {
       const isDimmer = (context.dimmer_devices || []).includes(card.querySelector('.mr-target-device').value);
@@ -765,6 +813,16 @@ function addMotionRuleCard(initial, startCollapsed) {
   // ściemniania na zwykłym gniazdku/przekaźniku.
   card.querySelector('.mr-target-device').addEventListener('change', syncActionKind);
 
+  // System (Tuya / Satel-wyjście) zmienia, CO pokazuje "Urządzenie
+  // docelowe" - przy zmianie systemu lista musi się przeładować (inna
+  // pula nazw), a wybrane urządzenie/wyjście z poprzedniego systemu nie
+  // ma sensu, więc zaczynamy od pustego wyboru.
+  card.querySelector('.mr-target-system').addEventListener('change', (e) => {
+    const deviceSel = card.querySelector('.mr-target-device');
+    deviceSel.innerHTML = targetDeviceOptionsHtml(e.target.value, '');
+    syncActionKind();
+  });
+
   wireTimeSpecToggles(card);
 
   card.querySelector('.mr-window-enabled').addEventListener('change', (e) => {
@@ -773,7 +831,15 @@ function addMotionRuleCard(initial, startCollapsed) {
   card.querySelector('.mr-escalation-enabled').addEventListener('change', (e) => {
     card.querySelector('.mr-escalation-fields').classList.toggle('show', e.target.checked);
   });
-  card.querySelector('.row-remove').addEventListener('click', () => { card.remove(); refreshEmptyHints(); });
+  card.querySelector('.mr-enabled').addEventListener('change', (e) => {
+    card.classList.toggle('disabled', !e.target.checked);
+  });
+  card.querySelector('.row-remove').addEventListener('click', () => {
+    const ruleName = card.querySelector('.mr-name').value.trim();
+    if (!confirm(`Na pewno usunąć regułę ruchu „${ruleName || '(bez nazwy)'}”? Tej operacji nie można cofnąć.`)) return;
+    card.remove();
+    refreshEmptyHints();
+  });
   card.querySelector('.mr-toggle-collapse').addEventListener('click', () => {
     setMotionRuleCollapsed(card, !card.classList.contains('collapsed'));
   });
@@ -790,14 +856,17 @@ function collectMotionRules() {
     const rule = {
       zone_number: card.querySelector('.mr-zone').value.trim(),
       trigger_on: card.querySelector('.mr-trigger').value,
+      enabled: card.querySelector('.mr-enabled').checked,
     };
     if (kind === 'scene') {
       rule.scene = card.querySelector('.mr-scene').value.trim();
     } else if (kind === 'device_off') {
       rule.target_device = card.querySelector('.mr-target-device').value.trim();
+      rule.target_system = card.querySelector('.mr-target-system').value;
       rule.action = 'turn_off';
     } else {
       rule.target_device = card.querySelector('.mr-target-device').value.trim();
+      rule.target_system = card.querySelector('.mr-target-system').value;
       rule.duration_seconds = card.querySelector('.mr-duration').value.trim();
       rule.dimmer_level_percent = card.querySelector('.mr-dimmer').value.trim();
     }

@@ -265,8 +265,14 @@ def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str
         else:
             if not rule.get("target_device"):
                 errors.append(f"{label}: wybierz urządzenie docelowe albo scenę")
-            if rule.get("action") != "turn_off" and not rule.get("duration_seconds"):
-                errors.append(f"{label}: czas włączenia (sekundy) jest wymagany")
+            # Puste "czas włączenia" dla akcji "włącz urządzenie" NIE jest
+            # błędem - oznacza "aż do ustania naruszenia czujki" zamiast
+            # stałego czasu (patrz RulesEngine._fire_motion_rule/
+            # _rule_matches_trigger - jedna reguła wtedy reaguje zarówno na
+            # naruszenie, jak i jego ustanie).
+            target_system = (rule.get("target_system") or "tuya").strip()
+            if target_system not in ("tuya", "satel_output"):
+                errors.append(f"{label}: nieznany system urządzenia docelowego '{target_system}'")
 
         trigger_on = (rule.get("trigger_on") or "violated").strip()
         if trigger_on not in ("violated", "restored"):
@@ -354,14 +360,23 @@ def _build_scene_action(action: dict) -> dict:
 
 
 def _build_scenes(scenes_form: list[dict]) -> list[dict]:
-    return [
-        {
+    built_scenes = []
+    for scene in scenes_form:
+        if not (scene.get("name") or "").strip():
+            continue
+        built = {
             "name": scene["name"].strip(),
             "actions": [_build_scene_action(a) for a in scene.get("actions", [])],
         }
-        for scene in scenes_form
-        if (scene.get("name") or "").strip()
-    ]
+        # enabled=true jest domyślne (i pomijane w zapisie - stare configi
+        # bez tego pola mają dalej działać identycznie) - zapisujemy tylko
+        # jawne wyłączenie. Wyłączona scena nie uruchomi się z ŻADNEGO
+        # miejsca (reguła ruchu, eskalacja, kamera, kocioł...) - patrz
+        # SceneRunner.run(), jedyny punkt wykonania sceny.
+        if scene.get("enabled") is False:
+            built["enabled"] = False
+        built_scenes.append(built)
+    return built_scenes
 
 
 def _build_condition(condition: dict | None, depth: int = 0) -> dict | None:
@@ -420,17 +435,41 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
             built["scene"] = scene_name
         else:
             built["target_device"] = rule["target_device"]
+            # target_system=tuya jest domyślne i pomijane w zapisie (patrz
+            # analogiczny komentarz dla trigger_on/enabled niżej) - "device"
+            # jest wtedy nazwą urządzenia Tuya. "satel_output" zamienia
+            # znaczenie na nazwę wyjścia Satela (klucz w
+            # satel.monitored_outputs) - patrz RulesEngine._set_target_state.
+            target_system = (rule.get("target_system") or "tuya").strip()
+            if target_system == "satel_output":
+                built["target_system"] = "satel_output"
             if rule.get("action") == "turn_off":
                 built["action"] = "turn_off"
             else:
-                built["duration_seconds"] = int(rule["duration_seconds"])
-                built["dimmer_level_percent"] = (
-                    int(rule["dimmer_level_percent"]) if rule.get("dimmer_level_percent") not in (None, "") else None
-                )
+                # Puste "czas włączenia" - NIE zapisujemy duration_seconds
+                # wcale (zamiast np. 0) - jego BRAK jest tym, co
+                # RulesEngine._rule_matches_trigger/_fire_motion_rule
+                # rozpoznaje jako "włącz aż do ustania naruszenia".
+                if rule.get("duration_seconds") not in (None, ""):
+                    built["duration_seconds"] = int(rule["duration_seconds"])
+                # Jasność ma sens tylko dla urządzeń Tuya (ściemniacz) -
+                # wyjścia Satela są zwykłym przekaźnikiem on/off.
+                if target_system != "satel_output":
+                    built["dimmer_level_percent"] = (
+                        int(rule["dimmer_level_percent"])
+                        if rule.get("dimmer_level_percent") not in (None, "") else None
+                    )
 
         trigger_on = (rule.get("trigger_on") or "violated").strip()
         if trigger_on == "restored":
             built["trigger_on"] = "restored"
+
+        # enabled=true jest domyślne i pomijane w zapisie (patrz analogiczny
+        # komentarz w _build_scenes) - wyłączona reguła w ogóle nie jest
+        # brana pod uwagę w RulesEngine.handle_motion() (ani przez
+        # wyzwalanie łańcuchowe - patrz _chain_trigger).
+        if rule.get("enabled") is False:
+            built["enabled"] = False
 
         window = rule.get("time_window") or {}
         if window.get("enabled") and window.get("start") and window.get("end"):

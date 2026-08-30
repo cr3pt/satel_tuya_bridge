@@ -1300,6 +1300,42 @@ z powrotem do tego samego formatu tekstowego co wyżej (`"22:00"`/
 `"sunset-15"`) - identycznie dla harmonogramu reguły, warunku `time_window`
 w edytorze warunków (patrz niżej) i okna symulacji obecności.
 
+### System urządzenia docelowego: Tuya albo wyjście Satela (`target_system`)
+
+"Urządzenie docelowe" akcji reguły ruchu ("Włącz urządzenie na czas"/
+"Wyłącz urządzenie") domyślnie odnosi się do urządzenia Tuya
+(`target_system: tuya`, też domyślne gdy pole w ogóle nie występuje - stare
+configi działają bez zmian). Opcjonalne `target_system: satel_output`
+przełącza cel na **wyjście Satela** - wtedy `target_device` jest NAZWĄ
+wyjścia (klucz w `satel.monitored_outputs`, zakładka ⚙ Ustawienia -> Satel,
+np. brama, syrena, przekaźnik oświetlenia podłączony do centrali), nie
+urządzeniem Tuya:
+
+```yaml
+reguły_ruchu:
+  - source: satel_zone
+    zone_number: 7
+    target_system: satel_output
+    target_device: "Brama garażowa"
+    duration_seconds: 15
+```
+
+Działa identycznie z każdym trybem akcji opisanym wyżej - stały czas
+włączenia, "Wyłącz urządzenie" (`action: turn_off`) i "aż do ustania
+naruszenia" (puste `duration_seconds`) - tyle że zamiast
+`tuya.turn_on/turn_off/turn_on_for_duration` wywołuje
+`satel.set_output(numer, stan)` pod spodem
+(`RulesEngine._set_target_state`/`_run_on_for_duration`). Pole "Jasność %"
+nie ma zastosowania dla wyjścia Satela (zwykły przekaźnik on/off, bez
+ściemniania) - w edytorze znika po wybraniu tego systemu. Nazwa wyjścia,
+która zniknęła z configu (np. usunięta/przemianowana w ⚙ Ustawienia),
+skutkuje ostrzeżeniem w logu zamiast wywalenia procesu.
+
+W edytorze (`/automations`) wybór jest dwuetapowy - pole **"System"**
+(Tuya / Satel - wyjście) obok "Urządzenia docelowego", które podpowiada
+listę zależną od wybranego systemu (urządzenia Tuya albo nazwane wyjścia
+Satela).
+
 ### Eskalacja przy powtarzających się naruszeniach
 
 Reguła ruchu z sekcją `escalation` liczy naruszenia w ruchomym oknie
@@ -1436,6 +1472,35 @@ na czas), która i tak już samodzielnie gasi urządzenie po upływie
 "Wyzwalacz" (Naruszenie czujki / Ustanie naruszenia) obok pola "Akcja",
 gdzie doszła nowa opcja "Wyłącz urządzenie".
 
+### Włączenie "aż do ustania naruszenia" (puste `duration_seconds`)
+
+Domyślna akcja "Włącz urządzenie na czas" wymaga stałego czasu
+(`duration_seconds`) - urządzenie gaśnie po jego upływie, NIEZALEŻNIE od
+tego, czy naruszenie nadal trwa. Jeśli pole "Czas włączenia (s)" w
+edytorze zostanie puste (albo `duration_seconds` w ogóle nie występuje w
+YAML-u), reguła przełącza się w tryb **"aż do ustania naruszenia"**:
+urządzenie włącza się przy naruszeniu i gaśnie dokładnie wtedy, gdy
+naruszenie ustaje - bez zgadywania czasu, bez osobnej drugiej reguły z
+`trigger_on: restored`/`action: turn_off`. Jedna reguła sama obsługuje obie
+strony (`RulesEngine._rule_matches_trigger` sprawia, że taka reguła widzi
+zarówno "violated", jak i "restored" tej samej strefy, ignorując pole
+`trigger_on` - ono nie ma tu zastosowania, bo reguła i tak reaguje na obie
+strony):
+
+```yaml
+reguły_ruchu:
+  - zone_number: 5
+    target_device: swiatlo_korytarz
+    # brak duration_seconds = włącz na naruszenie, wyłącz na jego ustanie
+```
+
+`dimmer_level_percent` nadal działa normalnie (ustawia jasność przy
+włączeniu). Ten tryb NIE tworzy zadania w tle (`turn_on_for_duration`) -
+to zwykłe włączenie/wyłączenie, więc nie pojawia się w statusie
+`automation:<nazwa>` (patrz "Warunek 'inna automatyzacja jest
+uruchomiona'" wyżej - to zasięganie dotyczy tylko reguł ze STAŁYM czasem
+włączenia).
+
 ### Wyzwalanie łańcuchowe (`then_trigger_rule`)
 
 Reguła ruchu może mieć nazwę (`name`) i opcjonalne pole
@@ -1475,6 +1540,35 @@ nazwy reguły siedzi teraz w nagłówku karty (po lewej stronie przycisku
 serwera (już zapisane) startują zwinięte; nowo dodana reguła ("+ Dodaj
 regułę") zostaje rozwinięta do edycji, a po kliknięciu "Zapisz
 automatyzacje" wszystkie karty zwijają się razem.
+
+### Włączanie/wyłączanie i usuwanie sceny/reguły (`enabled`)
+
+Każda karta sceny i reguły ruchu w edytorze (`/automations`) ma
+przełącznik **"Włączona"** w nagłówku (obok przycisku "usuń"). Odznaczenie
+go zapisuje `enabled: false` - wyłączona automatyzacja zostaje w configu
+(nie trzeba jej usuwać i odtwarzać, żeby tymczasowo ją wstrzymać), ale nie
+uruchamia się z ŻADNEGO miejsca, które przez nią przechodzi:
+
+- wyłączona **reguła ruchu** - w ogóle nie jest brana pod uwagę w
+  `RulesEngine.handle_motion()` (naruszenie/ustanie naruszenia jej
+  przypisanej strefy jest po prostu ignorowane), ani jako cel
+  wyzwolenia łańcuchowego (`then_trigger_rule`) - łańcuch zatrzymuje się
+  bez błędu, z wpisem w logu.
+- wyłączona **scena** - `SceneRunner.run()` (jedyny punkt faktycznego
+  wykonania sceny w całym bridge'u) pomija ją bez względu na to, kto ją
+  wywołuje: reguła ruchu (`scene:`), eskalacja (`escalated_scene`), reguła
+  kamery, automatyka kotła.
+
+Domyślne `enabled: true` (przełącznik zaznaczony) NIE jest zapisywane
+jawnie w YAML-u - żeby nie zaśmiecać configu istniejących (starszych)
+scen/reguł bez tego pola, bez zmiany zachowania. Karty wyłączonych
+automatyzacji są w edytorze wizualnie przyciemnione.
+
+**Usuwanie wymaga potwierdzenia** - przyciski "✕ usuń scenę"/"✕ usuń
+regułę" pytają (`confirm()` z nazwą sceny/reguły) przed usunięciem karty z
+formularza, żeby przypadkowe kliknięcie nie skasowało całej
+skonfigurowanej automatyzacji bez ostrzeżenia (usunięcie z formularza
+staje się trwałe dopiero po kliknięciu "Zapisz automatyzacje").
 
 ### Symulacja obecności
 
