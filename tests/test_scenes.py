@@ -38,6 +38,13 @@ SCENES_CFG = [
             {"type": "satel_disarm", "partitions": [2]},
         ],
     },
+    {
+        "name": "scena_wylaczona",
+        "enabled": False,
+        "actions": [
+            {"type": "tuya_on", "device": "gniazdko_salon"},
+        ],
+    },
 ]
 
 
@@ -64,6 +71,15 @@ async def test_unknown_action_is_skipped_not_fatal(runner, fake_tuya):
 
 async def test_unknown_scene_does_not_raise(runner):
     await runner.run("nieistniejaca_scena")  # nie powinno rzucić wyjątku
+
+
+async def test_disabled_scene_does_not_run(runner, fake_tuya, history):
+    """Przełącznik "Włączona" (enabled: false) w edytorze - scena jest
+    pomijana z KAŻDEGO miejsca, które ją wywołuje (reguła ruchu, eskalacja,
+    kamera, kocioł...), bo run() to jedyny punkt jej wykonania."""
+    await runner.run("scena_wylaczona")
+    assert fake_tuya.calls == []
+    assert history.get_status_value("automation:scena_wylaczona") is None
 
 
 async def test_arm_disarm_actions(runner, fake_satel):

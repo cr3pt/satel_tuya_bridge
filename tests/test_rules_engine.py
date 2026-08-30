@@ -51,6 +51,25 @@ reguły_ruchu:
     target_device: gniazdko_salon
     action: turn_off
 
+  - source: satel_zone
+    zone_number: 16
+    target_device: gniazdko_salon
+    dimmer_level_percent: 40
+
+  - source: satel_zone
+    zone_number: 17
+    name: "regula_wylaczona"
+    enabled: false
+    target_device: gniazdko_salon
+    duration_seconds: 30
+
+  - source: satel_zone
+    zone_number: 18
+    name: "regula_lancuch_do_wylaczonej"
+    target_device: gniazdko_salon
+    duration_seconds: 30
+    then_trigger_rule: "regula_wylaczona"
+
 reguły_swiatlo_do_satela:
   - source_device: gniazdko_salon
     virtual_input: test_input
@@ -68,6 +87,11 @@ reguły_kamera_alarm:
 
 scenes:
   - name: "wykryto_intruza"
+    actions:
+      - {{type: tuya_on, device: gniazdko_salon}}
+
+  - name: "scena_wylaczona"
+    enabled: false
     actions:
       - {{type: tuya_on, device: gniazdko_salon}}
 
@@ -164,6 +188,44 @@ class TestMotionRules:
 
         await engine.handle_motion("satel_zone", 15, trigger="restored")
         assert ("off", "gniazdko_salon") in fake_tuya.calls
+
+    async def test_blank_duration_turns_on_immediately_on_violated(self, engine, fake_tuya):
+        """Reguła bez duration_seconds ("Czas włączenia" niewypełnione w
+        edytorze) - "aż do ustania naruszenia": zwykłe włączenie (bez
+        timera), nie turn_on_for_duration."""
+        await engine.handle_motion("satel_zone", 16, trigger="violated")
+        assert ("on", "gniazdko_salon", 40) in fake_tuya.calls
+        assert not any(c[0] == "on_for" for c in fake_tuya.calls)
+
+    async def test_blank_duration_turns_off_on_restored(self, engine, fake_tuya):
+        await engine.handle_motion("satel_zone", 16, trigger="restored")
+        assert ("off", "gniazdko_salon") in fake_tuya.calls
+
+    async def test_blank_duration_rule_reacts_to_both_triggers_regardless_of_trigger_on(
+        self, engine, fake_tuya,
+    ):
+        """_rule_matches_trigger(): reguła "do ustania naruszenia" musi
+        zobaczyć OBA wyzwolenia (violated i restored) tej samej zony, żeby
+        w ogóle mogła się sama wyłączyć - w odróżnieniu od zwykłych reguł,
+        gdzie trigger_on wybiera dokładnie jedno z nich."""
+        await engine.handle_motion("satel_zone", 16, trigger="violated")
+        await engine.handle_motion("satel_zone", 16, trigger="restored")
+        assert ("on", "gniazdko_salon", 40) in fake_tuya.calls
+        assert ("off", "gniazdko_salon") in fake_tuya.calls
+
+    async def test_disabled_rule_does_not_fire(self, engine, fake_tuya):
+        """Przełącznik "Włączona" (enabled: false) w edytorze - reguła jest
+        całkowicie pomijana, tak jakby jej nie było w configu."""
+        await engine.handle_motion("satel_zone", 17)
+        assert fake_tuya.calls == []
+
+    async def test_chain_trigger_skips_disabled_target_rule(self, engine, fake_tuya):
+        """Reguła zone_number=18 wyzwala łańcuchowo "regula_wylaczona"
+        (zone_number=17, enabled: false) - łańcuch nie powinien jej wcale
+        odpalić, mimo że sama reguła #18 jest włączona i działa normalnie."""
+        await engine.handle_motion("satel_zone", 18)
+        await asyncio.sleep(0)
+        assert fake_tuya.calls == [("on_for", "gniazdko_salon", 30, None)]  # tylko reguła #18, nie #17
 
     async def test_time_window_outside_blocks_rule(self, engine, fake_tuya, monkeypatch):
         import datetime as dt

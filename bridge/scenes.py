@@ -46,6 +46,13 @@ class SceneRunner:
         if scene is None:
             logger.error("Nieznana scena: '%s' (sprawdź sekcję 'scenes' w config.yaml)", scene_name)
             return
+        if not scene.get("enabled", True):
+            # Wyłączona w edytorze (przełącznik "Włączona" w karcie sceny) -
+            # scena nie uruchamia się z ŻADNEGO miejsca, które przez nią
+            # przechodzi (reguła ruchu, eskalacja, kamera, kocioł...), bo to
+            # jedyny punkt faktycznego wykonania sceny w całym bridge'u.
+            logger.debug("Scena '%s' pominięta - wyłączona w edytorze", scene_name)
+            return
         logger.info("Uruchamiam scenę '%s' (%d akcji)", scene_name, len(scene.get("actions", [])))
         if self.history:
             self.history.write_event("scene", source=scene_name, detail={"actions": len(scene.get("actions", []))})
