@@ -1,7 +1,10 @@
 """Testy dla dashboard/app.py - endpointy API, w tym egzekwowanie autoryzacji."""
 import base64
+import io
+import zipfile
 
 import pytest
+import yaml
 from werkzeug.security import generate_password_hash
 
 from bridge.config import BridgeConfig
@@ -325,6 +328,93 @@ class TestSystemRestartEndpoint:
         assert len(started_timers) == 1
         assert started_timers[0].interval == 0.5
         assert exit_calls == []  # timer.start() spatchowany - fn() nie wywołane, proces żyje
+
+
+def _zip_bytes(files: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+class TestConfigBackupZipEndpoints:
+    """/api/config/export-zip + /api/config/import-zip - kopia zapasowa
+    całej konfiguracji jako prawdziwe archiwum .zip, z podwójnym
+    sprawdzeniem importu PRZED zapisem (patrz bridge/config_store.py:
+    import_yaml_bundle_validated - to samo, co testuje tests/test_config.py,
+    tu tylko przez warstwę HTTP/auth/reload)."""
+
+    def test_export_requires_auth(self, client):
+        assert client.get("/api/config/export-zip").status_code == 401
+
+    def test_export_returns_valid_zip_with_config_yaml(self, client):
+        resp = client.get("/api/config/export-zip", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.mimetype == "application/zip"
+        with zipfile.ZipFile(io.BytesIO(resp.data)) as zf:
+            names = zf.namelist()
+            assert "config.yaml" in names
+            content = yaml.safe_load(zf.read("config.yaml"))
+            assert content["satel"]["host"] == "127.0.0.1"
+
+    def test_import_requires_auth(self, client):
+        resp = client.post(
+            "/api/config/import-zip",
+            data={"file": (io.BytesIO(_zip_bytes({"config.yaml": "a: 1"})), "backup.zip")},
+        )
+        assert resp.status_code == 401
+
+    def test_import_without_file_is_error(self, client):
+        resp = client.post("/api/config/import-zip", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 400
+
+    def test_import_non_zip_file_is_error(self, client):
+        resp = client.post(
+            "/api/config/import-zip",
+            data={"file": (io.BytesIO(b"nie jestem zipem"), "backup.zip")},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+        assert "zip" in resp.get_json()["error"].lower()
+
+    def test_import_valid_roundtrip_from_export(self, client):
+        export_resp = client.get("/api/config/export-zip", headers=_basic_auth_header("test_haslo_123"))
+        import_resp = client.post(
+            "/api/config/import-zip",
+            data={"file": (io.BytesIO(export_resp.data), "backup.zip")},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert import_resp.status_code == 200
+        assert "config" in import_resp.get_json()["imported"]
+
+    def test_import_rejects_config_missing_satel_fields_without_writing(self, client):
+        broken = _zip_bytes({
+            "config.yaml": "satel: {}\ntuya:\n  devices: {}\nreguły_ruchu: []\nebus:\n  mqtt_host: x\n",
+        })
+        resp = client.post(
+            "/api/config/import-zip",
+            data={"file": (io.BytesIO(broken), "backup.zip")},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+        assert "satel" in resp.get_json()["error"]
+
+        # Konfiguracja MUSI zostać nietknięta - sprawdzone przez ponowny
+        # eksport (wciąż zawiera oryginalny host, nie zniknął/nie zepsuł się).
+        export_resp = client.get("/api/config/export-zip", headers=_basic_auth_header("test_haslo_123"))
+        with zipfile.ZipFile(io.BytesIO(export_resp.data)) as zf:
+            content = yaml.safe_load(zf.read("config.yaml"))
+        assert content["satel"]["host"] == "127.0.0.1"
+
+    def test_import_rejects_broken_yaml_syntax(self, client):
+        broken = _zip_bytes({"config.yaml": "satel: [unclosed"})
+        resp = client.post(
+            "/api/config/import-zip",
+            data={"file": (io.BytesIO(broken), "backup.zip")},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
 
 
 class TestAutomationContextEndpoint:

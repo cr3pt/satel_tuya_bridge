@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import pathlib
 import sqlite3
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -193,6 +194,82 @@ class ConfigStore:
                 continue
             data = yaml.safe_load(content) or {}
             self.set(name, data)
+
+    def import_yaml_bundle_validated(self, files: dict[str, str]) -> list[str]:
+        """Jak `import_yaml_bundle`, ale z PODWÓJNYM sprawdzeniem PRZED
+        zapisem - używane przez import z archiwum ZIP (patrz
+        dashboard/app.py: /api/config/import-zip), gdzie błędny/uszkodzony
+        plik z zewnątrz (przeniesiony z innej instalacji, ręcznie
+        edytowany) nie powinien dać się zapisać "po cichu", a dopiero przy
+        najbliższym restarcie bridge'a ujawnić, że proces w ogóle nie
+        wstaje:
+
+        1) Składnia - każdy rozpoznany plik musi być poprawnym YAML-em
+           reprezentującym słownik.
+        2) Semantyka "czy zadziała" - wynikowa konfiguracja (aktualna
+           zawartość bazy + nadpisania z importu) musi przejść przez
+           PRAWDZIWY `BridgeConfig.load()` na tymczasowej kopii bazy - tę
+           samą ścieżkę kodu, którą bridge/panel uruchamiają przy starcie
+           procesu (zamiast osobno, ręcznie duplikować tu tę logikę, co
+           mogłoby z czasem rozjechać się z rzeczywistym zachowaniem) -
+           plus jawne sprawdzenie kilku pól Satela, które
+           `BridgeConfig._validate()` NIE sprawdza (bo interesuje ją tylko
+           obecność sekcji najwyższego poziomu), a bez których
+           `RulesEngine` i tak wywali się `KeyError`-em zaraz po starcie
+           (`bridge/rules_engine.py`: `config.satel["host"/"port"/
+           "integration_key"]`, odczytywane bezpośrednio, bez `.get()`).
+
+        Nic NIE trafia do prawdziwej bazy, dopóki oba sprawdzenia nie
+        przejdą - błąd podnosi ValueError z czytelnym opisem, zamiast
+        zapisać część dokumentów a resztę pominąć."""
+        from .config import BridgeConfig  # lokalny import - unika cyklu (config.py importuje ten moduł)
+
+        parsed: dict[str, dict] = {}
+        for filename, content in files.items():
+            name = filename[:-5] if filename.endswith(".yaml") else filename
+            if name not in KNOWN_DOCUMENTS:
+                continue
+            try:
+                data = yaml.safe_load(content)
+            except yaml.YAMLError as exc:
+                raise ValueError(f"Błąd parsowania YAML w pliku '{filename}': {exc}") from exc
+            if data is None:
+                data = {}
+            if not isinstance(data, dict):
+                raise ValueError(f"Plik '{filename}' nie zawiera słownika YAML (nieprawidłowy format)")
+            parsed[name] = data
+
+        if not parsed:
+            raise ValueError(
+                "Archiwum nie zawiera żadnego rozpoznawanego pliku konfiguracji "
+                f"({', '.join(sorted(n + '.yaml' for n in KNOWN_DOCUMENTS))})"
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_store = ConfigStore(pathlib.Path(tmp_dir) / "config.db")
+            for name in KNOWN_DOCUMENTS:
+                content = parsed[name] if name in parsed else (self.get(name) if self.has(name) else None)
+                if content is not None:
+                    tmp_store.set(name, content)
+
+            try:
+                simulated = BridgeConfig.load(tmp_store.db_path)
+            except Exception as exc:
+                raise ValueError(f"Zaimportowana konfiguracja nie przejdzie startu procesu: {exc}") from exc
+
+            missing_satel = [
+                key for key in ("host", "port", "integration_key")
+                if not simulated.raw.get("satel", {}).get(key)
+            ]
+            if missing_satel:
+                raise ValueError(
+                    "Zaimportowana konfiguracja nie przejdzie startu procesu: brak wymaganych pól "
+                    f"satel.{'/'.join(missing_satel)}"
+                )
+
+        for name, data in parsed.items():
+            self.set(name, data)
+        return sorted(parsed.keys())
 
 
 def resolve_db_and_legacy_paths(path: str | pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:

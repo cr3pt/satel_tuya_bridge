@@ -165,14 +165,20 @@
   <div class="section-hint" style="margin-top: 20px;">
     <strong>Kopia zapasowa konfiguracji.</strong> Cała konfiguracja żyje w
     bazie (nie w plikach .yaml na dysku) - tu można ją wyeksportować do
-    wglądu/backupu albo zaimportować z powrotem (np. po przeniesieniu na
-    inny serwer). Import NADPISUJE wskazane sekcje - zmiany połączeń
-    wymagają potem pełnego restartu (przycisk wyżej).
+    prawdziwego archiwum .zip (pliki .yaml w środku, do wglądu/backupu
+    dowolnym programem) albo zaimportować z powrotem (np. po przeniesieniu
+    na inny serwer). Import jest <strong>podwójnie sprawdzany PRZED
+    zapisem</strong> - najpierw poprawność samego YAML-a, potem czy
+    wynikowa konfiguracja w ogóle przejdzie start procesu (dokładnie ta
+    sama ścieżka kodu, co przy prawdziwym uruchomieniu bridge'a) - błędne
+    albo niekompletne archiwum jest odrzucane w całości, nic się wtedy nie
+    zmienia. Import NADPISUJE wskazane sekcje - zmiany połączeń wymagają
+    potem pełnego restartu (przycisk wyżej).
   </div>
   <div class="actions-bar">
-    <button id="exportYamlBtn" type="button" class="secondary">⬇ Eksportuj konfigurację</button>
-    <button id="importYamlBtn" type="button" class="secondary">⬆ Importuj konfigurację</button>
-    <input type="file" id="importYamlFile" accept=".json" style="display:none;">
+    <button id="exportYamlBtn" type="button" class="secondary">⬇ Eksportuj konfigurację (.zip)</button>
+    <button id="importYamlBtn" type="button" class="secondary">⬆ Importuj konfigurację (.zip)</button>
+    <input type="file" id="importYamlFile" accept=".zip" style="display:none;">
   </div>
   <div id="backupMsg" class="msg-box"></div>
 </div>
@@ -492,22 +498,25 @@ document.getElementById('restartBtn').addEventListener('click', async () => {
 
 document.getElementById('exportYamlBtn').addEventListener('click', async () => {
   try {
-    const resp = await authorizedFetch('/api/config/export-yaml');
-    const data = await resp.json();
+    const resp = await authorizedFetch('/api/config/export-zip');
     if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
       showMsg('backupMsg', false, data.error || 'Błąd eksportu');
       return;
     }
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const blob = await resp.blob();
+    const disposition = resp.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : 'satel-tuya-bridge-config.zip';
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'satel_tuya_bridge_config_export.json';
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    showMsg('backupMsg', true, 'Wyeksportowano - plik pobrany.');
+    showMsg('backupMsg', true, 'Wyeksportowano - plik .zip pobrany.');
   } catch (e) {
     showMsg('backupMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
@@ -520,16 +529,16 @@ document.getElementById('importYamlBtn').addEventListener('click', () => {
 document.getElementById('importYamlFile').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  if (!confirm('Import NADPISZE wskazane sekcje konfiguracji zawartością pliku. Kontynuować?')) {
+  if (!confirm('Import NADPISZE wskazane sekcje konfiguracji zawartością archiwum (po sprawdzeniu, że się zgadza i wystartuje). Kontynuować?')) {
     e.target.value = '';
     return;
   }
   try {
-    const bundle = JSON.parse(await file.text());
-    const resp = await authorizedFetch('/api/config/import-yaml', {
+    const formData = new FormData();
+    formData.append('file', file);
+    const resp = await authorizedFetch('/api/config/import-zip', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(bundle),
+      body: formData,
     });
     const data = await resp.json();
     if (!resp.ok) {

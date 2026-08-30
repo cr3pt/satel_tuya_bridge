@@ -57,6 +57,10 @@
   }
   .sub-card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
   .sub-card-header input[type=text] { font-weight: 600; }
+  .sub-card.collapsed { margin-bottom: 8px; }
+  .sub-card.collapsed .sub-card-header { margin-bottom: 0; }
+  .sub-card.collapsed .mr-body { display: none; }
+  .mr-toggle-collapse { flex-shrink: 0; padding: 6px 10px; font-size: 12.5px; }
   .action-row { background: #1d2129; border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
   .action-fields { display: flex; gap: 8px; flex: 2; flex-wrap: wrap; }
   .action-fields input, .action-fields select { flex: 1; min-width: 100px; }
@@ -519,7 +523,21 @@ function thenTriggerRuleOptionsHtml(selected, ownNameEl) {
 // ------------------------------------------------------------------
 // Reguły ruchu
 // ------------------------------------------------------------------
-function addMotionRuleCard(initial) {
+function setMotionRuleCollapsed(card, collapsed) {
+  card.classList.toggle('collapsed', collapsed);
+  card.querySelector('.mr-toggle-collapse').textContent = collapsed ? '▶ Rozwiń' : '▼ Zwiń';
+}
+
+function collapseAllMotionRules() {
+  document.querySelectorAll('#motionRulesContainer .sub-card').forEach(card => setMotionRuleCollapsed(card, true));
+}
+
+// startCollapsed=true dla reguł wczytanych z serwera (już zapisane -
+// nie trzeba ich mieć rozwinięte, żeby nie zaśmiecały widoku przy wielu
+// regułach) - nowo dodana reguła ("+ Dodaj regułę") zostaje rozwinięta,
+// bo właśnie się ją edytuje. Po zapisie (patrz saveBtn niżej)
+// collapseAllMotionRules() zwija WSZYSTKIE karty naraz.
+function addMotionRuleCard(initial, startCollapsed) {
   initial = initial || {};
   const window_ = initial.time_window || {};
   const escalation = initial.escalation || {};
@@ -529,9 +547,11 @@ function addMotionRuleCard(initial) {
   card.className = 'sub-card';
   card.innerHTML = `
     <div class="sub-card-header">
-      <b style="color: var(--muted); font-size: 13px;">Reguła ruchu</b>
+      <input type="text" class="mr-name" placeholder="Nazwa reguły (opcjonalnie - potrzebna do wyzwalania łańcuchowego)" value="${escapeHtml(initial.name || '')}" style="flex:1;">
+      <button type="button" class="secondary mr-toggle-collapse">▼ Zwiń</button>
       <button type="button" class="row-remove">✕ usuń regułę</button>
     </div>
+    <div class="mr-body">
     <div class="field-row">
       <div class="field"><label>Numer wejścia w Satelu (naruszenie wywoła regułę)</label>
         <input type="number" class="mr-zone" value="${initial.zone_number ?? ''}"></div>
@@ -572,8 +592,6 @@ function addMotionRuleCard(initial) {
     </div>
 
     <div class="field-row">
-      <div class="field"><label>Nazwa reguły (opcjonalna - wymagana, żeby inna reguła mogła wyzwolić tę)</label>
-        <input type="text" class="mr-name" placeholder="np. wejscie_do_salonu" value="${escapeHtml(initial.name || '')}"></div>
       <div class="field"><label>Po zadziałaniu wyzwól też regułę</label>
         <select class="mr-then-trigger"></select></div>
     </div>
@@ -582,6 +600,7 @@ function addMotionRuleCard(initial) {
       <label>Dodatkowy warunek (if/and/or/not) - reguła zadziała tylko, gdy jest spełniony</label></div>
     <div class="optional-content mr-condition-fields ${initial.condition ? 'show' : ''}">
       <div class="mr-condition-container"></div>
+    </div>
     </div>`;
 
   const conditionContainer = card.querySelector('.mr-condition-container');
@@ -613,6 +632,10 @@ function addMotionRuleCard(initial) {
     card.querySelector('.mr-escalation-fields').classList.toggle('show', e.target.checked);
   });
   card.querySelector('.row-remove').addEventListener('click', () => { card.remove(); refreshEmptyHints(); });
+  card.querySelector('.mr-toggle-collapse').addEventListener('click', () => {
+    setMotionRuleCollapsed(card, !card.classList.contains('collapsed'));
+  });
+  setMotionRuleCollapsed(card, !!startCollapsed);
 
   container.appendChild(card);
   refreshEmptyHints();
@@ -718,7 +741,7 @@ async function loadAll() {
 
   const data = await (await fetch('/api/config/automations')).json();
   (data.scenes || []).forEach(s => addSceneCard(s));
-  (data.motion_rules || []).forEach(r => addMotionRuleCard(r));
+  (data.motion_rules || []).forEach(r => addMotionRuleCard(r, true));
   populatePresence(data.presence_simulation);
   refreshDependentDropdowns();
 }
@@ -748,6 +771,7 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
     } else {
       msgEl.className = 'ok';
       msgEl.textContent = `✅ Zapisano (${data.saved.scenes} scen, ${data.saved.motion_rules} reguł ruchu). ${data.message}`;
+      collapseAllMotionRules();
     }
   } catch (e) {
     msgEl.className = 'error';

@@ -16,15 +16,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import logging
 import os
 import pathlib
 import sqlite3
 import threading
 import time
+import zipfile
 
 import yaml
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, send_file, url_for
 from werkzeug.exceptions import HTTPException, InternalServerError
 from werkzeug.security import generate_password_hash
 
@@ -769,6 +771,62 @@ def api_config_import_yaml():
     return jsonify({
         "imported": list(payload.keys()),
         "message": "Zaimportowano. Zmiany połączeń (host/klucze) wymagają pełnego restartu - "
+                    "użyj przycisku restartu w zakładce Połączenia.",
+    })
+
+
+@app.route("/api/config/export-zip", methods=["GET"])
+@require_auth()
+def api_config_export_zip():
+    """Jak export-yaml wyżej, ale jako prawdziwe archiwum .zip (pliki
+    .yaml w środku, do rozpakowania/wglądu dowolnym programem) zamiast
+    jednego pliku JSON z zaszytym tekstem YAML w wartościach - wygodniejsze
+    jako format kopii zapasowej "do ręki"."""
+    bundle = config_store.export_yaml_bundle()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for filename, content in bundle.items():
+            zf.writestr(filename, content)
+    buf.seek(0)
+    download_name = f"satel-tuya-bridge-config-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name=download_name)
+
+
+@app.route("/api/config/import-zip", methods=["POST"])
+@require_auth()
+def api_config_import_zip():
+    """Odwrotność export-zip wyżej - PODWÓJNIE sprawdza importowaną
+    konfigurację PRZED zapisem (patrz bridge/config_store.py:
+    import_yaml_bundle_validated - składnia YAML + realny start procesu
+    na tymczasowej kopii bazy), więc uszkodzone/niekompletne archiwum jest
+    odrzucane w całości, zanim cokolwiek trafi do prawdziwej bazy."""
+    uploaded = request.files.get("file")
+    if uploaded is None or not uploaded.filename:
+        return jsonify({"error": "Nie przesłano pliku .zip"}), 400
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(uploaded.read())) as zf:
+            files = {
+                name: zf.read(name).decode("utf-8")
+                for name in zf.namelist()
+                if name.endswith(".yaml") and not name.endswith("/")
+            }
+    except zipfile.BadZipFile:
+        return jsonify({"error": "Przesłany plik nie jest poprawnym archiwum .zip"}), 400
+
+    try:
+        imported = config_store.import_yaml_bundle_validated(files)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+    _enqueue_bridge_reload()
+
+    return jsonify({
+        "imported": imported,
+        "message": "Zaimportowano (zweryfikowano składnię i start procesu przed zapisem). "
+                    "Zmiany połączeń (host/klucze) wymagają pełnego restartu - "
                     "użyj przycisku restartu w zakładce Połączenia.",
     })
 

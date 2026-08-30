@@ -215,7 +215,7 @@ automatycznie do bazy jednorazowo** i zmieniają nazwy starych plików na
 `*.migrated` (żeby było jasne, że przestały być czytane - patrz sekcja
 "Konfiguracja w bazie danych"). PO pierwszym uruchomieniu ręczna edycja
 tych plików już nic nie robi - dalsze zmiany rób z panelu albo przez
-import YAML (`/api/config/import-yaml`, patrz niżej).
+import archiwum .zip (`/api/config/import-zip`, patrz niżej).
 
 1. `cp config.example.yaml config.yaml`
 2. `cp sensors.example.yaml sensors.yaml` (lista czujników eBUS - można
@@ -242,8 +242,8 @@ Cała konfiguracja (połączenia, strefy/wyjścia Satela, urządzenia Tuya -
 razem z `local_key` - sceny/reguły/harmonogramy, hasło administratora)
 żyje w jednym pliku SQLite: **`config.db`** (w tym samym katalogu, co
 wcześniej `config.yaml`, wskazywanym przez `--config`). To NIE jest plik
-do ręcznej edycji tekstowej - patrz "Import/eksport YAML" niżej po
-sposób na wgląd/edycję poza panelem.
+do ręcznej edycji tekstowej - patrz "Kopia zapasowa (eksport/import .zip)"
+niżej po sposób na wgląd/edycję/backup poza panelem.
 
 **Dlaczego baza, a nie pliki `.yaml`:** `local_key` urządzeń Tuya (i inne
 sekrety - hasła MQTT, Tuya Cloud Access Secret, kod integracji Satela) to
@@ -263,18 +263,37 @@ plików na `*.migrated` (zostają na dysku do wglądu, ale przestają być
 czytane - dalsza ręczna edycja `config.yaml` po tym momencie nic już nie
 robi).
 
-**Import/eksport YAML** - furtka bezpieczeństwa, żeby baza nikogo nie
-zamykała bez wyjścia:
-- **Eksport**: przycisk "⬇ Eksportuj konfigurację" w zakładce
-  ⚙ Ustawienia -> Połączenia (albo `GET /api/config/export-yaml`, wymaga
-  zalogowania) - pobiera plik JSON z rekonstrukcją wszystkich dokumentów
-  jako tekst YAML (`{"config.yaml": "...", "satel_fields.yaml": "...", ...}`)
-  - do backupu, wglądu, migracji na inny serwer.
-- **Import**: przycisk "⬆ Importuj konfigurację" (albo
-  `POST /api/config/import-yaml` z tym samym JSON-em) - nadpisuje
-  wskazane dokumenty w bazie. Zmiany połączeń (host/port/klucze) wymagają
-  potem pełnego restartu (przycisk "🔄 Zrestartuj bridge i panel teraz",
-  ta sama zakładka).
+**Kopia zapasowa (eksport/import .zip)** - furtka bezpieczeństwa, żeby
+baza nikogo nie zamykała bez wyjścia, w zakładce ⚙ Ustawienia ->
+Połączenia:
+- **Eksport**: przycisk "⬇ Eksportuj konfigurację (.zip)" (albo
+  `GET /api/config/export-zip`, wymaga zalogowania) - pobiera prawdziwe
+  archiwum `.zip` z rekonstrukcją wszystkich dokumentów jako osobne pliki
+  `.yaml` w środku (`config.yaml`, `satel_fields.yaml`, `tuya_devices.yaml`,
+  `automations.yaml`, `sensors.yaml`) - do backupu, wglądu dowolnym
+  programem, migracji na inny serwer.
+- **Import**: przycisk "⬆ Importuj konfigurację (.zip)" (albo
+  `POST /api/config/import-zip`, plik jako `multipart/form-data`, pole
+  `file`) - nadpisuje wskazane dokumenty w bazie, ale dopiero **po
+  podwójnym sprawdzeniu**, że archiwum się zgadza i bridge z nim
+  wystartuje:
+  1. **Składnia** - każdy rozpoznany plik w archiwum musi być poprawnym
+     YAML-em reprezentującym słownik.
+  2. **"Czy zadziała"** - wynikowa konfiguracja (aktualna zawartość bazy +
+     nadpisania z importu) jest budowana na TYMCZASOWEJ kopii bazy i
+     przepuszczana przez `BridgeConfig.load()` - dokładnie tę samą ścieżkę
+     kodu, którą bridge/panel uruchamiają przy prawdziwym starcie procesu -
+     plus jawne sprawdzenie `satel.host`/`satel.port`/
+     `satel.integration_key` (pól, bez których proces i tak zaraz
+     wywaliłby się `KeyError`-em, a których sama obecność sekcji `satel`
+     jeszcze nie gwarantuje).
+
+  Jeśli którekolwiek z tych dwóch sprawdzeń się nie powiedzie, **nic nie
+  jest zapisywane** - import jest odrzucany w całości z czytelnym opisem
+  błędu, zamiast zapisać część dokumentów, a resztę pominąć (patrz
+  `bridge/config_store.py: import_yaml_bundle_validated`). Zmiany połączeń
+  (host/port/klucze) po udanym imporcie wciąż wymagają pełnego restartu
+  (przycisk "🔄 Zrestartuj bridge i panel teraz", ta sama zakładka).
 
 ## Konto Tuya Cloud (Access ID / Access Secret)
 
@@ -1343,6 +1362,14 @@ sprawdzone testem, że taki cykl kończy się (z ostrzeżeniem w logu), zamiast
 zawiesić proces. Panel (`/automations`) waliduje przy zapisie, że nazwa
 docelowa istnieje i że reguła nie wskazuje sama na siebie.
 
+**Zwijane karty reguł w panelu** - przy wielu regułach edytor w
+`/automations` łatwo zaśmiecić długimi, rozwiniętymi formularzami. Pole
+nazwy reguły siedzi teraz w nagłówku karty (po lewej stronie przycisku
+"▼ Zwiń"/"▶ Rozwiń"), więc widać je nawet po zwinięciu. Reguły wczytane z
+serwera (już zapisane) startują zwinięte; nowo dodana reguła ("+ Dodaj
+regułę") zostaje rozwinięta do edycji, a po kliknięciu "Zapisz
+automatyzacje" wszystkie karty zwijają się razem.
+
 ### Symulacja obecności
 
 Losowe włączanie/wyłączanie wybranych urządzeń Tuya w oknie czasowym -
@@ -1473,9 +1500,9 @@ Otwórz `http://<adres-hosta>:8090/setup` w przeglądarce i przejdź kreator
 dokładnie tak samo, jak przy uruchomieniu bez Dockera - `config.db` i
 `bridge_history.db` wylądują w `./data/` na hoście (a nie w kontenerze),
 więc przetrwają przebudowę/aktualizację obrazu (do backupu/wglądu poza
-panelem - patrz "Import/eksport YAML" wyżej). Po zapisaniu w kreatorze
-kontener `bridge` trzeba zrestartować, żeby wczytał świeżo zapisaną
-konfigurację:
+panelem - patrz "Kopia zapasowa (eksport/import .zip)" wyżej). Po
+zapisaniu w kreatorze kontener `bridge` trzeba zrestartować, żeby wczytał
+świeżo zapisaną konfigurację:
 
 ```bash
 docker compose restart bridge
