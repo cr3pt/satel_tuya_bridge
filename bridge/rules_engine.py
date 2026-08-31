@@ -839,6 +839,11 @@ class RulesEngine:
         seen = {s["key"] for s in self.history.get_status("satel_input")}
         seen |= {s["key"] for s in self.history.get_status("satel_output")}
         seen |= {s["key"] for s in self.history.get_status("satel_partition")}
+        input_keys = {f"satel_input:{number}" for number in self.satel.monitored_zones.values()}
+        output_keys = {f"satel_output:{number}" for number in self.satel.monitored_outputs.values()}
+        partition_keys = {
+            f"satel_partition:{number}" for number in self.config.satel.get("partitions", {}).values()
+        }
         for name, number in self.satel.monitored_zones.items():
             key = f"satel_input:{number}"
             if key not in seen:
@@ -851,6 +856,14 @@ class RulesEngine:
             key = f"satel_partition:{number}"
             if key not in seen:
                 self.history.set_status(key, "satel_partition", "nieznany", label=name)
+
+        # Sprzątanie wejść/wyjść/stref USUNIĘTYCH albo PRZEMIANOWANYCH
+        # (zmiana numeru) w ⚙ Ustawienia od poprzedniego seedowania - patrz
+        # HistoryStore.prune_status(). Inaczej strona główna pokazywałaby na
+        # zawsze stare, martwe wpisy niezależne od aktualnej konfiguracji.
+        self.history.prune_status("satel_input", input_keys)
+        self.history.prune_status("satel_output", output_keys)
+        self.history.prune_status("satel_partition", partition_keys)
 
     def _seed_tuya_status_labels(self) -> None:
         """Zapisuje wpis '?' dla KAŻDEGO skonfigurowanego urządzenia Tuya,
@@ -868,6 +881,17 @@ class RulesEngine:
             if key not in seen:
                 self.history.set_status(key, "tuya", "?", label=name)
 
+        # Sprzątanie urządzeń USUNIĘTYCH/PRZEMIANOWANYCH w ⚙ Ustawienia od
+        # poprzedniego seedowania - patrz analogiczny komentarz w
+        # _seed_satel_status_labels()/HistoryStore.prune_status(). ":brightness"
+        # to DODATKOWY klucz per ściemniacz zapisywany przez
+        # _tuya_status_poll_loop() niżej (ta sama kategoria "tuya") - musi
+        # zostać w zestawie "do zachowania", inaczej sprzątanie skasowałoby
+        # żywy odczyt jasności zaraz po jego zapisaniu.
+        tuya_keys = {f"tuya:{name}" for name in self.tuya.devices_cfg}
+        tuya_keys |= {f"tuya:{name}:brightness" for name in self.tuya.devices_cfg}
+        self.history.prune_status("tuya", tuya_keys)
+
     def _seed_automation_status_labels(self) -> None:
         """Zapisuje "bezczynna" dla każdej nazwanej sceny i (nazwanej)
         reguły ruchu z akcją "włącz urządzenie na czas", żeby klucz
@@ -880,6 +904,7 @@ class RulesEngine:
         sensownego stanu "uruchomiona" do zaznaczenia. Pomija już znane
         klucze - patrz analogiczny komentarz w _seed_satel_status_labels()."""
         seen = {s["key"] for s in self.history.get_status("automation")}
+        valid_keys = {f"automation:{scene_name}" for scene_name in self.scenes.scenes}
         for scene_name in self.scenes.scenes:
             key = f"automation:{scene_name}"
             if key not in seen:
@@ -888,8 +913,14 @@ class RulesEngine:
             name = rule.get("name")
             if name and "scene" not in rule and rule.get("action") != "turn_off":
                 key = f"automation:{name}"
+                valid_keys.add(key)
                 if key not in seen:
                     self.history.set_status(key, "automation", "bezczynna", label=name)
+
+        # Sprzątanie scen/reguł USUNIĘTYCH/PRZEMIANOWANYCH od poprzedniego
+        # seedowania - patrz analogiczny komentarz w
+        # _seed_satel_status_labels()/HistoryStore.prune_status().
+        self.history.prune_status("automation", valid_keys)
 
     async def _on_alarm_status_change(self) -> None:
         """Rzeczywisty callback rejestrowany przez register_alarm_status_callback
