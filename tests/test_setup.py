@@ -1396,6 +1396,26 @@ class TestBuildConfigDictAdvanced:
         assert "duration_seconds" not in rule
         assert "dimmer_level_percent" not in rule
 
+    def test_motion_rule_virtual_input_action_with_explicit_duration_is_built(self):
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {
+                "source": "satel_zone", "zone_number": "5", "virtual_input": "motion_hall_camera",
+                "duration_seconds": "10", "time_window": {}, "escalation": {},
+            },
+        ]}
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["duration_seconds"] == 10
+
+    def test_motion_rule_virtual_input_action_duration_zero_is_kept_explicit(self):
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {
+                "source": "satel_zone", "zone_number": "5", "virtual_input": "motion_hall_camera",
+                "duration_seconds": "0", "time_window": {}, "escalation": {},
+            },
+        ]}
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["duration_seconds"] == 0
+
     def test_motion_rule_scene_takes_priority_over_virtual_input(self):
         """Gdyby oba pola (scene i virtual_input) jakoś trafiły do formularza
         naraz (nie powinno się zdarzyć z edytora - to wzajemnie wykluczające

@@ -265,16 +265,15 @@ class RulesEngine:
 
     @staticmethod
     def _is_until_restored(rule: dict) -> bool:
-        """Czy ta reguła ma tryb "włącz aż do ustania naruszenia" - PUSTE
-        ALBO ZEROWE `duration_seconds` ("Czas włączenia (s)" niewypełniony
-        ALBO wpisane jawnie jako 0 w edytorze - obie wartości znaczą to
-        samo, 0 jest tylko wygodniejszym sposobem wpisania tego samego w
-        polu liczbowym), na akcji "włącz urządzenie" (nie scena, nie
-        "wyłącz urządzenie", nie wirtualne wejście IP - te nie mają
-        czasu trwania w ogóle, to jednorazowe wywołania)."""
+        """Czy ta reguła ma tryb "włącz aż do ustania naruszenia/wyłączenia
+        wyzwalacza" - PUSTE ALBO ZEROWE `duration_seconds` ("Czas
+        włączenia (s)" niewypełniony ALBO wpisane jawnie jako 0 w
+        edytorze - obie wartości znaczą to samo, 0 jest tylko
+        wygodniejszym sposobem wpisania tego samego w polu liczbowym), na
+        akcji "włącz urządzenie" ALBO "aktywuj wejście IP" (nie scena, nie
+        "wyłącz urządzenie" - te nie mają czasu trwania w ogóle)."""
         return (
             "scene" not in rule
-            and "virtual_input" not in rule
             and rule.get("action") != "turn_off"
             and rule.get("duration_seconds") in (None, 0)
         )
@@ -341,19 +340,47 @@ class RulesEngine:
             return
 
         if "virtual_input" in rule:
-            # Jednorazowe wywołanie wejścia IP Satela (SatelVirtualInputTrigger)
-            # jako akcja reguły ruchu - w odróżnieniu od urządzenia docelowego
-            # nie ma tu pojęcia "włącz na czas"/"aż do ustania naruszenia",
-            # więc ta gałąź musi zwrócić PRZED `device = rule["target_device"]`
-            # niżej (taka reguła w ogóle nie ma tego pola).
-            await self.satel_virtual_inputs.trigger(rule["virtual_input"])
+            # Aktywacja wejścia IP Satela (SatelVirtualInputTrigger) jako
+            # akcja reguły ruchu - ta gałąź musi zwrócić PRZED
+            # `device = rule["target_device"]` niżej (taka reguła w ogóle
+            # nie ma tego pola). "Czas włączenia" działa analogicznie do
+            # urządzenia docelowego, tylko że SatelVirtualInputTrigger ma
+            # WYŁĄCZNIE jednorazowe naruszenie (trigger()) - protokół ETHM-1
+            # Plus nie ma osobnego wywołania "przywróć" - więc zarówno
+            # "aktywuj", jak i (po czasie/przy ustaniu naruszenia)
+            # "dezaktywuj" to ten sam trigger() wywołany drugi raz, tak jak
+            # ponowne naciśnięcie tego samego przycisku.
+            vi_name = rule["virtual_input"]
+            timer_key = f"virtual_input:{vi_name}"
+            if timer_key in self._active_timers and not self._active_timers[timer_key].done():
+                self._active_timers[timer_key].cancel()
+
+            if self._is_until_restored(rule):
+                await self.satel_virtual_inputs.trigger(vi_name)
+                logger.info(
+                    "Reguła ruchu: %s(%s) -> wejście IP '%s' (%s, do ustania naruszenia/wyłączenia wyzwalacza)",
+                    source, zone_or_device_id, vi_name,
+                    "dezaktywacja" if trigger == "restored" else "aktywacja",
+                )
+                self.history.write_event(
+                    "motion", source=f"{source}:{zone_or_device_id}",
+                    detail={"virtual_input": vi_name, "until_restored": True, "trigger": trigger},
+                )
+                await self._chain_trigger(rule, trigger, _chain_depth)
+                return
+
+            duration = rule.get("duration_seconds")
+            rule_name = rule.get("name")
+            self._active_timers[timer_key] = asyncio.create_task(
+                self._run_virtual_input_for_duration(vi_name, duration, rule_name)
+            )
             logger.info(
-                "Reguła ruchu: %s(%s) -> wejście IP '%s'",
-                source, zone_or_device_id, rule["virtual_input"],
+                "Reguła ruchu: %s(%s) -> wejście IP '%s' na %ss",
+                source, zone_or_device_id, vi_name, duration,
             )
             self.history.write_event(
                 "motion", source=f"{source}:{zone_or_device_id}",
-                detail={"virtual_input": rule["virtual_input"]},
+                detail={"virtual_input": vi_name, "duration_seconds": duration},
             )
             await self._chain_trigger(rule, trigger, _chain_depth)
             return
@@ -476,6 +503,27 @@ class RulesEngine:
                 await self._set_target_state(target_system, device, False)
             else:
                 await self.tuya.turn_on_for_duration(device, duration, dimmer)
+        finally:
+            if rule_name:
+                self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)
+
+    async def _run_virtual_input_for_duration(
+        self, name: str, duration: float, rule_name: str | None,
+    ) -> None:
+        """Odpowiednik _run_on_for_duration wyżej dla akcji "Aktywuj
+        wejście IP Satela" - w odróżnieniu od urządzenia (bool wł/wył) nie
+        ma tu osobnego wywołania "wyłącz": SatelVirtualInputTrigger.trigger()
+        to WYŁĄCZNIE jednorazowe naruszenie (protokół ETHM-1 Plus nie ma
+        odpowiednika "przywróć"), więc "aktywacja" i "dezaktywacja po
+        czasie" to ten sam trigger() wywołany dwa razy - jak dwukrotne
+        naciśnięcie tego samego przycisku. Status automation:<nazwa> - jak
+        wyżej, tylko dla nazwanych reguł."""
+        if rule_name:
+            self.history.set_status(f"automation:{rule_name}", "automation", "uruchomiona", label=rule_name)
+        try:
+            await self.satel_virtual_inputs.trigger(name)
+            await asyncio.sleep(duration)
+            await self.satel_virtual_inputs.trigger(name)
         finally:
             if rule_name:
                 self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)

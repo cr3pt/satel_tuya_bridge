@@ -890,7 +890,6 @@ function addMotionRuleCard(initial, startCollapsed) {
             <option value="satel_output" ${initial.target_system === 'satel_output' ? 'selected' : ''}>Satel (wyjście)</option>
           </select></div>
         <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${targetDeviceOptionsHtml(initial.target_system || 'tuya', initial.target_device)}</select></div>
-        <div class="field mr-duration-field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" placeholder="puste albo 0 = do ustania naruszenia" value="${initial.duration_seconds ?? ''}"></div>
         <div class="field mr-dimmer-field" style="${(initial.target_system || 'tuya') === 'tuya' && (context.dimmer_devices || []).includes(initial.target_device) ? '' : 'display:none;'}">
           <label>Jasność % (ściemniacz)</label><input type="number" class="mr-dimmer" value="${initial.dimmer_level_percent ?? ''}"></div>
       </div>
@@ -899,6 +898,9 @@ function addMotionRuleCard(initial, startCollapsed) {
       </div>
       <div class="field-row mr-vinput-fields">
         <div class="field"><label>Wirtualne wejście</label><select class="mr-vinput">${virtualInputOptionsHtml(initial.virtual_input)}</select></div>
+      </div>
+      <div class="field-row mr-duration-row">
+        <div class="field mr-duration-field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" placeholder="puste albo 0 = do ustania naruszenia / wyłączenia wyzwalacza" value="${initial.duration_seconds ?? ''}"></div>
       </div>
     </div>
 
@@ -1002,8 +1004,11 @@ function addMotionRuleCard(initial, startCollapsed) {
     sceneFields.style.display = kind === 'scene' ? '' : 'none';
     vinputFields.style.display = kind === 'virtual_input' ? '' : 'none';
     // "Wyłącz urządzenie" nie ma czasu ani jasności - urządzenie po
-    // prostu gaśnie natychmiast po wyzwoleniu reguły.
-    durationField.style.display = kind === 'device' ? '' : 'none';
+    // prostu gaśnie natychmiast po wyzwoleniu reguły. Wejście IP ma czas
+    // włączenia analogicznie do urządzenia (puste/0 = wywołaj ponownie
+    // dopiero przy ustaniu naruszenia/wyłączeniu wyzwalacza, zamiast po
+    // stałym czasie) - patrz RulesEngine._run_virtual_input_for_duration.
+    durationField.style.display = (kind === 'device' || kind === 'virtual_input') ? '' : 'none';
     // Jasność % istnieje tylko dla ściemniaczy Tuya - wyjścia Satela to
     // zwykły przekaźnik on/off, więc pole zawsze ukryte dla tego systemu.
     if (kind === 'device_off' || system === 'satel_output') {
@@ -1075,6 +1080,7 @@ function collectMotionRules() {
       rule.scene = card.querySelector('.mr-scene').value.trim();
     } else if (kind === 'virtual_input') {
       rule.virtual_input = card.querySelector('.mr-vinput').value.trim();
+      rule.duration_seconds = card.querySelector('.mr-duration').value.trim();
     } else if (kind === 'device_off') {
       rule.target_device = card.querySelector('.mr-target-device').value.trim();
       rule.target_system = card.querySelector('.mr-target-system').value;

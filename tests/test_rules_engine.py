@@ -312,9 +312,13 @@ class TestVirtualInputMotionRuleAction:
     """Akcja "Aktywuj wejście IP Satela" w edytorze reguł ruchu (pole
     `virtual_input` zamiast target_device/scene, patrz dashboard/setup.py:
     _build_motion_rules) - RulesEngine._fire_motion_rule, gałąź
-    "virtual_input" in rule - jednorazowe wywołanie SatelVirtualInputTrigger,
-    bez pojęcia czasu włączenia/"aż do ustania naruszenia" (w odróżnieniu od
-    włączenia urządzenia)."""
+    "virtual_input" in rule. "Czas włączenia" (duration_seconds) działa
+    analogicznie do włączenia urządzenia: puste/0 = "aż do ustania
+    naruszenia/wyłączenia wyzwalacza" (reguła reaguje na OBA wyzwolenia -
+    trigger() wywołany raz na "violated", drugi raz na "restored", bo
+    SatelVirtualInputTrigger nie ma osobnego wywołania "przywróć"),
+    dodatnia wartość = jednorazowe wywołanie teraz + drugie po czasie
+    (RulesEngine._run_virtual_input_for_duration)."""
 
     async def _reload_with_rule(self, engine, fake_tuya, fake_satel, fake_virtual_inputs, rule):
         engine.config.store.set("automations", {
@@ -324,35 +328,63 @@ class TestVirtualInputMotionRuleAction:
         await engine.reload_config()
         _repatch_fakes(engine, fake_tuya=fake_tuya, fake_satel=fake_satel, fake_virtual_inputs=fake_virtual_inputs)
 
-    async def test_fires_on_violated_by_default(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
+    async def test_no_duration_fires_on_violated(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
         await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
             "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
         })
         await engine.handle_motion("satel_zone", 12, trigger="violated")
-        assert ("trigger", "motion_hall_camera") in fake_virtual_inputs.calls
+        assert fake_virtual_inputs.calls == [("trigger", "motion_hall_camera")]
         assert fake_tuya.calls == []
 
-    async def test_does_not_fire_on_restored_by_default(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
-        """Brak duration_seconds NIE oznacza tu "aż do ustania naruszenia"
-        (w odróżnieniu od włączenia urządzenia) - _is_until_restored musi
-        rozpoznać obecność pola "virtual_input" i zwrócić False, inaczej
-        ta reguła zareagowałaby też na "restored" mimo domyślnego
-        trigger_on="violated"."""
+    async def test_no_duration_also_fires_again_on_restored(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
+        """Brak duration_seconds = "do ustania naruszenia/wyłączenia
+        wyzwalacza" (dokładnie jak dla urządzenia) - _rule_matches_trigger
+        widzi OBA wyzwolenia niezależnie od trigger_on, więc trigger()
+        wywoła się DRUGI RAZ przy ustaniu naruszenia - to jedyny sposób
+        "dezaktywacji", bo protokół nie ma osobnego wywołania restore."""
         await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
             "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
         })
+        await engine.handle_motion("satel_zone", 12, trigger="violated")
         await engine.handle_motion("satel_zone", 12, trigger="restored")
-        assert fake_virtual_inputs.calls == []
+        assert fake_virtual_inputs.calls == [
+            ("trigger", "motion_hall_camera"), ("trigger", "motion_hall_camera"),
+        ]
 
-    async def test_respects_explicit_trigger_on_restored(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
+    async def test_duration_zero_behaves_like_blank(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
         await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
-            "source": "satel_zone", "zone_number": 12, "trigger_on": "restored",
-            "virtual_input": "motion_hall_camera",
+            "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
+            "duration_seconds": 0,
         })
         await engine.handle_motion("satel_zone", 12, trigger="violated")
-        assert fake_virtual_inputs.calls == []
         await engine.handle_motion("satel_zone", 12, trigger="restored")
-        assert ("trigger", "motion_hall_camera") in fake_virtual_inputs.calls
+        assert fake_virtual_inputs.calls == [
+            ("trigger", "motion_hall_camera"), ("trigger", "motion_hall_camera"),
+        ]
+
+    async def test_explicit_duration_fires_once_now_and_once_after_timeout(
+        self, engine, fake_tuya, fake_satel, fake_virtual_inputs,
+    ):
+        """Z jawnym dodatnim czasem reguła NIE jest już w trybie "do
+        ustania" - trigger_on (domyślnie "violated") znów wybiera DOKŁADNIE
+        jedno wyzwolenie (jak zwykłe "włącz urządzenie na czas"), a drugie
+        wywołanie trigger() przychodzi automatycznie po `duration_seconds`,
+        nie od drugiego wyzwolenia źródła."""
+        await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
+            "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
+            "duration_seconds": 0.02,
+        })
+        await engine.handle_motion("satel_zone", 12, trigger="restored")
+        await asyncio.sleep(0)
+        assert fake_virtual_inputs.calls == []  # trigger_on domyślnie "violated" - restored nie pasuje
+
+        await engine.handle_motion("satel_zone", 12, trigger="violated")
+        await asyncio.sleep(0)  # handle_motion planuje _run_virtual_input_for_duration jako Task w tle
+        assert fake_virtual_inputs.calls == [("trigger", "motion_hall_camera")]  # aktywacja natychmiast
+        await asyncio.sleep(0.05)
+        assert fake_virtual_inputs.calls == [
+            ("trigger", "motion_hall_camera"), ("trigger", "motion_hall_camera"),
+        ]  # dezaktywacja po upływie czasu
 
     async def test_works_for_device_state_source(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
         """Wejście reguły też może być dowolnym stanem urządzenia (Tuya/
