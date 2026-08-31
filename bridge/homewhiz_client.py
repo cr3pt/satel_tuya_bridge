@@ -7,11 +7,19 @@ Kształt API rozpoznany na podstawie integracji Home Assistant
 licencja MIT) - to repo NIE jest zależnością tego projektu, tylko
 źródłem wiedzy o kształcie żądań/odpowiedzi.
 
+KAŻDA odpowiedź API (login i zwykłe zapytania podpisane SigV4) jest
+opakowana w `{"success": bool, "data": ...}` - potwierdzone WPROST w
+źródle integracji Home Assistant (`custom_components/homewhiz/api.py`),
+nie zgadywane z dokumentacji. Prawdziwa awaria (złe hasło, brak dostępu)
+potrafi wrócić z kodem HTTP 200 i `"success": false` zamiast kodu błędu -
+patrz `_unwrap_envelope`.
+
 Cztery kroki:
 
-1. Logowanie (`login`) - POST username/password -> tymczasowe poświadczenia
-   AWS (accessKey/secretKey/sessionToken/expiration), używane do
-   podpisywania (SigV4) każdego kolejnego żądania do AWS.
+1. Logowanie (`login`) - POST username/password ->
+   `data.credentials.{accessKey,secretKey,sessionToken,expiration}`
+   (tymczasowe poświadczenia AWS), używane do podpisywania (SigV4) każdego
+   kolejnego żądania do AWS.
 2. Lista urządzeń (`list_appliances`) - podpisane żądania GET do
    smarthome.arcelikiot.com. `applianceId` z tej listy to JEST już nazwa
    "rzeczy" (thing) w AWS IoT Core - osobna wymiana identyfikatora
@@ -209,13 +217,36 @@ class HomeWhizSession:
     access_key: str
     secret_key: str
     session_token: str
-    expiration: str = ""
+    expiration_ms: int = 0
+
+
+def _unwrap_envelope(contents: object, *, context: str) -> object:
+    """Każda odpowiedź API HomeWhiz (login i zwykłe zapytania podpisane
+    SigV4) jest opakowana w `{"success": bool, "data": ...}` - `data` bywa
+    listą (`/my-homes`) albo słownikiem (`/my-homes/{id}`, logowanie,
+    deskryptor konfiguracji), zależnie od endpointu. Co WAŻNE,
+    prawdziwa awaria (złe hasło, brak dostępu) potrafi wrócić z kodem HTTP
+    200 i `"success": false` zamiast kodu błędu - potwierdzone bezpośrednio
+    w źródle integracji Home Assistant (custom_components/homewhiz/api.py:
+    `if "success" in contents and not contents["success"]: raise LoginError`).
+    Bez tej sprawdzianki taka odpowiedź wyglądałaby na sukces aż do
+    (mylącego) KeyError przy próbie odczytania nieistniejących pól niżej."""
+    if not isinstance(contents, dict):
+        raise HomeWhizError(f"Nieoczekiwana odpowiedź HomeWhiz ({context}): {contents!r}")
+    if "success" in contents and not contents["success"]:
+        raise HomeWhizError(f"Chmura HomeWhiz zgłosiła błąd ({context}): {contents}")
+    if "data" not in contents:
+        raise HomeWhizError(f"Nieoczekiwana odpowiedź HomeWhiz ({context}, brak pola 'data'): {contents}")
+    return contents["data"]
 
 
 async def login(username: str, password: str) -> HomeWhizSession:
     """Loguje się do chmury HomeWhiz - zwraca tymczasowe poświadczenia AWS
-    (ważne zwykle ok. godziny, patrz `expiration`), używane do podpisywania
-    (SigV4) każdego kolejnego żądania REST i połączenia MQTT."""
+    (ważne zwykle ok. godziny, patrz `expiration_ms`), używane do
+    podpisywania (SigV4) każdego kolejnego żądania REST i połączenia MQTT.
+    Poświadczenia siedzą pod `data.credentials`, NIE bezpośrednio pod
+    `data` (potwierdzone w źródle integracji Home Assistant, patrz
+    `_unwrap_envelope` wyżej)."""
     try:
         async with aiohttp.ClientSession() as http:
             async with http.post(
@@ -223,24 +254,27 @@ async def login(username: str, password: str) -> HomeWhizSession:
                 json={"username": username, "password": password},
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
+                body = await resp.json()
                 if resp.status == 401 or resp.status == 403:
                     raise HomeWhizError("Nieprawidłowy login lub hasło do konta HomeWhiz")
                 if resp.status != 200:
                     raise HomeWhizError(f"Logowanie HomeWhiz nie powiodło się (kod {resp.status})")
-                data = await resp.json()
     except aiohttp.ClientError as exc:
         raise HomeWhizError(f"Błąd połączenia z chmurą HomeWhiz: {exc}") from exc
 
+    data = _unwrap_envelope(body, context="logowanie")
     try:
+        credentials = data["credentials"]
         return HomeWhizSession(
-            access_key=data["accessKey"], secret_key=data["secretKey"],
-            session_token=data["sessionToken"], expiration=data.get("expiration", ""),
+            access_key=credentials["accessKey"], secret_key=credentials["secretKey"],
+            session_token=credentials["sessionToken"], expiration_ms=credentials.get("expiration", 0),
         )
     except KeyError as exc:
         raise HomeWhizError(f"Nieoczekiwana odpowiedź logowania HomeWhiz (brak pola {exc})") from exc
 
 
-async def _signed_get_json(session: HomeWhizSession, url: str, region: str = DEFAULT_REGION) -> object:
+async def _signed_get_json(session: HomeWhizSession, url: str, region: str = DEFAULT_REGION,
+                            *, context: str) -> object:
     parsed = urllib.parse.urlsplit(url)
     headers = _sigv4_headers(
         method="GET", host=parsed.netloc, path=parsed.path, query=parsed.query,
@@ -250,23 +284,30 @@ async def _signed_get_json(session: HomeWhizSession, url: str, region: str = DEF
     )
     async with aiohttp.ClientSession() as http:
         async with http.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            body = await resp.json(content_type=None)
             if resp.status != 200:
                 raise HomeWhizError(f"Zapytanie HomeWhiz {url} nie powiodło się (kod {resp.status})")
-            return await resp.json()
+    return _unwrap_envelope(body, context=context)
 
 
 async def list_appliances(session: HomeWhizSession, region: str = DEFAULT_REGION) -> list[dict]:
     """Zwraca listę urządzeń przypisanych do konta, WYŁĄCZAJĄC urządzenia
     sparowane tylko przez Bluetooth (patrz docstring modułu) - każdy wpis
-    to `{id, applianceId, brand, model, applianceType, connectivity, name}`."""
-    homes = await _signed_get_json(session, f"https://{SMARTHOME_HOST}/my-homes", region)
+    to `{id, applianceId, brand, model, applianceType, connectivity, name}`.
+    Kształt odpowiedzi (`{"data": [{"id": ...}, ...]}` dla `/my-homes`,
+    `{"data": {"appliances": [...]}}` dla `/my-homes/{id}`) potwierdzony
+    w źródle integracji Home Assistant (`MyHomesResponse`/`HomeResponseData`
+    w custom_components/homewhiz/api.py)."""
+    homes = await _signed_get_json(session, f"https://{SMARTHOME_HOST}/my-homes", region, context="lista domów")
     appliances: list[dict] = []
     for home in homes if isinstance(homes, list) else []:
         home_id = home.get("id") if isinstance(home, dict) else None
         if not home_id:
             continue
-        detail = await _signed_get_json(session, f"https://{SMARTHOME_HOST}/my-homes/{home_id}", region)
-        for item in detail if isinstance(detail, list) else []:
+        detail = await _signed_get_json(
+            session, f"https://{SMARTHOME_HOST}/my-homes/{home_id}", region, context="urządzenia domu",
+        )
+        for item in (detail.get("appliances") or []) if isinstance(detail, dict) else []:
             if not isinstance(item, dict) or not item.get("applianceId"):
                 continue
             if item.get("connectivity") in _BLUETOOTH_ONLY_CONNECTIVITY:
@@ -285,14 +326,17 @@ async def fetch_config_descriptor(
     """Deskryptor konfiguracji urządzenia - lista możliwych stanów
     (`deviceStates.states`, każdy `{strKey, wifiArrayValue}`) i offset
     (`deviceStates.wifiArrayReadIndex`), pod którym w tablicy bajtów stanu
-    ("wifi array") szukać bieżącej wartości - patrz `decode_state` niżej."""
+    ("wifi array") szukać bieżącej wartości - patrz `decode_state` niżej.
+    Lista wersji konfiguracji siedzi pod `data.results`, NIE bezpośrednio
+    pod `data` (`ContentsIndexResponse` w źródle integracji Home Assistant)."""
     contents_url = (
         f"https://{AUTH_HOST}/procam/contents"
         f"?applianceId={urllib.parse.quote(appliance_id)}&ctype=CONFIGURATION"
         f"&lang={urllib.parse.quote(language)}&testMode=true"
     )
-    entries = await _signed_get_json(session, contents_url, region)
-    if not isinstance(entries, list) or not entries:
+    data = await _signed_get_json(session, contents_url, region, context="deskryptor konfiguracji")
+    entries = data.get("results") if isinstance(data, dict) else None
+    if not entries:
         raise HomeWhizError(f"Brak deskryptora konfiguracji dla urządzenia {appliance_id}")
     entry = entries[0]
     cid, ver, lang = entry.get("cid"), entry.get("ver"), entry.get("lang", language)
@@ -478,7 +522,7 @@ class HomeWhizClient:
                 topic_prefix = f"$aws/things/{watch.appliance_id}/shadow"
                 client.subscribe(f"{topic_prefix}/update/accepted")
                 client.subscribe(f"{topic_prefix}/get/accepted")
-                client.publish(f"{topic_prefix}/get", payload="")
+                client.publish(f"{topic_prefix}/get", payload="{}")
             logger.info("HomeWhiz: połączono, monitoruję %d urządzeń", len(self._appliances))
             await on_connected()
 
