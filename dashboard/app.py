@@ -905,10 +905,10 @@ _AUTOMATIONS_PLUGIN_IDS = {"presence_simulation"}
 # klucze zostają, jak są). Zawsze wymaga pełnego restartu procesu - żywe
 # połączenie sieciowe (TCP do centrali/MQTT/itd.) startuje tylko raz, przy
 # starcie RulesEngine (patrz rules_engine.py: start()).
-_TOGGLE_ONLY_PLUGIN_IDS = {"satel", "tuya_local", "ebus", "unifi_protect", "notifications"}
+_TOGGLE_ONLY_PLUGIN_IDS = {"satel", "tuya_local", "ebus", "unifi_protect", "homewhiz", "notifications"}
 _TOGGLE_ONLY_CONFIG_KEY = {
     "satel": "satel", "tuya_local": "tuya", "ebus": "ebus",
-    "unifi_protect": "unifi_protect", "notifications": "notifications",
+    "unifi_protect": "unifi_protect", "homewhiz": "homewhiz", "notifications": "notifications",
 }
 
 

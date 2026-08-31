@@ -891,6 +891,9 @@ PLUGIN_DEFS = [
     {"id": "unifi_protect", "name": "Kamery UniFi Protect", "icon": "📹", "toggleable": True, "restart_required": True,
      "has_log_level": True,
      "description": "Detekcja ruchu z kamer UniFi Protect jako alternatywa/uzupełnienie kamer Tuya."},
+    {"id": "homewhiz", "name": "Zmywarki/AGD HomeWhiz", "icon": "🍽", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
+     "description": "Stan zmywarek (i innego AGD) BEQ/Arcelik sterowanych przez chmurę HomeWhiz - dostępny jako warunek 'stan' w automatyzacjach."},
     {"id": "presence_simulation", "name": "Symulacja obecności", "icon": "🎭", "toggleable": True, "restart_required": False,
      "has_log_level": True,
      "description": "Losowe włączanie/wyłączanie wskazanych urządzeń Tuya pod nieobecność domowników."},
@@ -918,6 +921,7 @@ def list_plugins(config_raw: dict) -> list[dict]:
     ebus_sensors = config_raw.get("ebus", {}).get("sensors", []) or []
 
     unifi_protect_cfg = config_raw.get("unifi_protect") or {}
+    homewhiz_cfg = config_raw.get("homewhiz") or {}
 
     state = {
         "satel": {
@@ -961,6 +965,11 @@ def list_plugins(config_raw: dict) -> list[dict]:
             "enabled": unifi_protect_cfg.get("enabled", True) and config_raw.get("unifi_protect") is not None,
             "configured": config_raw.get("unifi_protect") is not None,
             "detail": "skonfigurowane" if config_raw.get("unifi_protect") is not None else "nieskonfigurowane",
+        },
+        "homewhiz": {
+            "enabled": homewhiz_cfg.get("enabled", True) and bool(homewhiz_cfg.get("username") and homewhiz_cfg.get("appliances")),
+            "configured": bool(homewhiz_cfg.get("username") and homewhiz_cfg.get("appliances")),
+            "detail": f"{len(homewhiz_cfg.get('appliances', {}))} urządzeń" if homewhiz_cfg.get("appliances") else "brak poświadczeń/urządzeń",
         },
         "presence_simulation": {
             "enabled": bool(presence.get("enabled")),

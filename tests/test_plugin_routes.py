@@ -791,6 +791,203 @@ class TestUnifiProtectPluginPage:
         assert saved["host"] == "192.168.1.1"  # nietknięte
 
 
+class TestHomeWhizPluginPage:
+    def test_page_redirects_to_login_without_auth(self, client):
+        resp = client.get("/plugins/homewhiz", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_page_loads_when_authenticated(self, client):
+        resp = client.get("/plugins/homewhiz", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+
+    def test_credentials_get_requires_auth_and_defaults_when_unconfigured(self, client):
+        assert client.get("/api/plugins/homewhiz/credentials").status_code == 401
+        resp = client.get("/api/plugins/homewhiz/credentials", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json() == {"username": "", "password_set": False, "language": "en"}
+
+    def test_credentials_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/homewhiz/credentials", json={"username": "x"}).status_code == 401
+
+    def test_credentials_post_requires_username(self, client):
+        resp = client.post(
+            "/api/plugins/homewhiz/credentials", json={}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_credentials_post_persists_and_never_leaks_password_back(self, client):
+        import dashboard.app as app_module
+
+        resp = client.post(
+            "/api/plugins/homewhiz/credentials",
+            json={"username": "user@example.com", "password": "s3cr3t", "language": "pl"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["homewhiz"]
+        assert saved["username"] == "user@example.com"
+        assert saved["password"] == "s3cr3t"
+        assert saved["language"] == "pl"
+        text = client.get(
+            "/api/plugins/homewhiz/credentials", headers=_basic_auth_header("test_haslo_123"),
+        ).get_data(as_text=True)
+        assert "s3cr3t" not in text
+
+    def test_credentials_post_blank_password_keeps_existing(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "user@example.com", "password": "s3cr3t"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "user@example.com", "password": ""},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        saved = app_module.config_store.get("config")["homewhiz"]
+        assert saved["password"] == "s3cr3t"
+
+    def test_appliances_get_defaults_to_empty(self, client):
+        resp = client.get("/api/plugins/homewhiz/appliances", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json() == {"appliances": []}
+
+    def test_appliances_post_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/homewhiz/appliances", json={"appliances": []}).status_code == 401
+
+    def test_appliances_post_requires_credentials_first(self, client):
+        resp = client.post(
+            "/api/plugins/homewhiz/appliances",
+            json={"appliances": [{"name": "Zmywarka", "appliance_id": "abc"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_appliances_post_rejects_missing_appliance_id(self, client):
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "u", "password": "p"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = client.post(
+            "/api/plugins/homewhiz/appliances", json={"appliances": [{"name": "Zmywarka", "appliance_id": ""}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_appliances_post_rejects_duplicate_names(self, client):
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "u", "password": "p"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = client.post(
+            "/api/plugins/homewhiz/appliances",
+            json={"appliances": [
+                {"name": "Zmywarka", "appliance_id": "a1"}, {"name": "Zmywarka", "appliance_id": "a2"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_appliances_post_persists(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "u", "password": "p"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = client.post(
+            "/api/plugins/homewhiz/appliances",
+            json={"appliances": [{"name": "Zmywarka", "appliance_id": "abc123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["homewhiz"]
+        assert saved["appliances"] == {"Zmywarka": {"appliance_id": "abc123"}}
+
+    def test_settings_post_rejects_enabling_when_not_configured(self, client):
+        resp = client.post(
+            "/api/plugins/homewhiz/settings", json={"enabled": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_settings_post_succeeds_once_configured(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "u", "password": "p"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/homewhiz/appliances",
+            json={"appliances": [{"name": "Zmywarka", "appliance_id": "abc123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = client.post(
+            "/api/plugins/homewhiz/settings", json={"enabled": True, "log_level": "ERROR"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["homewhiz"]
+        assert saved["enabled"] is True
+        assert saved["log_level"] == "ERROR"
+        assert saved["username"] == "u"  # nietknięte
+
+    def test_discover_without_auth_returns_401(self, client):
+        assert client.post("/api/plugins/homewhiz/discover").status_code == 401
+
+    def test_discover_requires_credentials_first(self, client):
+        resp = client.post("/api/plugins/homewhiz/discover", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 400
+
+    def test_discover_returns_appliances_from_client(self, client, monkeypatch):
+        import plugins.homewhiz.routes as homewhiz_routes_module
+        from bridge.homewhiz_client import HomeWhizSession
+
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "u", "password": "p"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        async def fake_login(username, password):
+            return HomeWhizSession(access_key="AK", secret_key="SK", session_token="ST")
+
+        async def fake_list_appliances(session):
+            return [
+                {"applianceId": "a1", "name": "Zmywarka", "brand": "Beko", "model": "X1", "applianceType": 3},
+                {"applianceId": "a2", "name": "Pralka", "brand": "Beko", "model": "Y1", "applianceType": 1},
+            ]
+
+        monkeypatch.setattr(homewhiz_routes_module, "login", fake_login)
+        monkeypatch.setattr(homewhiz_routes_module, "list_appliances", fake_list_appliances)
+
+        resp = client.post("/api/plugins/homewhiz/discover", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        appliances = resp.get_json()["appliances"]
+        assert {a["appliance_id"] for a in appliances} == {"a1", "a2"}
+        assert next(a for a in appliances if a["appliance_id"] == "a1")["is_dishwasher"] is True
+        assert next(a for a in appliances if a["appliance_id"] == "a2")["is_dishwasher"] is False
+
+    def test_discover_reports_homewhiz_error(self, client, monkeypatch):
+        import plugins.homewhiz.routes as homewhiz_routes_module
+        from bridge.homewhiz_client import HomeWhizError
+
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "u", "password": "p"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        async def fake_login(username, password):
+            raise HomeWhizError("zły login lub hasło")
+
+        monkeypatch.setattr(homewhiz_routes_module, "login", fake_login)
+
+        resp = client.post("/api/plugins/homewhiz/discover", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 502
+        assert "login" in resp.get_json()["error"]
+
+
 class TestNotificationsPluginPage:
     def test_page_redirects_to_login_without_auth(self, client):
         resp = client.get("/plugins/notifications", follow_redirects=False)
