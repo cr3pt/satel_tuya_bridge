@@ -83,6 +83,8 @@
   .cond-leaf-fields select, .cond-leaf-fields input { flex: 1; min-width: 110px; }
   .cond-row .cond-nested { flex: 1; margin-top: 0; }
   .cond-empty-hint { font-size: 12px; margin-top: 4px; }
+  .mr-section { border: 1px dashed var(--border); border-radius: 8px; padding: 12px; margin-top: 12px; }
+  .mr-section-title { font-size: 12px; color: var(--muted); font-weight: 600; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.3px; }
   .timespec { display: inline-flex; gap: 6px; flex: 1; min-width: 220px; }
   .timespec select, .timespec input { flex: 1; min-width: 90px; }
   button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 10px 18px; font-size: 14px; cursor: pointer; font-weight: 500; }
@@ -172,7 +174,7 @@
 <script>
 let context = {
   tuya_devices: [], virtual_inputs: [], satel_partitions: {}, status_keys: [], motion_rule_names: [],
-  dimmer_devices: [], satel_outputs: [], satel_zones: [],
+  dimmer_devices: [], satel_outputs: [], satel_zones: [], homewhiz_appliances: [],
 };
 
 // Autoryzacja tylko dla zapisu (POST) - sesja przez /login (ciasteczko
@@ -333,6 +335,23 @@ function targetDeviceOptionsHtml(system, selected) {
   return deviceOptionsHtml(selected);
 }
 
+// "Wejście" reguły ruchu ma teraz TRZY możliwe systemy (nie tylko Satel):
+// - satel_zone: wejście Satela, wyzwalacz to naruszenie/ustanie (jak dotąd)
+// - tuya_state / homewhiz_state: STAN dowolnego urządzenia Tuya/HomeWhiz
+//   jako wyzwalacz (patrz RulesEngine.handle_device_state) - "urządzenie
+//   źródłowe" to wtedy nazwa urządzenia, a "wyzwalacz" to konkretna wartość
+//   statusu (np. "włączone", albo "finished" dla zmywarki), NIE numer strefy.
+function sourceDeviceOptionsHtml(system, selected) {
+  if (system === 'homewhiz_state') {
+    const appliances = context.homewhiz_appliances || [];
+    if (appliances.length === 0) {
+      return `<option value="">(brak skonfigurowanych urządzeń HomeWhiz - zakładka 🧩 Wtyczki)</option>`;
+    }
+    return appliances.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+  }
+  return deviceOptionsHtml(selected);
+}
+
 function getSceneNames() {
   return Array.from(document.querySelectorAll('#scenesContainer .scene-name')).map(el => el.value.trim()).filter(Boolean);
 }
@@ -355,6 +374,13 @@ function refreshDependentDropdowns() {
     if (sel) { const cur = sel.value; sel.innerHTML = deviceOptionsHtml(cur); sel.value = cur; }
   });
   document.querySelectorAll('#motionRulesContainer .sub-card').forEach(card => {
+    const sourceDeviceSel = card.querySelector('.mr-source-device');
+    if (sourceDeviceSel) {
+      const curSourceSystem = card.querySelector('.mr-source-system').value;
+      const curSourceDevice = sourceDeviceSel.value;
+      sourceDeviceSel.innerHTML = sourceDeviceOptionsHtml(curSourceSystem, curSourceDevice);
+      sourceDeviceSel.value = curSourceDevice;
+    }
     const deviceSel = card.querySelector('.mr-target-device');
     const curSystem = card.querySelector('.mr-target-system').value;
     const curDevice = deviceSel.value; deviceSel.innerHTML = targetDeviceOptionsHtml(curSystem, curDevice); deviceSel.value = curDevice;
@@ -539,6 +565,27 @@ function statusKeyCategory(key) {
   return found ? found.category : null;
 }
 
+// Wartość wyzwalająca "wejścia" reguły ruchu (source: tuya_state/
+// homewhiz_state, patrz sourceDeviceOptionsHtml wyżej) - lista wyboru dla
+// Tuya (skończony zbiór: włączone/wyłączone/niedostępne, ten sam co
+// STATE_VALUE_OPTIONS.tuya dla warunku "state"), wolny tekst dla HomeWhiz
+// (nazwy stanów są specyficzne dla modelu urządzenia, HomeWhiz sam je
+// definiuje - nie da się z góry wypisać skończonej listy).
+function triggerValueFieldHtml(system, selectedValue) {
+  const options = system === 'tuya_state' ? STATE_VALUE_OPTIONS.tuya : null;
+  if (!options) {
+    return `<input type="text" class="mr-trigger-value" placeholder="wartość (np. finished - zależy od modelu urządzenia)" value="${escapeHtml(selectedValue || '')}">`;
+  }
+  const hasSelected = selectedValue && options.includes(selectedValue);
+  const extra = (selectedValue && !hasSelected)
+    ? `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>` : '';
+  return `<select class="mr-trigger-value">
+    <option value="">(wybierz wartość)</option>
+    ${options.map(v => `<option value="${escapeHtml(v)}" ${v === selectedValue ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
+    ${extra}
+  </select>`;
+}
+
 function stateValueFieldHtml(category, selectedValue) {
   const options = STATE_VALUE_OPTIONS[category];
   if (!options) {
@@ -720,6 +767,7 @@ function addMotionRuleCard(initial, startCollapsed) {
   const window_ = initial.time_window || {};
   const escalation = initial.escalation || {};
   const actionKind = initial.scene ? 'scene' : (initial.action === 'turn_off' ? 'device_off' : 'device');
+  const sourceSystem = initial.source || 'satel_zone';
   const triggerOn = initial.trigger_on === 'restored' ? 'restored' : 'violated';
   const isEnabled = initial.enabled !== false;
   const container = document.getElementById('motionRulesContainer');
@@ -733,52 +781,57 @@ function addMotionRuleCard(initial, startCollapsed) {
       <button type="button" class="row-remove">✕ usuń regułę</button>
     </div>
     <div class="mr-body">
-    <div class="field-row">
-      <div class="field"><label>Wejście w Satelu</label>
-        <select class="mr-zone">${zoneOptionsHtml(initial.zone_number ?? '')}</select></div>
-      <div class="field"><label>Wyzwalacz</label>
-        <select class="mr-trigger">
-          <option value="violated" ${triggerOn === 'violated' ? 'selected' : ''}>Naruszenie czujki</option>
-          <option value="restored" ${triggerOn === 'restored' ? 'selected' : ''}>Ustanie naruszenia (czujka wróciła do OK)</option>
-        </select></div>
-      <div class="field"><label>Akcja</label>
-        <select class="mr-action-kind">
-          <option value="device" ${actionKind === 'device' ? 'selected' : ''}>Włącz urządzenie na czas</option>
-          <option value="device_off" ${actionKind === 'device_off' ? 'selected' : ''}>Wyłącz urządzenie</option>
-          <option value="scene" ${actionKind === 'scene' ? 'selected' : ''}>Uruchom scenę</option>
-        </select></div>
-    </div>
-    <div class="field-row mr-device-fields">
-      <div class="field"><label>System</label>
-        <select class="mr-target-system">
-          <option value="tuya" ${(initial.target_system || 'tuya') === 'tuya' ? 'selected' : ''}>Tuya</option>
-          <option value="satel_output" ${initial.target_system === 'satel_output' ? 'selected' : ''}>Satel (wyjście)</option>
-        </select></div>
-      <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${targetDeviceOptionsHtml(initial.target_system || 'tuya', initial.target_device)}</select></div>
-      <div class="field mr-duration-field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" placeholder="puste = do ustania naruszenia" value="${initial.duration_seconds ?? ''}"></div>
-      <div class="field mr-dimmer-field" style="${(initial.target_system || 'tuya') === 'tuya' && (context.dimmer_devices || []).includes(initial.target_device) ? '' : 'display:none;'}">
-        <label>Jasność % (ściemniacz)</label><input type="number" class="mr-dimmer" value="${initial.dimmer_level_percent ?? ''}"></div>
-    </div>
-    <div class="field-row mr-scene-fields">
-      <div class="field"><label>Scena</label><select class="mr-scene">${sceneOptionsHtml(initial.scene)}</select></div>
-    </div>
 
-    <div class="checkbox-row"><input type="checkbox" class="mr-window-enabled" ${window_.start ? 'checked' : ''}>
-      <label>Harmonogram - reguła aktywna tylko w oknie czasowym</label></div>
-    <div class="optional-content mr-window-fields ${window_.start ? 'show' : ''}">
+    <div class="mr-section">
+      <div class="mr-section-title">1. Wejście - co wyzwala regułę</div>
       <div class="field-row">
-        <div class="field"><label>Początek</label>${timeSpecFieldHtml('mr-window-start', window_.start)}</div>
-        <div class="field"><label>Koniec</label>${timeSpecFieldHtml('mr-window-end', window_.end)}</div>
+        <div class="field"><label>System</label>
+          <select class="mr-source-system">
+            <option value="satel_zone" ${sourceSystem === 'satel_zone' ? 'selected' : ''}>Satel (wejście)</option>
+            <option value="tuya_state" ${sourceSystem === 'tuya_state' ? 'selected' : ''}>Tuya (stan urządzenia)</option>
+            <option value="homewhiz_state" ${sourceSystem === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz (stan urządzenia AGD)</option>
+          </select></div>
+        <div class="field mr-satel-source-fields" style="${sourceSystem === 'satel_zone' ? '' : 'display:none;'}">
+          <label>Wejście w Satelu</label>
+          <select class="mr-zone">${zoneOptionsHtml(initial.zone_number ?? '')}</select></div>
+        <div class="field mr-device-source-fields" style="${sourceSystem === 'satel_zone' ? 'display:none;' : ''}">
+          <label>Urządzenie źródłowe</label>
+          <select class="mr-source-device">${sourceDeviceOptionsHtml(sourceSystem, initial.source_device)}</select></div>
+      </div>
+      <div class="field-row">
+        <div class="field mr-satel-source-fields" style="${sourceSystem === 'satel_zone' ? '' : 'display:none;'}">
+          <label>Wyzwalacz</label>
+          <select class="mr-trigger">
+            <option value="violated" ${triggerOn === 'violated' ? 'selected' : ''}>Naruszenie czujki</option>
+            <option value="restored" ${triggerOn === 'restored' ? 'selected' : ''}>Ustanie naruszenia (czujka wróciła do OK)</option>
+          </select></div>
+        <div class="field mr-device-source-fields" style="${sourceSystem === 'satel_zone' ? 'display:none;' : ''}">
+          <label>Wyzwalacz - wartość statusu</label>
+          <span class="mr-trigger-value-wrap">${triggerValueFieldHtml(sourceSystem, initial.trigger_value)}</span></div>
+        <div class="field"><label>Akcja</label>
+          <select class="mr-action-kind">
+            <option value="device" ${actionKind === 'device' ? 'selected' : ''}>Włącz urządzenie na czas</option>
+            <option value="device_off" ${actionKind === 'device_off' ? 'selected' : ''}>Wyłącz urządzenie</option>
+            <option value="scene" ${actionKind === 'scene' ? 'selected' : ''}>Uruchom scenę</option>
+          </select></div>
       </div>
     </div>
 
-    <div class="checkbox-row"><input type="checkbox" class="mr-escalation-enabled" ${escalation.escalated_scene ? 'checked' : ''}>
-      <label>Eskalacja - powtarzające się naruszenia wywołują mocniejszą scenę</label></div>
-    <div class="optional-content mr-escalation-fields ${escalation.escalated_scene ? 'show' : ''}">
-      <div class="field-row">
-        <div class="field"><label>Próg (liczba naruszeń)</label><input type="number" class="mr-esc-threshold" value="${escalation.threshold_count ?? 3}"></div>
-        <div class="field"><label>W oknie (sekundy)</label><input type="number" class="mr-esc-window" value="${escalation.window_seconds ?? 120}"></div>
-        <div class="field"><label>Wywołaj scenę</label><select class="mr-esc-scene">${sceneOptionsHtml(escalation.escalated_scene)}</select></div>
+    <div class="mr-section">
+      <div class="mr-section-title">2. Wyjście - co się dzieje</div>
+      <div class="field-row mr-device-fields">
+        <div class="field"><label>System</label>
+          <select class="mr-target-system">
+            <option value="tuya" ${(initial.target_system || 'tuya') === 'tuya' ? 'selected' : ''}>Tuya</option>
+            <option value="satel_output" ${initial.target_system === 'satel_output' ? 'selected' : ''}>Satel (wyjście)</option>
+          </select></div>
+        <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${targetDeviceOptionsHtml(initial.target_system || 'tuya', initial.target_device)}</select></div>
+        <div class="field mr-duration-field"><label>Czas włączenia (s)</label><input type="number" class="mr-duration" placeholder="puste albo 0 = do ustania naruszenia" value="${initial.duration_seconds ?? ''}"></div>
+        <div class="field mr-dimmer-field" style="${(initial.target_system || 'tuya') === 'tuya' && (context.dimmer_devices || []).includes(initial.target_device) ? '' : 'display:none;'}">
+          <label>Jasność % (ściemniacz)</label><input type="number" class="mr-dimmer" value="${initial.dimmer_level_percent ?? ''}"></div>
+      </div>
+      <div class="field-row mr-scene-fields">
+        <div class="field"><label>Scena</label><select class="mr-scene">${sceneOptionsHtml(initial.scene)}</select></div>
       </div>
     </div>
 
@@ -787,10 +840,38 @@ function addMotionRuleCard(initial, startCollapsed) {
         <select class="mr-then-trigger"></select></div>
     </div>
 
-    <div class="checkbox-row"><input type="checkbox" class="mr-condition-enabled" ${initial.condition ? 'checked' : ''}>
-      <label>Dodatkowy warunek (if/and/or/not) - reguła zadziała tylko, gdy jest spełniony</label></div>
-    <div class="optional-content mr-condition-fields ${initial.condition ? 'show' : ''}">
-      <div class="mr-condition-container"></div>
+    <div class="mr-section">
+      <div class="mr-section-title">3. Dodatkowy warunek</div>
+      <div class="checkbox-row"><input type="checkbox" class="mr-condition-enabled" ${initial.condition ? 'checked' : ''}>
+        <label>Warunek (if/and/or/not) - reguła zadziała tylko, gdy jest spełniony</label></div>
+      <div class="optional-content mr-condition-fields ${initial.condition ? 'show' : ''}">
+        <div class="mr-condition-container"></div>
+      </div>
+    </div>
+
+    <div class="mr-section">
+      <div class="mr-section-title">4. Harmonogram</div>
+      <div class="checkbox-row"><input type="checkbox" class="mr-window-enabled" ${window_.start ? 'checked' : ''}>
+        <label>Reguła aktywna tylko w oknie czasowym</label></div>
+      <div class="optional-content mr-window-fields ${window_.start ? 'show' : ''}">
+        <div class="field-row">
+          <div class="field"><label>Początek</label>${timeSpecFieldHtml('mr-window-start', window_.start)}</div>
+          <div class="field"><label>Koniec</label>${timeSpecFieldHtml('mr-window-end', window_.end)}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mr-section">
+      <div class="mr-section-title">5. Eskalacja</div>
+      <div class="checkbox-row"><input type="checkbox" class="mr-escalation-enabled" ${escalation.escalated_scene ? 'checked' : ''}>
+        <label>Powtarzające się naruszenia wywołują mocniejszą scenę</label></div>
+      <div class="optional-content mr-escalation-fields ${escalation.escalated_scene ? 'show' : ''}">
+        <div class="field-row">
+          <div class="field"><label>Próg (liczba naruszeń)</label><input type="number" class="mr-esc-threshold" value="${escalation.threshold_count ?? 3}"></div>
+          <div class="field"><label>W oknie (sekundy)</label><input type="number" class="mr-esc-window" value="${escalation.window_seconds ?? 120}"></div>
+          <div class="field"><label>Wywołaj scenę</label><select class="mr-esc-scene">${sceneOptionsHtml(escalation.escalated_scene)}</select></div>
+        </div>
+      </div>
     </div>
     </div>`;
 
@@ -804,6 +885,22 @@ function addMotionRuleCard(initial, startCollapsed) {
 
   card.querySelector('.mr-condition-enabled').addEventListener('change', (e) => {
     card.querySelector('.mr-condition-fields').classList.toggle('show', e.target.checked);
+  });
+
+  // "Wejście" - system (Satel/Tuya/HomeWhiz) decyduje, które pola są
+  // widoczne (strefa+wyzwalacz naruszenia dla Satela, urządzenie+wartość
+  // statusu dla Tuya/HomeWhiz) - patrz RulesEngine.handle_device_state.
+  const satelSourceFields = card.querySelectorAll('.mr-satel-source-fields');
+  const deviceSourceFields = card.querySelectorAll('.mr-device-source-fields');
+  card.querySelector('.mr-source-system').addEventListener('change', (e) => {
+    const system = e.target.value;
+    const isSatel = system === 'satel_zone';
+    satelSourceFields.forEach(el => { el.style.display = isSatel ? '' : 'none'; });
+    deviceSourceFields.forEach(el => { el.style.display = isSatel ? 'none' : ''; });
+    if (!isSatel) {
+      card.querySelector('.mr-source-device').innerHTML = sourceDeviceOptionsHtml(system, '');
+      card.querySelector('.mr-trigger-value-wrap').innerHTML = triggerValueFieldHtml(system, '');
+    }
   });
 
   const deviceFields = card.querySelector('.mr-device-fields');
@@ -876,11 +973,15 @@ document.getElementById('addMotionRuleBtn').addEventListener('click', () => { ad
 function collectMotionRules() {
   return Array.from(document.querySelectorAll('#motionRulesContainer .sub-card')).map(card => {
     const kind = card.querySelector('.mr-action-kind').value;
-    const rule = {
-      zone_number: card.querySelector('.mr-zone').value.trim(),
-      trigger_on: card.querySelector('.mr-trigger').value,
-      enabled: card.querySelector('.mr-enabled').checked,
-    };
+    const source = card.querySelector('.mr-source-system').value;
+    const rule = { source, enabled: card.querySelector('.mr-enabled').checked };
+    if (source === 'satel_zone') {
+      rule.zone_number = card.querySelector('.mr-zone').value.trim();
+      rule.trigger_on = card.querySelector('.mr-trigger').value;
+    } else {
+      rule.source_device = card.querySelector('.mr-source-device').value.trim();
+      rule.trigger_value = card.querySelector('.mr-trigger-value').value.trim();
+    }
     if (kind === 'scene') {
       rule.scene = card.querySelector('.mr-scene').value.trim();
     } else if (kind === 'device_off') {

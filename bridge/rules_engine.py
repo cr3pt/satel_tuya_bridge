@@ -91,6 +91,12 @@ class RulesEngine:
             status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 15),
         )
         self._active_timers: dict[str, asyncio.Task] = {}
+        # Ostatnia znana wartość statusu per (source, nazwa urządzenia) -
+        # potrzebne do wykrycia FAKTYCZNEJ zmiany w handle_device_state()
+        # niżej (Tuya/HomeWhiz jako "wejście" reguły ruchu, obok Satela).
+        # Bez tego pętla odpytywania Tuya (co kilkanaście sekund) wyzwalałaby
+        # regułę PONOWNIE przy każdym obrocie, nawet gdy stan się nie zmienił.
+        self._device_state_last_value: dict[tuple[str, str], str] = {}
         # Zadanie odliczające debounce dla _on_alarm_status_change() niżej -
         # patrz tam po wyjaśnienie.
         self._alarm_status_debounce_task: asyncio.Task | None = None
@@ -214,6 +220,63 @@ class RulesEngine:
 
             await self._fire_motion_rule(rule, f"motion_rule_{idx}", source, zone_or_device_id, trigger)
 
+    # ------------------------------------------------------------------
+    # Stan urządzenia (Tuya/HomeWhiz) jako "wejście" reguły ruchu - obok
+    # wejść Satela (handle_motion wyżej). Rule ma wtedy `source_device`
+    # (nazwa urządzenia/urządzenia AGD) zamiast `zone_number` i
+    # `trigger_value` (wartość statusu, przy której reguła ma zadziałać)
+    # zamiast `trigger_on` (naruszenie/ustanie - to jest specyfika Satela,
+    # binarna z definicji). Wołane z _tuya_status_poll_loop/
+    # _on_homewhiz_state PO zapisaniu statusu (history.set_status) - ta
+    # metoda TYLKO decyduje, czy któraś reguła ma na to zareagować.
+    # ------------------------------------------------------------------
+    async def handle_device_state(self, source: str, device_name: str, value: str) -> None:
+        state_key = (source, device_name)
+        old_value = self._device_state_last_value.get(state_key)
+        self._device_state_last_value[state_key] = value
+        if old_value == value:
+            return  # bez faktycznej zmiany - nie wyzwalaj ponownie tej samej reguły co poprzedni odczyt
+
+        now = datetime.now()
+        for idx, rule in enumerate(self.config.motion_rules):
+            if rule.get("source") != source or rule.get("source_device") != device_name:
+                continue
+            if not rule.get("enabled", True):
+                continue
+
+            trigger_value = rule.get("trigger_value")
+            if value == trigger_value:
+                trigger = "violated"
+            elif self._is_until_restored(rule) and old_value == trigger_value:
+                # Wartość WŁAŚNIE zmieniła się Z wartości wyzwalającej na
+                # inną - odpowiednik "ustania naruszenia" dla Satela, ale
+                # TYLKO dla reguł w trybie "aż do ustania" (patrz
+                # _is_until_restored) - zwykła reguła z czasem/scena/
+                # "wyłącz urządzenie" reaguje WYŁĄCZNIE na osiągnięcie
+                # trigger_value, nie na odejście od niego.
+                trigger = "restored"
+            else:
+                continue
+
+            if not self._rule_gate_open(rule, now):
+                continue  # poza oknem czasowym albo warunek (condition) niespełniony
+
+            await self._fire_motion_rule(rule, f"motion_rule_{idx}", source, device_name, trigger)
+
+    @staticmethod
+    def _is_until_restored(rule: dict) -> bool:
+        """Czy ta reguła ma tryb "włącz aż do ustania naruszenia" - PUSTE
+        ALBO ZEROWE `duration_seconds` ("Czas włączenia (s)" niewypełniony
+        ALBO wpisane jawnie jako 0 w edytorze - obie wartości znaczą to
+        samo, 0 jest tylko wygodniejszym sposobem wpisania tego samego w
+        polu liczbowym), na akcji "włącz urządzenie" (nie scena, nie
+        "wyłącz urządzenie" - te nie mają czasu trwania w ogóle)."""
+        return (
+            "scene" not in rule
+            and rule.get("action") != "turn_off"
+            and rule.get("duration_seconds") in (None, 0)
+        )
+
     @staticmethod
     def _rule_matches_trigger(rule: dict, trigger: str) -> bool:
         """Czy reguła ma zareagować na TO konkretne wyzwolenie (naruszenie
@@ -226,17 +289,12 @@ class RulesEngine:
         stałym czasie.
 
         WYJĄTEK: reguła "Włącz urządzenie na czas" (nie scena, nie
-        "turn_off") z PUSTYM `duration_seconds` ("Czas włączenia (s)" nie
-        wypełniony w edytorze) reaguje na OBA wyzwolenia niezależnie od
+        "turn_off") w trybie "aż do ustania naruszenia" (patrz
+        _is_until_restored wyżej) reaguje na OBA wyzwolenia niezależnie od
         `trigger_on` - to jedna reguła obsługuje "włącz przy naruszeniu,
         wyłącz przy jego ustaniu" (patrz _fire_motion_rule niżej), więc musi
         zobaczyć zarówno "violated", jak i "restored"."""
-        is_until_restored = (
-            "scene" not in rule
-            and rule.get("action") != "turn_off"
-            and rule.get("duration_seconds") is None
-        )
-        if is_until_restored:
+        if RulesEngine._is_until_restored(rule):
             return True
         return rule.get("trigger_on", "violated") == trigger
 
@@ -312,13 +370,13 @@ class RulesEngine:
         duration = rule.get("duration_seconds")
         dimmer = rule.get("dimmer_level_percent")
 
-        if duration is None:
-            # "Czas włączenia" niewypełniony w edytorze - urządzenie zostaje
-            # włączone AŻ DO USTANIA NARUSZENIA czujki, zamiast na stały
-            # czas: włącz na "violated" (i wyzwolenia łańcuchowe/eskalacyjne,
-            # które nie niosą prawdziwego "restored" - patrz _chain_trigger),
-            # wyłącz na "restored". _rule_matches_trigger() wyżej gwarantuje,
-            # że ta sama reguła zobaczy OBA wyzwolenia.
+        if self._is_until_restored(rule):
+            # "Czas włączenia" niewypełniony ALBO 0 w edytorze - urządzenie
+            # zostaje włączone AŻ DO USTANIA NARUSZENIA czujki, zamiast na
+            # stały czas: włącz na "violated" (i wyzwolenia łańcuchowe/
+            # eskalacyjne, które nie niosą prawdziwego "restored" - patrz
+            # _chain_trigger), wyłącz na "restored". _rule_matches_trigger()
+            # wyżej gwarantuje, że ta sama reguła zobaczy OBA wyzwolenia.
             await self._set_target_state(target_system, device, trigger != "restored", dimmer)
             logger.info(
                 "Reguła ruchu: %s(%s) -> %s %s (%s, do ustania naruszenia)",
@@ -473,8 +531,11 @@ class RulesEngine:
         zdekodowany stan zmywarki jako zwykły status (kategoria "homewhiz"),
         DOKŁADNIE jak stan kotła (kategoria "boiler") - żadnego nowego typu
         warunku nie trzeba dodawać, wystarczy istniejący warunek "state"
-        reguły ruchu wskazujący klucz "homewhiz:<nazwa>" (patrz README)."""
+        reguły ruchu wskazujący klucz "homewhiz:<nazwa>" (patrz README).
+        Dodatkowo - stan urządzenia może być bezpośrednio "wejściem" reguły
+        ruchu (source: "homewhiz_state"), patrz handle_device_state()."""
         self.history.set_status(f"homewhiz:{appliance_name}", "homewhiz", state_name, label=appliance_name)
+        await self.handle_device_state("homewhiz_state", appliance_name, state_name)
 
     async def handle_camera_motion(self, source: str, camera_id: str) -> None:
         now = datetime.now()
@@ -789,14 +850,13 @@ class RulesEngine:
                         self.history.set_status(
                             f"tuya:{device_name}", "tuya", "niedostępne", label=device_name,
                         )
+                        await self.handle_device_state("tuya_state", device_name, "niedostępne")
                         continue
                     # DP '1' to konwencjonalnie stan on/off większości urządzeń Tuya
                     is_on = dps.get("1")
-                    self.history.set_status(
-                        f"tuya:{device_name}", "tuya",
-                        "włączone" if is_on else "wyłączone" if is_on is not None else "?",
-                        label=device_name,
-                    )
+                    tuya_value = "włączone" if is_on else "wyłączone" if is_on is not None else "?"
+                    self.history.set_status(f"tuya:{device_name}", "tuya", tuya_value, label=device_name)
+                    await self.handle_device_state("tuya_state", device_name, tuya_value)
                     if self.ha_mqtt and is_on is not None:
                         self.ha_mqtt.publish_state(
                             f"{self._ha_topic_prefix}/tuya/{device_name}/state",

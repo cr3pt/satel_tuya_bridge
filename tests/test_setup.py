@@ -960,6 +960,57 @@ class TestValidationAdvanced:
         form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
         assert validate(form) == []
 
+    def test_motion_rule_device_state_source_is_not_an_error(self):
+        """Wejście "stan urządzenia" (Tuya/HomeWhiz) - patrz
+        RulesEngine.handle_device_state. Nie wymaga zone_number."""
+        rule = {
+            "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+            "target_device": "gniazdko_salon", "duration_seconds": "5",
+        }
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        assert validate(form) == []
+
+    def test_motion_rule_homewhiz_state_source_is_not_an_error(self):
+        rule = {
+            "source": "homewhiz_state", "source_device": "Zmywarka", "trigger_value": "finished",
+            "target_device": "gniazdko_salon", "duration_seconds": "5",
+        }
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        assert validate(form) == []
+
+    def test_motion_rule_device_state_source_requires_source_device(self):
+        rule = {
+            "source": "tuya_state", "source_device": "", "trigger_value": "włączone",
+            "target_device": "gniazdko_salon", "duration_seconds": "5",
+        }
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("urządzenie źródłowe" in e for e in errors)
+
+    def test_motion_rule_device_state_source_requires_trigger_value(self):
+        rule = {
+            "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "",
+            "target_device": "gniazdko_salon", "duration_seconds": "5",
+        }
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("wartość wyzwalającą" in e for e in errors)
+
+    def test_motion_rule_device_state_source_does_not_require_zone_number(self):
+        rule = {
+            "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+            "target_device": "gniazdko_salon", "duration_seconds": "5",
+        }
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert not any("numer wejścia" in e for e in errors)
+
+    def test_motion_rule_unknown_source_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "source": "cos_innego"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("nieznane wejście" in e for e in errors)
+
     def test_incomplete_virtual_input_is_error(self):
         form = {**FORM_WITH_ADVANCED, "virtual_inputs": [{"name": "x", "number": "", "key": ""}]}
         errors = validate(form)
@@ -1272,6 +1323,58 @@ class TestBuildConfigDictAdvanced:
         assert rule["action"] == "turn_off"
         assert "duration_seconds" not in rule
         assert "dimmer_level_percent" not in rule
+
+    def test_motion_rule_duration_zero_is_kept_explicit(self):
+        """duration_seconds: "0" (wpisane JAWNIE w edytorze, w odróżnieniu
+        od pustego pola) MUSI zostać zapisane jako 0, nie pominięte - to
+        RulesEngine (nie ten builder) traktuje 0 tak samo jak brak pola
+        ("aż do ustania naruszenia"), patrz test_motion_rule_blank_duration_
+        omits_duration_seconds wyżej dla przypadku pustego pola."""
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {
+                "zone_number": "16", "target_device": "swiatlo_korytarz",
+                "duration_seconds": "0", "time_window": {}, "escalation": {},
+            },
+        ]}
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["duration_seconds"] == 0
+
+    def test_motion_rule_tuya_state_source_is_built(self):
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {
+                "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+                "target_device": "gniazdko_salon", "duration_seconds": "5",
+                "time_window": {}, "escalation": {},
+            },
+        ]}
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["source"] == "tuya_state"
+        assert rule["source_device"] == "czujnik_drzwi"
+        assert rule["trigger_value"] == "włączone"
+        assert "zone_number" not in rule
+        assert "trigger_on" not in rule
+
+    def test_motion_rule_homewhiz_state_source_is_built(self):
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {
+                "source": "homewhiz_state", "source_device": "Zmywarka", "trigger_value": "finished",
+                "target_device": "gniazdko_salon", "duration_seconds": "5",
+                "time_window": {}, "escalation": {},
+            },
+        ]}
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["source"] == "homewhiz_state"
+        assert rule["source_device"] == "Zmywarka"
+        assert rule["trigger_value"] == "finished"
+
+    def test_motion_rule_device_state_source_without_device_or_value_is_skipped(self):
+        """Niekompletna reguła "stan urządzenia" (brak source_device albo
+        trigger_value) jest po prostu pomijana - analogicznie do reguł
+        Satela bez zone_number (patrz _build_motion_rules)."""
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {"source": "tuya_state", "source_device": "", "trigger_value": "włączone"},
+        ]}
+        assert build_automations_dict(form)["reguły_ruchu"] == []
 
     def test_virtual_inputs_built_into_satel_fields(self):
         satel_fields = build_satel_fields_dict(FORM_WITH_ADVANCED)

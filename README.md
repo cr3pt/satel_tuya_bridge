@@ -1284,6 +1284,58 @@ sensu i tylko myliłoby. Dotyczy zarówno akcji scen (`tuya_on`/
 `tuya_on_for_duration`), jak i akcji "Włącz urządzenie na czas" w regule
 ruchu niżej.
 
+### Reguła ruchu - edytor podzielony na sekcje: Wejście, Wyjście, Warunek, Harmonogram, Eskalacja
+
+Karta reguły ruchu w `/automations` jest podzielona logicznie na 5 sekcji,
+każda w osobnej, podpisanej ramce - **1. Wejście** (co wyzwala regułę:
+system + urządzenie źródłowe + wyzwalacz + rodzaj akcji), **2. Wyjście**
+(system + urządzenie docelowe + czas), **3. Dodatkowy warunek**,
+**4. Harmonogram**, **5. Eskalacja** - patrz sekcje niżej po szczegóły
+każdej z nich.
+
+### Wejście reguły ruchu: Satel, albo stan urządzenia Tuya/HomeWhiz (`source`)
+
+Reguła ruchu wyzwala się nie tylko naruszeniem wejścia Satela - może też
+reagować na **stan dowolnego urządzenia Tuya albo urządzenia AGD
+HomeWhiz** (patrz sekcja "Zmywarki/AGD HomeWhiz" niżej). Pole "System" w
+sekcji "1. Wejście" wybiera źródło:
+
+- **Satel (wejście)** (`source: satel_zone`, domyślne) - jak dotąd:
+  `zone_number` + `trigger_on` (naruszenie/ustanie).
+- **Tuya (stan urządzenia)** (`source: tuya_state`) - `source_device`
+  (nazwa urządzenia Tuya) + `trigger_value` (wartość statusu, przy której
+  reguła ma zadziałać - lista wyboru: `włączone`/`wyłączone`/`niedostępne`).
+- **HomeWhiz (stan urządzenia AGD)** (`source: homewhiz_state`) -
+  `source_device` (nazwa urządzenia HomeWhiz) + `trigger_value` (wolny
+  tekst - nazwy stanów są specyficzne dla modelu urządzenia, np.
+  `finished`/`running`, patrz sekcja HomeWhiz niżej).
+
+```yaml
+reguły_ruchu:
+  # Gdy zmywarka skończy zmywanie - wyślij powiadomienie (przez scenę)
+  - source: homewhiz_state
+    source_device: "Zmywarka"
+    trigger_value: "finished"
+    scene: "zmywarka_skonczyla"
+
+  # Gdy czujnik drzwi (Tuya) się otworzy - włącz światło na 2 minuty
+  - source: tuya_state
+    source_device: "czujnik_drzwi_wejsciowych"
+    trigger_value: "włączone"
+    target_device: "swiatlo_przedpokoj"
+    duration_seconds: 120
+```
+
+Reguła wyzwala się DOKŁADNIE wtedy, gdy status urządzenia **zmienia się
+NA** `trigger_value` (nie przy każdym odczycie o tej samej wartości -
+`RulesEngine.handle_device_state` pamięta ostatnią wartość per urządzenie,
+żeby np. pętla odpytywania Tuya co kilkanaście sekund nie odpalała reguły
+ponownie, dopóki stan faktycznie się nie zmieni). Tryb "aż do ustania
+naruszenia" (puste/zerowe `duration_seconds`, patrz niżej) działa też dla
+tych źródeł - urządzenie docelowe włącza się, gdy status STAJE SIĘ
+`trigger_value`, i gaśnie, gdy status zmienia się na jakąkolwiek inną
+wartość.
+
 ### Harmonogramy czasowe (`time_window`)
 
 Dowolna reguła ruchu lub kamery może mieć opcjonalne pole `time_window`,
@@ -1484,18 +1536,21 @@ na czas), która i tak już samodzielnie gasi urządzenie po upływie
 "Wyzwalacz" (Naruszenie czujki / Ustanie naruszenia) obok pola "Akcja",
 gdzie doszła nowa opcja "Wyłącz urządzenie".
 
-### Włączenie "aż do ustania naruszenia" (puste `duration_seconds`)
+### Włączenie "aż do ustania naruszenia" (puste albo zerowe `duration_seconds`)
 
 Domyślna akcja "Włącz urządzenie na czas" wymaga stałego czasu
 (`duration_seconds`) - urządzenie gaśnie po jego upływie, NIEZALEŻNIE od
 tego, czy naruszenie nadal trwa. Jeśli pole "Czas włączenia (s)" w
-edytorze zostanie puste (albo `duration_seconds` w ogóle nie występuje w
-YAML-u), reguła przełącza się w tryb **"aż do ustania naruszenia"**:
-urządzenie włącza się przy naruszeniu i gaśnie dokładnie wtedy, gdy
-naruszenie ustaje - bez zgadywania czasu, bez osobnej drugiej reguły z
-`trigger_on: restored`/`action: turn_off`. Jedna reguła sama obsługuje obie
-strony (`RulesEngine._rule_matches_trigger` sprawia, że taka reguła widzi
-zarówno "violated", jak i "restored" tej samej strefy, ignorując pole
+edytorze zostanie puste ALBO wpisane jawnie jako **0** (albo
+`duration_seconds` w ogóle nie występuje w YAML-u - obie wartości znaczą
+dokładnie to samo, 0 jest tylko wygodniejszym sposobem wpisania tego w
+polu liczbowym), reguła przełącza się w tryb **"aż do ustania
+naruszenia"**: urządzenie włącza się przy naruszeniu i gaśnie dokładnie
+wtedy, gdy naruszenie ustaje - bez zgadywania czasu, bez osobnej drugiej
+reguły z `trigger_on: restored`/`action: turn_off`. Jedna reguła sama
+obsługuje obie strony (`RulesEngine._is_until_restored`/
+`_rule_matches_trigger` sprawiają, że taka reguła widzi zarówno
+"violated", jak i "restored" tego samego wejścia, ignorując pole
 `trigger_on` - ono nie ma tu zastosowania, bo reguła i tak reaguje na obie
 strony):
 
@@ -1503,8 +1558,13 @@ strony):
 reguły_ruchu:
   - zone_number: 5
     target_device: swiatlo_korytarz
-    # brak duration_seconds = włącz na naruszenie, wyłącz na jego ustanie
+    # brak duration_seconds (albo duration_seconds: 0) = włącz na
+    # naruszenie, wyłącz na jego ustanie
 ```
+
+Ten tryb działa TAK SAMO dla wejścia "stan urządzenia" (patrz niżej) -
+urządzenie włącza się, gdy status STAJE SIĘ wartością wyzwalającą, i gaśnie,
+gdy status zmienia się na inną.
 
 `dimmer_level_percent` nadal działa normalnie (ustawia jasność przy
 włączeniu). Ten tryb NIE tworzy zadania w tle (`turn_on_for_duration`) -
@@ -1640,18 +1700,26 @@ chmurę Arcelik/AWS IoT Core) jest zweryfikowane względem
    procesu bridge'a, tak jak inne integracje chmurowe (UniFi Protect, Tuya
    Cloud).
 
-### Stan urządzenia jako warunek automatyzacji
+### Stan urządzenia jako warunek ALBO wejście automatyzacji
 
 Zdekodowany stan (np. `running`/`finished`/`idle` - dokładne nazwy zależą
 od modelu urządzenia, HomeWhiz sam je definiuje) trafia na stronę główną
 jako zwykły status pod kluczem `homewhiz:<nazwa>` - DOKŁADNIE tak samo jak
-stan kotła (kategoria `boiler`). Włączenie/wyłączenie automatyzacji od
-stanu zmywarki NIE wymaga żadnego nowego typu warunku - wystarczy istniejący
-warunek "stan" (`state`, patrz "Dodatkowy warunek reguły" wyżej) wskazujący
-ten klucz, np. w edytorze `/automations`: warunek typu `state`, klucz
-`homewhiz:Zmywarka`, wartość `finished` - i akcja (np. powiadomienie albo
-włączenie gniazdka) uruchomi się dopiero, gdy zmywarka faktycznie skończy
-zmywanie.
+stan kotła (kategoria `boiler`). Da się go użyć na dwa sposoby:
+
+- **Jako dodatkowy warunek** innej reguły - warunek typu `state`, klucz
+  `homewhiz:Zmywarka`, wartość `finished` (patrz "Dodatkowy warunek
+  reguły" wyżej) - NIE wymaga żadnego nowego typu warunku, tylko
+  istniejący mechanizm statusu.
+- **Jako bezpośrednie wejście (wyzwalacz)** reguły ruchu - system
+  "HomeWhiz (stan urządzenia AGD)" w sekcji "1. Wejście" edytora
+  `/automations` (`source: homewhiz_state`, patrz "Wejście reguły ruchu"
+  wyżej) - reguła wyzwala się DOKŁADNIE w momencie, gdy stan zmieni się na
+  wybraną wartość, bez potrzeby osobnej reguły źródłowej do podpięcia
+  warunku.
+
+W obu przypadkach akcja (np. powiadomienie albo włączenie gniazdka)
+uruchomi się dopiero, gdy zmywarka faktycznie skończy zmywanie.
 
 ## Synchronizacja czasu
 

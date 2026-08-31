@@ -591,6 +591,30 @@ class TestAutomationContextEndpoint:
         ).get_json()
         assert data["dimmer_devices"] == ["lampa_scienna"]
 
+    def test_context_includes_homewhiz_appliances_for_device_state_source(self, client):
+        """Nazwy skonfigurowanych urządzeń HomeWhiz - do wyboru jako
+        "system: HomeWhiz" WEJŚCIA reguły ruchu (source: homewhiz_state,
+        patrz RulesEngine.handle_device_state)."""
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "u", "password": "p"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/homewhiz/appliances",
+            json={"appliances": [{"name": "Zmywarka", "appliance_id": "abc123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        data = client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        ).get_json()
+        assert data["homewhiz_appliances"] == ["Zmywarka"]
+
+    def test_context_homewhiz_appliances_empty_when_unconfigured(self, client):
+        data = client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        ).get_json()
+        assert data["homewhiz_appliances"] == []
+
 
 class TestAutomationsEndpoint:
     def test_get_automations_requires_auth(self, client):
