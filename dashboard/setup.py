@@ -275,13 +275,23 @@ def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str
             seen_names.add(name)
 
         uses_scene = bool((rule.get("scene") or "").strip())
+        uses_virtual_input = bool((rule.get("virtual_input") or "").strip())
         if uses_scene:
             scene_name = rule["scene"].strip()
             if scene_name not in scene_names:
                 errors.append(f"{label}: wybrana scena '{scene_name}' nie istnieje wśród zdefiniowanych scen")
+        elif uses_virtual_input:
+            # Nazwa wirtualnego wejścia NIE jest tu walidowana względem
+            # faktycznie skonfigurowanych (patrz plugins/satel/routes.py) -
+            # ten formularz (validate_automations) nie ma dostępu do
+            # dokumentu satel_fields, tak samo jak target_device niżej nie
+            # jest walidowany względem urządzeń Tuya. Nieznana nazwa
+            # ujawni się dopiero przy próbie wywołania (SatelVirtualInputTrigger
+            # loguje błąd i po prostu nic nie robi).
+            pass
         else:
             if not rule.get("target_device"):
-                errors.append(f"{label}: wybierz urządzenie docelowe albo scenę")
+                errors.append(f"{label}: wybierz urządzenie docelowe, wirtualne wejście albo scenę")
             # Puste "czas włączenia" dla akcji "włącz urządzenie" NIE jest
             # błędem - oznacza "aż do ustania naruszenia czujki" zamiast
             # stałego czasu (patrz RulesEngine._fire_motion_rule/
@@ -459,8 +469,11 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
             built["name"] = name
 
         scene_name = (rule.get("scene") or "").strip()
+        virtual_input_name = (rule.get("virtual_input") or "").strip()
         if scene_name:
             built["scene"] = scene_name
+        elif virtual_input_name:
+            built["virtual_input"] = virtual_input_name
         else:
             built["target_device"] = rule["target_device"]
             # target_system=tuya jest domyślne i pomijane w zapisie (patrz

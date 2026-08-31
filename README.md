@@ -1407,6 +1407,54 @@ tego samego powodu listą wyboru zamiast gołego numeru do wpisania na
 pamięć - podpowiada nazwane wejścia z `satel.monitored_zones` (zakładka
 ⚙ Ustawienia -> Satel), dokładnie tak jak wybór urządzenia docelowego wyżej.
 
+### Wyjście reguły ruchu: aktywacja wirtualnego wejścia IP Satela
+
+Akcja "Wyjście - co się dzieje" reguły ruchu może, zamiast włączać/wyłączać
+urządzenie docelowe albo uruchamiać scenę, **jednorazowo aktywować
+wirtualne wejście IP** Satela (ten sam mechanizm `SatelVirtualInputTrigger`,
+którego już używa akcja sceny `satel_virtual_input` oraz przycisk "Aktywuj"
+na stronie głównej - patrz "Ręczna aktywacja wirtualnego wejścia z panelu
+głównego" niżej) - np. żeby naruszenie czujki Tuya albo
+zmiana stanu urządzenia HomeWhiz zgłosiła się jako naruszenie WEJŚCIA w
+samej centrali Satel (integracja z systemami trzecimi, które rozumieją
+tylko wejścia Satela, np. stary panel/centralka monitoringu):
+
+```yaml
+reguły_ruchu:
+  - source: tuya_state
+    source_device: "czujnik_drzwi_garazowych"
+    trigger_value: "włączone"
+    virtual_input: motion_hall_camera
+```
+
+Pole `virtual_input` (nazwa - klucz w `satel.virtual_inputs.inputs`,
+zakładka 🧩 Wtyczki -> Satel) zastępuje `target_device`/`target_system`/
+`duration_seconds`/`dimmer_level_percent` - w odróżnieniu od włączenia
+urządzenia to jednorazowe wywołanie HTTP GET (patrz niżej), więc tryb "aż
+do ustania naruszenia" i jasność % nie mają tu zastosowania. `trigger_on`
+(domyślnie "violated") wciąż działa normalnie - np. `trigger_on: restored`
+wywoła wejście IP dopiero, gdy naruszenie ustanie, a nie gdy się pojawi.
+W edytorze (`/automations`) wybiera się z listy wyboru "Aktywuj wejście IP
+Satela" w polu "Akcja".
+
+### Ręczna aktywacja wirtualnego wejścia z panelu głównego
+
+Strona główna (`/`) ma osobną kartę "Wirtualne wejścia IP (Satel)" z
+przyciskiem "▶ Aktywuj" przy każdym skonfigurowanym wirtualnym wejściu
+(`satel.virtual_inputs.inputs`, zakładka 🧩 Wtyczki -> Satel) - do
+jednorazowego, ręcznego wywołania niezależnie od automatyzacji. Wirtualne
+wejście IP to tylko jednorazowa akcja (naruszenie wysyłane przez HTTP GET
+do ETHM-1 Plus), bez żadnego stanu do odczytania - stąd sam przycisk, bez
+statusu jak przy wejściach/wyjściach wyżej na tej samej stronie.
+
+Wymaga zalogowania (jak reszta sterowania - uzbrojenie/rozbrojenie). Panel
+webowy to osobny proces bez żywego połączenia z Satelem, więc kliknięcie
+idzie przez tę samą kolejkę komend w bazie SQLite, którą już wykorzystuje
+uzbrojenie/rozbrojenie (`POST /api/satel/virtual-inputs/<nazwa>/trigger` ->
+`history.enqueue_command("satel_virtual_input", ...)` -> bridge odbiera i
+wykonuje w `RulesEngine._execute_command` w ciągu ok. 1.5s) - przycisk
+pokazuje "⏳..." w trakcie oczekiwania i wynik (✅/❌) po wykonaniu.
+
 ### Eskalacja przy powtarzających się naruszeniach
 
 Reguła ruchu z sekcją `escalation` liczy naruszenia w ruchomym oknie

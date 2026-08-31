@@ -1210,6 +1210,18 @@ def api_satel_zone_types():
     })
 
 
+@app.route("/api/satel/virtual-inputs", methods=["GET"])
+def api_satel_virtual_inputs():
+    """Publiczna lista NAZW skonfigurowanych wirtualnych wejść IP (klucze
+    satel.virtual_inputs.inputs, zakładka 🧩 Wtyczki -> Satel) - do sekcji
+    "Wirtualne wejścia IP" na stronie głównej (index.html). Same nazwy nie
+    są wrażliwe (bez numerów wejść/kluczy DLOADX) - analogicznie do
+    /api/satel/zone-types wyżej. Faktyczna aktywacja (POST .../trigger)
+    wciąż wymaga zalogowania."""
+    inputs = config_raw.get("satel", {}).get("virtual_inputs", {}).get("inputs", {})
+    return jsonify({"virtual_inputs": sorted(inputs.keys())})
+
+
 @app.route("/api/satel/partitions")
 def api_satel_partitions():
     """Lista nazwanych stref do wyboru w panelu - WYMAGA zalogowania (patrz
@@ -1237,6 +1249,25 @@ def api_satel_disarm():
     partitions = payload.get("partitions") or list(satel_partitions_cfg.values())
     command_id = history.enqueue_command("satel_disarm", {"partitions": partitions})
     history.write_event("system", source="dashboard", detail={"message": f"Zlecono rozbrojenie stref {partitions}"})
+    return jsonify({"command_id": command_id, "status": "pending"})
+
+
+@app.route("/api/satel/virtual-inputs/<name>/trigger", methods=["POST"])
+@require_auth()
+def api_satel_virtual_input_trigger(name):
+    """Ręczna aktywacja wirtualnego wejścia IP z panelu głównego - ten sam
+    mechanizm co akcja "Aktywuj wejście IP Satela" reguły ruchu (patrz
+    RulesEngine._fire_motion_rule), tylko wywołana wprost przez
+    użytkownika. Idzie przez tę samą kolejkę komend co uzbrojenie/
+    rozbrojenie wyżej (panel to OSOBNY proces bez żywego połączenia z
+    Satelem)."""
+    inputs = config_raw.get("satel", {}).get("virtual_inputs", {}).get("inputs", {})
+    if name not in inputs:
+        return jsonify({"error": f"Nieznane wirtualne wejście '{name}'"}), 404
+    command_id = history.enqueue_command("satel_virtual_input", {"name": name})
+    history.write_event(
+        "system", source="dashboard", detail={"message": f"Zlecono aktywację wirtualnego wejścia '{name}'"},
+    )
     return jsonify({"command_id": command_id, "status": "pending"})
 
 

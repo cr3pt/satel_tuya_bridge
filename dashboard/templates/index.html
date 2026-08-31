@@ -93,6 +93,8 @@
   .btn-disarm { background: var(--ok); color: #0a1a12; }
   #armMessage.ok { color: var(--ok); }
   #armMessage.error { color: var(--danger); }
+  #virtualInputMessage.ok { color: var(--ok); }
+  #virtualInputMessage.error { color: var(--danger); }
   .sensor-multiselect { position: relative; }
   .sensor-multi-panel {
     position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
@@ -148,6 +150,12 @@
 <div class="card">
   <h2>Wyjścia Satel</h2>
   <div id="statusSatelOutputs" class="status-grid"></div>
+</div>
+
+<div class="card">
+  <h2>Wirtualne wejścia IP (Satel)</h2>
+  <div id="virtualInputsSection" class="status-grid"></div>
+  <div id="virtualInputMessage" style="font-size: 13px; margin-top: 10px; display: none;"></div>
 </div>
 
 <div class="card">
@@ -692,6 +700,81 @@ function showArmMessage(kind, text) {
   el.textContent = text;
 }
 
+// --- Wirtualne wejścia IP (ETHM-1 Plus) - jednorazowa aktywacja z panelu
+// głównego, ten sam mechanizm co akcja "Aktywuj wejście IP Satela" w
+// edytorze reguł ruchu (RulesEngine._fire_motion_rule) i akcja sceny
+// satel_virtual_input, tylko wywołana ręcznie na żądanie. Bez pojęcia
+// "stanu" (to jednorazowe wywołanie HTTP, nie coś do odczytania) - stąd
+// sama lista przycisków, nie status-card jak dla wejść/wyjść wyżej.
+async function loadVirtualInputs() {
+  const el = document.getElementById('virtualInputsSection');
+  const data = await (await fetch('/api/satel/virtual-inputs')).json();
+  const names = data.virtual_inputs || [];
+  if (names.length === 0) {
+    el.innerHTML = '<div style="color: var(--muted); font-size: 13px;">Brak skonfigurowanych wirtualnych wejść (zakładka 🧩 Wtyczki -> Satel)</div>';
+    return;
+  }
+  el.innerHTML = names.map(name => `
+    <div class="status-card">
+      <div class="label">${name}</div>
+      <button type="button" class="secondary vi-trigger-btn" data-name="${name}" style="margin-top: 6px; width: 100%;">▶ Aktywuj</button>
+    </div>
+  `).join('');
+  el.querySelectorAll('.vi-trigger-btn').forEach(btn => {
+    btn.addEventListener('click', () => triggerVirtualInput(btn));
+  });
+}
+
+async function triggerVirtualInput(btn) {
+  const name = btn.dataset.name;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳...';
+  try {
+    const resp = await authorizedFetch(`/api/satel/virtual-inputs/${encodeURIComponent(name)}/trigger`, { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showVirtualInputMessage('error', '❌ ' + (data.error || 'Błąd'));
+      btn.textContent = originalText;
+      btn.disabled = false;
+      return;
+    }
+    await pollVirtualInputCommand(data.command_id, btn, originalText);
+  } catch (e) {
+    showVirtualInputMessage('error', '❌ ' + e.message);
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
+
+async function pollVirtualInputCommand(commandId, btn, originalText, attempt = 0) {
+  if (attempt > 15) {
+    showVirtualInputMessage('error', '❌ Brak odpowiedzi od bridge\'a - sprawdź, czy proces działa');
+    btn.textContent = originalText;
+    btn.disabled = false;
+    return;
+  }
+  const cmd = await (await fetch(`/api/commands/${commandId}`)).json();
+  if (cmd.status === 'pending') {
+    setTimeout(() => pollVirtualInputCommand(commandId, btn, originalText, attempt + 1), 1000);
+    return;
+  }
+  if (cmd.status === 'done') {
+    showVirtualInputMessage('ok', '✅ ' + (cmd.result?.message || 'Wykonano'));
+  } else {
+    showVirtualInputMessage('error', '❌ ' + (cmd.result?.error || 'Błąd wykonania'));
+  }
+  btn.textContent = originalText;
+  btn.disabled = false;
+}
+
+function showVirtualInputMessage(kind, text) {
+  const el = document.getElementById('virtualInputMessage');
+  el.className = kind;
+  el.style.display = 'block';
+  el.textContent = text;
+}
+
 // Dziennik zdarzeń domyślnie UKRYTY (zbędny ruch/zapytania, dopóki nikt na
 // niego nie patrzy) - pokazuje się dopiero po kliknięciu przycisku
 // "DZIENNIK ZDARZEŃ" i dociąga dane dopiero wtedy.
@@ -708,6 +791,7 @@ async function refreshAll() {
   await refreshAuthNav();  // stan zalogowania może się zmienić w innej karcie - odśwież przed sekcją alarmu
   await loadStatuses();
   await loadPartitionControls();
+  await loadVirtualInputs();
   await loadActiveAlerts();
   await loadHistory();
   if (eventsVisible) await loadEvents();
