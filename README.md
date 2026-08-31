@@ -1306,9 +1306,16 @@ sekcji "1. Wejście" wybiera źródło:
   (nazwa urządzenia Tuya) + `trigger_value` (wartość statusu, przy której
   reguła ma zadziałać - lista wyboru: `włączone`/`wyłączone`/`niedostępne`).
 - **HomeWhiz (stan urządzenia AGD)** (`source: homewhiz_state`) -
-  `source_device` (nazwa urządzenia HomeWhiz) + `trigger_value` (wolny
-  tekst - nazwy stanów są specyficzne dla modelu urządzenia, np.
-  `finished`/`running`, patrz sekcja HomeWhiz niżej).
+  `source_device` (nazwa urządzenia HomeWhiz) + `trigger_value` (wartość
+  statusu, przy której reguła ma zadziałać). Nazwy stanów są specyficzne dla
+  modelu urządzenia (np. `finished`/`running`), więc panel `/automations`
+  po wybraniu urządzenia źródłowego pobiera na żywo z chmury HomeWhiz listę
+  WSZYSTKICH możliwych stanów TEGO KONKRETNEGO modelu (endpoint
+  `/api/plugins/homewhiz/appliances/<nazwa>/states`, patrz
+  `bridge/homewhiz_client.py: list_possible_states`) i pokazuje ją jako
+  listę wyboru - zamiast wolnego tekstu na pamięć. Gdyby pobranie listy się
+  nie udało (np. chwilowy brak połączenia z chmurą), pole spada z powrotem
+  na wolny tekst.
 
 ```yaml
 reguły_ruchu:

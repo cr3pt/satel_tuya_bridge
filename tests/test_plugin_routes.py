@@ -987,6 +987,82 @@ class TestHomeWhizPluginPage:
         assert resp.status_code == 502
         assert "login" in resp.get_json()["error"]
 
+    def test_appliance_states_without_auth_returns_401(self, client):
+        assert client.get("/api/plugins/homewhiz/appliances/Zmywarka/states").status_code == 401
+
+    def test_appliance_states_requires_credentials_first(self, client):
+        resp = client.get(
+            "/api/plugins/homewhiz/appliances/Zmywarka/states", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_appliance_states_unknown_appliance_returns_404(self, client):
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "u", "password": "p"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = client.get(
+            "/api/plugins/homewhiz/appliances/Nieznana/states", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 404
+
+    def test_appliance_states_returns_list_from_config_descriptor(self, client, monkeypatch):
+        import plugins.homewhiz.routes as homewhiz_routes_module
+        from bridge.homewhiz_client import HomeWhizSession
+
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "u", "password": "p"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/homewhiz/appliances",
+            json={"appliances": [{"name": "Zmywarka", "appliance_id": "abc123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        async def fake_login(username, password):
+            return HomeWhizSession(access_key="AK", secret_key="SK", session_token="ST")
+
+        async def fake_fetch_config_descriptor(session, appliance_id, language="en"):
+            assert appliance_id == "abc123"
+            return {"deviceStates": {"states": [
+                {"strKey": "Dishwasher_State_Idle", "wifiArrayValue": 0},
+                {"strKey": "Dishwasher_State_Finished", "wifiArrayValue": 1},
+            ]}}
+
+        monkeypatch.setattr(homewhiz_routes_module, "login", fake_login)
+        monkeypatch.setattr(homewhiz_routes_module, "fetch_config_descriptor", fake_fetch_config_descriptor)
+
+        resp = client.get(
+            "/api/plugins/homewhiz/appliances/Zmywarka/states", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["states"] == ["idle", "finished"]
+
+    def test_appliance_states_reports_homewhiz_error(self, client, monkeypatch):
+        import plugins.homewhiz.routes as homewhiz_routes_module
+        from bridge.homewhiz_client import HomeWhizError
+
+        client.post(
+            "/api/plugins/homewhiz/credentials", json={"username": "u", "password": "p"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/homewhiz/appliances",
+            json={"appliances": [{"name": "Zmywarka", "appliance_id": "abc123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        async def fake_login(username, password):
+            raise HomeWhizError("zły login lub hasło")
+
+        monkeypatch.setattr(homewhiz_routes_module, "login", fake_login)
+
+        resp = client.get(
+            "/api/plugins/homewhiz/appliances/Zmywarka/states", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 502
+
 
 class TestNotificationsPluginPage:
     def test_page_redirects_to_login_without_auth(self, client):

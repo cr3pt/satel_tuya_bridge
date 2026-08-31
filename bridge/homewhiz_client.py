@@ -411,6 +411,26 @@ def decode_state(config_descriptor: dict, offset: int, wfa: list[int]) -> str | 
     return None
 
 
+def list_possible_states(config_descriptor: dict) -> list[str]:
+    """Lista WSZYSTKICH możliwych (czytelnych) nazw stanów tego
+    KONKRETNEGO modelu urządzenia - z tego samego deskryptora konfiguracji,
+    który `decode_state()` wyżej używa do dekodowania bieżącej wartości.
+    Używane przez edytor reguł ruchu (patrz plugins/homewhiz/routes.py),
+    żeby pole "Wyzwalacz - wartość statusu" dla źródła `homewhiz_state`
+    było listą wyboru zamiast wolnego tekstu - w odróżnieniu od Tuya
+    (STATE_VALUE_OPTIONS w automations.html), HomeWhiz nie ma jednego
+    stałego zbioru wartości wspólnego dla wszystkich modeli, więc listę
+    trzeba pobrać z chmury osobno dla KAŻDEGO urządzenia."""
+    device_states = (config_descriptor or {}).get("deviceStates") or {}
+    states = device_states.get("states") or []
+    names: list[str] = []
+    for state in states:
+        name = to_friendly_name(state.get("strKey", ""))
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
 # --- Żywe połączenie (MQTT-over-WebSocket, AWS IoT Core) ------------------
 
 @dataclass

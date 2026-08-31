@@ -352,6 +352,24 @@ function sourceDeviceOptionsHtml(system, selected) {
   return deviceOptionsHtml(selected);
 }
 
+// Lista możliwych wartości statusu HomeWhiz NIE jest znana z góry (w
+// odróżnieniu od Tuya - patrz STATE_VALUE_OPTIONS.tuya niżej) - każdy model
+// AGD definiuje własny zbiór, więc trzeba go pobrać na żądanie z chmury
+// (GET /api/plugins/homewhiz/appliances/<nazwa>/states, patrz
+// bridge/homewhiz_client.py: list_possible_states). Cache per nazwa
+// urządzenia (Promise, żeby równoległe wywołania nie duplikowały zapytania).
+const homewhizStatesCache = {};
+function fetchHomewhizStates(applianceName) {
+  if (!applianceName) return Promise.resolve([]);
+  if (!(applianceName in homewhizStatesCache)) {
+    homewhizStatesCache[applianceName] = fetch(`/api/plugins/homewhiz/appliances/${encodeURIComponent(applianceName)}/states`)
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(data => Array.isArray(data.states) ? data.states : [])
+      .catch(() => []);
+  }
+  return homewhizStatesCache[applianceName];
+}
+
 function getSceneNames() {
   return Array.from(document.querySelectorAll('#scenesContainer .scene-name')).map(el => el.value.trim()).filter(Boolean);
 }
@@ -568,13 +586,26 @@ function statusKeyCategory(key) {
 // Wartość wyzwalająca "wejścia" reguły ruchu (source: tuya_state/
 // homewhiz_state, patrz sourceDeviceOptionsHtml wyżej) - lista wyboru dla
 // Tuya (skończony zbiór: włączone/wyłączone/niedostępne, ten sam co
-// STATE_VALUE_OPTIONS.tuya dla warunku "state"), wolny tekst dla HomeWhiz
-// (nazwy stanów są specyficzne dla modelu urządzenia, HomeWhiz sam je
-// definiuje - nie da się z góry wypisać skończonej listy).
-function triggerValueFieldHtml(system, selectedValue) {
-  const options = system === 'tuya_state' ? STATE_VALUE_OPTIONS.tuya : null;
+// STATE_VALUE_OPTIONS.tuya dla warunku "state"). Dla HomeWhiz nie ma
+// jednego stałego zbioru wspólnego dla wszystkich modeli AGD - listę trzeba
+// pobrać z chmury osobno dla KAŻDEGO urządzenia (fetchHomewhizStates wyżej),
+// więc `homewhizStates` (null dopóki się nie pobierze/nie wybrano jeszcze
+// urządzenia, albo tablica po pobraniu) decyduje, czy pokazać listę wyboru,
+// czy tymczasowo/awaryjnie wolny tekst - patrz renderTriggerValueField niżej.
+function triggerValueFieldHtml(system, selectedValue, homewhizStates) {
+  let options = null;
+  if (system === 'tuya_state') {
+    options = STATE_VALUE_OPTIONS.tuya;
+  } else if (system === 'homewhiz_state' && Array.isArray(homewhizStates) && homewhizStates.length > 0) {
+    options = homewhizStates;
+  }
   if (!options) {
-    return `<input type="text" class="mr-trigger-value" placeholder="wartość (np. finished - zależy od modelu urządzenia)" value="${escapeHtml(selectedValue || '')}">`;
+    const placeholder = system === 'homewhiz_state'
+      ? (Array.isArray(homewhizStates)
+          ? 'wartość (nie udało się pobrać listy stanów z chmury - wpisz ręcznie)'
+          : 'wybierz najpierw urządzenie źródłowe / ładowanie listy stanów...')
+      : 'wartość (np. finished - zależy od modelu urządzenia)';
+    return `<input type="text" class="mr-trigger-value" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(selectedValue || '')}">`;
   }
   const hasSelected = selectedValue && options.includes(selectedValue);
   const extra = (selectedValue && !hasSelected)
@@ -584,6 +615,25 @@ function triggerValueFieldHtml(system, selectedValue) {
     ${options.map(v => `<option value="${escapeHtml(v)}" ${v === selectedValue ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
     ${extra}
   </select>`;
+}
+
+// Renderuje pole "Wyzwalacz - wartość statusu" w danej karcie reguły i - dla
+// homewhiz_state z już wybranym urządzeniem źródłowym - dociąga listę
+// możliwych stanów z chmury asynchronicznie, podmieniając wolny tekst na
+// prawdziwą listę wyboru, gdy odpowiedź wróci (o ile użytkownik
+// międzyczasie nie zmienił systemu/urządzenia źródłowego pod nogami).
+function renderTriggerValueField(card, system, selectedValue) {
+  const wrap = card.querySelector('.mr-trigger-value-wrap');
+  wrap.innerHTML = triggerValueFieldHtml(system, selectedValue);
+  if (system !== 'homewhiz_state') return;
+  const deviceName = card.querySelector('.mr-source-device').value;
+  if (!deviceName) return;
+  fetchHomewhizStates(deviceName).then(states => {
+    if (card.querySelector('.mr-source-system').value !== 'homewhiz_state') return;
+    if (card.querySelector('.mr-source-device').value !== deviceName) return;
+    const curValue = wrap.querySelector('.mr-trigger-value').value;
+    wrap.innerHTML = triggerValueFieldHtml(system, curValue || selectedValue, states);
+  });
 }
 
 function stateValueFieldHtml(category, selectedValue) {
@@ -898,10 +948,30 @@ function addMotionRuleCard(initial, startCollapsed) {
     satelSourceFields.forEach(el => { el.style.display = isSatel ? '' : 'none'; });
     deviceSourceFields.forEach(el => { el.style.display = isSatel ? 'none' : ''; });
     if (!isSatel) {
+      // Zmiana systemu = inna pula urządzeń źródłowych, więc wybór z
+      // poprzedniego systemu traci sens - zaczynamy od pustego wyboru
+      // (renderTriggerValueField dla pustego urządzenia po prostu pokaże
+      // wolny tekst/placeholder, bez zapytania do chmury).
       card.querySelector('.mr-source-device').innerHTML = sourceDeviceOptionsHtml(system, '');
-      card.querySelector('.mr-trigger-value-wrap').innerHTML = triggerValueFieldHtml(system, '');
+      renderTriggerValueField(card, system, '');
     }
   });
+
+  // Zmiana wybranego urządzenia źródłowego (dla tuya_state/homewhiz_state)
+  // = inny zestaw możliwych wartości statusu -> pole wartości trzeba
+  // przeliczyć (dla HomeWhiz oznacza to nowe zapytanie do chmury o listę
+  // stanów TEGO KONKRETNEGO modelu urządzenia).
+  card.querySelector('.mr-source-device').addEventListener('change', () => {
+    const system = card.querySelector('.mr-source-system').value;
+    if (system !== 'satel_zone') renderTriggerValueField(card, system, '');
+  });
+
+  // Przy pierwszym renderze karty z już wybranym urządzeniem HomeWhiz
+  // (reguła wczytana z serwera) - dociągnij listę stanów od razu, żeby
+  // zamienić wolny tekst na prawdziwą listę wyboru.
+  if (sourceSystem === 'homewhiz_state' && initial.source_device) {
+    renderTriggerValueField(card, sourceSystem, initial.trigger_value);
+  }
 
   const deviceFields = card.querySelector('.mr-device-fields');
   const sceneFields = card.querySelector('.mr-scene-fields');

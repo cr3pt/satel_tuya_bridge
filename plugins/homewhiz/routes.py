@@ -9,7 +9,9 @@ import asyncio
 
 from flask import Flask, jsonify, render_template, request
 
-from bridge.homewhiz_client import HomeWhizError, is_dishwasher, list_appliances, login
+from bridge.homewhiz_client import (
+    HomeWhizError, fetch_config_descriptor, is_dishwasher, list_appliances, list_possible_states, login,
+)
 from plugins import PluginMeta, register_settings_route
 
 META = PluginMeta(
@@ -159,6 +161,40 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
                 for a in appliances
             ],
         })
+
+    @app.route("/api/plugins/homewhiz/appliances/<name>/states", methods=["GET"])
+    @require_auth(get_guard=get_auth_guard)
+    def api_plugin_homewhiz_appliance_states(name):
+        """Lista możliwych stanów TEGO KONKRETNEGO urządzenia (jego
+        modelu) - pobrana na żywo z chmury HomeWhiz (deskryptor
+        konfiguracji, patrz bridge/homewhiz_client.py: fetch_config_
+        descriptor/list_possible_states) - do wypełnienia listy wyboru
+        "Wyzwalacz - wartość statusu" w edytorze reguł ruchu (source:
+        homewhiz_state). Wymaga zalogowania - to żywe zapytanie do chmury
+        przy użyciu zapisanych poświadczeń, nie tylko odczyt configu."""
+        section = _get_section()
+        username, password = section.get("username", ""), section.get("password", "")
+        if not username or not password:
+            return jsonify({"error": "Najpierw zapisz login i hasło do konta HomeWhiz wyżej."}), 400
+        appliance = (section.get("appliances") or {}).get(name)
+        if not appliance or not appliance.get("appliance_id"):
+            return jsonify({"error": f"Nieznane urządzenie '{name}' - zapisz je najpierw niżej."}), 404
+
+        async def _fetch():
+            session = await login(username, password)
+            descriptor = await fetch_config_descriptor(
+                session, appliance["appliance_id"], language=section.get("language", "en"),
+            )
+            return list_possible_states(descriptor)
+
+        try:
+            states = asyncio.run(_fetch())
+        except HomeWhizError as exc:
+            return jsonify({"error": str(exc)}), 502
+        except Exception as exc:
+            return jsonify({"error": f"Błąd pobierania listy stanów urządzenia: {exc}"}), 502
+
+        return jsonify({"states": states})
 
     def _validate_enable() -> str | None:
         section = _get_section()
