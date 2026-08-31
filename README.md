@@ -686,6 +686,15 @@ nie uzupełnisz wiersza (po odkryciu albo ręcznie) i nie klikniesz "Zapisz"
 dla danej sekcji - odkrycie samo w sobie niczego nie włącza ani nie
 zapisuje.
 
+**Usunięcie/zmiana numeru wejścia, wyjścia, urządzenia Tuya czy
+sceny/reguły automatyzacji od razu znika ze strony głównej** - przy każdym
+starcie bridge'a i po każdym zapisaniu ustawień (bez restartu procesu),
+stare wpisy statusu, które nie odpowiadają już żadnemu aktualnie
+skonfigurowanemu wejściu/wyjściu/urządzeniu/scenie/regule, są automatycznie
+sprzątane z bazy (`HistoryStore.prune_status`). Wcześniej taki "osierocony"
+wpis zostawał w bazie na zawsze i strona główna pokazywała więcej
+wejść/wyjść/urządzeń, niż faktycznie jest w konfiguracji.
+
 Zakładka **🔌 Połączenia** ma dodatkowo przycisk **"🔄 Zrestartuj bridge i
 panel teraz"** - w odróżnieniu od reszty tej strony (patrz wyżej: zmiany
 wchodzą w życie automatycznie bez restartu), zmiany host/port/kluczy/

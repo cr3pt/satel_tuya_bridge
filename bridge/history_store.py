@@ -175,6 +175,34 @@ class HistoryStore:
             for r in rows
         ]
 
+    def prune_status(self, category: str, keep_keys) -> int:
+        """Usuwa z tabeli `status` wpisy danej kategorii, których klucza NIE
+        MA w `keep_keys` - sprząta status po wejściu/wyjściu/urządzeniu
+        USUNIĘTYM albo PRZEMIANOWANYM w konfiguracji wtyczki. `set_status()`
+        jest samym upsertem (INSERT ... ON CONFLICT DO UPDATE) i NIGDY nie
+        kasuje - bez tego sprzątania stary wpis (pod starym kluczem/nazwą)
+        zostawałby w bazie NA ZAWSZE i dalej pokazywał się na stronie
+        głównej, mimo że w ⚙ Ustawienia dawno go już nie ma (zgłoszony błąd:
+        liczba wejść/wyjść/urządzeń na stronie głównej rozjeżdżała się z
+        aktualną konfiguracją wtyczki). Wołane przez RulesEngine
+        (_seed_satel_status_labels/_seed_tuya_status_labels/
+        _seed_automation_status_labels) razem z zasiewaniem, więc uruchamia
+        się przy KAŻDYM starcie i KAŻDYM reload_config() - dokładnie tam,
+        gdzie już i tak liczymy aktualny zestaw skonfigurowanych kluczy.
+        Zwraca liczbę usuniętych wierszy (do logowania)."""
+        keep_keys = list(keep_keys)
+        with self._lock:
+            if not keep_keys:
+                cur = self._conn.execute("DELETE FROM status WHERE category = ?", (category,))
+            else:
+                placeholders = ",".join("?" * len(keep_keys))
+                cur = self._conn.execute(
+                    f"DELETE FROM status WHERE category = ? AND key NOT IN ({placeholders})",
+                    (category, *keep_keys),
+                )
+            self._conn.commit()
+            return cur.rowcount
+
     # -- kolejka komend (panel webowy -> proces bridge'a) ---------------
     # Panel webowy i główny proces bridge'a to DWA OSOBNE procesy - panel
     # nie ma bezpośredniego dostępu do żywego połączenia z Satelem. Zamiast

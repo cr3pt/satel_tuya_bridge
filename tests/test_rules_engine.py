@@ -387,19 +387,22 @@ class TestMotionRuleCondition:
         assert fake_tuya.calls == []
 
     async def test_state_condition_allows_when_met(self, engine, fake_tuya):
-        engine.history.set_status("satel_input:9", "satel_input", "naruszone")
         await self._reload_with_rule(engine, {
             "source": "satel_zone", "zone_number": 20,
             "target_device": "gniazdko_salon", "duration_seconds": 5,
             "condition": {"type": "state", "key": "satel_input:9", "equals": "naruszone"},
         }, fake_tuya=fake_tuya)
+        # UWAGA: set_status PO reload_config() celowo - reload_config()
+        # sprząta teraz (prune_status, patrz HistoryStore.prune_status)
+        # wpisy satel_input dla stref spoza satel.monitored_zones, a strefa
+        # 9 nie jest tu "skonfigurowana" (CONFIG_TEMPLATE jej nie definiuje) -
+        # ustawienie PRZED reloadem zostałoby więc od razu skasowane.
+        engine.history.set_status("satel_input:9", "satel_input", "naruszone")
         await engine.handle_motion("satel_zone", 20)
         await asyncio.sleep(0)
         assert any(c[1] == "gniazdko_salon" for c in fake_tuya.calls)
 
     async def test_nested_and_not_condition(self, engine, fake_tuya):
-        engine.history.set_status("satel_input:9", "satel_input", "naruszone")
-        engine.history.set_status("satel_output:5", "satel_output", "wyłączone")
         await self._reload_with_rule(engine, {
             "source": "satel_zone", "zone_number": 20,
             "target_device": "gniazdko_salon", "duration_seconds": 5,
@@ -413,13 +416,15 @@ class TestMotionRuleCondition:
                 ],
             },
         }, fake_tuya=fake_tuya)
+        # set_status PO reload_config() - patrz komentarz w
+        # test_state_condition_allows_when_met wyżej.
+        engine.history.set_status("satel_input:9", "satel_input", "naruszone")
+        engine.history.set_status("satel_output:5", "satel_output", "wyłączone")
         await engine.handle_motion("satel_zone", 20)
         await asyncio.sleep(0)
         assert any(c[1] == "gniazdko_salon" for c in fake_tuya.calls)
 
     async def test_nested_and_not_condition_blocks_when_negated_part_true(self, engine, fake_tuya):
-        engine.history.set_status("satel_input:9", "satel_input", "naruszone")
-        engine.history.set_status("satel_output:5", "satel_output", "włączone")
         await self._reload_with_rule(engine, {
             "source": "satel_zone", "zone_number": 20,
             "target_device": "gniazdko_salon", "duration_seconds": 5,
@@ -854,6 +859,91 @@ class TestReloadConfig:
         await engine.reload_config()
         assert len(calls) == 1
         assert "sensors" in calls[0]
+
+
+class TestStaleStatusPruning:
+    """HistoryStore.prune_status(), wołane przez RulesEngine
+    (_seed_satel_status_labels/_seed_tuya_status_labels/
+    _seed_automation_status_labels) przy KAŻDYM start()/reload_config() -
+    zgłoszony błąd: ilość wejść/wyjść Satela czy urządzeń Tuya na stronie
+    głównej rozjeżdżała się z aktualną konfiguracją wtyczki, bo stare wpisy
+    po USUNIĘTYM/PRZEMIANOWANYM elemencie nigdy nie były kasowane z tabeli
+    `status` (set_status() to sam upsert)."""
+
+    async def test_removed_satel_zone_prunes_stale_status(self, engine):
+        engine.config.store.set("satel_fields", {
+            "monitored_zones": {"Wejscie_A": 50}, "monitored_outputs": {},
+            "partitions": {}, "virtual_inputs": {},
+        })
+        await engine.reload_config()
+        assert engine.history.get_status_value("satel_input:50") is not None
+
+        engine.config.store.set("satel_fields", {
+            "monitored_zones": {}, "monitored_outputs": {},
+            "partitions": {}, "virtual_inputs": {},
+        })
+        await engine.reload_config()
+        assert engine.history.get_status_value("satel_input:50") is None
+
+    async def test_renamed_satel_zone_removes_old_number_but_keeps_new(self, engine):
+        engine.config.store.set("satel_fields", {
+            "monitored_zones": {"Wejscie_A": 50}, "monitored_outputs": {},
+            "partitions": {}, "virtual_inputs": {},
+        })
+        await engine.reload_config()
+        engine.config.store.set("satel_fields", {
+            "monitored_zones": {"Wejscie_A": 51}, "monitored_outputs": {},
+            "partitions": {}, "virtual_inputs": {},
+        })
+        await engine.reload_config()
+        assert engine.history.get_status_value("satel_input:50") is None
+        assert engine.history.get_status_value("satel_input:51") is not None
+
+    async def test_removed_satel_output_prunes_stale_status(self, engine):
+        engine.config.store.set("satel_fields", {
+            "monitored_zones": {}, "monitored_outputs": {"Brama_garaz": 7},
+            "partitions": {}, "virtual_inputs": {},
+        })
+        await engine.reload_config()
+        assert engine.history.get_status_value("satel_output:7") is not None
+
+        engine.config.store.set("satel_fields", {
+            "monitored_zones": {}, "monitored_outputs": {},
+            "partitions": {}, "virtual_inputs": {},
+        })
+        await engine.reload_config()
+        assert engine.history.get_status_value("satel_output:7") is None
+
+    async def test_removed_tuya_device_prunes_stale_status(self, engine):
+        # reload_config() (w odróżnieniu od samego start()) podmienia
+        # engine.tuya na PRAWDZIWY dyspozytor zbudowany z aktualnej
+        # konfiguracji (patrz TestBuildTuyaController/TestReloadConfig) -
+        # dopiero to sprawia, że devices_cfg faktycznie odzwierciedla
+        # dokument "tuya_devices", tak jak w prawdziwej pracy bridge'a.
+        await engine.reload_config()
+        assert engine.history.get_status_value("tuya:gniazdko_salon") is not None
+
+        engine.config.store.set("tuya_devices", {"devices": {}})
+        await engine.reload_config()
+        assert engine.history.get_status_value("tuya:gniazdko_salon") is None
+
+    async def test_tuya_brightness_key_survives_reload_of_same_device(self, engine):
+        """Klucz ':brightness' (osobny format, patrz
+        _tuya_status_poll_loop) NIE może zostać skasowany przez sprzątanie,
+        dopóki samo urządzenie nadal jest skonfigurowane."""
+        engine.history.set_status("tuya:gniazdko_salon:brightness", "tuya", "50")
+        await engine.reload_config()
+        assert engine.history.get_status_value("tuya:gniazdko_salon:brightness") == "50"
+
+    async def test_removed_scene_prunes_stale_automation_status(self, engine):
+        await engine.start()
+        assert engine.history.get_status_value("automation:wykryto_intruza") is not None
+
+        engine.config.store.set("automations", {
+            "scenes": [], "reguły_ruchu": [], "presence_simulation": {"enabled": False},
+        })
+        await engine.reload_config()
+        assert engine.history.get_status_value("automation:wykryto_intruza") is None
 
 
 class TestTuyaStatusPollLoop:
