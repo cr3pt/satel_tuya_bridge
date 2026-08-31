@@ -270,9 +270,11 @@ class RulesEngine:
         ALBO wpisane jawnie jako 0 w edytorze - obie wartości znaczą to
         samo, 0 jest tylko wygodniejszym sposobem wpisania tego samego w
         polu liczbowym), na akcji "włącz urządzenie" (nie scena, nie
-        "wyłącz urządzenie" - te nie mają czasu trwania w ogóle)."""
+        "wyłącz urządzenie", nie wirtualne wejście IP - te nie mają
+        czasu trwania w ogóle, to jednorazowe wywołania)."""
         return (
             "scene" not in rule
+            and "virtual_input" not in rule
             and rule.get("action") != "turn_off"
             and rule.get("duration_seconds") in (None, 0)
         )
@@ -334,6 +336,24 @@ class RulesEngine:
             await self.scenes.run(rule["scene"])
             self.history.write_event(
                 "motion", source=f"{source}:{zone_or_device_id}", detail={"scene": rule["scene"]},
+            )
+            await self._chain_trigger(rule, trigger, _chain_depth)
+            return
+
+        if "virtual_input" in rule:
+            # Jednorazowe wywołanie wejścia IP Satela (SatelVirtualInputTrigger)
+            # jako akcja reguły ruchu - w odróżnieniu od urządzenia docelowego
+            # nie ma tu pojęcia "włącz na czas"/"aż do ustania naruszenia",
+            # więc ta gałąź musi zwrócić PRZED `device = rule["target_device"]`
+            # niżej (taka reguła w ogóle nie ma tego pola).
+            await self.satel_virtual_inputs.trigger(rule["virtual_input"])
+            logger.info(
+                "Reguła ruchu: %s(%s) -> wejście IP '%s'",
+                source, zone_or_device_id, rule["virtual_input"],
+            )
+            self.history.write_event(
+                "motion", source=f"{source}:{zone_or_device_id}",
+                detail={"virtual_input": rule["virtual_input"]},
             )
             await self._chain_trigger(rule, trigger, _chain_depth)
             return
@@ -680,6 +700,14 @@ class RulesEngine:
                 partitions = cmd["params"]["partitions"]
                 await self.satel.disarm(partitions=partitions)
                 self.history.mark_command_done(cmd["id"], {"message": f"Rozbrojono strefy {partitions}"})
+            elif cmd["command"] == "satel_virtual_input":
+                # Ręczna aktywacja z panelu głównego (osobna od automatyzacji -
+                # patrz RulesEngine._fire_motion_rule, gałąź "virtual_input" in
+                # rule) - ten sam SatelVirtualInputTrigger, ale wywołany na
+                # żądanie użytkownika zamiast przez regułę ruchu.
+                name = cmd["params"]["name"]
+                await self.satel_virtual_inputs.trigger(name)
+                self.history.mark_command_done(cmd["id"], {"message": f"Aktywowano wirtualne wejście '{name}'"})
             elif cmd["command"] == "reload_config":
                 result = await self.reload_config()
                 self.history.mark_command_done(cmd["id"], result)

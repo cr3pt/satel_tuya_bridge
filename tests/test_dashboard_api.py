@@ -353,6 +353,51 @@ class TestProtectedArmDisarmEndpoints:
         assert set(status_resp.get_json()["params"]["partitions"]) == {1, 2}
 
 
+class TestVirtualInputEndpoints:
+    """GET /api/satel/virtual-inputs (lista nazw - strona główna) i
+    POST /api/satel/virtual-inputs/<nazwa>/trigger (ręczna aktywacja -
+    ten sam mechanizm kolejki komend co uzbrojenie/rozbrojenie wyżej).
+    CONFIG_TEMPLATE ma jedno wirtualne wejście: "motion_hall"."""
+
+    def test_list_requires_auth(self, client):
+        assert client.get("/api/satel/virtual-inputs").status_code == 401
+
+    def test_list_returns_configured_names(self, client):
+        resp = client.get("/api/satel/virtual-inputs", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json() == {"virtual_inputs": ["motion_hall"]}
+
+    def test_trigger_without_auth_returns_401(self, client):
+        resp = client.post("/api/satel/virtual-inputs/motion_hall/trigger")
+        assert resp.status_code == 401
+
+    def test_trigger_with_auth_enqueues_command(self, client):
+        resp = client.post(
+            "/api/satel/virtual-inputs/motion_hall/trigger", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["status"] == "pending"
+        assert "command_id" in body
+
+    def test_trigger_command_visible_via_status_endpoint(self, client):
+        resp = client.post(
+            "/api/satel/virtual-inputs/motion_hall/trigger", headers=_basic_auth_header("test_haslo_123"),
+        )
+        command_id = resp.get_json()["command_id"]
+        status_resp = client.get(f"/api/commands/{command_id}", headers=_basic_auth_header("test_haslo_123"))
+        assert status_resp.status_code == 200
+        assert status_resp.get_json()["status"] == "pending"
+        assert status_resp.get_json()["command"] == "satel_virtual_input"
+        assert status_resp.get_json()["params"] == {"name": "motion_hall"}
+
+    def test_trigger_unknown_name_returns_404(self, client):
+        resp = client.post(
+            "/api/satel/virtual-inputs/nieistniejace/trigger", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 404
+
+
 class TestSystemRestartEndpoint:
     """/api/system/restart - pełny restart obu kontenerów (bridge + panel),
     w odróżnieniu od reload_config() (patrz _enqueue_bridge_reload), który

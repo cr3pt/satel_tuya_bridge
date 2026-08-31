@@ -308,6 +308,63 @@ class TestMotionRules:
         assert len(events) == 1
 
 
+class TestVirtualInputMotionRuleAction:
+    """Akcja "Aktywuj wejście IP Satela" w edytorze reguł ruchu (pole
+    `virtual_input` zamiast target_device/scene, patrz dashboard/setup.py:
+    _build_motion_rules) - RulesEngine._fire_motion_rule, gałąź
+    "virtual_input" in rule - jednorazowe wywołanie SatelVirtualInputTrigger,
+    bez pojęcia czasu włączenia/"aż do ustania naruszenia" (w odróżnieniu od
+    włączenia urządzenia)."""
+
+    async def _reload_with_rule(self, engine, fake_tuya, fake_satel, fake_virtual_inputs, rule):
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [rule],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya, fake_satel=fake_satel, fake_virtual_inputs=fake_virtual_inputs)
+
+    async def test_fires_on_violated_by_default(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
+        await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
+            "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
+        })
+        await engine.handle_motion("satel_zone", 12, trigger="violated")
+        assert ("trigger", "motion_hall_camera") in fake_virtual_inputs.calls
+        assert fake_tuya.calls == []
+
+    async def test_does_not_fire_on_restored_by_default(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
+        """Brak duration_seconds NIE oznacza tu "aż do ustania naruszenia"
+        (w odróżnieniu od włączenia urządzenia) - _is_until_restored musi
+        rozpoznać obecność pola "virtual_input" i zwrócić False, inaczej
+        ta reguła zareagowałaby też na "restored" mimo domyślnego
+        trigger_on="violated"."""
+        await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
+            "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
+        })
+        await engine.handle_motion("satel_zone", 12, trigger="restored")
+        assert fake_virtual_inputs.calls == []
+
+    async def test_respects_explicit_trigger_on_restored(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
+        await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
+            "source": "satel_zone", "zone_number": 12, "trigger_on": "restored",
+            "virtual_input": "motion_hall_camera",
+        })
+        await engine.handle_motion("satel_zone", 12, trigger="violated")
+        assert fake_virtual_inputs.calls == []
+        await engine.handle_motion("satel_zone", 12, trigger="restored")
+        assert ("trigger", "motion_hall_camera") in fake_virtual_inputs.calls
+
+    async def test_works_for_device_state_source(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
+        """Wejście reguły też może być dowolnym stanem urządzenia (Tuya/
+        HomeWhiz), nie tylko strefą Satela - patrz RulesEngine.handle_device_state."""
+        await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
+            "source": "tuya_state", "source_device": "gniazdko_salon", "trigger_value": "włączone",
+            "virtual_input": "motion_hall_camera",
+        })
+        await engine.handle_device_state("tuya_state", "gniazdko_salon", "włączone")
+        assert ("trigger", "motion_hall_camera") in fake_virtual_inputs.calls
+
+
 class TestSatelOutputTarget:
     """target_system: "satel_output" - "Urządzenie docelowe" akcji reguły
     ruchu może być wyjściem Satela (po nazwie, klucz w

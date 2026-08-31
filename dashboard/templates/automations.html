@@ -296,6 +296,17 @@ function deviceOptionsHtml(selected) {
   return context.tuya_devices.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
 }
 
+// Wyjście reguły ruchu może też jednorazowo aktywować wejście IP Satela
+// (SatelVirtualInputTrigger - to samo, co akcja sceny satel_virtual_input
+// wyżej) zamiast włączać/wyłączać urządzenie docelowe - patrz mr-action-kind
+// niżej i RulesEngine._fire_motion_rule (gałąź "virtual_input" in rule).
+function virtualInputOptionsHtml(selected) {
+  if ((context.virtual_inputs || []).length === 0) {
+    return `<option value="">(brak wirtualnych wejść - zakładka 🧩 Wtyczki -> Satel)</option>`;
+  }
+  return context.virtual_inputs.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+}
+
 // "Urządzenie docelowe" akcji reguły ruchu wybiera się dwuetapowo: najpierw
 // system (Tuya / Satel - wyjście), potem coś z tego systemu - Tuya
 // urządzenie po nazwie (jak dotąd) albo Satel wyjście po nazwie (klucz w
@@ -816,7 +827,9 @@ function addMotionRuleCard(initial, startCollapsed) {
   initial = initial || {};
   const window_ = initial.time_window || {};
   const escalation = initial.escalation || {};
-  const actionKind = initial.scene ? 'scene' : (initial.action === 'turn_off' ? 'device_off' : 'device');
+  const actionKind = initial.scene ? 'scene'
+    : initial.virtual_input ? 'virtual_input'
+    : (initial.action === 'turn_off' ? 'device_off' : 'device');
   const sourceSystem = initial.source || 'satel_zone';
   const triggerOn = initial.trigger_on === 'restored' ? 'restored' : 'violated';
   const isEnabled = initial.enabled !== false;
@@ -863,6 +876,7 @@ function addMotionRuleCard(initial, startCollapsed) {
             <option value="device" ${actionKind === 'device' ? 'selected' : ''}>Włącz urządzenie na czas</option>
             <option value="device_off" ${actionKind === 'device_off' ? 'selected' : ''}>Wyłącz urządzenie</option>
             <option value="scene" ${actionKind === 'scene' ? 'selected' : ''}>Uruchom scenę</option>
+            <option value="virtual_input" ${actionKind === 'virtual_input' ? 'selected' : ''}>Aktywuj wejście IP Satela</option>
           </select></div>
       </div>
     </div>
@@ -882,6 +896,9 @@ function addMotionRuleCard(initial, startCollapsed) {
       </div>
       <div class="field-row mr-scene-fields">
         <div class="field"><label>Scena</label><select class="mr-scene">${sceneOptionsHtml(initial.scene)}</select></div>
+      </div>
+      <div class="field-row mr-vinput-fields">
+        <div class="field"><label>Wirtualne wejście</label><select class="mr-vinput">${virtualInputOptionsHtml(initial.virtual_input)}</select></div>
       </div>
     </div>
 
@@ -975,6 +992,7 @@ function addMotionRuleCard(initial, startCollapsed) {
 
   const deviceFields = card.querySelector('.mr-device-fields');
   const sceneFields = card.querySelector('.mr-scene-fields');
+  const vinputFields = card.querySelector('.mr-vinput-fields');
   const durationField = card.querySelector('.mr-duration-field');
   const dimmerField = card.querySelector('.mr-dimmer-field');
   function syncActionKind() {
@@ -982,6 +1000,7 @@ function addMotionRuleCard(initial, startCollapsed) {
     const system = card.querySelector('.mr-target-system').value;
     deviceFields.style.display = (kind === 'device' || kind === 'device_off') ? '' : 'none';
     sceneFields.style.display = kind === 'scene' ? '' : 'none';
+    vinputFields.style.display = kind === 'virtual_input' ? '' : 'none';
     // "Wyłącz urządzenie" nie ma czasu ani jasności - urządzenie po
     // prostu gaśnie natychmiast po wyzwoleniu reguły.
     durationField.style.display = kind === 'device' ? '' : 'none';
@@ -1054,6 +1073,8 @@ function collectMotionRules() {
     }
     if (kind === 'scene') {
       rule.scene = card.querySelector('.mr-scene').value.trim();
+    } else if (kind === 'virtual_input') {
+      rule.virtual_input = card.querySelector('.mr-vinput').value.trim();
     } else if (kind === 'device_off') {
       rule.target_device = card.querySelector('.mr-target-device').value.trim();
       rule.target_system = card.querySelector('.mr-target-system').value;

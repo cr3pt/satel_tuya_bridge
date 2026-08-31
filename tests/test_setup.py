@@ -1005,6 +1005,21 @@ class TestValidationAdvanced:
         errors = validate(form)
         assert not any("numer wejścia" in e for e in errors)
 
+    def test_motion_rule_virtual_input_action_is_not_an_error(self):
+        """Akcja "Aktywuj wejście IP Satela" (pole virtual_input) zastępuje
+        target_device - nie wymaga urządzenia docelowego/systemu/czasu."""
+        rule = {
+            "source": "satel_zone", "zone_number": "5", "virtual_input": "motion_hall_camera",
+        }
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        assert validate(form) == []
+
+    def test_motion_rule_without_target_device_scene_or_virtual_input_is_error(self):
+        rule = {"source": "satel_zone", "zone_number": "5"}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("wirtualne wejście" in e for e in errors)
+
     def test_motion_rule_unknown_source_is_error(self):
         rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "source": "cos_innego"}
         form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
@@ -1366,6 +1381,36 @@ class TestBuildConfigDictAdvanced:
         assert rule["source"] == "homewhiz_state"
         assert rule["source_device"] == "Zmywarka"
         assert rule["trigger_value"] == "finished"
+
+    def test_motion_rule_virtual_input_action_is_built(self):
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {
+                "source": "satel_zone", "zone_number": "5", "virtual_input": "motion_hall_camera",
+                "time_window": {}, "escalation": {},
+            },
+        ]}
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["virtual_input"] == "motion_hall_camera"
+        assert "target_device" not in rule
+        assert "target_system" not in rule
+        assert "duration_seconds" not in rule
+        assert "dimmer_level_percent" not in rule
+
+    def test_motion_rule_scene_takes_priority_over_virtual_input(self):
+        """Gdyby oba pola (scene i virtual_input) jakoś trafiły do formularza
+        naraz (nie powinno się zdarzyć z edytora - to wzajemnie wykluczające
+        się opcje "Akcji") - scena wygrywa, tak jak w edytorze/backendzie
+        scena jest sprawdzana jako pierwsza."""
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [
+            {
+                "source": "satel_zone", "zone_number": "5",
+                "scene": "wykryto_intruza", "virtual_input": "motion_hall_camera",
+                "time_window": {}, "escalation": {},
+            },
+        ]}
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["scene"] == "wykryto_intruza"
+        assert "virtual_input" not in rule
 
     def test_motion_rule_device_state_source_without_device_or_value_is_skipped(self):
         """Niekompletna reguła "stan urządzenia" (brak source_device albo
