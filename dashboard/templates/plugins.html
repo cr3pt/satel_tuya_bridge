@@ -22,18 +22,31 @@
   .nav a { color: var(--accent); text-decoration: none; font-size: 13px; }
   .hint { color: var(--muted); font-size: 13px; margin-bottom: 18px; line-height: 1.5; }
   .hint code { background: #262a32; padding: 1px 5px; border-radius: 4px; }
-  .plugin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
-  @media (max-width: 640px) { .plugin-grid { grid-template-columns: 1fr; } }
-  .plugin-card {
+  .plugin-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+  .plugin-row {
     background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-    padding: 16px; display: flex; flex-direction: column; gap: 8px;
+    overflow: hidden;
   }
-  .plugin-card.on { border-color: var(--ok); }
-  .plugin-card-top { display: flex; align-items: flex-start; gap: 10px; }
-  .plugin-icon { font-size: 22px; line-height: 1; }
-  .plugin-name { font-size: 14.5px; font-weight: 600; margin-bottom: 2px; }
-  .plugin-desc { color: var(--muted); font-size: 12.5px; line-height: 1.4; }
-  .plugin-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 6px; }
+  .plugin-row.on { border-color: var(--ok); }
+  .plugin-row-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; }
+  .plugin-row-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .plugin-row-right {
+    display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 6px;
+    margin: -4px -6px; border-radius: 6px; transition: background 0.1s;
+  }
+  .plugin-row-right:hover { background: #262a32; }
+  .plugin-row-right:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chevron { color: var(--muted); font-size: 11px; transition: transform 0.15s; display: inline-block; }
+  .plugin-row.expanded .chevron { transform: rotate(90deg); }
+  .plugin-row-body {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 0 14px 14px; border-top: 1px dashed var(--border); margin-top: 0;
+  }
+  .plugin-row-body[hidden] { display: none; }
+  .plugin-icon { font-size: 20px; line-height: 1; flex-shrink: 0; }
+  .plugin-name { font-size: 14.5px; font-weight: 600; }
+  .plugin-desc { color: var(--muted); font-size: 12.5px; line-height: 1.4; padding-top: 10px; }
+  .plugin-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 6px; }
   .status-pill {
     font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 10px;
     display: inline-block; white-space: nowrap;
@@ -102,7 +115,7 @@
 </div>
 
 <div id="pluginsMsg" class="msg-box"></div>
-<div id="pluginGrid" class="plugin-grid"></div>
+<div id="pluginList" class="plugin-list"></div>
 <div class="actions-bar">
   <button id="saveBtn" type="button" disabled>Zapisz zmiany</button>
   <span id="pendingHint" style="color: var(--muted); font-size: 12.5px;"></span>
@@ -197,9 +210,16 @@ function setPendingField(pluginId, field, value, originalValue) {
   updateSaveButtonState();
 }
 
+// Wiersze listy startują zwinięte - zbiór ID wtyczek aktualnie rozwiniętych,
+// żeby stan rozwinięcia PRZETRWAŁ odświeżenie listy po zapisie zmian
+// (loadPlugins() woła się ponownie po "Zapisz zmiany" - bez tego karta,
+// którą użytkownik właśnie rozwinął, zwijałaby się sama).
+const expandedPluginIds = new Set();
+
 function renderPlugin(p) {
-  const card = document.createElement('div');
-  card.className = 'plugin-card' + (p.enabled ? ' on' : '');
+  const row = document.createElement('div');
+  const isExpanded = expandedPluginIds.has(p.id);
+  row.className = 'plugin-row' + (p.enabled ? ' on' : '') + (isExpanded ? ' expanded' : '');
 
   const pillClass = p.enabled ? 'on' : (p.configured ? 'off' : 'unconfigured');
   const pillText = p.enabled ? 'Włączona' : (p.configured ? 'Wyłączona' : 'Nieskonfigurowana');
@@ -208,61 +228,83 @@ function renderPlugin(p) {
   const linkHtml = link ? `<a class="plugin-link" href="${link.href}">${link.label}</a>` : '';
   const restartBadge = p.restart_required ? '<span class="restart-badge">wymaga restartu</span>' : '';
 
-  card.innerHTML = `
-    <div class="plugin-card-top">
-      <div class="plugin-icon">${p.icon}</div>
-      <div style="flex:1;">
-        <div class="plugin-name">${p.name}</div>
-        <div class="plugin-desc">${p.description}</div>
+  row.innerHTML = `
+    <div class="plugin-row-header">
+      <div class="plugin-row-left">
+        <span class="plugin-icon">${p.icon}</span>
+        <span class="plugin-name">${p.name}</span>
       </div>
-      ${p.toggleable ? `
-        <label class="toggle-switch">
-          <input type="checkbox" class="plugin-toggle" data-id="${p.id}" ${p.enabled ? 'checked' : ''}>
-          <span class="toggle-slider"></span>
-        </label>
+      <div class="plugin-row-right" tabindex="0" role="button" aria-expanded="${isExpanded ? 'true' : 'false'}">
+        <span class="status-pill ${pillClass}">${pillText}</span>
+        <span class="chevron">▸</span>
+      </div>
+    </div>
+    <div class="plugin-row-body" ${isExpanded ? '' : 'hidden'}>
+      <div class="plugin-desc">${p.description}</div>
+      <div class="plugin-status-row">
+        <div>
+          ${p.toggleable ? `
+            <label class="toggle-switch">
+              <input type="checkbox" class="plugin-toggle" data-id="${p.id}" ${p.enabled ? 'checked' : ''}>
+              <span class="toggle-slider"></span>
+            </label>
+          ` : ''}
+          <span class="plugin-detail">${p.detail}</span>
+        </div>
+        <div>${restartBadge} ${linkHtml}</div>
+      </div>
+      ${p.has_poll_interval ? `
+        <div class="poll-interval-row">
+          <span>Interwał odpytywania:</span>
+          <input type="number" min="3" class="poll-interval-input" value="${p.poll_interval_seconds}">
+          <span>s</span>
+          <span class="live-badge">● działa na żywo, bez restartu</span>
+        </div>
+      ` : ''}
+      ${p.has_log_level ? `
+        <div class="poll-interval-row">
+          <span>Poziom logowania:</span>
+          <select class="log-level-select">
+            <option value="">(domyślny globalny)</option>
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+            <option value="CRITICAL">CRITICAL</option>
+          </select>
+          <span class="live-badge log-level-saved" style="display:none;">✓ zapisano</span>
+        </div>
       ` : ''}
     </div>
-    <div class="plugin-status-row">
-      <div>
-        <span class="status-pill ${pillClass}">${pillText}</span>
-        <span class="plugin-detail">${p.detail}</span>
-      </div>
-      <div>${restartBadge} ${linkHtml}</div>
-    </div>
-    ${p.has_poll_interval ? `
-      <div class="poll-interval-row">
-        <span>Interwał odpytywania:</span>
-        <input type="number" min="3" class="poll-interval-input" value="${p.poll_interval_seconds}">
-        <span>s</span>
-        <span class="live-badge">● działa na żywo, bez restartu</span>
-      </div>
-    ` : ''}
-    ${p.has_log_level ? `
-      <div class="poll-interval-row">
-        <span>Poziom logowania:</span>
-        <select class="log-level-select">
-          <option value="">(domyślny globalny)</option>
-          <option value="DEBUG">DEBUG</option>
-          <option value="INFO">INFO</option>
-          <option value="WARNING">WARNING</option>
-          <option value="ERROR">ERROR</option>
-          <option value="CRITICAL">CRITICAL</option>
-        </select>
-        <span class="live-badge log-level-saved" style="display:none;">✓ zapisano</span>
-      </div>
-    ` : ''}
   `;
 
+  // Rozwijanie/zwijanie karty - klika się w prawą część nagłówka (status +
+  // strzałka), nie w całą kartę, żeby dało się np. zaznaczyć nazwę bez
+  // przypadkowego zwinięcia/rozwinięcia.
+  const body = row.querySelector('.plugin-row-body');
+  const rightZone = row.querySelector('.plugin-row-right');
+  function toggleExpanded() {
+    const nowExpanded = body.hasAttribute('hidden');
+    body.toggleAttribute('hidden', !nowExpanded);
+    row.classList.toggle('expanded', nowExpanded);
+    rightZone.setAttribute('aria-expanded', nowExpanded ? 'true' : 'false');
+    if (nowExpanded) expandedPluginIds.add(p.id); else expandedPluginIds.delete(p.id);
+  }
+  rightZone.addEventListener('click', toggleExpanded);
+  rightZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpanded(); }
+  });
+
   if (p.toggleable) {
-    const checkbox = card.querySelector('.plugin-toggle');
+    const checkbox = row.querySelector('.plugin-toggle');
     checkbox.addEventListener('change', () => {
       setPendingField(p.id, 'enabled', checkbox.checked, p.enabled);
-      card.classList.toggle('on', checkbox.checked);
+      row.classList.toggle('on', checkbox.checked);
     });
   }
 
   if (p.has_poll_interval) {
-    const input = card.querySelector('.poll-interval-input');
+    const input = row.querySelector('.poll-interval-input');
     input.addEventListener('change', () => {
       const value = parseInt(input.value, 10);
       setPendingField(p.id, 'status_poll_interval_seconds', value, p.poll_interval_seconds);
@@ -275,8 +317,8 @@ function renderPlugin(p) {
     // wspólny wzorzec co na dedykowanej stronie każdej wtyczki (patrz
     // plugins/__init__.py: register_settings_route) - zapisuje się od
     // razu przy zmianie, bez osobnego przycisku.
-    const select = card.querySelector('.log-level-select');
-    const savedBadge = card.querySelector('.log-level-saved');
+    const select = row.querySelector('.log-level-select');
+    const savedBadge = row.querySelector('.log-level-saved');
     select.value = p.log_level || '';
     select.addEventListener('change', async () => {
       const endpointId = PLUGIN_SETTINGS_ENDPOINT_ID[p.id] || p.id;
@@ -299,14 +341,14 @@ function renderPlugin(p) {
     });
   }
 
-  return card;
+  return row;
 }
 
 async function loadPlugins() {
   const plugins = await (await fetch('/api/plugins')).json();
-  const grid = document.getElementById('pluginGrid');
-  grid.innerHTML = '';
-  plugins.forEach(p => grid.appendChild(renderPlugin(p)));
+  const list = document.getElementById('pluginList');
+  list.innerHTML = '';
+  plugins.forEach(p => list.appendChild(renderPlugin(p)));
 }
 
 document.getElementById('saveBtn').addEventListener('click', async () => {
