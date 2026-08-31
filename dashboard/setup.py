@@ -239,14 +239,31 @@ def _validate_condition(condition: dict | None, label: str, depth: int = 0) -> l
     return errors
 
 
+_MOTION_RULE_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state")
+
+
 def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str]:
     errors = []
     rule_names = {(r.get("name") or "").strip() for r in rules if (r.get("name") or "").strip()}
     seen_names = set()
     for i, rule in enumerate(rules):
         label = f"Reguła ruchu #{i + 1}"
-        if not rule.get("zone_number"):
-            errors.append(f"{label}: numer wejścia Satela jest wymagany")
+        source = (rule.get("source") or "satel_zone").strip()
+        if source not in _MOTION_RULE_SOURCES:
+            errors.append(f"{label}: nieznane wejście '{source}'")
+        if source == "satel_zone":
+            if not rule.get("zone_number"):
+                errors.append(f"{label}: numer wejścia Satela jest wymagany")
+        else:
+            # Wejście "stan urządzenia" (Tuya/HomeWhiz) - patrz
+            # RulesEngine.handle_device_state. `source_device` to nazwa
+            # urządzenia/urządzenia AGD, `trigger_value` to wartość statusu,
+            # przy której reguła ma zadziałać (odpowiednik "naruszenia" dla
+            # Satela, ale dla dowolnej wartości, nie tylko naruszone/OK).
+            if not (rule.get("source_device") or "").strip():
+                errors.append(f"{label}: wybierz urządzenie źródłowe")
+            if not (rule.get("trigger_value") or "").strip():
+                errors.append(f"{label}: wybierz wartość wyzwalającą")
 
         name = (rule.get("name") or "").strip()
         if name:
@@ -274,9 +291,10 @@ def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str
             if target_system not in ("tuya", "satel_output"):
                 errors.append(f"{label}: nieznany system urządzenia docelowego '{target_system}'")
 
-        trigger_on = (rule.get("trigger_on") or "violated").strip()
-        if trigger_on not in ("violated", "restored"):
-            errors.append(f"{label}: nieznany wyzwalacz '{trigger_on}'")
+        if source == "satel_zone":
+            trigger_on = (rule.get("trigger_on") or "violated").strip()
+            if trigger_on not in ("violated", "restored"):
+                errors.append(f"{label}: nieznany wyzwalacz '{trigger_on}'")
 
         window = rule.get("time_window") or {}
         if window.get("enabled"):
@@ -422,9 +440,19 @@ def _build_condition(condition: dict | None, depth: int = 0) -> dict | None:
 def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
     rules = []
     for rule in rules_form:
-        if not rule.get("zone_number"):
-            continue
-        built = {"source": "satel_zone", "zone_number": int(rule["zone_number"])}
+        source = (rule.get("source") or "satel_zone").strip()
+        if source == "satel_zone":
+            if not rule.get("zone_number"):
+                continue
+            built = {"source": "satel_zone", "zone_number": int(rule["zone_number"])}
+        else:
+            # Wejście "stan urządzenia" (Tuya/HomeWhiz) - patrz komentarz w
+            # _validate_motion_rules wyżej i RulesEngine.handle_device_state.
+            source_device = (rule.get("source_device") or "").strip()
+            trigger_value = (rule.get("trigger_value") or "").strip()
+            if not source_device or not trigger_value:
+                continue
+            built = {"source": source, "source_device": source_device, "trigger_value": trigger_value}
 
         name = (rule.get("name") or "").strip()
         if name:
@@ -460,9 +488,10 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
                         if rule.get("dimmer_level_percent") not in (None, "") else None
                     )
 
-        trigger_on = (rule.get("trigger_on") or "violated").strip()
-        if trigger_on == "restored":
-            built["trigger_on"] = "restored"
+        if source == "satel_zone":
+            trigger_on = (rule.get("trigger_on") or "violated").strip()
+            if trigger_on == "restored":
+                built["trigger_on"] = "restored"
 
         # enabled=true jest domyślne i pomijane w zapisie (patrz analogiczny
         # komentarz w _build_scenes) - wyłączona reguła w ogóle nie jest

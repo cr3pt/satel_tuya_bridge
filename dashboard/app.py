@@ -1085,10 +1085,16 @@ def api_config_automation_context():
          for name, number in config_raw.get("satel", {}).get("monitored_zones", {}).items()),
         key=lambda z: z["name"],
     )
+    # Nazwy skonfigurowanych urządzeń HomeWhiz (zakładka 🧩 Wtyczki ->
+    # Zmywarki/AGD HomeWhiz, homewhiz.appliances: {nazwa: {appliance_id}}) -
+    # do wyboru jako "system: HomeWhiz" WEJŚCIA reguły ruchu (stan
+    # urządzenia jako wyzwalacz), patrz RulesEngine.handle_device_state.
+    homewhiz_appliances = sorted((config_raw.get("homewhiz") or {}).get("appliances", {}).keys())
     return jsonify({
         "tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs, "satel_partitions": satel_partitions,
         "status_keys": status_keys, "motion_rule_names": motion_rule_names,
         "dimmer_devices": dimmer_devices, "satel_outputs": satel_outputs, "satel_zones": satel_zones,
+        "homewhiz_appliances": homewhiz_appliances,
     })
 
 

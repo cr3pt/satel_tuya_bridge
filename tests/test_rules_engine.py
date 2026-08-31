@@ -218,6 +218,27 @@ class TestMotionRules:
         await engine.handle_motion("satel_zone", 16, trigger="restored")
         assert ("off", "gniazdko_salon") in fake_tuya.calls
 
+    async def test_duration_zero_is_equivalent_to_blank(self, engine, fake_tuya):
+        """duration_seconds: 0 (wpisane JAWNIE w edytorze) znaczy dokładnie
+        to samo, co brak pola - "aż do ustania naruszenia" - wygodniejszy
+        sposób wpisania tego samego w polu liczbowym."""
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [{
+                "source": "satel_zone", "zone_number": 16,
+                "target_device": "gniazdko_salon", "duration_seconds": 0,
+            }],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+
+        await engine.handle_motion("satel_zone", 16, trigger="violated")
+        assert ("on", "gniazdko_salon", None) in fake_tuya.calls
+        assert not any(c[0] == "on_for" for c in fake_tuya.calls)
+
+        await engine.handle_motion("satel_zone", 16, trigger="restored")
+        assert ("off", "gniazdko_salon") in fake_tuya.calls
+
     async def test_blank_duration_rule_reacts_to_both_triggers_regardless_of_trigger_on(
         self, engine, fake_tuya,
     ):
@@ -448,6 +469,101 @@ class TestMotionRuleCondition:
             "condition": {"type": "state"},  # brak "key" - KeyError wewnątrz evaluate_condition
         }, fake_tuya=fake_tuya)
         await engine.handle_motion("satel_zone", 20)  # nie powinno rzucić wyjątku
+        assert fake_tuya.calls == []
+
+
+class TestDeviceStateTrigger:
+    """Stan urządzenia (Tuya/HomeWhiz) jako "wejście" reguły ruchu, obok
+    wejść Satela - patrz RulesEngine.handle_device_state(). Reguła ma
+    `source_device` (nazwa urządzenia) + `trigger_value` (wartość statusu,
+    przy której ma zadziałać) zamiast `zone_number`/`trigger_on`."""
+
+    async def _reload_with_rule(self, engine, rule: dict, fake_tuya=None, fake_satel=None, fake_virtual_inputs=None):
+        engine.config.store.set("automations", {
+            "scenes": [], "reguły_ruchu": [rule], "presence_simulation": {"enabled": False},
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya, fake_satel, fake_virtual_inputs)
+
+    async def test_tuya_state_matching_value_fires_action(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+            "target_device": "gniazdko_salon", "duration_seconds": 5,
+        }, fake_tuya=fake_tuya)
+        await engine.handle_device_state("tuya_state", "czujnik_drzwi", "włączone")
+        await asyncio.sleep(0)
+        assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+    async def test_tuya_state_non_matching_value_does_not_fire(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+            "target_device": "gniazdko_salon", "duration_seconds": 5,
+        }, fake_tuya=fake_tuya)
+        await engine.handle_device_state("tuya_state", "czujnik_drzwi", "wyłączone")
+        assert fake_tuya.calls == []
+
+    async def test_wrong_source_device_does_not_fire(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+            "target_device": "gniazdko_salon", "duration_seconds": 5,
+        }, fake_tuya=fake_tuya)
+        await engine.handle_device_state("tuya_state", "inne_urzadzenie", "włączone")
+        assert fake_tuya.calls == []
+
+    async def test_repeated_identical_value_does_not_refire(self, engine, fake_tuya):
+        """Bez wykrywania faktycznej zmiany, pętla odpytywania Tuya (co
+        kilkanaście sekund) wyzwalałaby regułę PONOWNIE przy każdym
+        obrocie, nawet gdy stan się nie zmienił."""
+        await self._reload_with_rule(engine, {
+            "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+            "target_device": "gniazdko_salon", "duration_seconds": 5,
+        }, fake_tuya=fake_tuya)
+        await engine.handle_device_state("tuya_state", "czujnik_drzwi", "włączone")
+        await asyncio.sleep(0)
+        fake_tuya.calls.clear()
+        await engine.handle_device_state("tuya_state", "czujnik_drzwi", "włączone")
+        await asyncio.sleep(0)
+        assert fake_tuya.calls == []
+
+    async def test_homewhiz_state_matching_value_fires_action(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "homewhiz_state", "source_device": "Zmywarka", "trigger_value": "finished",
+            "target_device": "gniazdko_salon", "duration_seconds": 5,
+        }, fake_tuya=fake_tuya)
+        await engine.handle_device_state("homewhiz_state", "Zmywarka", "finished")
+        await asyncio.sleep(0)
+        assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+    async def test_until_restored_turns_on_then_off_on_value_change(self, engine, fake_tuya):
+        """duration_seconds puste/0 - włącz gdy wartość STAJE SIĘ
+        trigger_value, wyłącz gdy wartość ZMIENIA SIĘ na inną (odpowiednik
+        "aż do ustania naruszenia" dla Satela, ale dla dowolnej wartości)."""
+        await self._reload_with_rule(engine, {
+            "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+            "target_device": "gniazdko_salon",
+        }, fake_tuya=fake_tuya)
+        await engine.handle_device_state("tuya_state", "czujnik_drzwi", "włączone")
+        assert ("on", "gniazdko_salon", None) in fake_tuya.calls
+        assert not any(c[0] == "on_for" for c in fake_tuya.calls)
+
+        await engine.handle_device_state("tuya_state", "czujnik_drzwi", "wyłączone")
+        assert ("off", "gniazdko_salon") in fake_tuya.calls
+
+    async def test_duration_zero_is_equivalent_to_blank_for_until_restored(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+            "target_device": "gniazdko_salon", "duration_seconds": 0,
+        }, fake_tuya=fake_tuya)
+        await engine.handle_device_state("tuya_state", "czujnik_drzwi", "włączone")
+        assert ("on", "gniazdko_salon", None) in fake_tuya.calls
+        assert not any(c[0] == "on_for" for c in fake_tuya.calls)
+
+    async def test_disabled_rule_is_not_matched(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+            "target_device": "gniazdko_salon", "duration_seconds": 5, "enabled": False,
+        }, fake_tuya=fake_tuya)
+        await engine.handle_device_state("tuya_state", "czujnik_drzwi", "włączone")
         assert fake_tuya.calls == []
 
 
@@ -996,6 +1112,24 @@ class TestHomeWhizStateCallback:
         rows = engine.history.get_status("homewhiz")
         assert rows[0]["label"] == "Zmywarka"
 
+    async def test_also_dispatches_to_device_state_motion_rules(self, engine, fake_tuya):
+        """Stan HomeWhiz może być bezpośrednio "wejściem" reguły ruchu
+        (source: homewhiz_state), nie tylko warunkiem - patrz
+        RulesEngine.handle_device_state()."""
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [{
+                "source": "homewhiz_state", "source_device": "Zmywarka", "trigger_value": "finished",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+            }],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+
+        await engine._on_homewhiz_state("Zmywarka", "finished")
+        await asyncio.sleep(0)
+        assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
 
 class TestTuyaStatusPollLoop:
     """Regresja dla zgłoszonego z prawdziwego wdrożenia błędu:
@@ -1024,6 +1158,30 @@ class TestTuyaStatusPollLoop:
         statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
         assert "tuya:gniazdko_salon" in statuses  # NIE zostało pominięte przez wcześniejszy crash
         assert "tuya:T & H Sensor" in statuses
+
+    async def test_poll_loop_dispatches_to_device_state_motion_rules(self, engine, fake_tuya):
+        """Stan urządzenia Tuya odczytany w pętli odpytywania może być
+        bezpośrednio "wejściem" reguły ruchu (source: tuya_state), nie
+        tylko warunkiem - patrz RulesEngine.handle_device_state()."""
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [{
+                "source": "tuya_state", "source_device": "czujnik_ruchu", "trigger_value": "włączone",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+            }],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+        # FakeTuya.get_status() zwraca domyślnie {"1": True} ("włączone")
+        # dla dowolnego urządzenia spoza fail_devices - patrz conftest.py.
+        fake_tuya.devices_cfg = {"czujnik_ruchu": {"id": "dev2", "ip": "1.2.3.4", "local_key": "k"}}
+
+        try:
+            await asyncio.wait_for(engine._tuya_status_poll_loop(), timeout=0.05)
+        except asyncio.TimeoutError:
+            pass  # oczekiwane - pętla działa w nieskończoność
+
+        assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
 
 
 class TestStateMqttPublisher:
