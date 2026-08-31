@@ -227,6 +227,41 @@ class TestDecodeState:
         assert hw.decode_state(self.CONFIG, 0, [9, 9, 129]) == "running"
 
 
+class TestListPossibleStates:
+    def test_lists_all_states_in_order(self):
+        config = {
+            "deviceStates": {
+                "wifiArrayReadIndex": 2,
+                "states": [
+                    {"strKey": "Dishwasher_State_Idle", "wifiArrayValue": 0},
+                    {"strKey": "Dishwasher_State_Running", "wifiArrayValue": 1},
+                    {"strKey": "Dishwasher_State_Finished", "wifiArrayValue": 2},
+                ],
+            },
+        }
+        assert hw.list_possible_states(config) == ["idle", "running", "finished"]
+
+    def test_deduplicates_names(self):
+        """Dwa surowe klucze mogą sanityzować się do TEJ SAMEJ czytelnej
+        nazwy (np. różne warianty tego samego stanu) - lista wyboru w
+        edytorze nie powinna pokazywać duplikatów."""
+        config = {
+            "deviceStates": {
+                "states": [
+                    {"strKey": "Dishwasher_State_Idle", "wifiArrayValue": 0},
+                    {"strKey": "State_Idle", "wifiArrayValue": 5},
+                ],
+            },
+        }
+        assert hw.list_possible_states(config) == ["idle"]
+
+    def test_empty_descriptor_returns_empty_list(self):
+        assert hw.list_possible_states({}) == []
+
+    def test_missing_states_returns_empty_list(self):
+        assert hw.list_possible_states({"deviceStates": {}}) == []
+
+
 # --- REST (login/list_appliances/fetch_config_descriptor), aiohttp ------
 
 class _FakeResponse:
