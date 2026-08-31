@@ -165,3 +165,7 @@ class BridgeConfig:
     @property
     def unifi_protect(self) -> dict | None:
         return self.raw.get("unifi_protect")
+
+    @property
+    def homewhiz(self) -> dict | None:
+        return self.raw.get("homewhiz")

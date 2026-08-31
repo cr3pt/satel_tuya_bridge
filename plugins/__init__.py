@@ -129,13 +129,15 @@ def register_all(app: Flask, **deps) -> list[PluginMeta]:
     from plugins.home_assistant import routes as home_assistant_routes
     from plugins.mqtt_publish import routes as mqtt_publish_routes
     from plugins.unifi_protect import routes as unifi_protect_routes
+    from plugins.homewhiz import routes as homewhiz_routes
     from plugins.notifications import routes as notifications_routes
     from plugins.presence_simulation import routes as presence_simulation_routes
 
     metas = []
     for routes_module in (
         satel_routes, tuya_routes, ebus_routes, tuya_cloud_routes, home_assistant_routes,
-        mqtt_publish_routes, unifi_protect_routes, notifications_routes, presence_simulation_routes,
+        mqtt_publish_routes, unifi_protect_routes, homewhiz_routes, notifications_routes,
+        presence_simulation_routes,
     ):
         metas.append(routes_module.register(app, **deps))
     return metas

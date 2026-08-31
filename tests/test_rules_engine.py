@@ -946,6 +946,57 @@ class TestStaleStatusPruning:
         assert engine.history.get_status_value("automation:wykryto_intruza") is None
 
 
+class TestHomeWhizStatusSeeding:
+    """_seed_homewhiz_status_labels() - urządzenie HomeWhiz od razu widoczne
+    na stronie głównej (status 'nieznany', zanim się w ogóle odezwie po
+    MQTT), i sprzątane, gdy zniknie z konfiguracji - dokładnie ten sam
+    wzorzec co dla wejść/wyjść Satela i urządzeń Tuya (TestStaleStatusPruning
+    wyżej)."""
+
+    def _set_homewhiz_cfg(self, engine, appliances: dict) -> None:
+        raw = engine.config.store.get("config")
+        raw["homewhiz"] = {"username": "u", "password": "p", "appliances": appliances}
+        engine.config.store.set("config", raw)
+
+    async def test_seeded_as_unknown_for_configured_appliance(self, engine):
+        self._set_homewhiz_cfg(engine, {"Zmywarka": {"appliance_id": "abc123"}})
+        await engine.reload_config()
+        assert engine.history.get_status_value("homewhiz:Zmywarka") == "nieznany"
+
+    async def test_seed_does_not_overwrite_already_running_status(self, engine):
+        self._set_homewhiz_cfg(engine, {"Zmywarka": {"appliance_id": "abc123"}})
+        await engine.reload_config()
+        engine.history.set_status("homewhiz:Zmywarka", "homewhiz", "running", label="Zmywarka")
+        engine._seed_homewhiz_status_labels()
+        assert engine.history.get_status_value("homewhiz:Zmywarka") == "running"
+
+    async def test_removed_appliance_prunes_stale_status(self, engine):
+        self._set_homewhiz_cfg(engine, {"Zmywarka": {"appliance_id": "abc123"}})
+        await engine.reload_config()
+        assert engine.history.get_status_value("homewhiz:Zmywarka") is not None
+
+        self._set_homewhiz_cfg(engine, {})
+        await engine.reload_config()
+        assert engine.history.get_status_value("homewhiz:Zmywarka") is None
+
+    async def test_no_homewhiz_config_is_a_noop(self, engine):
+        await engine.reload_config()  # brak sekcji "homewhiz" w configu - nie powinno rzucić wyjątku
+        assert engine.history.get_status("homewhiz") == []
+
+
+class TestHomeWhizStateCallback:
+    """RulesEngine._on_homewhiz_state - callback HomeWhizClient (patrz
+    start()) publikuje zdekodowany stan jako zwykły status, żeby istniejący
+    warunek 'state' reguły ruchu mógł na nim polegać (bez nowego typu
+    warunku)."""
+
+    async def test_publishes_state_as_status(self, engine):
+        await engine._on_homewhiz_state("Zmywarka", "running")
+        assert engine.history.get_status_value("homewhiz:Zmywarka") == "running"
+        rows = engine.history.get_status("homewhiz")
+        assert rows[0]["label"] == "Zmywarka"
+
+
 class TestTuyaStatusPollLoop:
     """Regresja dla zgłoszonego z prawdziwego wdrożenia błędu:
     `KeyError: 'T & H Sensor'` w _tuya_status_poll_loop. engine.tuya.

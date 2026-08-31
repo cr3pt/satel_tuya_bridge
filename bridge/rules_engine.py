@@ -18,6 +18,7 @@ from .tuya_cloud import TuyaCloudController
 from .tuya_dispatch import TuyaController
 from .tuya_cloud_events import TuyaCameraMotionListener
 from .unifi_protect_events import UnifiProtectMotionListener
+from .homewhiz_client import HomeWhizClient
 from .ebus_client import EbusMqttListener
 from .boiler_output import build_boiler_publishers, MqttBoilerPublisher, TuyaVirtualDevicePublisher
 from .history_store import HistoryStore
@@ -467,6 +468,14 @@ class RulesEngine:
     # Ruch z kamery -> akcja w Satelu (LUB scena), z opcjonalnym oknem
     # czasowym i cooldownem (żeby migoczący ruch nie strzelał w kółko)
     # ------------------------------------------------------------------
+    async def _on_homewhiz_state(self, appliance_name: str, state_name: str) -> None:
+        """Callback HomeWhizClient (patrz start() wyżej) - publikuje
+        zdekodowany stan zmywarki jako zwykły status (kategoria "homewhiz"),
+        DOKŁADNIE jak stan kotła (kategoria "boiler") - żadnego nowego typu
+        warunku nie trzeba dodawać, wystarczy istniejący warunek "state"
+        reguły ruchu wskazujący klucz "homewhiz:<nazwa>" (patrz README)."""
+        self.history.set_status(f"homewhiz:{appliance_name}", "homewhiz", state_name, label=appliance_name)
+
     async def handle_camera_motion(self, source: str, camera_id: str) -> None:
         now = datetime.now()
         for idx, rule in enumerate(self.config.camera_alarm_rules):
@@ -732,6 +741,7 @@ class RulesEngine:
 
         self._seed_satel_status_labels()
         self._seed_tuya_status_labels()
+        self._seed_homewhiz_status_labels()
         self._seed_automation_status_labels()
 
         logger.info("Konfiguracja przeładowana bez restartu procesu")
@@ -892,6 +902,24 @@ class RulesEngine:
         tuya_keys |= {f"tuya:{name}:brightness" for name in self.tuya.devices_cfg}
         self.history.prune_status("tuya", tuya_keys)
 
+    def _seed_homewhiz_status_labels(self) -> None:
+        """Zapisuje 'nieznany' dla KAŻDEGO skonfigurowanego urządzenia
+        HomeWhiz (zakładka 🧩 Wtyczki -> Zmywarki HomeWhiz), żeby klucz
+        'homewhiz:<nazwa>' był od razu widoczny na stronie głównej i na
+        liście warunków (state) w edytorze /automations, zanim urządzenie
+        w ogóle się odezwie po MQTT - patrz analogiczny komentarz w
+        _seed_satel_status_labels()/_seed_tuya_status_labels()."""
+        homewhiz_cfg = self.config.homewhiz or {}
+        appliance_names = set((homewhiz_cfg.get("appliances") or {}).keys())
+        seen = {s["key"] for s in self.history.get_status("homewhiz")}
+        for name in appliance_names:
+            key = f"homewhiz:{name}"
+            if key not in seen:
+                self.history.set_status(key, "homewhiz", "nieznany", label=name)
+
+        homewhiz_keys = {f"homewhiz:{name}" for name in appliance_names}
+        self.history.prune_status("homewhiz", homewhiz_keys)
+
     def _seed_automation_status_labels(self) -> None:
         """Zapisuje "bezczynna" dla każdej nazwanej sceny i (nazwanej)
         reguły ruchu z akcją "włącz urządzenie na czas", żeby klucz
@@ -984,6 +1012,7 @@ class RulesEngine:
 
         self._seed_satel_status_labels()
         self._seed_tuya_status_labels()
+        self._seed_homewhiz_status_labels()
         self._seed_automation_status_labels()
 
         # Callback z centrali: zmiana wejść -> reguły ruchu (source=satel_zone)
@@ -1120,6 +1149,19 @@ class RulesEngine:
                 grace_seconds=self._grace_seconds,
             )
             asyncio.create_task(unifi_listener.run_forever())
+
+        # Zmywarki/AGD HomeWhiz (opcjonalnie, wyłączalna z 🧩 Wtyczki) -
+        # stan publikowany jako zwykły status (kategoria "homewhiz",
+        # dokładnie jak "boiler" dla kotła) - włączenie/wyłączenie danej
+        # automatyzacji od stanu zmywarki nie potrzebuje ŻADNEGO nowego
+        # typu warunku, tylko istniejącego warunku "state" (patrz README:
+        # "Warunek 'stan zmywarki HomeWhiz'").
+        if self.config.homewhiz and self.config.homewhiz.get("enabled", True):
+            homewhiz_client = HomeWhizClient(
+                self.config.homewhiz, self._on_homewhiz_state,
+                history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
+            )
+            asyncio.create_task(homewhiz_client.run_forever())
 
         # Integracja z Home Assistant (opcjonalna) - rejestrujemy handlery
         # komend PRZED startem, żeby subskrypcja MQTT objęła je od razu

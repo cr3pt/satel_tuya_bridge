@@ -1607,6 +1607,52 @@ temperatura zewnętrzna -> włącz grzałkę). Ma własny `cooldown_seconds`,
 żeby wahania wartości blisko progu nie odpalały sceny co odczyt -
 sprawdzone testem.
 
+## Zmywarki/AGD HomeWhiz (BEQ/Arcelik)
+
+Bridge łączy się BEZPOŚREDNIO z chmurą HomeWhiz (Arcelik IoT/AWS) tymi
+samymi danymi logowania, co aplikacja HomeWhiz na telefonie - nie ma tu
+żadnego pośredniczącego lokalnego brokera (w odróżnieniu od eBUS). Kształt
+API rozpoznany na podstawie integracji Home Assistant
+([home-assistant-HomeWhiz/home-assistant-HomeWhiz](https://github.com/home-assistant-HomeWhiz/home-assistant-HomeWhiz),
+licencja MIT) - to repo NIE jest zależnością tego projektu, tylko źródłem
+wiedzy o kształcie żądań/odpowiedzi (`bridge/homewhiz_client.py`).
+
+**Celowo bez `awsiotsdk`/`awscrt`** (skompilowana biblioteka C/Rust, której
+używa integracja HA) - zamiast tego zwykłe `paho-mqtt` (transport
+WebSocket) + `aiohttp`, już obecne w tym projekcie jako zależności innych
+integracji. Podpisywanie żądań (AWS Signature Version 4, wymagane przez
+chmurę Arcelik/AWS IoT Core) jest zweryfikowane względem
+[oficjalnego zestawu testowego AWS](https://docs.aws.amazon.com/general/latest/gr/signature-v4-test-suite.html)
+- patrz `tests/test_homewhiz_client.py`.
+
+### Konfiguracja (zakładka 🧩 Wtyczki -> "🍽 Zmywarki/AGD HomeWhiz")
+
+1. Wpisz login (e-mail) i hasło do konta HomeWhiz i zapisz.
+2. Kliknij "🔍 Odkryj urządzenia" - bridge loguje się do chmury i pokazuje
+   listę urządzeń przypisanych do konta (zmywarki oznaczone tagiem
+   "zmywarka", ale lista pokazuje WSZYSTKIE typy AGD z konta - działa dla
+   dowolnego z nich, nie tylko zmywarek). Urządzenia sparowane WYŁĄCZNIE
+   przez Bluetooth (bez łączności WiFi) nie są tu widoczne - nie da się ich
+   odpytać zdalnie z serwera działającego w Dockerze.
+3. Kliknij "+ Dodaj" przy urządzeniu, nadaj mu nazwę (dowolną, unikalną) i
+   zapisz listę monitorowanych urządzeń.
+4. Włącz wtyczkę (przełącznik u góry strony) - wymaga pełnego restartu
+   procesu bridge'a, tak jak inne integracje chmurowe (UniFi Protect, Tuya
+   Cloud).
+
+### Stan urządzenia jako warunek automatyzacji
+
+Zdekodowany stan (np. `running`/`finished`/`idle` - dokładne nazwy zależą
+od modelu urządzenia, HomeWhiz sam je definiuje) trafia na stronę główną
+jako zwykły status pod kluczem `homewhiz:<nazwa>` - DOKŁADNIE tak samo jak
+stan kotła (kategoria `boiler`). Włączenie/wyłączenie automatyzacji od
+stanu zmywarki NIE wymaga żadnego nowego typu warunku - wystarczy istniejący
+warunek "stan" (`state`, patrz "Dodatkowy warunek reguły" wyżej) wskazujący
+ten klucz, np. w edytorze `/automations`: warunek typu `state`, klucz
+`homewhiz:Zmywarka`, wartość `finished` - i akcja (np. powiadomienie albo
+włączenie gniazdka) uruchomi się dopiero, gdy zmywarka faktycznie skończy
+zmywanie.
+
 ## Synchronizacja czasu
 
 Trzy niezależne miejsca, gdzie "czas" ma znaczenie - żaden nie wymaga
@@ -1884,6 +1930,7 @@ satel_tuya_bridge/
     tuya_local.py            # sterowanie lokalne (tinytuya) + scan_network()/fetch_cloud_devices() (import w /config)
     tuya_cloud_events.py     # ruch z kamer Tuya (Pulsar, wymaga chmury)
     unifi_protect_events.py  # ruch z kamer UniFi Protect
+    homewhiz_client.py        # stan zmywarek/AGD HomeWhiz (SigV4 + MQTT-over-WebSocket do AWS IoT Core)
     ebus_client.py           # odczyt danych z ebusd (MQTT) + discover_topics() (podpowiedź do /config)
     boiler_output.py         # publikacja danych kotła (MQTT / Tuya virtual device)
     history_store.py         # baza SQLite (odczyty + zdarzenia + alarmy + statusy)
@@ -1918,6 +1965,7 @@ satel_tuya_bridge/
     home_assistant/routes.py  # /plugins/home_assistant - broker MQTT + prefiksy discovery/stanu
     mqtt_publish/routes.py    # /plugins/mqtt_publish - tematy MQTT (Satel/Tuya)
     unifi_protect/routes.py   # /plugins/unifi_protect - host/login/hasło kontrolera UniFi OS
+    homewhiz/routes.py        # /plugins/homewhiz - konto HomeWhiz + odkrywanie/wybór monitorowanych urządzeń
     notifications/routes.py   # /plugins/notifications - adres tematu ntfy + okres ciszy
     presence_simulation/routes.py  # /plugins/presence_simulation - włącznik/log_level (lista urządzeń w /automations)
   tests/                     # testy pytest (patrz sekcja "Testy automatyczne")

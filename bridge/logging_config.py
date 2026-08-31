@@ -25,6 +25,7 @@ PLUGIN_LOGGERS: dict[str, list[str]] = {
     "home_assistant": ["bridge.ha_mqtt"],
     "mqtt_publish": ["bridge.ha_mqtt"],
     "unifi_protect": ["bridge.unifi_protect"],
+    "homewhiz": ["bridge.homewhiz"],
     "presence_simulation": ["bridge.presence_simulation"],
     "notifications": ["bridge.notifier"],
 }
@@ -44,6 +45,7 @@ def plugin_config_section(config_raw: dict, plugin_id: str) -> dict:
         "home_assistant": config_raw.get("home_assistant", {}) or {},
         "mqtt_publish": config_raw.get("mqtt_publish", {}) or {},
         "unifi_protect": config_raw.get("unifi_protect") or {},
+        "homewhiz": config_raw.get("homewhiz") or {},
         "presence_simulation": config_raw.get("presence_simulation", {}) or {},
         "notifications": config_raw.get("notifications", {}) or {},
     }.get(plugin_id, {})
