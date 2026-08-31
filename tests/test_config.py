@@ -65,6 +65,61 @@ def test_missing_required_section_raises(tmp_path):
         BridgeConfig.load(tmp_path / "config.yaml")
 
 
+def test_missing_virtual_inputs_section_gets_safe_defaults(tmp_path):
+    """satel.virtual_inputs to jedyna sekcja, której RulesEngine.__init__
+    NIE toleruje pustej/nieobecnej postaci - SatelVirtualInputTrigger (patrz
+    bridge/satel_client.py) czyta cfg["port"]/cfg["url_template"] przez
+    bracket-access i jest tworzony BEZWARUNKOWO, nawet gdy żadne wirtualne
+    wejście nie jest skonfigurowane. Config bez jawnie zapisanej sekcji
+    "virtual_inputs" (stary config.yaml sprzed tej funkcji, ręczna edycja,
+    częściowy import YAML) MUSI dostać te same wartości domyślne co kreator/
+    zakładka Połączenia (dashboard/setup.py), inaczej cały silnik reguł
+    wywala się KeyErrorem przy starcie/przeładowaniu configu."""
+    (tmp_path / "config.yaml").write_text(
+        """
+satel:
+  host: "127.0.0.1"
+  port: 7094
+  integration_key: "x"
+tuya:
+  devices: {}
+reguły_ruchu: []
+ebus:
+  mqtt_host: "127.0.0.1"
+""",
+        encoding="utf-8",
+    )
+    config = BridgeConfig.load(tmp_path / "config.yaml")
+    assert config.satel["virtual_inputs"]["port"] == 8888
+    assert "{host}" in config.satel["virtual_inputs"]["url_template"]
+    assert config.satel["virtual_inputs"]["inputs"] == {}
+
+    from bridge.satel_client import SatelVirtualInputTrigger
+
+    SatelVirtualInputTrigger(config.satel["host"], config.satel["virtual_inputs"])
+
+
+def test_explicit_virtual_inputs_port_is_not_overridden_by_default(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+satel:
+  host: "127.0.0.1"
+  port: 7094
+  integration_key: "x"
+  virtual_inputs:
+    port: 9999
+tuya:
+  devices: {}
+reguły_ruchu: []
+ebus:
+  mqtt_host: "127.0.0.1"
+""",
+        encoding="utf-8",
+    )
+    config = BridgeConfig.load(tmp_path / "config.yaml")
+    assert config.satel["virtual_inputs"]["port"] == 9999
+
+
 def test_convenience_properties(config_dir):
     config = BridgeConfig.load(config_dir / "config.yaml")
     assert config.satel["host"] == "127.0.0.1"
