@@ -274,34 +274,87 @@ def _patch_session(monkeypatch, responses: list):
     return calls
 
 
+class TestUnwrapEnvelope:
+    """Każda odpowiedź API HomeWhiz jest opakowana w
+    `{"success": bool, "data": ...}` - potwierdzone w źródle integracji
+    Home Assistant (custom_components/homewhiz/api.py). Prawdziwa awaria
+    (złe hasło, brak dostępu) potrafi wrócić z kodem HTTP 200 i
+    `"success": false` zamiast kodu błędu - `_unwrap_envelope` musi to
+    wykryć samo, bo sam kod HTTP na to nie wskaże."""
+
+    def test_extracts_data(self):
+        assert hw._unwrap_envelope({"success": True, "data": {"x": 1}}, context="t") == {"x": 1}
+
+    def test_data_can_be_a_list(self):
+        assert hw._unwrap_envelope({"success": True, "data": [1, 2]}, context="t") == [1, 2]
+
+    def test_success_false_raises_despite_http_200(self):
+        with pytest.raises(hw.HomeWhizError):
+            hw._unwrap_envelope({"success": False, "data": {}}, context="t")
+
+    def test_missing_data_key_raises(self):
+        with pytest.raises(hw.HomeWhizError):
+            hw._unwrap_envelope({"success": True}, context="t")
+
+    def test_non_dict_body_raises(self):
+        with pytest.raises(hw.HomeWhizError):
+            hw._unwrap_envelope("not a dict", context="t")
+
+
 class TestLogin:
     async def test_successful_login_returns_session(self, monkeypatch):
         _patch_session(monkeypatch, [_FakeResponse(200, {
-            "accessKey": "AK", "secretKey": "SK", "sessionToken": "ST", "expiration": "2026-01-01T00:00:00Z",
+            "success": True,
+            "data": {"credentials": {
+                "accessKey": "AK", "secretKey": "SK", "sessionToken": "ST", "expiration": 1735689600000,
+            }},
         })])
         session = await hw.login("user@example.com", "pw")
         assert session.access_key == "AK"
         assert session.secret_key == "SK"
         assert session.session_token == "ST"
+        assert session.expiration_ms == 1735689600000
 
     async def test_bad_credentials_raises_homewhiz_error(self, monkeypatch):
         _patch_session(monkeypatch, [_FakeResponse(401, {})])
         with pytest.raises(hw.HomeWhizError):
             await hw.login("user@example.com", "wrong")
 
+    async def test_success_false_with_http_200_raises(self, monkeypatch):
+        """Dokładnie scenariusz ze zgłoszenia: złe hasło potrafi wrócić z
+        kodem HTTP 200 i {"success": false, ...} zamiast kodu błędu."""
+        _patch_session(monkeypatch, [_FakeResponse(200, {"success": False, "message": "invalid credentials"})])
+        with pytest.raises(hw.HomeWhizError):
+            await hw.login("user@example.com", "wrong")
+
     async def test_malformed_response_raises_homewhiz_error(self, monkeypatch):
-        _patch_session(monkeypatch, [_FakeResponse(200, {"accessKey": "AK"})])  # brak reszty pól
+        _patch_session(monkeypatch, [_FakeResponse(200, {
+            "success": True, "data": {"credentials": {"accessKey": "AK"}},  # brak reszty pól
+        })])
+        with pytest.raises(hw.HomeWhizError):
+            await hw.login("user@example.com", "pw")
+
+    async def test_missing_credentials_key_raises(self, monkeypatch):
+        _patch_session(monkeypatch, [_FakeResponse(200, {"success": True, "data": {}})])
         with pytest.raises(hw.HomeWhizError):
             await hw.login("user@example.com", "pw")
 
 
 class TestListAppliances:
+    """Kształt odpowiedzi: `{"data": [{"id": ...}, ...]}` dla `/my-homes`,
+    `{"data": {"appliances": [...]}}` dla `/my-homes/{id}` - potwierdzone w
+    źródle integracji Home Assistant (`MyHomesResponse`/`HomeResponseData`)."""
+
     async def test_flattens_appliances_across_homes(self, monkeypatch):
         session = hw.HomeWhizSession(access_key="AK", secret_key="SK", session_token="ST")
         _patch_session(monkeypatch, [
-            _FakeResponse(200, [{"id": "home1"}, {"id": "home2"}]),
-            _FakeResponse(200, [{"applianceId": "a1", "applianceType": 3, "connectivity": "WIFI", "name": "Zmywarka"}]),
-            _FakeResponse(200, [{"applianceId": "a2", "applianceType": 1, "connectivity": "WIFI", "name": "Pralka"}]),
+            _FakeResponse(200, {"success": True, "data": [{"id": "home1"}, {"id": "home2"}]}),
+            _FakeResponse(200, {"success": True, "data": {"appliances": [
+                {"applianceId": "a1", "applianceType": 3, "connectivity": "WIFI", "name": "Zmywarka"},
+            ]}}),
+            _FakeResponse(200, {"success": True, "data": {"appliances": [
+                {"applianceId": "a2", "applianceType": 1, "connectivity": "WIFI", "name": "Pralka"},
+            ]}}),
         ])
         appliances = await hw.list_appliances(session)
         assert {a["applianceId"] for a in appliances} == {"a1", "a2"}
@@ -309,12 +362,12 @@ class TestListAppliances:
     async def test_excludes_bluetooth_only_appliances(self, monkeypatch):
         session = hw.HomeWhizSession(access_key="AK", secret_key="SK", session_token="ST")
         _patch_session(monkeypatch, [
-            _FakeResponse(200, [{"id": "home1"}]),
-            _FakeResponse(200, [
+            _FakeResponse(200, {"success": True, "data": [{"id": "home1"}]}),
+            _FakeResponse(200, {"success": True, "data": {"appliances": [
                 {"applianceId": "a1", "connectivity": "WIFI"},
                 {"applianceId": "a2", "connectivity": "BT"},
                 {"applianceId": "a3", "connectivity": "BASICBT"},
-            ]),
+            ]}}),
         ])
         appliances = await hw.list_appliances(session)
         assert {a["applianceId"] for a in appliances} == {"a1"}
@@ -322,8 +375,8 @@ class TestListAppliances:
     async def test_skips_entries_without_appliance_id(self, monkeypatch):
         session = hw.HomeWhizSession(access_key="AK", secret_key="SK", session_token="ST")
         _patch_session(monkeypatch, [
-            _FakeResponse(200, [{"id": "home1"}]),
-            _FakeResponse(200, [{"connectivity": "WIFI"}]),
+            _FakeResponse(200, {"success": True, "data": [{"id": "home1"}]}),
+            _FakeResponse(200, {"success": True, "data": {"appliances": [{"connectivity": "WIFI"}]}}),
         ])
         assert await hw.list_appliances(session) == []
 
@@ -333,11 +386,14 @@ class TestListAppliances:
 
 
 class TestFetchConfigDescriptor:
+    """Kształt odpowiedzi: `{"data": {"results": [...]}}` (`ContentsIndexResponse`
+    w źródle integracji Home Assistant), NIE goła lista pod `data`."""
+
     async def test_fetches_descriptor_from_s3(self, monkeypatch):
         session = hw.HomeWhizSession(access_key="AK", secret_key="SK", session_token="ST")
         expected = {"deviceStates": {"wifiArrayReadIndex": 0, "states": []}}
         calls = _patch_session(monkeypatch, [
-            _FakeResponse(200, [{"cid": "cfg123", "ver": "2", "lang": "en"}]),
+            _FakeResponse(200, {"success": True, "data": {"results": [{"cid": "cfg123", "ver": "2", "lang": "en"}]}}),
             _FakeResponse(200, expected),
         ])
         result = await hw.fetch_config_descriptor(session, "appliance1", language="en")
@@ -346,7 +402,7 @@ class TestFetchConfigDescriptor:
 
     async def test_empty_entries_raises_homewhiz_error(self, monkeypatch):
         session = hw.HomeWhizSession(access_key="AK", secret_key="SK", session_token="ST")
-        _patch_session(monkeypatch, [_FakeResponse(200, [])])
+        _patch_session(monkeypatch, [_FakeResponse(200, {"success": True, "data": {"results": []}})])
         with pytest.raises(hw.HomeWhizError):
             await hw.fetch_config_descriptor(session, "appliance1")
 
