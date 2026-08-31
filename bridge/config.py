@@ -88,7 +88,21 @@ class BridgeConfig:
         # (odwrotne mapowanie numer -> nazwa).
         for key in ("zone_types", "output_types"):
             data["satel"][key] = satel_fields.get(key, {})
+        # "port"/"url_template" (do których faktycznie łączy się
+        # SatelVirtualInputTrigger - patrz bridge/satel_client.py) muszą tu
+        # dostać te same wartości domyślne, co dashboard/setup.py
+        # (build_config_dict/build_connections_patch) - inaczej config bez
+        # jawnie zapisanej sekcji "virtual_inputs" (stary, ręcznie
+        # edytowany albo migrowany z config.yaml sprzed tej funkcji)
+        # zostawiłby cfg["port"] nieobecne, co wywala CAŁY silnik reguł
+        # (RulesEngine.__init__ zawsze tworzy SatelVirtualInputTrigger,
+        # niezależnie od tego, czy jakiekolwiek wirtualne wejście jest w
+        # ogóle skonfigurowane) KeyErrorem przy starcie/przeładowaniu.
         data["satel"].setdefault("virtual_inputs", {})
+        data["satel"]["virtual_inputs"].setdefault("port", 8888)
+        data["satel"]["virtual_inputs"].setdefault(
+            "url_template", "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
+        )
         if "virtual_inputs" in satel_fields:
             data["satel"]["virtual_inputs"]["inputs"] = satel_fields["virtual_inputs"]
         else:
