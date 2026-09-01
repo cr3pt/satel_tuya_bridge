@@ -179,6 +179,81 @@ class TestSatelPluginPage:
         assert {"name": "Piwnica", "number": 9} in fields["partitions"]
 
 
+class TestSatelConnectionEndpoint:
+    """GET/POST /api/plugins/satel/connection - host/port/klucze/tryb
+    wejść IP, przeniesione tutaj z dawnej wspólnej zakładki 🔌 Połączenia
+    (patrz zgłoszenie: rozdzielić Połączenia na właściwe wtyczki)."""
+
+    def test_get_requires_auth(self, client):
+        assert client.get("/api/plugins/satel/connection").status_code == 401
+        resp = client.get("/api/plugins/satel/connection", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+
+    def test_get_returns_current_values_without_leaking_secret(self, client):
+        resp = client.get("/api/plugins/satel/connection", headers=_basic_auth_header("test_haslo_123"))
+        data = resp.get_json()
+        assert data["host"] == "127.0.0.1"
+        assert data["port"] == 7094
+        assert data["integration_key_set"] is True
+        assert data["encryption_key_set"] is False
+        assert data["encryption_enabled"] is False
+        assert data["virtual_inputs_mode"] == "library"
+        assert '"x"' not in resp.get_data(as_text=True)  # "x" to integration_key w CONFIG_TEMPLATE
+
+    def test_post_without_auth_returns_401(self, client):
+        resp = client.post("/api/plugins/satel/connection", json={})
+        assert resp.status_code == 401
+
+    def test_post_updates_host(self, client):
+        import dashboard.app as app_module
+
+        payload = {"host": "10.0.0.9", "port": "7094"}
+        resp = client.post("/api/plugins/satel/connection", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert app_module.config_store.get("config")["satel"]["host"] == "10.0.0.9"
+
+    def test_post_validates_missing_host(self, client):
+        resp = client.post(
+            "/api/plugins/satel/connection", json={"host": ""}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_post_blank_integration_key_preserves_existing_secret(self, client):
+        import dashboard.app as app_module
+
+        payload = {"host": "127.0.0.1", "port": "7094", "integration_key": ""}
+        client.post("/api/plugins/satel/connection", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert app_module.config_store.get("config")["satel"]["integration_key"] == "x"
+
+    def test_post_does_not_touch_zones_or_partitions(self, client):
+        """build_satel_connection_patch operuje TYLKO na polach połączenia -
+        monitored_zones/partitions (współdzielone z /api/plugins/satel/fields
+        przez ten sam dokument "satel_fields", patrz BridgeConfig.load) nie
+        mogą zniknąć po zapisie stąd."""
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/satel/connection", json={"host": "10.0.0.9"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        fields = client.get("/api/plugins/satel/fields", headers=_basic_auth_header("test_haslo_123")).get_json()
+        assert {"name": "Dom", "number": 1} in fields["partitions"]
+        assert {"name": "Salon", "number": 12, "type": ""} in fields["monitored_zones"]
+
+    def test_post_does_not_clobber_log_level_set_via_settings(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/satel/settings", json={"log_level": "DEBUG"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/plugins/satel/connection", json={"host": "10.0.0.9"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert app_module.config_store.get("config")["satel"]["log_level"] == "DEBUG"
+
+
 class TestTuyaLocalPluginPage:
     def test_page_redirects_to_login_without_auth(self, client):
         resp = client.get("/plugins/tuya", follow_redirects=False)
@@ -213,6 +288,35 @@ class TestTuyaLocalPluginPage:
 
     def test_post_devices_rejects_incomplete_device(self, client):
         payload = {"tuya_devices": [{"name": "x", "id": ""}]}
+        resp = client.post("/api/plugins/tuya/devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 400
+
+    def test_saved_zigbee_gateway_and_sub_device_round_trip(self, client):
+        """Bramka Zigbee + podurządzenie wskazujące na nią (pole "gateway")
+        - patrz TuyaLocalController w bridge/tuya_local.py. Podurządzenie
+        NIE ma własnego ip/local_key, dostaje za to gateway/cid."""
+        payload = {
+            "tuya_devices": [
+                {"name": "gniazdko", "id": "d1", "ip": "1.2.3.4", "local_key": "k", "type": "socket"},
+                {"name": "lampka_zigbee", "id": "sub1", "gateway": "brama_salon", "cid": "node1", "type": "socket"},
+            ],
+            "zigbee_gateways": [
+                {"name": "brama_salon", "id": "gw1", "ip": "1.2.3.9", "local_key": "gwkey", "version": "3.4"},
+            ],
+        }
+        resp = client.post("/api/plugins/tuya/devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+
+        data = client.get("/api/plugins/tuya/devices", headers=_basic_auth_header("test_haslo_123")).get_json()
+        assert {
+            "name": "lampka_zigbee", "id": "sub1", "gateway": "brama_salon", "cid": "node1",
+            "type": "socket", "ip": "", "local_key": "", "dimmer_dp": "",
+        } in data["devices"]
+        assert {"name": "brama_salon", "id": "gw1", "ip": "1.2.3.9", "local_key": "gwkey", "version": 3.4} \
+            in data["zigbee_gateways"]
+
+    def test_post_devices_rejects_sub_device_with_unknown_gateway(self, client):
+        payload = {"tuya_devices": [{"name": "lampka", "id": "sub1", "gateway": "brama_nieznana"}]}
         resp = client.post("/api/plugins/tuya/devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 400
 
@@ -346,6 +450,30 @@ class TestEbusPluginPage:
         resp = client.post("/api/plugins/ebus/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 400
 
+    def test_mqtt_field_round_trips_for_composite_json_topics(self, client):
+        """mqtt_field - do wyboru pola z tematu ebusd publikującego kilka
+        naraz w trybie --mqttjson (patrz bridge/ebus_client.py:
+        EbusMqttListener._parse_payload)."""
+        payload = [{
+            "name": "temp_podlogowa", "label": "Temp. podłogowa", "mqtt_topic": "ebusd/hc1",
+            "mqtt_field": "TempFloor",
+            "targets": {"history": True, "mqtt_publish": False, "tuya_virtual_device": False, "tuya_dp": ""},
+        }]
+        client.post("/api/plugins/ebus/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        resp = client.get("/api/plugins/ebus/sensors", headers=_basic_auth_header("test_haslo_123"))
+        saved = next(s for s in resp.get_json() if s["name"] == "temp_podlogowa")
+        assert saved["mqtt_field"] == "TempFloor"
+
+    def test_mqtt_field_defaults_to_empty_string(self, client):
+        payload = [{
+            "name": "zwykly_czujnik", "mqtt_topic": "ebusd/bai/FlowTemp",
+            "targets": {"history": True, "mqtt_publish": False, "tuya_virtual_device": False, "tuya_dp": ""},
+        }]
+        client.post("/api/plugins/ebus/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        resp = client.get("/api/plugins/ebus/sensors", headers=_basic_auth_header("test_haslo_123"))
+        saved = next(s for s in resp.get_json() if s["name"] == "zwykly_czujnik")
+        assert saved["mqtt_field"] == ""
+
     def test_discover_requires_auth(self, client, monkeypatch):
         monkeypatch.setattr(
             "plugins.ebus.routes.discover_ebus_topics", lambda host, port: ["ebusd/bai/FlowTemp"],
@@ -423,6 +551,60 @@ class TestEbusPluginPage:
         assert stored_ebus["log_level"] == "ERROR"
         assert "sensors" not in stored_ebus
         assert stored_ebus["mqtt_host"] == "127.0.0.1"
+
+
+class TestEbusConnectionEndpoint:
+    """GET/POST /api/plugins/ebus/connection - adres/port brokera MQTT i
+    temat stanu, przeniesione tutaj z dawnej wspólnej zakładki
+    🔌 Połączenia (patrz zgłoszenie: rozdzielić Połączenia na właściwe
+    wtyczki). Publiczny odczyt (bez sekretów), chroniony globalnie tak
+    samo jak /api/plugins/ebus/sensors."""
+
+    def test_get_requires_auth(self, client):
+        assert client.get("/api/plugins/ebus/connection").status_code == 401
+        resp = client.get("/api/plugins/ebus/connection", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+
+    def test_get_returns_current_values(self, client):
+        resp = client.get("/api/plugins/ebus/connection", headers=_basic_auth_header("test_haslo_123"))
+        data = resp.get_json()
+        assert data["mqtt_host"] == "127.0.0.1"
+        assert data["mqtt_port"] == 1883
+        assert data["topic_prefix"] == "home/boiler"
+
+    def test_post_without_auth_returns_401(self, client):
+        resp = client.post("/api/plugins/ebus/connection", json={"mqtt_host": "127.0.0.1"})
+        assert resp.status_code == 401
+
+    def test_post_updates_mqtt_host_and_topic_prefix(self, client):
+        import dashboard.app as app_module
+
+        payload = {"mqtt_host": "10.0.0.5", "mqtt_port": "1884", "topic_prefix": "dom/kociol"}
+        resp = client.post("/api/plugins/ebus/connection", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")
+        assert saved["ebus"]["mqtt_host"] == "10.0.0.5"
+        assert saved["ebus"]["mqtt_port"] == 1884
+        # host/port mirroring do boiler_output.mqtt (ten sam broker obsługuje
+        # odczyt z kotła i publikację jego stanu, patrz build_ebus_connection_patch)
+        assert saved["boiler_output"]["mqtt"]["host"] == "10.0.0.5"
+        assert saved["boiler_output"]["mqtt"]["port"] == 1884
+        assert saved["boiler_output"]["mqtt"]["topic_prefix"] == "dom/kociol"
+
+    def test_post_validates_missing_mqtt_host(self, client):
+        resp = client.post(
+            "/api/plugins/ebus/connection", json={"mqtt_host": ""}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_post_does_not_touch_satel_section(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/plugins/ebus/connection", json={"mqtt_host": "10.0.0.5"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert app_module.config_store.get("config")["satel"]["host"] == "127.0.0.1"
 
 
 class TestTuyaCloudPluginPage:

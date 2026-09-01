@@ -98,13 +98,14 @@ def validate_satel_fields(form: dict, virtual_input_mode: str = "library") -> li
     odwołać). Strefy/wyjścia/partycje nie mają twardej walidacji - niepełny
     wiersz (brakująca nazwa albo numer) jest po prostu pomijany przy
     zapisie (patrz _build_monitored_zones/_build_monitored_outputs/
-    _build_partitions). Współdzielone przez kreator i panel /config.
+    _build_partitions). Współdzielone przez kreator (/setup) i stronę
+    wtyczki Satel (/plugins/satel, patrz plugins/satel/routes.py).
 
     Wymagane pola zależą od trybu (satel.virtual_inputs.mode, patrz
     obszerny docstring bridge/satel_client.py) - `virtual_input_mode`
     zawsze pochodzi z JUŻ ZAPISANEGO configu (autorytatywne źródło, patrz
-    dashboard/app.py:api_config_satel_fields_post), nigdy z przesłanego
-    formularza:
+    plugins/satel/routes.py:api_plugin_satel_fields_post), nigdy z
+    przesłanego formularza:
     - "library" (domyślny): zwykłe wyjście Satela - wystarczy nazwa+numer,
       BEZ osobnego klucza (uwierzytelnienie idzie przez wspólny
       satel.integration_key).
@@ -121,8 +122,9 @@ def validate_satel_fields(form: dict, virtual_input_mode: str = "library") -> li
 
 def validate_tuya_devices(form: dict) -> list[str]:
     """Waliduje urządzenia Tuya ORAZ bramki Zigbee - współdzielone przez
-    kreator i panel /config (patrz validate_satel_fields wyżej - ten sam
-    wzorzec). Urządzenie WSKAZUJĄCE bramkę (pole "gateway" - podurządzenie
+    kreator (/setup) i strony wtyczek Tuya (/plugins/tuya, /plugins/tuya_cloud,
+    patrz validate_satel_fields wyżej - ten sam wzorzec). Urządzenie
+    WSKAZUJĄCE bramkę (pole "gateway" - podurządzenie
     Zigbee) nie ma własnego ip/local_key (tinytuya kieruje ruch przez
     połączenie bramki, patrz bridge/tuya_local.py) - wymaga za to, żeby
     wskazana bramka faktycznie istniała wśród zdefiniowanych niżej."""
@@ -706,10 +708,14 @@ def _build_cloud_devices(form: dict) -> dict:
 
 
 def validate_connections(form: dict) -> list[str]:
-    """Waliduje formularz zakładki "Połączenia" panelu /config (host/klucze/
-    tematy MQTT już skonfigurowanej instalacji) - współdzielony wzorzec z
-    validate() (kreator), ale bez wymogu hasła (to ustawia się tylko raz,
-    w kreatorze, i panel /config go nie zmienia)."""
+    """Waliduje formularz połączeń (host/klucze/tematy MQTT już
+    skonfigurowanej instalacji) - współdzielony wzorzec z validate()
+    (kreator), ale bez wymogu hasła. Dawna wspólna zakładka "Połączenia"
+    (/config) została rozdzielona na strony poszczególnych wtyczek (patrz
+    validate_satel_connection/validate_ebus_connection niżej) - ta funkcja
+    dziś obsługuje już tylko wąski przypadek: GET/POST /api/plugins
+    (zakładka 🧩 Wtyczki, przełącznik enabled + interwał odpytywania dla
+    satel/tuya_local, patrz dashboard/app.py)."""
     errors = []
     satel = form.get("satel", {})
     if not satel.get("host"):
@@ -920,13 +926,17 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
 
 def connections_to_form(existing: dict) -> dict:
     """Odwrotność build_connections_patch - konwertuje AKTUALNY config.yaml
-    na kształt formularza zakładki "Połączenia" (GET /api/config/connections).
-    Sekretne pola (klucz integracji Satela, Tuya Cloud Access Secret) NIE są
-    tu NIGDY zwracane w jawnej postaci - tylko flaga `*_set`, czy są w ogóle
-    ustawione, żeby nie wyciekały przez GET do każdego w sieci LAN (w
-    odróżnieniu od np. local_key urządzeń Tuya w /api/config/tuya-devices -
-    tam ryzyko jest dużo mniejsze niż tu, bo klucz integracji Satela pozwala
-    rozbroić fizyczny system alarmowy)."""
+    na kształt formularza dawnej wspólnej zakładki "Połączenia", dziś
+    używany już tylko wewnętrznie przez GET/POST /api/plugins (patrz
+    docstring validate_connections wyżej) - GET/POST /api/config/connections
+    zostało usunięte, host/port/klucze edytuje się teraz na stronach
+    poszczególnych wtyczek (satel_connection_to_form/ebus_connection_to_form
+    niżej). Sekretne pola (klucz integracji Satela, Tuya Cloud Access
+    Secret) NIE są tu NIGDY zwracane w jawnej postaci - tylko flaga
+    `*_set`, czy są w ogóle ustawione, żeby nie wyciekały przez GET do
+    każdego w sieci LAN (w odróżnieniu od np. local_key urządzeń Tuya w
+    /api/plugins/tuya/devices - tam ryzyko jest dużo mniejsze niż tu, bo
+    klucz integracji Satela pozwala rozbroić fizyczny system alarmowy)."""
     satel = existing.get("satel", {})
     tuya = existing.get("tuya", {})
     ebus = existing.get("ebus", {})
@@ -976,6 +986,131 @@ def connections_to_form(existing: dict) -> dict:
             "ntfy_topic_url": existing.get("notifications", {}).get("ntfy_topic_url", ""),
         },
     }
+
+
+def validate_satel_connection(form: dict) -> list[str]:
+    """Waliduje formularz sekcji "🔌 Połączenia" na stronie /plugins/satel
+    (host/port/klucze - w odróżnieniu od /api/plugins/satel/fields, który
+    edytuje tylko strefy/wyjścia/partycje/wejścia IP). Interwał odpytywania
+    zostaje na stronie 🧩 Wtyczki (patrz PLUGIN_DEFS), nie tutaj."""
+    errors = []
+    if not (form.get("host") or "").strip():
+        errors.append("Adres IP centrali/modułu ETHM jest wymagany")
+    return errors
+
+
+def satel_connection_to_form(satel_section: dict) -> dict:
+    """Odwrotność build_satel_connection_patch - konwertuje SUROWĄ sekcję
+    `satel` (dokument "config", patrz plugins/satel/routes.py:
+    _get_satel_section) na kształt formularza GET /api/plugins/satel/connection.
+    Klucz integracji/klucz szyfrowania NIGDY nie wracają w jawnej postaci -
+    tylko flaga `*_set`, ten sam wzorzec co connections_to_form()."""
+    return {
+        "host": satel_section.get("host", ""),
+        "port": satel_section.get("port", 7094),
+        "partition": satel_section.get("partition", 1),
+        "integration_key_set": bool(satel_section.get("integration_key")),
+        "encryption_key_set": bool(satel_section.get("encryption_key")),
+        "encryption_enabled": bool(satel_section.get("encryption_enabled")),
+        "virtual_inputs_mode": satel_section.get("virtual_inputs", {}).get("mode", "library"),
+        "virtual_inputs_port": satel_section.get("virtual_inputs", {}).get("port", 8888),
+    }
+
+
+def build_satel_connection_patch(form: dict, existing_satel_section: dict) -> dict:
+    """Buduje NOWĄ sekcję `satel` (do zapisania z powrotem w dokumencie
+    "config") na bazie JUŻ ISTNIEJĄCEJ - nadpisuje TYLKO pola połączenia
+    (host/port/partycja/klucze/tryb wejść IP), zostawiając nietknięte
+    pozostałe klucze tej sekcji (monitored_zones/monitored_outputs/
+    partitions/zone_types/virtual_inputs.inputs i tak są nadpisywane przy
+    starcie z dokumentu "satel_fields" - patrz bridge/config.py:
+    BridgeConfig.load - więc ich obecność/nieobecność tutaj nie ma
+    znaczenia; status_poll_interval_seconds/outputs/fields_file zostają,
+    bo edytuje je inna strona). Odpowiednik build_connections_patch, ale
+    scoped do samej sekcji `satel` zamiast całego config.yaml - węższy zakres
+    = mniejsze ryzyko przypadkowego skasowania czegoś z innej wtyczki (patrz
+    ostrzeżenie w build_connections_patch o Tuya Cloud/HA).
+
+    Pola-sekrety: pusta wartość w formularzu = ZACHOWAJ dotychczasową
+    (formularz nigdy nie dostaje prawdziwego sekretu z powrotem, patrz
+    satel_connection_to_form)."""
+    section = copy.deepcopy(existing_satel_section)
+    section["host"] = (form.get("host") or "").strip()
+    section["port"] = int(form.get("port") or section.get("port") or 7094)
+    section["partition"] = int(form.get("partition") or section.get("partition") or 1)
+    if (form.get("integration_key") or "").strip():
+        section["integration_key"] = form["integration_key"].strip()
+    else:
+        section.setdefault("integration_key", "")
+    if (form.get("encryption_key") or "").strip():
+        section["encryption_key"] = form["encryption_key"].strip()
+    elif form.get("encryption_key_clear"):
+        section["encryption_key"] = None
+    else:
+        section.setdefault("encryption_key", None)
+    section["encryption_enabled"] = bool(form.get("encryption_enabled"))
+    section.setdefault("virtual_inputs", {})
+    vi_mode = form.get("virtual_inputs_mode") or section["virtual_inputs"].get("mode") or "library"
+    section["virtual_inputs"]["mode"] = vi_mode
+    section["virtual_inputs"]["port"] = int(
+        form.get("virtual_inputs_port") or section["virtual_inputs"].get("port") or 8888
+    )
+    section["virtual_inputs"].setdefault(
+        "url_template", "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
+    )
+    section["virtual_inputs"].setdefault("inputs", {})
+    section.setdefault("outputs", {})
+    section.setdefault("fields_file", "satel_fields.yaml")
+    section.setdefault("status_poll_interval_seconds", 3)
+    return section
+
+
+def validate_ebus_connection(form: dict) -> list[str]:
+    """Waliduje formularz sekcji "🔌 Połączenia" na stronie /plugins/ebus
+    (adres/port brokera MQTT/temat stanu - w odróżnieniu od
+    /api/plugins/ebus/sensors, który edytuje listę czujników)."""
+    errors = []
+    if not (form.get("mqtt_host") or "").strip():
+        errors.append("Adres brokera MQTT jest wymagany")
+    return errors
+
+
+def ebus_connection_to_form(ebus_section: dict, boiler_output_section: dict) -> dict:
+    """Odwrotność build_ebus_connection_patch - `topic_prefix` żyje
+    historycznie w config["boiler_output"]["mqtt"]["topic_prefix"], nie w
+    samej sekcji `ebus` (patrz build_ebus_connection_patch)."""
+    return {
+        "mqtt_host": ebus_section.get("mqtt_host", ""),
+        "mqtt_port": ebus_section.get("mqtt_port", 1883),
+        "topic_prefix": boiler_output_section.get("mqtt", {}).get("topic_prefix", "home/boiler"),
+    }
+
+
+def build_ebus_connection_patch(form: dict, existing_config: dict) -> dict:
+    """Buduje NOWY słownik config.yaml na bazie JUŻ ISTNIEJĄCEGO - nadpisuje
+    TYLKO `ebus.mqtt_host`/`mqtt_port` i `boiler_output.mqtt.*` (adres/port
+    są zwierciadlane w obu miejscach - ten sam broker obsługuje odczyt z
+    kotła i publikację jego stanu, patrz analogiczny fragment
+    build_connections_patch), zostawiając nietknięte wszystkie inne sekcje.
+    Zwraca cały config (nie samą sekcję `ebus`), bo dotyka dwóch sekcji na
+    najwyższym poziomie naraz - odpowiednik `_save_ebus_section` w
+    plugins/ebus/routes.py woła to i zapisuje wynik od razu."""
+    config = copy.deepcopy(existing_config)
+    config.setdefault("ebus", {})
+    config["ebus"]["mqtt_host"] = (form.get("mqtt_host") or "").strip()
+    config["ebus"]["mqtt_port"] = int(form.get("mqtt_port") or config["ebus"].get("mqtt_port") or 1883)
+    config["ebus"].setdefault("sensors_file", "sensors.yaml")
+
+    config.setdefault("boiler_output", {})
+    config["boiler_output"].setdefault("mqtt", {})
+    config["boiler_output"]["mqtt"]["host"] = config["ebus"]["mqtt_host"]
+    config["boiler_output"]["mqtt"]["port"] = config["ebus"]["mqtt_port"]
+    config["boiler_output"]["mqtt"]["topic_prefix"] = (
+        (form.get("topic_prefix") or "").strip()
+        or config["boiler_output"]["mqtt"].get("topic_prefix", "home/boiler")
+    )
+    config["boiler_output"].setdefault("tuya_virtual_device", {"device_id": ""})
+    return config
 
 
 def validate_location(form: dict) -> list[str]:
@@ -1227,7 +1362,8 @@ def cloud_devices_to_rows(devices: dict) -> list[dict]:
 def build_satel_fields_dict(form: dict, virtual_input_mode: str = "library") -> dict:
     """Buduje zawartość satel_fields.yaml (strefy/wyjścia/wejścia IP/
     partycje) - używane zarówno przez kreator (razem z build_config_dict),
-    jak i samodzielnie przez panel /config przy każdym zapisie.
+    jak i samodzielnie przez stronę wtyczki Satel (/plugins/satel, patrz
+    plugins/satel/routes.py) przy każdym zapisie.
     `virtual_input_mode` (satel.virtual_inputs.mode) - patrz
     _build_virtual_inputs - decyduje o kształcie "virtual_inputs" niżej."""
     return {
@@ -1254,11 +1390,10 @@ def build_tuya_devices_dict(form: dict) -> dict:
 
 def clean_sensors_payload(payload) -> tuple[list | None, str | None]:
     """Waliduje i normalizuje listę czujników eBUS przesłaną z panelu
-    (`/api/config/sensors` w dashboard/app.py i `/api/plugins/ebus/sensors`
-    w plugins/ebus/routes.py - ten sam kształt danych, więc jedna wspólna
-    funkcja). Walidacja jest celowo minimalna (tylko to, co faktycznie
-    zepsułoby resztę bridge'a przy starcie) - reszta pól ma sensowne
-    wartości domyślne. Zwraca (cleaned, None) albo (None, komunikat_błędu)."""
+    (`/api/plugins/ebus/sensors` w plugins/ebus/routes.py). Walidacja jest
+    celowo minimalna (tylko to, co faktycznie zepsułoby resztę bridge'a
+    przy starcie) - reszta pól ma sensowne wartości domyślne. Zwraca
+    (cleaned, None) albo (None, komunikat_błędu)."""
     if not isinstance(payload, list):
         return None, "Oczekiwano listy czujników w ciele żądania"
 

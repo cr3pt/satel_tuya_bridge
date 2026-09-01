@@ -35,8 +35,8 @@ satel:
   port: 7094
   # Opcjonalny - ustawiony w DLOADX. Bez niego panel działa TYLKO DO ODCZYTU
   # (stany stref/wyjść widoczne, ale (roz)uzbrojenie i sterowanie wyjściami
-  # jest zablokowane z czytelnym komunikatem) - dopisz go później w
-  # ⚙ Ustawienia -> 🔌 Połączenia, żeby odblokować sterowanie.
+  # jest zablokowane z czytelnym komunikatem) - dopisz go później w sekcji
+  # "🔌 Połączenie" na stronie /plugins/satel, żeby odblokować sterowanie.
   integration_key: "TWOJ_KLUCZ_INTEGRACJI"
   # Klucz szyfrowania AES transmisji TCP ("Encrypted connections" w DLOADX)
   # - CAŁKIEM INNY klucz niż integration_key wyżej (to hasło protokołu, nie
@@ -75,9 +75,9 @@ satel:
   # wygenerowanym przez kreator/panel NIE SĄ tutaj - trafiają do osobnych
   # plików satel_fields.yaml i tuya_devices.yaml (analogicznie do
   # sensors.yaml/automations.yaml), edytowalnych z powrotem w przeglądarce
-  # w zakładce "⚙ Ustawienia" (/config, wymaga hasła administratora do
-  # zapisu). Wpisanie ich TUTAJ, bezpośrednio w config.yaml, wciąż działa
-  # (wsteczna zgodność) - patrz bridge/config.py.
+  # na stronach wtyczek (/plugins/satel, /plugins/tuya, wymaga hasła
+  # administratora do zapisu). Wpisanie ich TUTAJ, bezpośrednio w
+  # config.yaml, wciąż działa (wsteczna zgodność) - patrz bridge/config.py.
   virtual_inputs:
     mode: library    # "library" (zalecane) albo "http"
     port: 8888                  # tylko dla mode: http (port TCP/IP ETHM-1 Plus)
@@ -366,7 +366,8 @@ dashboard:
 
   auth:
     # Konto administratora chroniące TYLKO akcje, które coś zmieniają:
-    # zapis konfiguracji czujników (/config) oraz uzbrajanie/rozbrajanie
+    # zapis konfiguracji czujników/stref/urządzeń (/plugins/<id>) oraz
+    # uzbrajanie/rozbrajanie
     # stref. Samo przeglądanie panelu (historia, statusy, dziennik
     # zdarzeń) zostaje otwarte - to świadomy wybór. Oba pola ustawia się
     # normalnie raz w kreatorze (/setup) - ręczna edycja poniżej to tylko
@@ -449,8 +450,8 @@ mqtt_publish:
   # wyżej (ha_mqtt publikuje TYLKO gdy Home Assistant jest włączony, pod
   # jednym wspólnym state_topic_prefix). Domyślnie WŁĄCZONE, jeśli
   # ebus.mqtt_host (broker) jest ustawiony - edytowalne też z panelu,
-  # zakładka 🔌 Połączenia. Temat dla danych z kotła eBUS to osobne pole,
-  # patrz boiler_output.mqtt.topic_prefix niżej (istniało już wcześniej).
+  # strona /plugins/mqtt_publish. Temat dla danych z kotła eBUS to osobne
+  # pole, patrz boiler_output.mqtt.topic_prefix niżej (istniało już wcześniej).
   enabled: true
   topics:
     satel: "satel"   # -> satel/input/<numer>/state, satel/output/<numer>/state, satel/partition/<numer>/state

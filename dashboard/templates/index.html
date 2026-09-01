@@ -278,7 +278,7 @@ function fmtTime(ts) {
 
 // --- Wybór czujników do wykresu (wielokrotny, pogrupowany wg obwodu) ---
 // Grupowanie po drugim segmencie tematu MQTT (ten sam mechanizm co w
-// /config dla wykrywania czujników eBUS) - np. "ebusd/bm/FlowTemp" i
+// /plugins/ebus przy wykrywaniu czujników) - np. "ebusd/bm/FlowTemp" i
 // "ebusd/fha/FlowTemp" trafiają do osobnych grup "bm"/"fha".
 function topicCircuit(topic) {
   const parts = (topic || '').split('/').filter(Boolean);
@@ -290,13 +290,12 @@ let sensorMeta = {};        // nazwa -> {label, mqtt_topic} (z /api/config/senso
 let selectedSensors = new Set();
 
 async function loadSensors() {
-  // /api/config/sensors to "ustawienia" (etykiety/tematy MQTT czujników) -
-  // wymaga zalogowania (patrz dashboard/app.py:
-  // _require_login_for_settings_and_control), w odróżnieniu od
+  // /api/config/sensors to "ustawienia" (etykiety/tematy MQTT czujników,
+  // publiczny odczyt - zapis przeniesiony do /api/plugins/ebus/sensors,
+  // patrz dashboard/app.py: api_config_sensors_get), w odróżnieniu od
   // /api/sensors (same nazwy czujników z historycznymi danymi - część
-  // publicznego podglądu). Niezalogowany widz i tak widzi wykres, tylko z
-  // surowymi nazwami zamiast ładnych etykiet - stąd `r.ok ? ... : []`
-  // zamiast wywalenia całej reszty strony na 401.
+  // publicznego podglądu). `r.ok ? ... : []` to tylko zabezpieczenie na
+  // wypadek chwilowej niedostępności serwera, nie logowania.
   const [names, configured] = await Promise.all([
     fetch('/api/sensors').then(r => r.json()),
     fetch('/api/config/sensors').then(r => r.ok ? r.json() : []),
@@ -481,8 +480,9 @@ async function loadAlertsHistory() {
 }
 
 // Rodzaje czujek/wyjść Satela - ikony/etykiety CZYSTO kosmetyczne (patrz
-// SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES w dashboard/setup.py i config.html,
-// gdzie się je przypisuje nazwie wejścia/wyjścia). Zielone OK/czerwone
+// SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES w dashboard/setup.py i
+// plugins/satel/templates/satel/index.html, gdzie się je przypisuje
+// nazwie wejścia/wyjścia). Zielone OK/czerwone
 // naruszone zostaje jak dotychczas (statusCardClass) - typ dokłada tylko
 // ikonę i etykietę rodzaju, żeby dało się od razu odróżnić np. czujkę dymu
 // od czujki ruchu na liście wejść.
@@ -495,9 +495,9 @@ let satelZoneTypes = {};   // nazwa wejścia -> slug rodzaju (np. "drzwi")
 let satelOutputTypes = {}; // nazwa wyjścia -> slug rodzaju (np. "syrena")
 
 async function loadSatelFieldTypes() {
-  // /api/config/satel-fields (pełne ustawienia, w tym klucz wirtualnych
-  // wejść) teraz wymaga zalogowania - /api/satel/zone-types to jego
-  // publiczny podzbiór (same mapy nazwa -> rodzaj, bez niczego wrażliwego),
+  // /api/plugins/satel/fields (pełne ustawienia, w tym klucz wirtualnych
+  // wejść) wymaga zalogowania - /api/satel/zone-types to jego publiczny
+  // podzbiór (same mapy nazwa -> rodzaj, bez niczego wrażliwego),
   // wystarczający dla samych ikon/etykiet na stronie głównej.
   try {
     const data = await (await fetch('/api/satel/zone-types')).json();

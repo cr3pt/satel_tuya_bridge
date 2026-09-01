@@ -147,17 +147,6 @@ class TestSettingsRequireLogin:
         assert resp.status_code == 200
         assert resp.get_json() == {"zone_types": {}, "output_types": {}}
 
-    def test_config_page_redirects_to_login_without_auth(self, client):
-        resp = client.get("/config", follow_redirects=False)
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
-
-    def test_config_page_loads_when_authenticated_via_session(self, client):
-        login = client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
-        assert login.status_code == 200
-        resp = client.get("/config")
-        assert resp.status_code == 200
-
     def test_plugins_page_redirects_to_login_without_auth(self, client):
         resp = client.get("/plugins", follow_redirects=False)
         assert resp.status_code == 302
@@ -245,7 +234,7 @@ class TestSessionAuthEndpoints:
         (klient testowy Flask trzyma ciasteczka między żądaniami jak
         prawdziwa przeglądarka)."""
         client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
-        resp = client.post("/api/config/sensors", json=[])
+        resp = client.post("/api/plugins/ebus/sensors", json=[])
         assert resp.status_code == 200
 
     def test_logout_clears_session(self, client):
@@ -261,85 +250,8 @@ class TestSessionAuthEndpoints:
     def test_protected_endpoint_still_works_with_basic_auth_fallback(self, client):
         """Basic Auth wciąż działa (skrypty/curl/automatyzacja poza
         przeglądarką) - sesja to dodatek, nie zamiennik."""
-        resp = client.post("/api/config/sensors", json=[], headers=_basic_auth_header("test_haslo_123"))
+        resp = client.post("/api/plugins/ebus/sensors", json=[], headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 200
-
-
-class TestProtectedConfigEndpoint:
-    def test_post_sensors_without_auth_returns_401(self, client):
-        resp = client.post("/api/config/sensors", json=[])
-        assert resp.status_code == 401
-
-    def test_post_sensors_with_correct_auth_succeeds(self, client):
-        payload = [{
-            "name": "test_sensor", "label": "Test", "mqtt_topic": "ebusd/x/y",
-            "targets": {"history": True, "mqtt_publish": False, "tuya_virtual_device": False, "tuya_dp": ""},
-        }]
-        resp = client.post("/api/config/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 200
-        assert resp.get_json()["saved"] == 1
-
-    def test_post_sensors_enqueues_bridge_reload_command(self, client):
-        """Bridge (osobny proces) musi dowiedzieć się o zmianie BEZ ręcznego
-        restartu - panel dokłada komendę 'reload_config' do tej samej
-        kolejki co uzbrojenie/rozbrojenie (patrz dashboard/app.py:
-        _enqueue_bridge_reload, bridge/rules_engine.py: reload_config)."""
-        import dashboard.app as app_module
-
-        client.post("/api/config/sensors", json=[], headers=_basic_auth_header("test_haslo_123"))
-        pending = app_module.history.get_pending_commands()
-        assert any(c["command"] == "reload_config" for c in pending)
-
-    def test_post_sensors_with_wrong_auth_returns_401(self, client):
-        resp = client.post("/api/config/sensors", json=[], headers=_basic_auth_header("złe_hasło"))
-        assert resp.status_code == 401
-
-    def test_post_sensors_validates_required_fields(self, client):
-        payload = [{"name": "", "mqtt_topic": "x", "targets": {}}]
-        resp = client.post("/api/config/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 400
-
-    def test_post_sensors_rejects_duplicate_names(self, client):
-        payload = [
-            {"name": "a", "mqtt_topic": "x", "targets": {}},
-            {"name": "a", "mqtt_topic": "y", "targets": {}},
-        ]
-        resp = client.post("/api/config/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 400
-
-    def test_saved_sensors_persist_and_are_readable(self, client):
-        payload = [{
-            "name": "trwaly_czujnik", "label": "Trwały", "mqtt_topic": "ebusd/a/b",
-            "targets": {"history": True, "mqtt_publish": True, "tuya_virtual_device": False, "tuya_dp": ""},
-        }]
-        client.post("/api/config/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        resp = client.get("/api/config/sensors", headers=_basic_auth_header("test_haslo_123"))
-        names = [s["name"] for s in resp.get_json()]
-        assert "trwaly_czujnik" in names
-
-    def test_mqtt_field_round_trips_for_composite_json_topics(self, client):
-        """mqtt_field - do wyboru pola z tematu ebusd publikującego kilka
-        naraz w trybie --mqttjson (patrz bridge/ebus_client.py:
-        EbusMqttListener._parse_payload)."""
-        payload = [{
-            "name": "temp_podlogowa", "label": "Temp. podłogowa", "mqtt_topic": "ebusd/hc1",
-            "mqtt_field": "TempFloor",
-            "targets": {"history": True, "mqtt_publish": False, "tuya_virtual_device": False, "tuya_dp": ""},
-        }]
-        client.post("/api/config/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        resp = client.get("/api/config/sensors", headers=_basic_auth_header("test_haslo_123"))
-        saved = next(s for s in resp.get_json() if s["name"] == "temp_podlogowa")
-        assert saved["mqtt_field"] == "TempFloor"
-
-    def test_mqtt_field_defaults_to_empty_string(self, client):
-        payload = [{
-            "name": "zwykly_czujnik", "mqtt_topic": "ebusd/bai/FlowTemp",
-            "targets": {"history": True, "mqtt_publish": False, "tuya_virtual_device": False, "tuya_dp": ""},
-        }]
-        client.post("/api/config/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        resp = client.get("/api/config/sensors", headers=_basic_auth_header("test_haslo_123"))
-        saved = next(s for s in resp.get_json() if s["name"] == "zwykly_czujnik")
-        assert saved["mqtt_field"] == ""
 
 
 class TestProtectedArmDisarmEndpoints:
@@ -678,7 +590,7 @@ class TestAutomationContextEndpoint:
         ściemniaczem (type == "dimmer") - "gniazdko" z CONFIG_TEMPLATE jest
         zwykłym gniazdkiem (type domyślny), więc nie powinno się tu pojawić."""
         client.post(
-            "/api/config/tuya-devices",
+            "/api/plugins/tuya/devices",
             json={"tuya_devices": [
                 {"name": "lampa_scienna", "id": "dimmer1", "ip": "1.2.3.9", "local_key": "k9",
                  "type": "dimmer", "dimmer_dp": "3"},
@@ -797,265 +709,6 @@ class TestAutomationsEndpoint:
         client.post("/api/config/automations", json=payload, headers=_basic_auth_header("test_haslo_123"))
         after = app_module.config_store.get("config")
         assert before == after
-
-
-class TestSatelFieldsEndpoint:
-    def test_get_satel_fields_requires_auth(self, client):
-        assert client.get("/api/config/satel-fields").status_code == 401
-
-    def test_get_satel_fields_reads_inline_values_when_no_fields_file(self, client):
-        """CONFIG_TEMPLATE ma strefy/wyjścia/wejścia wpisane wprost - bez
-        satel_fields.yaml na dysku - i to musi działać (wsteczna zgodność,
-        patrz bridge/config.py)."""
-        data = client.get("/api/config/satel-fields", headers=_basic_auth_header("test_haslo_123")).get_json()
-        assert {"name": "Dom", "number": 1} in data["partitions"]
-        assert {"name": "Salon", "number": 12, "type": ""} in data["monitored_zones"]
-        assert {"name": "Syrena", "number": 1, "type": ""} in data["monitored_outputs"]
-        assert {"name": "motion_hall", "number": 1, "key": "k"} in data["virtual_inputs"]
-        assert data["zone_types"] == {}
-        assert data["output_types"] == {}
-
-    def test_post_satel_fields_without_auth_returns_401(self, client):
-        resp = client.post("/api/config/satel-fields", json={})
-        assert resp.status_code == 401
-
-    def test_post_satel_fields_with_correct_auth_saves(self, client):
-        payload = {
-            "partitions": [{"name": "Dom", "number": "1"}],
-            "monitored_zones": [{"name": "Kuchnia", "number": "20"}],
-            "monitored_outputs": [],
-            "virtual_inputs": [{"name": "vi1", "number": "3", "key": "K"}],
-        }
-        resp = client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 200
-        assert resp.get_json()["saved"]["monitored_zones"] == 1
-
-    def test_post_satel_fields_enqueues_bridge_reload_command(self, client):
-        import dashboard.app as app_module
-
-        client.post("/api/config/satel-fields", json={}, headers=_basic_auth_header("test_haslo_123"))
-        pending = app_module.history.get_pending_commands()
-        assert any(c["command"] == "reload_config" for c in pending)
-
-    def test_post_satel_fields_validates_incomplete_virtual_input(self, client):
-        payload = {"virtual_inputs": [{"name": "x", "number": "", "key": ""}]}
-        resp = client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 400
-
-    def test_saved_satel_fields_persist_and_are_readable(self, client, tmp_path):
-        payload = {
-            "partitions": [{"name": "Piwnica", "number": "9"}],
-            "monitored_zones": [], "monitored_outputs": [], "virtual_inputs": [],
-        }
-        client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        resp = client.get("/api/config/satel-fields", headers=_basic_auth_header("test_haslo_123"))
-        assert {"name": "Piwnica", "number": 9} in resp.get_json()["partitions"]
-
-    def test_saved_zone_and_output_types_round_trip(self, client):
-        """Rodzaj czujki/wyjścia (patrz SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES w
-        setup.py) - kosmetyczny atrybut do ikon w panelu głównym - musi
-        przetrwać zapis/odczyt tak samo jak nazwa/numer."""
-        payload = {
-            "monitored_zones": [{"name": "Kuchnia", "number": "20", "type": "dym"}],
-            "monitored_outputs": [{"name": "Syrena zew.", "number": "2", "type": "syrena"}],
-        }
-        client.post("/api/config/satel-fields", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        data = client.get("/api/config/satel-fields", headers=_basic_auth_header("test_haslo_123")).get_json()
-        assert {"name": "Kuchnia", "number": 20, "type": "dym"} in data["monitored_zones"]
-        assert {"name": "Syrena zew.", "number": 2, "type": "syrena"} in data["monitored_outputs"]
-        assert data["zone_types"] == {"Kuchnia": "dym"}
-        assert data["output_types"] == {"Syrena zew.": "syrena"}
-
-    def test_post_satel_fields_does_not_touch_config_document(self, client):
-        import dashboard.app as app_module
-
-        before = app_module.config_store.get("config")
-        client.post(
-            "/api/config/satel-fields",
-            json={"partitions": [{"name": "X", "number": "1"}]},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
-        after = app_module.config_store.get("config")
-        assert before == after
-
-
-class TestTuyaDevicesEndpoint:
-    def test_get_tuya_devices_requires_auth(self, client):
-        assert client.get("/api/config/tuya-devices").status_code == 401
-
-    def test_get_tuya_devices_reads_inline_values_when_no_devices_file(self, client):
-        data = client.get("/api/config/tuya-devices", headers=_basic_auth_header("test_haslo_123")).get_json()
-        assert any(d["name"] == "gniazdko" and d["ip"] == "1.2.3.4" for d in data["devices"])
-
-    def test_post_tuya_devices_without_auth_returns_401(self, client):
-        resp = client.post("/api/config/tuya-devices", json={"tuya_devices": []})
-        assert resp.status_code == 401
-
-    def test_post_tuya_devices_with_correct_auth_saves(self, client):
-        payload = {"tuya_devices": [
-            {"name": "nowe", "id": "d2", "ip": "1.2.3.5", "local_key": "k2", "type": "socket"},
-        ]}
-        resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 200
-        assert resp.get_json()["saved"] == 1
-
-    def test_post_tuya_devices_enqueues_bridge_reload_command(self, client):
-        import dashboard.app as app_module
-
-        client.post("/api/config/tuya-devices", json={"tuya_devices": []}, headers=_basic_auth_header("test_haslo_123"))
-        pending = app_module.history.get_pending_commands()
-        assert any(c["command"] == "reload_config" for c in pending)
-
-    def test_post_tuya_devices_validates_incomplete_device(self, client):
-        payload = {"tuya_devices": [{"name": "x", "id": "", "ip": "1.2.3.4", "local_key": "k"}]}
-        resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 400
-
-    def test_saved_tuya_devices_persist_and_are_readable(self, client):
-        import dashboard.app as app_module
-
-        payload = {"tuya_devices": [
-            {"name": "trwale", "id": "d3", "ip": "1.2.3.6", "local_key": "k3", "type": "socket"},
-        ]}
-        client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        resp = client.get("/api/config/tuya-devices", headers=_basic_auth_header("test_haslo_123"))
-        assert any(d["name"] == "trwale" for d in resp.get_json()["devices"])
-        assert "trwale" in app_module.config_store.get("tuya_devices")["devices"]
-
-    def test_saved_zigbee_gateway_and_sub_device_round_trip(self, client):
-        """Bramka Zigbee + podurządzenie wskazujące na nią (pole "gateway")
-        - patrz TuyaLocalController w bridge/tuya_local.py. Podurządzenie
-        NIE ma własnego ip/local_key, dostaje za to gateway/cid."""
-        payload = {
-            "tuya_devices": [
-                {"name": "gniazdko", "id": "d1", "ip": "1.2.3.4", "local_key": "k", "type": "socket"},
-                {"name": "lampka_zigbee", "id": "sub1", "gateway": "brama_salon", "cid": "node1", "type": "socket"},
-            ],
-            "zigbee_gateways": [
-                {"name": "brama_salon", "id": "gw1", "ip": "1.2.3.9", "local_key": "gwkey", "version": "3.4"},
-            ],
-        }
-        resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 200
-
-        data = client.get("/api/config/tuya-devices", headers=_basic_auth_header("test_haslo_123")).get_json()
-        assert {
-            "name": "lampka_zigbee", "id": "sub1", "gateway": "brama_salon", "cid": "node1",
-            "type": "socket", "ip": "", "local_key": "", "dimmer_dp": "",
-        } in data["devices"]
-        assert {"name": "brama_salon", "id": "gw1", "ip": "1.2.3.9", "local_key": "gwkey", "version": 3.4} \
-            in data["zigbee_gateways"]
-
-    def test_post_tuya_devices_rejects_sub_device_with_unknown_gateway(self, client):
-        payload = {"tuya_devices": [{"name": "lampka", "id": "sub1", "gateway": "brama_nieznana"}]}
-        resp = client.post("/api/config/tuya-devices", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 400
-
-    def test_post_tuya_devices_does_not_touch_config_document(self, client):
-        import dashboard.app as app_module
-
-        before = app_module.config_store.get("config")
-        client.post(
-            "/api/config/tuya-devices",
-            json={"tuya_devices": [{"name": "x", "id": "i", "ip": "1.2.3.4", "local_key": "k"}]},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
-        after = app_module.config_store.get("config")
-        assert before == after
-
-    def test_post_tuya_devices_preserves_cloud_devices(self, client):
-        """Zapis stąd (urządzenia lokalne) nie może skasować urządzeń
-        chmurowych zapisanych z zakładki Tuya Cloud (współdzielony
-        dokument ConfigStore "tuya_devices") - patrz
-        plugins/tuya_cloud/routes.py."""
-        client.post(
-            "/api/plugins/tuya_cloud/devices",
-            json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
-        client.post(
-            "/api/config/tuya-devices",
-            json={"tuya_devices": [{"name": "x", "id": "i", "ip": "1.2.3.4", "local_key": "k"}]},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
-        cloud_after = client.get(
-            "/api/plugins/tuya_cloud/devices", headers=_basic_auth_header("test_haslo_123"),
-        ).get_json()
-        assert any(d["name"] == "lampa_taras" for d in cloud_after["devices"])
-
-
-class TestConnectionsEndpoint:
-    """Zakładka "Połączenia" - jedyne miejsce do zmiany host/port/kluczy/
-    tematów MQTT PO pierwszej konfiguracji (patrz dashboard/setup.py:
-    build_connections_patch/connections_to_form). W ODRÓŻNIENIU od reszty
-    /api/config/* - odczyt TEŻ wymaga hasła (zwraca informacje o tym, czy
-    sekrety Satela/Tuya Cloud są ustawione)."""
-
-    def test_get_without_auth_returns_401(self, client):
-        assert client.get("/api/config/connections").status_code == 401
-
-    def test_get_with_auth_returns_current_values(self, client):
-        resp = client.get("/api/config/connections", headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["satel"]["host"] == "127.0.0.1"
-        assert data["satel"]["integration_key_set"] is True
-        assert data["ebus"]["mqtt_host"] == "127.0.0.1"
-
-    def test_get_never_leaks_integration_key(self, client):
-        resp = client.get("/api/config/connections", headers=_basic_auth_header("test_haslo_123"))
-        assert '"x"' not in resp.get_data(as_text=True)  # "x" to integration_key w CONFIG_TEMPLATE
-
-    def test_post_without_auth_returns_401(self, client):
-        resp = client.post("/api/config/connections", json={})
-        assert resp.status_code == 401
-
-    def test_post_updates_satel_host(self, client):
-        import dashboard.app as app_module
-
-        payload = {"satel": {"host": "10.0.0.9", "port": "7094"}, "ebus": {"mqtt_host": "127.0.0.1"}}
-        resp = client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 200
-        saved = app_module.config_store.get("config")
-        assert saved["satel"]["host"] == "10.0.0.9"
-
-    def test_post_blank_integration_key_preserves_existing_secret(self, client):
-        import dashboard.app as app_module
-
-        payload = {
-            "satel": {"host": "127.0.0.1", "port": "7094", "integration_key": ""},
-            "ebus": {"mqtt_host": "127.0.0.1"},
-        }
-        client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        saved = app_module.config_store.get("config")
-        assert saved["satel"]["integration_key"] == "x"  # niezmieniony, patrz CONFIG_TEMPLATE
-
-    def test_post_validates_missing_satel_host(self, client):
-        payload = {"satel": {"host": ""}, "ebus": {"mqtt_host": "127.0.0.1"}}
-        resp = client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 400
-
-    def test_post_preserves_other_config_sections(self, client):
-        """reguły_ruchu i inne sekcje spoza formularza połączeń nie mogą
-        zniknąć po zapisie (patrz build_connections_patch)."""
-        import dashboard.app as app_module
-
-        payload = {"satel": {"host": "10.0.0.9"}, "ebus": {"mqtt_host": "127.0.0.1"}}
-        client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        saved = app_module.config_store.get("config")
-        assert saved["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"
-        assert saved["dashboard"]["auth"]["password_hash"]
-
-    def test_post_sets_custom_mqtt_publish_topics(self, client):
-        import dashboard.app as app_module
-
-        payload = {
-            "satel": {"host": "127.0.0.1"}, "ebus": {"mqtt_host": "127.0.0.1"},
-            "mqtt_publish": {"enabled": True, "satel_topic": "alarm", "tuya_topic": "smart_home"},
-        }
-        client.post("/api/config/connections", json=payload, headers=_basic_auth_header("test_haslo_123"))
-        saved = app_module.config_store.get("config")
-        assert saved["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home"}
 
 
 class TestLocationEndpoint:
@@ -1312,37 +965,14 @@ class TestPluginsEndpoint:
 
 
 class TestDiscoveryEndpoints:
-    """POST /api/discover/ebus i /api/discover/tuya - publiczne (tylko
-    odczyt sieci), wykrywanie samo w sobie zamockowane (bridge/ebus_client.py
-    i bridge/tuya_local.py mają własne testy jednostkowe z fake'ami -
-    tutaj sprawdzamy tylko routing/obsługę błędów na poziomie endpointu)."""
-
-    def test_discover_ebus_requires_auth(self, client, monkeypatch):
-        monkeypatch.setattr("dashboard.app.discover_ebus_topics", lambda host, port: ["ebusd/bai/FlowTemp"])
-        assert client.post("/api/discover/ebus", json={}).status_code == 401
-        resp = client.post("/api/discover/ebus", json={}, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 200
-        assert resp.get_json()["topics"] == ["ebusd/bai/FlowTemp"]
-
-    def test_discover_ebus_uses_configured_mqtt_host_by_default(self, client, monkeypatch):
-        captured = {}
-
-        def fake_discover(host, port):
-            captured["host"] = host
-            captured["port"] = port
-            return []
-
-        monkeypatch.setattr("dashboard.app.discover_ebus_topics", fake_discover)
-        client.post("/api/discover/ebus", json={}, headers=_basic_auth_header("test_haslo_123"))
-        assert captured["host"] == "127.0.0.1"
-
-    def test_discover_ebus_connection_error_returns_502(self, client, monkeypatch):
-        def raise_connection_error(host, port):
-            raise ConnectionError("nie udało się połączyć")
-
-        monkeypatch.setattr("dashboard.app.discover_ebus_topics", raise_connection_error)
-        resp = client.post("/api/discover/ebus", json={}, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 502
+    """POST /api/discover/tuya - publiczny (tylko odczyt sieci), wykrywanie
+    samo w sobie zamockowane (bridge/tuya_local.py ma własne testy
+    jednostkowe z fake'ami - tutaj sprawdzamy tylko routing/obsługę błędów
+    na poziomie endpointu). Odpowiednik dla eBUS
+    (/api/plugins/ebus/discover*) ma własne testy w
+    tests/test_plugin_routes.py::TestEbusPluginPage - dawne
+    /api/discover/ebus* (blokujące i w tle) zostały usunięte jako
+    zdublowane/martwe (config.html, jedyny ich odbiorca, też usunięty)."""
 
     def test_discover_tuya_no_auth_required(self, client, monkeypatch):
         monkeypatch.setattr("dashboard.app.scan_tuya_network", lambda: [{"id": "d1", "ip": "1.2.3.4", "version": "3.4"}])
@@ -1357,98 +987,6 @@ class TestDiscoveryEndpoints:
         monkeypatch.setattr("dashboard.app.scan_tuya_network", raise_error)
         resp = client.post("/api/discover/tuya", json={})
         assert resp.status_code == 502
-
-
-class TestBackgroundEbusDiscoveryEndpoints:
-    """/api/discover/ebus/start|status|stop - nasłuch MQTT ebusd W TLE (do
-    kilku minut), w odróżnieniu od /api/discover/ebus (blokujące ~4s).
-    Logika samego nasłuchu ma własne testy w test_ebus_client.py - tutaj
-    tylko routing/obsługa błędów na poziomie endpointu (podmieniamy metody
-    singletona _ebus_background_discovery na fake'i)."""
-
-    def test_start_requires_auth(self, client, monkeypatch):
-        import dashboard.app as app_module
-
-        monkeypatch.setattr(app_module._ebus_background_discovery, "start", lambda *a, **kw: None)
-        monkeypatch.setattr(
-            app_module._ebus_background_discovery, "status",
-            lambda: {"running": True, "topics": [], "elapsed_seconds": 0, "duration_seconds": 300},
-        )
-        assert client.post("/api/discover/ebus/start", json={}).status_code == 401
-        resp = client.post("/api/discover/ebus/start", json={}, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 200
-        assert resp.get_json()["running"] is True
-
-    def test_start_uses_configured_mqtt_host_by_default(self, client, monkeypatch):
-        import dashboard.app as app_module
-
-        captured = {}
-        monkeypatch.setattr(
-            app_module._ebus_background_discovery, "start",
-            lambda host, port, duration_seconds=300.0: captured.update(host=host, port=port),
-        )
-        monkeypatch.setattr(app_module._ebus_background_discovery, "status", lambda: {})
-        client.post("/api/discover/ebus/start", json={}, headers=_basic_auth_header("test_haslo_123"))
-        assert captured["host"] == "127.0.0.1"
-
-    def test_start_connection_error_returns_502(self, client, monkeypatch):
-        import dashboard.app as app_module
-
-        def raise_connection_error(*a, **kw):
-            raise ConnectionError("nie udało się połączyć")
-
-        monkeypatch.setattr(app_module._ebus_background_discovery, "start", raise_connection_error)
-        resp = client.post("/api/discover/ebus/start", json={}, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 502
-
-    def test_start_while_already_running_returns_409(self, client, monkeypatch):
-        import dashboard.app as app_module
-
-        def raise_running(*a, **kw):
-            raise RuntimeError("Nasłuch już trwa")
-
-        monkeypatch.setattr(app_module._ebus_background_discovery, "start", raise_running)
-        resp = client.post("/api/discover/ebus/start", json={}, headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 409
-
-    def test_duration_seconds_is_capped(self, client, monkeypatch):
-        import dashboard.app as app_module
-
-        captured = {}
-        monkeypatch.setattr(
-            app_module._ebus_background_discovery, "start",
-            lambda host, port, duration_seconds=300.0: captured.update(duration_seconds=duration_seconds),
-        )
-        monkeypatch.setattr(app_module._ebus_background_discovery, "status", lambda: {})
-        client.post(
-            "/api/discover/ebus/start", json={"duration_seconds": 99999},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
-        assert captured["duration_seconds"] == 600
-
-    def test_status_requires_auth(self, client, monkeypatch):
-        import dashboard.app as app_module
-
-        monkeypatch.setattr(
-            app_module._ebus_background_discovery, "status",
-            lambda: {"running": True, "topics": ["ebusd/bai/FlowTemp"], "elapsed_seconds": 5, "duration_seconds": 300},
-        )
-        assert client.get("/api/discover/ebus/status").status_code == 401
-        resp = client.get("/api/discover/ebus/status", headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 200
-        assert resp.get_json()["topics"] == ["ebusd/bai/FlowTemp"]
-
-    def test_stop_requires_auth(self, client, monkeypatch):
-        import dashboard.app as app_module
-
-        monkeypatch.setattr(
-            app_module._ebus_background_discovery, "stop",
-            lambda: {"running": False, "topics": [], "elapsed_seconds": 5, "duration_seconds": 300},
-        )
-        assert client.post("/api/discover/ebus/stop").status_code == 401
-        resp = client.post("/api/discover/ebus/stop", headers=_basic_auth_header("test_haslo_123"))
-        assert resp.status_code == 200
-        assert resp.get_json()["running"] is False
 
 
 class TestSatelConnectionTestEndpoint:

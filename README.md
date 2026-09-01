@@ -456,7 +456,7 @@ MQTT dane pole jest publikowane, sprawdź konfigurację MQTT ebusd (domyślnie
 ruch bezpośrednio: `mosquitto_sub -h 127.0.0.1 -t 'ebusd/#' -v`.
 
 Dokładnie to ostatnie (podsłuchanie ruchu MQTT) robi automatycznie
-przycisk **"🔍 Rozpocznij nasłuch"** w zakładce ⚙ Ustawienia (`/config`) -
+przycisk **"🔍 Rozpocznij nasłuch"** na stronie `/plugins/ebus` -
 wygodna podpowiedź w przeglądarce zamiast SSH + `mosquitto_sub`. Nasłuch
 działa **w tle do 5 minut** (żądanie wraca od razu, wykryte tematy
 dopisują się na bieżąco jako nowe wiersze w miarę wykrywania - nie trzeba
@@ -470,8 +470,8 @@ find -d` daje pełniejszy, ale ręczny obraz.
 
 Dwie równoważne drogi - wybierz wygodniejszą:
 
-**A) Panel webowy** (`/config` - link "⚙ Ustawienia czujników eBUS" w
-górnym pasku panelu głównego): tabela z listą czujników, gdzie każdy ma
+**A) Panel webowy** (`/plugins/ebus` - link "⚙ Konfiguruj" na karcie eBUS
+w zakładce 🧩 Wtyczki): tabela z listą czujników, gdzie każdy ma
 trzy niezależne przełączniki (Historia / MQTT / Tuya) i pole na kod DP.
 Można dodawać/usuwać czujniki bez dotykania pliku ręcznie. **Zmiany
 działają automatycznie w ciągu ok. 1-2s, bez restartu bridge'a** (patrz
@@ -656,10 +656,13 @@ python -m dashboard.app --config config.db --port 8090
 
 Panel dostępny pod `http://<adres-rpi>:8090/` - **wymaga zalogowania od
 razu, przed zobaczeniem czegokolwiek** (patrz sekcja "Bezpieczeństwo
-panelu" niżej). Dwie zakładki dostępne z górnego paska: **⚙ Ustawienia**
-(`/config` - czujniki eBUS, pola Satela, urządzenia Tuya, patrz niżej) i
+panelu" niżej). Rozwijane menu **⚙ Ustawienia** w górnym pasku zbiera
+**🧩 Wtyczki** (`/plugins` - własna strona KAŻDEJ integracji: host/port/
+klucze razem z czujnikami/strefami/urządzeniami, patrz niżej),
 **🎬 Automatyzacje** (`/automations` - sceny/reguły ruchu/harmonogramy/
-eskalacja/symulacja obecności, patrz sekcja "Automatyzacje" niżej).
+eskalacja/symulacja obecności/lokalizacja, patrz sekcja "Automatyzacje"
+niżej) i **⚙ Ogólne** (`/system` - konta administratorskie, logi, restart,
+kopia zapasowa).
 
 ### Wykres historii - wybór wielu czujników naraz
 
@@ -668,9 +671,9 @@ czujników, które mają choć jeden zapisany odczyt (tylko liczbowe czujniki
 eBUS - Satel/Tuya mają na razie tylko status na żywo, bez historii do
 wykresu). Lista jest:
 
-- **pogrupowana wg obwodu** - ten sam mechanizm co grupowanie w `/config`
-  (drugi segment tematu MQTT, np. `ebusd/bm/...` i `ebusd/fha/...` trafiają
-  do osobnych grup "bm"/"fha"),
+- **pogrupowana wg obwodu** - ten sam mechanizm co grupowanie w
+  `/plugins/ebus` (drugi segment tematu MQTT, np. `ebusd/bm/...` i
+  `ebusd/fha/...` trafiają do osobnych grup "bm"/"fha"),
 - **filtrowalna** - pole tekstowe nad listą filtruje po nazwie/etykiecie,
 - **wielokrotnego wyboru** - zaznacz kilka czujników naraz, żeby nałożyć
   je na jednym wykresie (np. porównać temperaturę zasilania i powrotu) -
@@ -680,47 +683,58 @@ Wybór zapamiętywany jest tylko w pamięci karty przeglądarki (jak reszta
 stanu UI) - znika przy odświeżeniu strony, przy starcie domyślnie
 zaznaczony jest pierwszy czujnik na liście.
 
-### Zakładka ⚙ Ustawienia - eBUS, Satel, Tuya bez edycji YAML-a
+### Zakładka 🧩 Wtyczki - eBUS, Satel, Tuya bez edycji YAML-a
 
-Trzy sekcje na jednej stronie (`/config`), każda z własnym przyciskiem
-zapisu (osobny plik na sekcję - patrz "Automatyzacje" niżej po wyjaśnienie
-tego wzorca):
+Każda integracja ma **własną stronę** pod `/plugins/<id>` (link
+"⚙ Konfiguruj" z przeglądu `/plugins`, patrz sekcja "Zakładka 🧩 Wtyczki -
+jeden przegląd wszystkich integracji" niżej) - host/port/klucze POŁĄCZENIA
+i lista czujników/stref/urządzeń tej integracji żyją teraz na TEJ SAMEJ
+stronie (osobne sekcje, osobne przyciski zapisu - dawna wspólna zakładka
+"⚙ Ustawienia"/"🔌 Połączenia" została rozdzielona, żeby konfiguracja
+każdej integracji była w jednym, oczywistym miejscu):
 
-- **Czujniki eBUS** (`sensors.yaml`) - jak dotychczas, plus przycisk
-  **"🔍 Wykryj czujniki"**: nasłuchuje ok. 4 sekundy na skonfigurowanym
-  brokerze MQTT (`ebus.mqtt_host`) i dopisuje wiersz dla każdego tematu, na
+- **`/plugins/ebus`** - sekcja "🔌 Połączenie" (adres/port brokera MQTT
+  `ebusd`, temat publikacji stanu kotła) i sekcja "Czujniki" (`sensors.yaml`)
+  z przyciskiem **"🔍 Rozpocznij nasłuch"**: nasłuchuje w tle do 5 minut na
+  skonfigurowanym brokerze MQTT i dopisuje wiersz dla każdego tematu, na
   który `ebusd` w tym czasie coś opublikował - **to podpowiedź, nie pełna
   lista pól** (rzadziej publikowane pola mogą się nie pojawić za pierwszym
   razem - kliknij ponownie albo dodaj ręcznie, patrz "Jak znaleźć listę
   dostępnych pól" niżej).
-- **Satel - strefy/wyjścia/wejścia IP/partycje** (`satel_fields.yaml`) -
-  przycisk **"🔍 Wykryj aktywne strefy/wyjścia"** (jak w kreatorze): protokół
-  integracji Satela nie udostępnia listy WSZYSTKICH skonfigurowanych
+- **`/plugins/satel`** - sekcja "🔌 Połączenie" (host/port centrali, klucz
+  integracji - opcjonalny, patrz "Panel tylko do odczytu bez klucza
+  integracji" niżej - klucz/tryb szyfrowania, tryb wirtualnych wejść IP) i
+  sekcja "Strefy, wyjścia, wejścia IP, partycje" (`satel_fields.yaml`) z
+  przyciskiem **"🔍 Wykryj aktywne strefy/wyjścia"** (jak w kreatorze):
+  protokół integracji Satela nie udostępnia listy WSZYSTKICH skonfigurowanych
   stref/wyjść wraz z nazwami (ograniczenie protokołu, nie da się tego
   obejść), więc przycisk nasłuchuje 30 sekund i notuje numery, które w tym
   czasie FIZYCZNIE zmienią stan (otwórz/zamknij drzwi i okna, wywołaj
   czujki ruchu, załącz wyjście) - dodaje je jako nowe wiersze niżej, nadaj
   im nazwę i zapisz. Strefy, które nie zmienią stanu w tym oknie, trzeba
   dodać ręcznie (numer z DLOADX) - host/port centrali brane są automatycznie
-  z zapisanego już `config.yaml` (nie trzeba ich przepisywać z zakładki
-  "Połączenia"). Każda strefa/wyjście ma dodatkowo **opcjonalny "rodzaj"**
-  (np. drzwi/okno/ruch/dym/zalanie/wibracja/sabotaż dla wejść, syrena/
-  przekaźnik/oświetlenie/brama/ogrzewanie dla wyjść) - czysto opisowy,
-  dokłada tylko ikonę i etykietę rodzaju na panelu głównym (zielone
-  OK/czerwone naruszone zostaje bez zmian niezależnie od wybranego rodzaju).
-- **Urządzenia Tuya** (`tuya_devices.yaml`) - przycisk
-  **"🔍 Skanuj sieć"** wywołuje broadcast UDP w LAN (`tinytuya.deviceScan`,
-  ok. 18 sekund) i podpowiada ID + adres IP znalezionych urządzeń. **Nie
-  podpowiada `local_key`** - Tuya świadomie go nie rozgłasza, trzeba go
-  wyciągnąć osobno (`python -m tinytuya wizard`). Sekcja **"🐝 Bramki
-  Zigbee"** w tym samym panelu pozwala dodać czujniki/przełączniki Zigbee
-  podpięte pod bramkę Tuya (np. Tuya Zigbee Gateway/Hub) - patrz "Urządzenia
-  Zigbee przez bramkę Tuya" niżej. Każde skonfigurowane urządzenie od razu
-  dostaje kartę na stronie głównej (nie dopiero po pierwszym udanym
-  odpytaniu) - jeśli akurat nie odpowiada (zły `local_key`/IP/wersja
-  protokołu, urządzenie offline), karta zostaje widoczna z wartością
-  "niedostępne" zamiast całkiem zniknąć, więc od razu widać, że urządzenie
-  JEST skonfigurowane, tylko coś jest z nim nie tak.
+  z zapisanego już `config.yaml` (nie trzeba ich przepisywać z sekcji
+  "Połączenie" wyżej). Każda strefa/wyjście ma dodatkowo **opcjonalny
+  "rodzaj"** (np. drzwi/okno/ruch/dym/zalanie/wibracja/sabotaż dla wejść,
+  syrena/przekaźnik/oświetlenie/brama/ogrzewanie dla wyjść) - czysto
+  opisowy, dokłada tylko ikonę i etykietę rodzaju na panelu głównym
+  (zielone OK/czerwone naruszone zostaje bez zmian niezależnie od
+  wybranego rodzaju).
+- **`/plugins/tuya`** - urządzenia lokalne (`tuya_devices.yaml`) z
+  przyciskiem **"🔍 Skanuj sieć"**, który wywołuje broadcast UDP w LAN
+  (`tinytuya.deviceScan`, ok. 18 sekund) i podpowiada ID + adres IP
+  znalezionych urządzeń. **Nie podpowiada `local_key`** - Tuya świadomie
+  go nie rozgłasza, trzeba go wyciągnąć osobno (`python -m tinytuya
+  wizard`) albo zaimportować razem z poświadczeniami z zakładki
+  `/plugins/tuya_cloud`. Sekcja **"🐝 Bramki Zigbee"** w tym samym panelu
+  pozwala dodać czujniki/przełączniki Zigbee podpięte pod bramkę Tuya (np.
+  Tuya Zigbee Gateway/Hub) - patrz "Urządzenia Zigbee przez bramkę Tuya"
+  niżej. Każde skonfigurowane urządzenie od razu dostaje kartę na stronie
+  głównej (nie dopiero po pierwszym udanym odpytaniu) - jeśli akurat nie
+  odpowiada (zły `local_key`/IP/wersja protokołu, urządzenie offline),
+  karta zostaje widoczna z wartością "niedostępne" zamiast całkiem
+  zniknąć, więc od razu widać, że urządzenie JEST skonfigurowane, tylko
+  coś jest z nim nie tak.
 
 Każde pole zaczyna jako **nieaktywne** (nie ma go w konfiguracji), dopóki
 nie uzupełnisz wiersza (po odkryciu albo ręcznie) i nie klikniesz "Zapisz"
@@ -736,16 +750,18 @@ sprzątane z bazy (`HistoryStore.prune_status`). Wcześniej taki "osierocony"
 wpis zostawał w bazie na zawsze i strona główna pokazywała więcej
 wejść/wyjść/urządzeń, niż faktycznie jest w konfiguracji.
 
-Zakładka **🔌 Połączenia** ma dodatkowo przycisk **"🔄 Zrestartuj bridge i
-panel teraz"** - w odróżnieniu od reszty tej strony (patrz wyżej: zmiany
-wchodzą w życie automatycznie bez restartu), zmiany host/port/kluczy/
-brokerów MQTT w TEJ zakładce wymagają pełnego restartu procesu (żywe
-połączenia TCP nie są odtwarzane w locie). Przycisk restartuje OBA
-kontenery Dockera (`docker-compose.yml` ma dla obu `restart: unless-stopped`
-- proces po prostu kończy się, Docker sam go podnosi ponownie) - bez
-potrzeby dostępu do konsoli/SSH. Uruchomienie bez Dockera (`python main.py`
-w tle/systemd) NIE ma tego automatycznego podniesienia - proces po prostu
-się zakończy, trzeba go wystartować ręcznie/przez systemd.
+Zakładka **⚙ Ogólne** (`/system`) ma sekcję **"🛠 Restart i kopia
+zapasowa"** z przyciskiem **"🔄 Zrestartuj bridge i panel teraz"** - w
+odróżnieniu od reszty pól opisanych wyżej (zmiany wchodzą w życie
+automatycznie bez restartu), zmiany host/port/kluczy/brokerów MQTT w
+sekcjach "🔌 Połączenie" poszczególnych wtyczek wymagają pełnego restartu
+procesu (żywe połączenia TCP nie są odtwarzane w locie). Przycisk
+restartuje OBA kontenery Dockera (`docker-compose.yml` ma dla obu
+`restart: unless-stopped` - proces po prostu kończy się, Docker sam go
+podnosi ponownie) - bez potrzeby dostępu do konsoli/SSH. Uruchomienie bez
+Dockera (`python main.py` w tle/systemd) NIE ma tego automatycznego
+podniesienia - proces po prostu się zakończy, trzeba go wystartować
+ręcznie/przez systemd.
 
 Czujniki eBUS są dodatkowo **pogrupowane w tabeli wg drugiego segmentu
 tematu MQTT** (np. `ebusd/bm/FlowTemp` i `ebusd/fha/FlowTemp` trafiają do
@@ -767,7 +783,7 @@ Zigbee sprzedawane pod marką Tuya/Smart Life). Bridge obsługuje je lokalnie
 - ruch idzie przez jej połączenie TCP (biblioteka `tinytuya`, ten sam
 mechanizm co Home Assistant).
 
-**Jak dodać (zakładka ⚙ Ustawienia → Urządzenia Tuya):**
+**Jak dodać (zakładka 🧩 Wtyczki → 🔌 Urządzenia Tuya, `/plugins/tuya`):**
 
 1. W sekcji **"🐝 Bramki Zigbee"** dodaj samą bramkę - potrzebuje własnego
    `id`/adresu IP/`local_key`, dokładnie tak jak zwykłe urządzenie WiFi
@@ -793,41 +809,44 @@ nie po WiFi.
 
 ### Zmiany działają od razu - bez restartu Dockera
 
-Zapis czujników eBUS, pól Satela, urządzeń Tuya (ta strona, `/config`) albo
-scen/reguł ruchu/symulacji obecności (`/automations`) **nie wymaga
-restartu** bridge'a ani całego kontenera Docker - panel prosi bridge o
-przeładowanie konfiguracji w tle (przez tę samą kolejkę komend co
-uzbrojenie/rozbrojenie, patrz "Jak działa uzbrajanie/rozbrajanie
-technicznie" niżej), a bridge podłapuje zmianę w ciągu ok. 1-2s. Widać to
-w komunikacie po zapisie oraz jako zdarzenie "Konfiguracja przeładowana"
-w dzienniku zdarzeń panelu głównego.
+Zapis czujników eBUS, pól Satela, urządzeń Tuya (sekcje na stronach
+poszczególnych wtyczek, `/plugins/<id>`) albo scen/reguł ruchu/symulacji
+obecności (`/automations`) **nie wymaga restartu** bridge'a ani całego
+kontenera Docker - panel prosi bridge o przeładowanie konfiguracji w tle
+(przez tę samą kolejkę komend co uzbrojenie/rozbrojenie, patrz "Jak działa
+uzbrajanie/rozbrajanie technicznie" niżej), a bridge podłapuje zmianę w
+ciągu ok. 1-2s. Widać to w komunikacie po zapisie oraz jako zdarzenie
+"Konfiguracja przeładowana" w dzienniku zdarzeń panelu głównego.
 
-**Wyjątek: zakładka 🔌 Połączenia** (host/port centrali Satel, adresy
-brokerów MQTT, poświadczenia Tuya Cloud, Home Assistant) - te ustawienia
-dotyczą ŻYWYCH połączeń sieciowych (gniazdo TCP do centrali, klienci
-MQTT, Tuya Cloud Pulsar), więc bezpieczne zamknięcie i odtworzenie ich w
-locie byłoby dużo bardziej ryzykowne niż warte tego dla ustawień, które i
-tak zmienia się rzadko. Zmiana czegokolwiek w tej zakładce **wciąż
-wymaga pełnego restartu** procesu bridge'a - patrz "Build i rebuild -
-krok po kroku" (Docker) albo `sudo systemctl restart satel-tuya-bridge`
-(systemd).
+**Wyjątek: sekcje "🔌 Połączenie"** na stronach `/plugins/satel` i
+`/plugins/ebus` (host/port centrali Satel, adres brokera MQTT), oraz
+poświadczenia Tuya Cloud/Home Assistant na ich własnych stronach - te
+ustawienia dotyczą ŻYWYCH połączeń sieciowych (gniazdo TCP do centrali,
+klienci MQTT, Tuya Cloud Pulsar), więc bezpieczne zamknięcie i odtworzenie
+ich w locie byłoby dużo bardziej ryzykowne niż warte tego dla ustawień,
+które i tak zmienia się rzadko. Zmiana czegokolwiek w tych sekcjach
+**wciąż wymaga pełnego restartu** procesu bridge'a - przycisk restartu w
+zakładce ⚙ Ogólne (patrz wyżej), albo "Build i rebuild - krok po kroku"
+(Docker), albo `sudo systemctl restart satel-tuya-bridge` (systemd).
 
-### Zakładka 🔌 Połączenia - host/port/klucze/tematy MQTT po pierwszej konfiguracji
+### Sekcje "🔌 Połączenie" - host/port/klucze po pierwszej konfiguracji
 
 Kreator (`/setup`) jest **celowo zablokowany** po pierwszym zapisie (żeby
 przypadkowe ponowne wejście na `/setup` nigdy nie nadpisało ręcznych zmian
 w `config.yaml`) - więc host/port centrali Satel, klucz integracji, adres
 brokera MQTT, poświadczenia Tuya Cloud, Home Assistant i tematy MQTT
-zmienia się **z panelu**, w zakładce **🔌 Połączenia** (`/config`, sekcja
-na górze strony). W odróżnieniu od reszty `/config` - **odczyt też wymaga
-hasła administratora** (kliknij "🔒 Wczytaj bieżące ustawienia"), bo dane
-obejmują klucz integracji Satela i sekrety Tuya Cloud; formularz nigdy nie
-pokazuje prawdziwej wartości sekretu z powrotem - tylko informację, czy
-jest już ustawiony. Zostaw pole hasła/klucza puste, żeby go NIE zmieniać.
+zmienia się **z panelu**, w sekcji **"🔌 Połączenie"** na stronie
+odpowiedniej wtyczki (`/plugins/satel`, `/plugins/ebus`, `/plugins/tuya_cloud`,
+`/plugins/home_assistant`). Na stronie Satela - w odróżnieniu od reszty
+tej strony - **odczyt też wymaga hasła administratora** (kliknij
+"🔒 Wczytaj bieżące ustawienia"), bo dane obejmują klucz integracji;
+formularz nigdy nie pokazuje prawdziwej wartości sekretu z powrotem -
+tylko informację, czy jest już ustawiony. Zostaw pole hasła/klucza puste,
+żeby go NIE zmieniać.
 
-Zmiany z tej zakładki dotykają **tylko** pól połączeń w `config.yaml` -
-reszta pliku (reguły kamer/alarmów, automatyka kotła, ustawienia
-konserwacji) zostaje nietknięta.
+Zmiany z tych sekcji dotykają **tylko** swoich pól połączenia w
+`config.yaml` - reszta pliku (reguły kamer/alarmów, automatyka kotła,
+ustawienia konserwacji) zostaje nietknięta.
 
 ### Zakładka 🧩 Wtyczki - jeden przegląd wszystkich integracji
 
@@ -951,8 +970,8 @@ skonfigurowany broker MQTT pod osobnym tematem per integracja -
 **niezależnie od tego, czy Home Assistant jest włączony** (dotychczas
 publikacja bez HA działała tylko dla danych z kotła eBUS, przez
 `boiler_output.mqtt.topic_prefix`). Domyślne tematy: `satel/...` i
-`tuya/...`, konfigurowalne w zakładce 🔌 Połączenia (sekcja "Publikacja
-stanu do MQTT") albo wprost w `config.yaml`:
+`tuya/...`, konfigurowalne na stronie `/plugins/mqtt_publish` albo wprost
+w `config.yaml`:
 
 ```yaml
 mqtt_publish:
@@ -1013,7 +1032,8 @@ Wynik wklej jako `dashboard.auth.password_hash`, nazwę użytkownika jako
 `dashboard.auth.username` (jawnym tekstem - to NIE jest sekret, tylko
 identyfikator, jak login, nie hasło) w wyeksportowanym `config.yaml` i
 zaimportuj z powrotem (`⬇ Eksportuj konfigurację` -> edytuj plik ->
-`⬆ Importuj konfigurację`, zakładka ⚙ Ustawienia -> Połączenia). Dopóki
+`⬆ Importuj konfigurację`, zakładka ⚙ Ogólne, sekcja "🛠 Restart i kopia
+zapasowa"). Dopóki
 `password_hash` jest puste, akcje zmieniające stan są **zablokowane** (nie
 ma trybu "otwartego na wszystko" przez pomyłkę - brak hasła = brak
 zapisu). `username` bez ustawionej wartości domyślnie to `admin` (dotyczy
@@ -1023,8 +1043,9 @@ wylogowuje/blokuje).
 **Uczciwie o obecnym braku**: zmiana nazwy użytkownika/hasła PO pierwszej
 konfiguracji wymaga eksportu/importu YAML (jak wyżej) i restartu panelu -
 w przeciwieństwie do reszty ustawień (Satel/
-Tuya/eBUS), zakładka 🔌 Połączenia świadomie NIE oferuje do tego formularza
-(zmiana własnego hasła administratora bez potwierdzenia bieżącego hasła to
+Tuya/eBUS) - żadna z sekcji "🔌 Połączenie" świadomie NIE oferuje do tego
+formularza (zmiana własnego hasła administratora bez potwierdzenia
+bieżącego hasła to
 osobna, większa funkcja bezpieczeństwa - do zrobienia w kolejnej rundzie,
 jeśli będzie potrzebna).
 
@@ -1046,7 +1067,7 @@ token, aż do wylogowania (link "🔓 Wyloguj" w nawigacji każdej strony,
 wywołuje `POST /api/logout`) albo wygaśnięcia sesji (12h).
 
 Próba akcji wymagającej logowania bez ważnej sesji (np. wejście prosto na
-`/config` i kliknięcie "Zapisz") przekierowuje na `/login?next=...` -
+`/plugins/satel` i kliknięcie "Zapisz") przekierowuje na `/login?next=...` -
 po zalogowaniu wracasz dokładnie tam, gdzie byłeś. HTTP Basic Auth
 (nagłówek `Authorization: Basic ...`) wciąż działa jako alternatywa **dla
 skryptów/automatyzacji poza przeglądarką** (np. `curl` z crona) - panel
@@ -1088,9 +1109,11 @@ zupełnie różne klucze, celowo osobne pola w konfiguracji - nie mylić ich:
   `set_output()`/`arm()`/`disarm()` odrzucają wtedy komendę z czytelnym
   komunikatem zamiast wysłać do centrali okaleczoną ramkę - `SatelWriteMessage`
   po prostu POMIJA pusty kod zamiast go dopełnić). Dopisz klucz później w
-  ⚙ Ustawienia -> 🔌 Połączenia, żeby odblokować sterowanie.
-- **`satel.encryption_key`** (nowe pole, sekcja "Połączenia" w ustawieniach
-  oraz krok 1 kreatora) - opcjonalny **klucz szyfrowania AES** transmisji
+  sekcji "🔌 Połączenie" na stronie `/plugins/satel`, żeby odblokować
+  sterowanie.
+- **`satel.encryption_key`** (nowe pole, sekcja "🔌 Połączenie" na stronie
+  `/plugins/satel` oraz krok 1 kreatora) - opcjonalny **klucz szyfrowania
+  AES** transmisji
   TCP, jeśli centrala/moduł ETHM ma włączoną funkcję "Encrypted connections"
   (ustawianą osobno w DLOADX, jako całkiem inne pole niż hasło integracji).
 - **`satel.encryption_enabled`** - JAWNY przełącznik włącz/wyłącz, CELOWO
@@ -1424,14 +1447,14 @@ nie przerywa działania reszty automatyki). Okna przechodzące przez północ
 (np. `22:00`-`06:00`) działają poprawnie - sprawdzone testem na kilku
 przypadkach brzegowych.
 
-**Skąd bridge ma znać lokalizację?** Zakładka ⚙ Ustawienia -> 🔌 Połączenia,
-sekcja "🌍 Lokalizacja" - trzy sposoby wyboru (jak w kreatorze onboardingu
-Home Assistant): kliknięcie na interaktywnej mapie (Leaflet + OpenStreetMap,
-przeciągalny znacznik), przycisk "📍 Wykryj lokalizację przeglądarki"
-(`navigator.geolocation` - przeglądarka najpierw zapyta o pozwolenie),
-albo ręczne wpisanie współrzędnych. W ODRÓŻNIENIU od reszty tej zakładki
-(host/port/klucze Satela/eBUS) **zapisuje się na żywo, bez restartu
-procesu** - lokalizacja to czyste dane, nie żywe połączenie sieciowe do
+**Skąd bridge ma znać lokalizację?** Zakładka 🎬 Automatyzacje
+(`/automations`), sekcja "🌍 Lokalizacja (wschód/zachód słońca)" - trzy
+sposoby wyboru (jak w kreatorze onboardingu Home Assistant): kliknięcie na
+interaktywnej mapie (Leaflet + OpenStreetMap, przeciągalny znacznik),
+przycisk "📍 Wykryj lokalizację przeglądarki" (`navigator.geolocation` -
+przeglądarka najpierw zapyta o pozwolenie), albo ręczne wpisanie
+współrzędnych. W ODRÓŻNIENIU od sekcji "🔌 Połączenie" na stronach Satela/
+eBUS (host/port/klucze) **zapisuje się na żywo, bez restartu procesu** - lokalizacja to czyste dane, nie żywe połączenie sieciowe do
 zerwania (`dashboard/app.py`: `/api/config/location`, `RulesEngine.
 reload_config` odświeża `self._location_cfg` i `presence_simulation.
 location_cfg` od razu przy każdym przeładowaniu). Wymaga zalogowania jak
@@ -1525,14 +1548,15 @@ klient celowo ignoruje kod odpowiedzi i traktuje sam brak wyjątku sieciowego
 jako sukces). W tym trybie aktywacja jest z definicji JEDNORAZOWYM impulsem
 - protokół nie ma odpowiednika "przywróć".
 
-Tryb wybiera się w zakładce ⚙ Ustawienia -> 🔌 Połączenia (sekcja "Wirtualne
-wejścia IP - tryb wyzwalania"), oddzielnie od samej listy nazwanych wejść.
-**Zmiana trybu nie przekształca automatycznie już zapisanych wierszy** -
-trzeba je ręcznie uzupełnić (numer albo numer+klucz, zależnie od trybu) i
-zapisać ponownie w zakładce Satel po zmianie trybu.
+Tryb wybiera się na stronie `/plugins/satel`, sekcja "🔌 Połączenie"
+("Wirtualne wejścia IP - tryb wyzwalania"), oddzielnie od samej listy
+nazwanych wejść. **Zmiana trybu nie przekształca automatycznie już
+zapisanych wierszy** - trzeba je ręcznie uzupełnić (numer albo
+numer+klucz, zależnie od trybu) i zapisać ponownie w sekcji "Strefy,
+wyjścia, wejścia IP, partycje" tej samej strony po zmianie trybu.
 
-**Przycisk "TEST"** obok pola klucza integracji (zakładka Połączenia)
-pozwala jednorazowo sprawdzić działanie na żywo: w trybie "library" podaje
+**Przycisk "TEST"** obok pola klucza integracji (sekcja "🔌 Połączenie" na
+stronie `/plugins/satel`) pozwala jednorazowo sprawdzić działanie na żywo: w trybie "library" podaje
 się numer wyjścia (używa już zapisanego klucza integracji, bez duplikowania
 go), w trybie "http" wybiera się z listy już skonfigurowanych wejść (bo ten
 tryb wymaga klucza per wejście, którego nie da się podać ad-hoc).
@@ -2068,8 +2092,8 @@ sprawia, że stare kontenery są podmieniane na nowe automatycznie, bez
 osobnego `stop`/`start`.
 
 **3. Restart BEZ rebuildu (wystarczy po zmianie samej konfiguracji w
-`config.db`, np. przez panel `/config` albo `/automations` - baza żyje w
-`./data/`, nie w obrazie, więc rebuild niczego by tu nie zmienił):**
+`config.db`, np. przez panel `/plugins/<id>` albo `/automations` - baza
+żyje w `./data/`, nie w obrazie, więc rebuild niczego by tu nie zmienił):**
 ```bash
 docker compose restart bridge
 ```
@@ -2179,7 +2203,7 @@ docker compose up -d
 satel_tuya_bridge/
   config.example.yaml       # dokumentacja pól głównej konfiguracji (połączenia, poświadczenia) -
                              # NIE jest już bezpośrednio wczytywany, patrz "Konfiguracja w bazie danych"
-  sensors.example.yaml      # wzór listy czujników eBUS (edytowalny z panelu, patrz /config)
+  sensors.example.yaml      # wzór listy czujników eBUS (edytowalny z panelu, patrz /plugins/ebus)
   # config.db - cała faktyczna konfiguracja (dokumenty config/sensors/
   # automations/satel_fields/tuya_devices) - baza SQLite tworzona przez
   # kreator (albo migrowana automatycznie ze starych plików .yaml przy
@@ -2195,11 +2219,11 @@ satel_tuya_bridge/
     config.py               # BridgeConfig.load() - czyta z ConfigStore, migruje stare pliki YAML
     config_store.py         # baza SQLite z dokumentami konfiguracji + eksport/import YAML
     satel_client.py         # protokół integracji + wirtualne wejścia IP + test_connection() ("Testuj połączenie")
-    tuya_local.py            # sterowanie lokalne (tinytuya) + scan_network()/fetch_cloud_devices() (import w /config)
+    tuya_local.py            # sterowanie lokalne (tinytuya) + scan_network()/fetch_cloud_devices() (import w /plugins/tuya)
     tuya_cloud_events.py     # ruch z kamer Tuya (Pulsar, wymaga chmury)
     unifi_protect_events.py  # ruch z kamer UniFi Protect
     homewhiz_client.py        # stan zmywarek/AGD HomeWhiz (SigV4 + MQTT-over-WebSocket do AWS IoT Core)
-    ebus_client.py           # odczyt danych z ebusd (MQTT) + discover_topics() (podpowiedź do /config)
+    ebus_client.py           # odczyt danych z ebusd (MQTT) + discover_topics() (podpowiedź do /plugins/ebus)
     boiler_output.py         # publikacja danych kotła (MQTT / Tuya virtual device)
     history_store.py         # baza SQLite (odczyty + zdarzenia + alarmy + statusy)
     alarms.py                # silnik alarmów progowych + powiadomienia ntfy
@@ -2218,17 +2242,16 @@ satel_tuya_bridge/
     auth.py                   # autoryzacja - tylko akcje zmieniające stan
     setup.py                   # logika kreatora + budowanie dokumentów configu
     templates/index.html     # frontend panelu (Chart.js, filtrowanie, sterowanie alarmem)
-    templates/config.html    # edytor czujników eBUS / pól Satela / urządzeń Tuya (+ przyciski wykrywania, backup)
-    templates/automations.html # edytor scen/reguł ruchu/symulacji obecności (wymaga hasła do zapisu)
+    templates/automations.html # edytor scen/reguł ruchu/harmonogramu/eskalacji/symulacji obecności + lokalizacja
     templates/setup.html      # kreator pierwszej konfiguracji (krok po kroku, autozapis postępu)
     templates/plugins.html    # przegląd wszystkich integracji (włącz/wyłącz, interwały)
-    templates/system.html     # ⚙ Ustawienia ogólne - konta, logowanie/blokady, poziom logów, przegląd logów
+    templates/system.html     # ⚙ Ustawienia ogólne - konta, logowanie/blokady, poziom logów, przegląd logów, restart + kopia zapasowa
   plugins/                   # wtyczki z WŁASNĄ stroną konfiguracji, jeden podkatalog na integrację -
                               # każda ma sekcję "⚙ Ustawienia wtyczki" (włącznik + poziom logowania,
                               # patrz plugins/__init__.py: register_settings_route) plus własne pola
-    satel/routes.py           # /plugins/satel - strefy/wyjścia/partycje + skanowanie
+    satel/routes.py           # /plugins/satel - host/port/klucze (🔌 Połączenie) + strefy/wyjścia/partycje + skanowanie
     tuya_local/routes.py      # /plugins/tuya - urządzenia + bramki Zigbee, skan LAN + import z Tuya Cloud
-    ebus/routes.py            # /plugins/ebus - czujniki kotła + wykrywanie tematów MQTT (blokujące i w tle)
+    ebus/routes.py            # /plugins/ebus - broker MQTT (🔌 Połączenie) + czujniki kotła + wykrywanie tematów MQTT (w tle)
     tuya_cloud/routes.py      # /plugins/tuya_cloud - poświadczenia API (Access ID/Secret, endpointy)
     home_assistant/routes.py  # /plugins/home_assistant - broker MQTT + prefiksy discovery/stanu
     mqtt_publish/routes.py    # /plugins/mqtt_publish - tematy MQTT (Satel/Tuya)
