@@ -431,7 +431,18 @@ def api_satel_test_output():
     pełnym restarcie) - inaczej zapisanie nowego trybu/portu wejść IP w
     sekcji 🔌 Połączenie i od razu kliknięcie TEST wciąż testowałoby
     STARY tryb, dając mylący błąd z niewłaściwej gałęzi (np. "Podaj numer
-    wyjścia" mimo wybranego i zapisanego trybu HTTP)."""
+    wyjścia" mimo wybranego i zapisanego trybu HTTP).
+
+    UWAGA 2: nazwane wirtualne wejścia (satel.virtual_inputs.inputs) po
+    zapisaniu przez /api/plugins/satel/fields żyją w OSOBNYM dokumencie
+    "satel_fields", NIE w "config" (tam zostaje tylko to, co ktoś wpisał
+    wprost w config.yaml, ewentualnie puste - patrz build_satel_connection_patch,
+    który tego pola nigdy nie dotyka). Branie ich TYLKO z config_store.get("config")
+    dawało więc "Wybierz skonfigurowane wirtualne wejście" nawet dla
+    NAPRAWDĘ skonfigurowanego wejścia. Odtwarzamy niżej DOKŁADNIE ten sam
+    wzorzec scalania co BridgeConfig.load (bridge/config.py): "satel_fields"
+    nadpisuje "inputs" TYLKO jeśli faktycznie ma ten klucz, inaczej pod uwagę
+    idzie to, co jest wprost w "config"."""
     satel_cfg = config_store.get("config").get("satel", {})
     host = (satel_cfg.get("host") or "").strip()
     port = satel_cfg.get("port")
@@ -445,7 +456,14 @@ def api_satel_test_output():
 
     if mode == "http":
         name = (payload.get("name") or "").strip()
-        entry = vi_cfg.get("inputs", {}).get(name)
+        # Ten sam wzorzec scalania co BridgeConfig.load (bridge/config.py):
+        # dokument "satel_fields" nadpisuje "inputs" TYLKO jeśli faktycznie
+        # ma ten klucz - inaczej (np. świeża instalacja bez satel_fields.yaml,
+        # wejścia wpisane wprost w config.yaml) trzeba wziąć to, co jest w
+        # samej sekcji "satel" dokumentu "config".
+        satel_fields = config_store.get("satel_fields")
+        inputs = satel_fields["virtual_inputs"] if "virtual_inputs" in satel_fields else vi_cfg.get("inputs", {})
+        entry = inputs.get(name)
         # Tolerujemy jeszcze stary kształt {number, key} (sprzed usunięcia
         # klucza per wejście) - liczy się tylko numer, klucz stamtąd jest
         # już ignorowany na rzecz wspólnego vi_cfg["key"] niżej.

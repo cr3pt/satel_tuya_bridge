@@ -440,6 +440,37 @@ class TestSatelTestOutputEndpoint:
         assert resp.status_code == 400
         assert "hasł" in resp.get_json()["error"].lower()
 
+    def test_http_mode_finds_input_saved_via_fields_page_not_inline_config(self, client, monkeypatch):
+        """Regresja: nazwane wirtualne wejścia NIE żyją w dokumencie
+        "config" (tam zostaje tylko nieaktualny/pusty słownik po zapisie
+        połączenia - patrz build_satel_connection_patch) - są zapisywane w
+        OSOBNYM dokumencie "satel_fields" przez /api/plugins/satel/fields
+        (przycisk "Zapisz pola Satela"). CONFIG_TEMPLATE definiuje
+        "motion_hall" WPROST w satel.virtual_inputs.inputs w config.yaml
+        (trafia więc od razu do dokumentu "config" przy migracji), co
+        maskowało tę regresję w innych testach - tu odtwarzamy PRAWDZIWY
+        przepływ: wejście istnieje TYLKO w dokumencie "satel_fields",
+        dokładnie jak po użyciu strony /plugins/satel w przeglądarce."""
+        import dashboard.app as app_module
+        current = app_module.config_store.get("config")
+        current["satel"]["virtual_inputs"]["mode"] = "http"
+        current["satel"]["virtual_inputs"]["inputs"] = {}
+        app_module.config_store.set("config", current)
+        app_module.config_store.set("satel_fields", {"virtual_inputs": {"zmywarka": 5}})
+
+        captured = {}
+
+        async def fake_test_http(host, port, url_template, key, number, **_kwargs):
+            captured["number"] = number
+
+        monkeypatch.setattr("dashboard.app.test_satel_virtual_input_http", fake_test_http)
+        resp = client.post(
+            "/api/satel/test-output", json={"name": "zmywarka", "state": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert captured["number"] == 5
+
 
 class TestSystemLogsLoggersEndpoint:
     """/api/system/logs/loggers - lista WYSTĘPUJĄCYCH nazw loggerów, do
