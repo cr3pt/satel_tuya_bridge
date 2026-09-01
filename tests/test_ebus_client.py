@@ -52,7 +52,7 @@ def _no_real_sleep(monkeypatch):
 
 def test_discover_topics_returns_sorted_unique_topics(monkeypatch):
     fake = FakeMqttClient(["ebusd/bai/FlowTemp", "ebusd/bai/FlowTemp", "ebusd/hwc/Temp"])
-    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
 
     topics = discover_topics("127.0.0.1", 1883)
 
@@ -61,7 +61,7 @@ def test_discover_topics_returns_sorted_unique_topics(monkeypatch):
 
 def test_discover_topics_subscribes_to_configured_prefix(monkeypatch):
     fake = FakeMqttClient([])
-    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
 
     discover_topics("127.0.0.1", 1883, topic_prefix="custom_prefix")
 
@@ -70,7 +70,7 @@ def test_discover_topics_subscribes_to_configured_prefix(monkeypatch):
 
 def test_discover_topics_connects_to_given_host_and_port(monkeypatch):
     fake = FakeMqttClient([])
-    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
 
     discover_topics("192.168.1.20", 1884)
 
@@ -79,7 +79,7 @@ def test_discover_topics_connects_to_given_host_and_port(monkeypatch):
 
 def test_discover_topics_stops_and_disconnects_afterwards(monkeypatch):
     fake = FakeMqttClient([])
-    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
 
     discover_topics("127.0.0.1", 1883)
 
@@ -89,7 +89,7 @@ def test_discover_topics_stops_and_disconnects_afterwards(monkeypatch):
 
 def test_discover_topics_no_messages_returns_empty_list(monkeypatch):
     fake = FakeMqttClient([])
-    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
 
     assert discover_topics("127.0.0.1", 1883) == []
 
@@ -99,7 +99,7 @@ def test_discover_topics_raises_clear_error_on_connection_failure(monkeypatch):
         def connect(self, *args, **kwargs):
             raise OSError("connection refused")
 
-    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: FailingClient())
+    monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: FailingClient())
 
     with pytest.raises(ConnectionError, match="127.0.0.1"):
         discover_topics("127.0.0.1", 1883)
@@ -144,7 +144,7 @@ class TestEbusMqttListenerUpdateSensors:
 
     async def test_update_sensors_replaces_topic_map(self, monkeypatch):
         fake = FakeMqttClientForListener()
-        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
         cfg = {"mqtt_host": "127.0.0.1", "sensors": [{"name": "a", "mqtt_topic": "ebusd/a"}]}
         listener = EbusMqttListener(cfg, lambda *a: None)
 
@@ -155,7 +155,7 @@ class TestEbusMqttListenerUpdateSensors:
 
     async def test_update_sensors_subscribes_only_to_new_topics(self, monkeypatch):
         fake = FakeMqttClientForListener()
-        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
         cfg = {"mqtt_host": "127.0.0.1", "sensors": [{"name": "a", "mqtt_topic": "ebusd/a"}]}
         listener = EbusMqttListener(cfg, lambda *a: None)
         fake.subscribed.clear()  # __init__ samo nie subskrybuje - to dzieje się w _on_connect
@@ -169,7 +169,7 @@ class TestEbusMqttListenerUpdateSensors:
 
     async def test_update_sensors_with_no_new_topics_subscribes_nothing(self, monkeypatch):
         fake = FakeMqttClientForListener()
-        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
         cfg = {"mqtt_host": "127.0.0.1", "sensors": [{"name": "a", "mqtt_topic": "ebusd/a"}]}
         listener = EbusMqttListener(cfg, lambda *a: None)
         fake.subscribed.clear()
@@ -216,7 +216,7 @@ class TestBackgroundTopicDiscovery:
 
     def test_start_connects_and_subscribes(self, monkeypatch):
         fake = FakeMqttClientBg()
-        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
 
         discovery = BackgroundTopicDiscovery()
         discovery.start("127.0.0.1", 1883, duration_seconds=10)
@@ -228,7 +228,7 @@ class TestBackgroundTopicDiscovery:
 
     def test_status_reports_running_immediately_after_start(self, monkeypatch):
         fake = FakeMqttClientBg()
-        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
 
         discovery = BackgroundTopicDiscovery()
         discovery.start("127.0.0.1", 1883, duration_seconds=10)
@@ -241,7 +241,7 @@ class TestBackgroundTopicDiscovery:
 
     def test_incoming_messages_accumulate_in_status(self, monkeypatch):
         fake = FakeMqttClientBg()
-        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
 
         discovery = BackgroundTopicDiscovery()
         discovery.start("127.0.0.1", 1883, duration_seconds=10)
@@ -256,7 +256,7 @@ class TestBackgroundTopicDiscovery:
 
     def test_stop_disconnects_and_marks_not_running(self, monkeypatch):
         fake = FakeMqttClientBg()
-        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: fake)
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
 
         discovery = BackgroundTopicDiscovery()
         discovery.start("127.0.0.1", 1883, duration_seconds=10)
@@ -267,7 +267,7 @@ class TestBackgroundTopicDiscovery:
         assert status["running"] is False
 
     def test_starting_twice_while_running_raises(self, monkeypatch):
-        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: FakeMqttClientBg())
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: FakeMqttClientBg())
 
         discovery = BackgroundTopicDiscovery()
         discovery.start("127.0.0.1", 1883, duration_seconds=10)
@@ -280,7 +280,7 @@ class TestBackgroundTopicDiscovery:
             def connect(self, *args, **kwargs):
                 raise OSError("connection refused")
 
-        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: FailingClient())
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: FailingClient())
 
         discovery = BackgroundTopicDiscovery()
         with pytest.raises(ConnectionError, match="127.0.0.1"):
@@ -289,7 +289,7 @@ class TestBackgroundTopicDiscovery:
         assert discovery.status()["running"] is False
 
     def test_auto_stops_after_duration_elapses(self, monkeypatch):
-        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: FakeMqttClientBg())
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: FakeMqttClientBg())
 
         discovery = BackgroundTopicDiscovery()
         discovery.start("127.0.0.1", 1883, duration_seconds=0.05)
@@ -305,7 +305,7 @@ class TestBackgroundTopicDiscovery:
         assert discovery.status()["running"] is False
 
     def test_new_discovery_clears_previous_topics(self, monkeypatch):
-        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda: FakeMqttClientBg())
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: FakeMqttClientBg())
 
         discovery = BackgroundTopicDiscovery()
         discovery.start("127.0.0.1", 1883, duration_seconds=10)

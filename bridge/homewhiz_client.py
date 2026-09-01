@@ -507,18 +507,21 @@ class HomeWhizClient:
         # URL-a WebSocketa. Reconnect musi przejść przez Supervisor.run()
         # wyżej, żeby dostać ŚWIEŻY presigned URL (i - jeśli trzeba - nową
         # sesję logowania).
-        client = mqtt.Client(transport="websockets", reconnect_on_failure=False)
+        client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+            transport="websockets", reconnect_on_failure=False,
+        )
         client.tls_set()
         client.ws_set_options(path=f"{parsed.path}?{parsed.query}", headers={"Host": parsed.hostname})
 
-        def _on_connect(_client, _userdata, _flags, rc) -> None:
-            if rc == 0:
+        def _on_connect(_client, _userdata, _connect_flags, reason_code, _properties) -> None:
+            if reason_code == 0:
                 self._loop.call_soon_threadsafe(connected_event.set)
             else:
-                _fail(ConnectionError(f"kod połączenia MQTT {rc}"))
+                _fail(ConnectionError(f"kod połączenia MQTT {reason_code}"))
 
-        def _on_disconnect(_client, _userdata, rc) -> None:
-            _fail(ConnectionError(f"rozłączono (kod {rc})"))
+        def _on_disconnect(_client, _userdata, _disconnect_flags, reason_code, _properties) -> None:
+            _fail(ConnectionError(f"rozłączono (kod {reason_code})"))
 
         def _on_message(_client, _userdata, msg) -> None:
             asyncio.run_coroutine_threadsafe(self._handle_message(msg.topic, msg.payload), self._loop)

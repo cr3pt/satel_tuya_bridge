@@ -1,6 +1,6 @@
-PyYAML>=6.0
-aiohttp>=3.9
-tinytuya>=1.14
+PyYAML>=6.0.3
+aiohttp>=3.14
+tinytuya>=1.20
 # satel-integra >=1.0.0 to kompletnie przepisane API względem 0.3.x
 # (rejestrowanie przez register_callbacks()+start() zamiast blokującego
 # monitor_status(), wbudowany keepalive/reconnect/wykrywanie "centrala
@@ -12,9 +12,9 @@ tinytuya>=1.14
 # aktualizacji tego pliku.
 satel-integra>=1.4.0,<2.0.0
 paho-mqtt>=2.1,<3.0
-uiprotect>=6.0
+uiprotect>=16.6
 tuya-connector-python>=0.1.2
-Flask>=3.0
-waitress>=3.0
+Flask>=3.1
+waitress>=3.0.2
 
 astral>=3.2
