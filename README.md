@@ -290,10 +290,10 @@ Połączenia:
      nadpisania z importu) jest budowana na TYMCZASOWEJ kopii bazy i
      przepuszczana przez `BridgeConfig.load()` - dokładnie tę samą ścieżkę
      kodu, którą bridge/panel uruchamiają przy prawdziwym starcie procesu -
-     plus jawne sprawdzenie `satel.host`/`satel.port`/
-     `satel.integration_key` (pól, bez których proces i tak zaraz
-     wywaliłby się `KeyError`-em, a których sama obecność sekcji `satel`
-     jeszcze nie gwarantuje).
+     plus jawne sprawdzenie `satel.host`/`satel.port` (pól, bez których
+     proces i tak zaraz wywaliłby się `KeyError`-em, a których sama obecność
+     sekcji `satel` jeszcze nie gwarantuje). `satel.integration_key` jest
+     celowo POMINIĘTY tutaj - jest opcjonalny, patrz niżej.
 
   Jeśli którekolwiek z tych dwóch sprawdzeń się nie powiedzie, **nic nie
   jest zapisywane** - import jest odrzucany w całości z czytelnym opisem
@@ -845,8 +845,9 @@ przy każdym przeładowaniu konfiguracji).
 **Interwał odpytywania (Satel i Tuya lokalnie).** Te dwie karty mają
 dodatkowo pole "Interwał odpytywania" - jak często bridge SAM dopytuje o
 bieżący stan wejść/wyjść (Satel: `satel.status_poll_interval_seconds`,
-domyślnie 10s) i urządzeń Tuya (`tuya.status_poll_interval_seconds`,
-domyślnie 15s, obejmuje też podurządzenia Zigbee - ta sama pętla). To
+domyślnie 3s, minimum 2s - zalecany zakres 2-5s) i urządzeń Tuya
+(`tuya.status_poll_interval_seconds`, domyślnie 15s, obejmuje też
+podurządzenia Zigbee - ta sama pętla). To
 osobny mechanizm od broadcastów samej centrali/urządzeń o zmianie stanu -
 zaobserwowano na realnej instalacji, że zmiana stanu WYJŚCIA nie zawsze
 dociera jako broadcast (w odróżnieniu od wejść), więc samo poleganie na
@@ -1047,24 +1048,39 @@ zupełnie różne klucze, celowo osobne pola w konfiguracji - nie mylić ich:
   kroku 1) - **hasło protokołu integracji** (kod użytkownika DLOADX/GUARDX).
   Autoryzuje polecenia (uzbrojenie/rozbrojenie, sterowanie wyjściem),
   wysyłane przy KAŻDEJ komendzie. To NIE jest klucz szyfrowania transmisji.
+  **Opcjonalne** - odczyt stref/wyjść/partycji nie wymaga uwierzytelnienia
+  w protokole integracji, więc bez tego pola kreator i tak da się ukończyć,
+  a panel działa w trybie **tylko do odczytu** (`bridge/satel_client.py`:
+  `set_output()`/`arm()`/`disarm()` odrzucają wtedy komendę z czytelnym
+  komunikatem zamiast wysłać do centrali okaleczoną ramkę - `SatelWriteMessage`
+  po prostu POMIJA pusty kod zamiast go dopełnić). Dopisz klucz później w
+  ⚙ Ustawienia -> 🔌 Połączenia, żeby odblokować sterowanie.
 - **`satel.encryption_key`** (nowe pole, sekcja "Połączenia" w ustawieniach
   oraz krok 1 kreatora) - opcjonalny **klucz szyfrowania AES** transmisji
   TCP, jeśli centrala/moduł ETHM ma włączoną funkcję "Encrypted connections"
   (ustawianą osobno w DLOADX, jako całkiem inne pole niż hasło integracji).
-  Gdy ustawiony, `bridge/satel_client.py` łączy się przez
-  `SatelEncryptedTransport` biblioteki `satel_integra` zamiast domyślnego
-  `SatelPlainTransport`. Gdy puste (domyślnie) - komunikacja z centralą
-  (port 7094) i wywołania wirtualnych wejść IP (port z sekcji
-  `virtual_inputs`) idą czystym tekstem po sieci LAN, jak dotychczas.
+- **`satel.encryption_enabled`** - JAWNY przełącznik włącz/wyłącz, CELOWO
+  osobny od samego faktu zapisania klucza wyżej. Sam zapisany klucz NIE
+  wystarczy, żeby szyfrowanie było używane - dopiero gdy ten przełącznik
+  jest włączony (checkbox "Centrala ma włączone szyfrowanie transmisji"),
+  `bridge/satel_client.py` łączy się przez `SatelEncryptedTransport`
+  biblioteki `satel_integra` zamiast domyślnego `SatelPlainTransport`,
+  przekazując jej `satel.encryption_key`. Dzięki temu można zachować klucz
+  w konfiguracji (np. na wypadek późniejszego włączenia szyfrowania na
+  centrali) bez ryzyka, że sam jego zapis przypadkiem przełączy transmisję
+  na szyfrowaną. Domyślnie wyłączone - komunikacja z centralą (port 7094)
+  i wywołania wirtualnych wejść IP (port z sekcji `virtual_inputs`) idą
+  wtedy czystym tekstem po sieci LAN, jak dotychczas.
 
 Jeśli Twoja centrala nie ma włączonego szyfrowania w DLOADX, zostaw
-`satel.encryption_key` puste - ustawienie błędnego/niepasującego klucza
-uniemożliwi połączenie. W praktyce, nawet bez szyfrowania, w zaufanej,
-odizolowanej sieci domowej czyste połączenie to zwykle akceptowalne ryzyko
-(dokładnie ta sama klasa kompromisu co Basic Auth panelu wyżej). Jeśli
-jednak centrala/RPi są w sieci współdzielonej z niezaufanymi urządzeniami,
-albo zależy Ci na dodatkowej warstwie ochrony:
-- włącz szyfrowanie w DLOADX i wpisz ten sam klucz w `satel.encryption_key`,
+`satel.encryption_enabled` wyłączone - włączenie go z błędnym/
+niepasującym kluczem uniemożliwi połączenie. W praktyce, nawet bez
+szyfrowania, w zaufanej, odizolowanej sieci domowej czyste połączenie to
+zwykle akceptowalne ryzyko (dokładnie ta sama klasa kompromisu co Basic
+Auth panelu wyżej). Jeśli jednak centrala/RPi są w sieci współdzielonej z
+niezaufanymi urządzeniami, albo zależy Ci na dodatkowej warstwie ochrony:
+- włącz szyfrowanie w DLOADX, wpisz ten sam klucz w `satel.encryption_key`
+  i zaznacz `satel.encryption_enabled`,
 - odizoluj VLAN-em urządzenia automatyki domowej od reszty sieci,
 - **nie** wystawiaj portu centrali (7094) ani portu wejść IP na świat -
   jeśli potrzebujesz zdalnego dostępu, użyj VPN (WireGuard/Tailscale) do

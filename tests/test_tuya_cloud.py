@@ -42,6 +42,47 @@ def controller():
     return TuyaCloudController(DEVICES_CFG, CREDENTIALS, retries=2, retry_delay=0.01)
 
 
+def test_client_defaults_missing_api_region_to_eu(monkeypatch):
+    """Regresja: dashboard/setup.py (kreator, potem odtworzona w
+    build_connections_patch) do niedawna w ogóle nie zapisywała
+    api_region - już zapisane, starsze config.yaml mogą go więc nie mieć.
+    tinytuya.Cloud dostaje wtedy apiRegion="" bez tego fallbacku, co Tuya
+    OpenAPI odrzuca błędem "cross-region access is not allowed"
+    niezależnie od faktycznego regionu konta - musi spaść na "eu", ten
+    sam domyślny region co reszta configu."""
+    captured = {}
+
+    def fake_cloud_ctor(apiRegion=None, apiKey=None, apiSecret=None):
+        captured["apiRegion"] = apiRegion
+        return FakeTinytuyaCloud()
+
+    import bridge.tuya_cloud as tuya_cloud_module
+    monkeypatch.setattr(tuya_cloud_module.tinytuya, "Cloud", fake_cloud_ctor)
+
+    controller = TuyaCloudController(DEVICES_CFG, {"access_id": "aid", "access_key": "akey"})
+    controller._client()
+    assert captured["apiRegion"] == "eu"
+
+
+def test_client_uses_configured_api_region(monkeypatch):
+    captured = {}
+
+    def fake_cloud_ctor(apiRegion=None, apiKey=None, apiSecret=None):
+        captured["apiRegion"] = apiRegion
+        return FakeTinytuyaCloud()
+
+    import bridge.tuya_cloud as tuya_cloud_module
+    monkeypatch.setattr(tuya_cloud_module.tinytuya, "Cloud", fake_cloud_ctor)
+
+    controller = TuyaCloudController(DEVICES_CFG, CREDENTIALS)
+    controller._client()
+    assert captured["apiRegion"] == "eu"
+
+    controller2 = TuyaCloudController(DEVICES_CFG, {**CREDENTIALS, "api_region": "us"})
+    controller2._client()
+    assert captured["apiRegion"] == "us"
+
+
 async def test_turn_on_sends_switch_code_true(controller):
     fake = FakeTinytuyaCloud()
     controller._cloud = fake

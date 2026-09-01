@@ -33,13 +33,21 @@ satel:
   # (roz)uzbrajanie) - wymaga biblioteki `satel_integra` (port zwykle 7094)
   host: "192.168.1.10"
   port: 7094
-  integration_key: "TWOJ_KLUCZ_INTEGRACJI"   # ustawiony w DLOADX
+  # Opcjonalny - ustawiony w DLOADX. Bez niego panel działa TYLKO DO ODCZYTU
+  # (stany stref/wyjść widoczne, ale (roz)uzbrojenie i sterowanie wyjściami
+  # jest zablokowane z czytelnym komunikatem) - dopisz go później w
+  # ⚙ Ustawienia -> 🔌 Połączenia, żeby odblokować sterowanie.
+  integration_key: "TWOJ_KLUCZ_INTEGRACJI"
   # Klucz szyfrowania AES transmisji TCP ("Encrypted connections" w DLOADX)
   # - CAŁKIEM INNY klucz niż integration_key wyżej (to hasło protokołu, nie
   # klucz szyfrowania). Zostaw null/puste, jeśli centrala/moduł ETHM nie ma
   # włączonego szyfrowania - patrz sekcja "A komunikacja z centralą Satel -
   # czy jest szyfrowana kluczem?" w README.
   encryption_key: null
+  # JAWNY przełącznik włącz/wyłącz - CELOWO osobny od samego faktu podania
+  # klucza wyżej. Sam zapisany klucz NIE wystarczy - szyfrowanie jest
+  # używane TYLKO gdy to pole jest true.
+  encryption_enabled: false
   partition: 1                                # numer strefy, zwykle 1
 
   # "Wirtualne wejścia IP" - do WYSYŁANIA naruszeń (np. gdy Tuya wykryje
@@ -108,8 +116,10 @@ satel:
   # (niezależnie od tego, czy centrala sama zgłosi zmianę broadcastem -
   # zaobserwowano, że wyjścia nie zawsze to robią, w odróżnieniu od wejść).
   # Edytowalne też z panelu (zakładka 🧩 Wtyczki) BEZ restartu procesu -
-  # minimum 3s, żeby nie zalewać centrali zapytaniami.
-  status_poll_interval_seconds: 10
+  # zalecany zakres 2-5s, minimum 2s (kolejka komend biblioteki i tak
+  # sekwencjonuje zapytania względem innych poleceń, patrz obszerny
+  # docstring bridge/satel_client.py).
+  status_poll_interval_seconds: 3
 
 tuya:
   # Co ile sekund odpytywać lokalnie urządzenia Tuya (WiFi i podurządzenia

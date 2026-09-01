@@ -78,16 +78,28 @@ class RulesEngine:
         self.satel = SatelIntegraClient(
             config.satel["host"],
             config.satel["port"],
-            config.satel["integration_key"],
+            # Opcjonalny - bez niego panel działa tylko do odczytu (patrz
+            # guardy w set_output/arm/disarm w bridge/satel_client.py), więc
+            # .get() zamiast [] - starszy ręcznie edytowany config.yaml mógł
+            # w ogóle nie mieć tego pola.
+            config.satel.get("integration_key") or "",
             config.satel.get("partition", 1),
             monitored_zones=config.satel.get("monitored_zones"),
             monitored_outputs=config.satel.get("monitored_outputs"),
             virtual_inputs=config.satel.get("virtual_inputs", {}).get("inputs"),
-            encryption_key=config.satel.get("encryption_key"),
+            # Jawny przełącznik satel.encryption_enabled decyduje, czy klucz
+            # w ogóle jest użyty - sam FAKT zapisania klucza NIE oznacza
+            # "szyfrowanie włączone" (zgłoszony błąd projektowy: dało się
+            # mieć zapisany klucz bez świadomej decyzji o włączeniu
+            # szyfrowania). Wyłączony przełącznik = zawsze czysty tekst,
+            # niezależnie od tego, czy klucz jest zapisany w configu.
+            encryption_key=(
+                config.satel.get("encryption_key") if config.satel.get("encryption_enabled") else None
+            ),
             history=self.history,
             notify_cfg=notify_cfg,
             grace_seconds=grace_seconds,
-            status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 10),
+            status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 3),
         )
         # Tryb "http" wirtualnych wejść IP (satel.virtual_inputs.mode) - osobne
         # połączenie HTTP, niezależne od kolejki poleceń protokołu integracji
@@ -835,7 +847,7 @@ class RulesEngine:
         # _periodic_status_sync) - W ODRÓŻNIENIU od host/portu/klucza,
         # DZIAŁA NA ŻYWO od razu, bez restartu procesu - pętla czyta ten
         # atrybut na bieżąco przy każdym obrocie, nie tylko raz na starcie.
-        self.satel.status_poll_interval_seconds = new_config.satel.get("status_poll_interval_seconds", 15)
+        self.satel.status_poll_interval_seconds = new_config.satel.get("status_poll_interval_seconds", 3)
 
         # Sceny/automatyka kotła/alarmy progowe - budowane na bieżąco z
         # configu przy każdym wywołaniu, bezpieczne do pełnej podmiany.

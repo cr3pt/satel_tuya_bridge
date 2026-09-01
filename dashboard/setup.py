@@ -64,8 +64,13 @@ def validate(form: dict) -> list[str]:
     satel = form.get("satel", {})
     if not satel.get("host"):
         errors.append("Satel: adres IP centrali/modułu ETHM jest wymagany")
-    if not satel.get("integration_key"):
-        errors.append("Satel: klucz integracji (ustawiony w DLOADX) jest wymagany")
+    # Klucz integracji CELOWO opcjonalny - bez niego panel działa w trybie
+    # tylko do odczytu (stan wejść/wyjść/stref widoczny normalnie, protokół
+    # integracji Satela nie wymaga klucza do samego czytania), ale
+    # sterowanie (uzbrojenie/rozbrojenie/wyjścia) jest zablokowane z
+    # czytelnym komunikatem, patrz SatelIntegraClient.set_output/arm/disarm
+    # w bridge/satel_client.py. Klucz można dodać później w zakładce
+    # ⚙ Ustawienia -> 🔌 Połączenia, bez ponownego przechodzenia kreatora.
 
     ebus = form.get("ebus", {})
     if not ebus.get("mqtt_host"):
@@ -722,13 +727,17 @@ def validate_connections(form: dict) -> list[str]:
     if ha.get("enabled") and not (ha.get("mqtt_host") or ebus.get("mqtt_host")):
         errors.append("Home Assistant: adres brokera MQTT jest wymagany, jeśli integracja włączona")
 
-    # Interwały odpytywania (zakładka 🧩 Wtyczki) - minimum 3s, żeby nie
-    # zalewać centrali/urządzeń zapytaniami przy pomyłce we wpisanej wartości.
+    # Interwały odpytywania (zakładka 🧩 Wtyczki) - minimum tak dobrane, żeby
+    # nie zalewać centrali/urządzeń zapytaniami przy pomyłce we wpisanej
+    # wartości. Satel: 2s (zalecany zakres 2-5s - kolejka komend biblioteki
+    # i tak sekwencjonuje zapytania względem innych poleceń, patrz obszerny
+    # docstring bridge/satel_client.py, więc krótszy interwał niż dawniej
+    # jest bezpieczny).
     satel_interval = satel.get("status_poll_interval_seconds")
     if satel_interval not in (None, ""):
         try:
-            if int(satel_interval) < 3:
-                errors.append("Satel: interwał odpytywania musi wynosić co najmniej 3 sekundy")
+            if int(satel_interval) < 2:
+                errors.append("Satel: interwał odpytywania musi wynosić co najmniej 2 sekundy")
         except (TypeError, ValueError):
             errors.append("Satel: interwał odpytywania musi być liczbą")
 
@@ -783,6 +792,12 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
         config["satel"]["encryption_key"] = None
     else:
         config["satel"].setdefault("encryption_key", None)
+    # Jawny przełącznik włącz/wyłącz - CELOWO osobny od samego faktu
+    # zapisania klucza wyżej (zgłoszony błąd projektowy: "szyfrowanie musi
+    # być włącz/wyłącz, a nie włączone-ale-bez-klucza"). Zwykły checkbox w
+    # formularzu (nie sekret) - zawsze nadpisywany wprost stanem z
+    # formularza, bez wzorca "puste = zostaw bez zmian".
+    config["satel"]["encryption_enabled"] = bool(satel_form.get("encryption_enabled"))
     config["satel"].setdefault("virtual_inputs", {})
     # Tryb wirtualnych wejść IP (patrz obszerny docstring
     # bridge/satel_client.py) - "library" (set_output, przez połączenie
@@ -804,7 +819,7 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     config["satel"].setdefault("fields_file", "satel_fields.yaml")
     config["satel"]["status_poll_interval_seconds"] = int(
         satel_form.get("status_poll_interval_seconds")
-        or config["satel"].get("status_poll_interval_seconds") or 15
+        or config["satel"].get("status_poll_interval_seconds") or 3
     )
 
     config.setdefault("ebus", {})
@@ -852,6 +867,14 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
             "enabled": existing_cloud.get("enabled", True),
             "access_id": tuya_cloud_form["access_id"].strip(),
             "access_key": (tuya_cloud_form.get("access_key") or "").strip() or existing_cloud.get("access_key", ""),
+            # REGRESJA: ta sekcja przepisuje cały słownik "cloud" od zera -
+            # brak api_region tutaj wcześniej znaczyłby, że KAŻDY zapis
+            # zakładki Połączenia kasowałby region ustawiony osobno w
+            # /plugins/tuya_cloud, psując sterowanie chmurowe (Tuya OpenAPI
+            # "cross-region access is not allowed"). Formularz Połączeń NIE
+            # edytuje regionu (to robi /plugins/tuya_cloud) - więc zawsze
+            # zachowaj już zapisaną wartość.
+            "api_region": (tuya_cloud_form.get("api_region") or "").strip() or existing_cloud.get("api_region", "eu"),
             "api_endpoint": (tuya_cloud_form.get("api_endpoint") or "").strip()
                 or existing_cloud.get("api_endpoint", "https://openapi.tuyaeu.com"),
             "mq_endpoint": (tuya_cloud_form.get("mq_endpoint") or "").strip()
@@ -920,7 +943,8 @@ def connections_to_form(existing: dict) -> dict:
             "virtual_inputs_port": satel.get("virtual_inputs", {}).get("port", 8888),
             "integration_key_set": bool(satel.get("integration_key")),
             "encryption_key_set": bool(satel.get("encryption_key")),
-            "status_poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
+            "encryption_enabled": bool(satel.get("encryption_enabled")),
+            "status_poll_interval_seconds": satel.get("status_poll_interval_seconds", 3),
         },
         "tuya_local": {
             "status_poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
@@ -939,6 +963,7 @@ def connections_to_form(existing: dict) -> dict:
             "enabled": bool(tuya_cloud),
             "access_id": tuya_cloud.get("access_id", ""),
             "access_key_set": bool(tuya_cloud.get("access_key")),
+            "api_region": tuya_cloud.get("api_region", "eu"),
             "api_endpoint": tuya_cloud.get("api_endpoint", "https://openapi.tuyaeu.com"),
             "mq_endpoint": tuya_cloud.get("mq_endpoint", "wss://mqe.tuyaeu.com:8285/"),
         },
@@ -1007,10 +1032,10 @@ def build_location_patch(form: dict, existing: dict) -> dict:
 # Cloud Pulsar), a przełączanie integracji jest i tak rzadką operacją.
 PLUGIN_DEFS = [
     {"id": "satel", "name": "Centrala Satel Integra", "icon": "🔒", "toggleable": True, "restart_required": True,
-     "has_poll_interval": True, "has_log_level": True,
+     "has_poll_interval": True, "min_poll_interval_seconds": 2, "has_log_level": True,
      "description": "Odczyt wejść/wyjść/stref i sterowanie (uzbrajanie, wyjścia)."},
     {"id": "tuya_local", "name": "Tuya - urządzenia lokalne (WiFi)", "icon": "🔌", "toggleable": True, "restart_required": True,
-     "has_poll_interval": True, "has_log_level": True,
+     "has_poll_interval": True, "min_poll_interval_seconds": 3, "has_log_level": True,
      "description": "Sterowanie gniazdkami/przełącznikami/ściemniaczami Tuya bezpośrednio w LAN, bez chmury (tinytuya) - obejmuje też podurządzenia Zigbee."},
     {"id": "tuya_zigbee", "name": "Tuya - bramki Zigbee", "icon": "🐝", "toggleable": False, "restart_required": False,
      "has_log_level": True,
@@ -1064,10 +1089,17 @@ def list_plugins(config_raw: dict) -> list[dict]:
 
     state = {
         "satel": {
-            "enabled": satel.get("enabled", True) and bool(satel.get("host") and satel.get("integration_key")),
-            "configured": bool(satel.get("host") and satel.get("integration_key")),
-            "detail": f"{satel.get('host', '?')}:{satel.get('port', '?')}" if satel.get("host") else "nieskonfigurowana",
-            "poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
+            # Klucz integracji NIE jest wymagany do połączenia/odczytu (patrz
+            # obszerny komentarz w validate() wyżej) - tylko host decyduje o
+            # "skonfigurowaniu", "detail" niżej jawnie sygnalizuje brak klucza
+            # (sterowanie zablokowane, dopóki go nie dodasz w Połączeniach).
+            "enabled": satel.get("enabled", True) and bool(satel.get("host")),
+            "configured": bool(satel.get("host")),
+            "detail": (
+                f"{satel.get('host', '?')}:{satel.get('port', '?')}"
+                + ("" if satel.get("integration_key") else " (tylko odczyt - brak klucza integracji)")
+            ) if satel.get("host") else "nieskonfigurowana",
+            "poll_interval_seconds": satel.get("status_poll_interval_seconds", 3),
         },
         "tuya_local": {
             "enabled": tuya.get("enabled", True) and len(tuya_devices) > len(zigbee_devices),
@@ -1278,11 +1310,18 @@ def build_config_dict(form: dict) -> dict:
         "satel": {
             "host": satel_form["host"],
             "port": int(satel_form.get("port", 7094)),
-            "integration_key": satel_form["integration_key"],
+            # Opcjonalny (patrz validate() wyżej) - puste = panel tylko do
+            # odczytu, dopóki klucz nie zostanie dodany w Połączeniach.
+            "integration_key": (satel_form.get("integration_key") or "").strip(),
             # Opcjonalny klucz szyfrowania transmisji (AES) - patrz
             # obszerny docstring bridge/satel_client.py, NIE mylić z
             # kluczem integracji wyżej. Puste/brak = brak szyfrowania.
             "encryption_key": (satel_form.get("encryption_key") or "").strip() or None,
+            # Jawny przełącznik włącz/wyłącz - CELOWO osobny od samego
+            # faktu podania klucza wyżej (patrz analogiczny komentarz w
+            # build_connections_patch) - domyślnie wyłączone, nawet jeśli
+            # klucz akurat wpisano.
+            "encryption_enabled": bool(satel_form.get("encryption_enabled")),
             "partition": int(satel_form.get("partition", 1)),
             "virtual_inputs": {
                 "mode": satel_form.get("virtual_inputs_mode") or "library",
@@ -1373,6 +1412,13 @@ def build_config_dict(form: dict) -> dict:
         config["tuya"]["cloud"] = {
             "access_id": form["tuya_cloud"]["access_id"],
             "access_key": form["tuya_cloud"].get("access_key", ""),
+            # Kod regionu (np. "eu"/"us") - REGRESJA: brakowało go tu do tej
+            # pory, więc TuyaCloudController (sterowanie urządzeniami przez
+            # chmurę, patrz bridge/tuya_cloud.py) zawsze dostawał pusty
+            # apiRegion, co Tuya OpenAPI odrzuca błędem "cross-region access
+            # is not allowed" niezależnie od regionu wybranego w kreatorze.
+            # Domyślnie "eu" - ten sam fallback co plugins/tuya_cloud/routes.py.
+            "api_region": form["tuya_cloud"].get("api_region") or "eu",
             # `or` (nie .get(key, default)) celowo - kreator wysyła ""
             # (nie brak klucza) dla regionów, dla których nie zgadujemy
             # nieudokumentowanego adresu Pulsar (patrz setup.html:

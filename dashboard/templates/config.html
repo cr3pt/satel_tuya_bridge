@@ -85,7 +85,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 </head>
 <body>
-<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/automations">🎬 Automatyzacje</a> &nbsp;·&nbsp; <a href="/plugins">🧩 Wtyczki</a> &nbsp;·&nbsp; <a href="/system">⚙ Ustawienia ogólne</a> &nbsp;·&nbsp; <a id="authNavLink" href="/login"></a></div>
+{% include "_nav.html" %}
 <h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">⚙ Ustawienia</h1>
 <div class="hint">
   Czujniki eBUS, pola Satela (strefy/wyjścia/wejścia IP/partycje) i
@@ -128,21 +128,28 @@
     <div class="conn-grid">
       <div class="field"><label>Adres IP</label><input type="text" id="conn_satel_host" placeholder="192.168.1.20"></div>
       <div class="field"><label>Port</label><input type="number" id="conn_satel_port" placeholder="7094"></div>
-      <div class="field"><label>Klucz integracji</label><input type="password" id="conn_satel_key" placeholder="(bez zmian)"></div>
+      <div class="field"><label>Klucz integracji (opcjonalny)</label><input type="password" id="conn_satel_key" placeholder="(bez zmian)"></div>
       <div class="field"><label>Strefa główna (numer)</label><input type="number" id="conn_satel_partition" placeholder="1"></div>
       <div class="field"><label>Klucz szyfrowania (opcjonalnie)</label><input type="password" id="conn_satel_enc_key" placeholder="(bez zmian)"></div>
     </div>
     <div class="secret-hint" id="conn_satel_key_hint"></div>
     <div class="secret-hint" id="conn_satel_enc_key_hint"></div>
     <label style="font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-top: 4px;">
+      <input type="checkbox" id="conn_satel_enc_enabled" style="width: auto;">
+      Centrala ma włączone szyfrowanie transmisji - używaj klucza szyfrowania
+    </label>
+    <label style="font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-top: 4px;">
       <input type="checkbox" id="conn_satel_enc_key_clear" style="width: auto;">
-      Wyłącz szyfrowanie (wyczyść klucz)
+      Usuń zapisany klucz szyfrowania
     </label>
     <div class="section-hint" style="margin: 4px 0 0;">
       Klucz szyfrowania to NIE klucz integracji wyżej - to osobny klucz
       transmisji (AES), ustawiany w DLOADX TYLKO jeśli centrala ma
-      jawnie włączoną szyfrowaną komunikację integracji. Zostaw puste,
-      jeśli nie wiesz, o co chodzi.
+      jawnie włączoną szyfrowaną komunikację integracji. Sam zapisany
+      klucz NIE wystarczy - szyfrowanie jest używane TYLKO gdy powyższy
+      checkbox jest zaznaczony (można więc zachować klucz w configu, a
+      mimo to mieć transmisję czystym tekstem). Zostaw obie opcje
+      wyłączone, jeśli nie wiesz, o co chodzi.
     </div>
 
     <div class="field-group" style="margin-top: 14px;">
@@ -488,10 +495,11 @@ document.getElementById('loadConnectionsBtn').addEventListener('click', async ()
     document.getElementById('conn_satel_partition').value = data.satel.partition || '';
     document.getElementById('conn_satel_key_hint').textContent = data.satel.integration_key_set
       ? 'Klucz integracji jest już ustawiony - zostaw pole puste, żeby go nie zmieniać.'
-      : 'Klucz integracji NIE jest jeszcze ustawiony.';
+      : 'Klucz integracji NIE jest jeszcze ustawiony - panel działa tylko do odczytu, bez sterowania.';
     document.getElementById('conn_satel_enc_key_hint').textContent = data.satel.encryption_key_set
-      ? 'Klucz szyfrowania jest już ustawiony - zostaw pole puste, żeby go nie zmieniać (albo zaznacz "Wyłącz szyfrowanie" niżej).'
-      : 'Klucz szyfrowania NIE jest ustawiony (transmisja czystym tekstem).';
+      ? 'Klucz szyfrowania jest już ustawiony - zostaw pole puste, żeby go nie zmieniać.'
+      : 'Klucz szyfrowania NIE jest ustawiony.';
+    document.getElementById('conn_satel_enc_enabled').checked = !!data.satel.encryption_enabled;
     document.getElementById('conn_satel_enc_key_clear').checked = false;
     document.getElementById('conn_satel_vi_mode').value = data.satel.virtual_inputs_mode || 'library';
     document.getElementById('conn_satel_vi_port').value = data.satel.virtual_inputs_port || '';
@@ -518,6 +526,7 @@ document.getElementById('saveConnectionsBtn').addEventListener('click', async ()
       port: document.getElementById('conn_satel_port').value,
       partition: document.getElementById('conn_satel_partition').value,
       integration_key: document.getElementById('conn_satel_key').value,
+      encryption_enabled: document.getElementById('conn_satel_enc_enabled').checked,
       encryption_key: document.getElementById('conn_satel_enc_key').value,
       encryption_key_clear: document.getElementById('conn_satel_enc_key_clear').checked,
       virtual_inputs_mode: document.getElementById('conn_satel_vi_mode').value,

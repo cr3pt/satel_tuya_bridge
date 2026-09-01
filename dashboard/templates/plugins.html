@@ -94,7 +94,7 @@
 </style>
 </head>
 <body>
-<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/config">⚙ Ustawienia</a> &nbsp;·&nbsp; <a href="/automations">🎬 Automatyzacje</a> &nbsp;·&nbsp; <a href="/system">⚙ Ustawienia ogólne</a> &nbsp;·&nbsp; <a id="authNavLink" href="/login"></a></div>
+{% include "_nav.html" %}
 <h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🧩 Wtyczki</h1>
 <div class="hint">
   Jeden spójny przegląd wszystkich integracji. <strong>Przełącznik działa
@@ -256,7 +256,7 @@ function renderPlugin(p) {
       ${p.has_poll_interval ? `
         <div class="poll-interval-row">
           <span>Interwał odpytywania:</span>
-          <input type="number" min="3" class="poll-interval-input" value="${p.poll_interval_seconds}">
+          <input type="number" min="${p.min_poll_interval_seconds || 3}" class="poll-interval-input" value="${p.poll_interval_seconds}">
           <span>s</span>
           <span class="live-badge">● działa na żywo, bez restartu</span>
         </div>

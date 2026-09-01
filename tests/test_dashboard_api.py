@@ -398,6 +398,36 @@ class TestVirtualInputEndpoints:
         assert resp.status_code == 404
 
 
+class TestSystemLogsLoggersEndpoint:
+    """/api/system/logs/loggers - lista WYSTĘPUJĄCYCH nazw loggerów, do
+    rozwijanej listy filtra w panelu (⚙ Ogólne -> Logi), patrz
+    HistoryStore.get_log_loggers."""
+
+    def test_requires_auth(self, client):
+        resp = client.get("/api/system/logs/loggers")
+        assert resp.status_code == 401
+
+    def test_returns_distinct_logger_names(self, client):
+        import dashboard.app as app_module
+        app_module.history.write_log("bridge", "bridge.satel", "INFO", "a")
+        app_module.history.write_log("bridge", "bridge.satel", "WARNING", "b")
+        app_module.history.write_log("bridge", "bridge.tuya_local", "DEBUG", "c")
+
+        resp = client.get("/api/system/logs/loggers", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json() == ["bridge.satel", "bridge.tuya_local"]
+
+    def test_filters_by_component(self, client):
+        import dashboard.app as app_module
+        app_module.history.write_log("bridge", "bridge.satel", "INFO", "a")
+        app_module.history.write_log("dashboard", "dashboard.app", "INFO", "b")
+
+        resp = client.get(
+            "/api/system/logs/loggers?component=dashboard", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.get_json() == ["dashboard.app"]
+
+
 class TestSystemRestartEndpoint:
     """/api/system/restart - pełny restart obu kontenerów (bridge + panel),
     w odróżnieniu od reload_config() (patrz _enqueue_bridge_reload), który
@@ -1470,6 +1500,39 @@ class TestSatelDiscoveryEndpoint:
         resp = client.post("/api/discover/satel", json={})
         assert resp.status_code == 200
         assert captured == {"host": "127.0.0.1", "port": 7094}  # z CONFIG_TEMPLATE
+
+    def test_encryption_key_not_used_when_encryption_disabled(self, client, monkeypatch):
+        """Regresja: satel.encryption_enabled musi GATE'OWAĆ encryption_key
+        - sam zapisany klucz bez włączonego przełącznika nie może trafić do
+        biblioteki (patrz analogiczny komentarz w bridge/rules_engine.py)."""
+        captured = {}
+
+        async def fake_discover(host, port, timeout_seconds=30.0, **kwargs):
+            captured.update(kwargs)
+            return {"zones": [], "outputs": []}
+
+        monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "satel": {"host": "127.0.0.1", "port": 7094, "encryption_key": "AESKEY", "encryption_enabled": False},
+        })
+        resp = client.post("/api/discover/satel", json={})
+        assert resp.status_code == 200
+        assert captured["encryption_key"] is None
+
+    def test_encryption_key_used_when_encryption_enabled(self, client, monkeypatch):
+        captured = {}
+
+        async def fake_discover(host, port, timeout_seconds=30.0, **kwargs):
+            captured.update(kwargs)
+            return {"zones": [], "outputs": []}
+
+        monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "satel": {"host": "127.0.0.1", "port": 7094, "encryption_key": "AESKEY", "encryption_enabled": True},
+        })
+        resp = client.post("/api/discover/satel", json={})
+        assert resp.status_code == 200
+        assert captured["encryption_key"] == "AESKEY"
 
     def test_explicit_host_in_body_overrides_configured(self, client, monkeypatch):
         captured = {}

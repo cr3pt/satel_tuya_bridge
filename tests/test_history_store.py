@@ -125,6 +125,26 @@ class TestStatus:
         assert len(history.get_status("satel_input")) == 2
 
 
+class TestLogs:
+    def test_get_log_loggers_returns_distinct_sorted_names(self, history):
+        history.write_log("bridge", "bridge.satel", "INFO", "połączono")
+        history.write_log("bridge", "bridge.tuya_local", "DEBUG", "odpytano")
+        history.write_log("bridge", "bridge.satel", "WARNING", "rozłączono")
+        assert history.get_log_loggers() == ["bridge.satel", "bridge.tuya_local"]
+
+    def test_get_log_loggers_filters_by_component(self, history):
+        """Do rozwijanej listy filtra w panelu (⚙ Ogólne -> Logi) - wybór
+        procesu (bridge/panel) musi zawężać też listę loggerów, inaczej
+        użytkownik mógłby wybrać logger, który i tak nic nie zwróci."""
+        history.write_log("bridge", "bridge.satel", "INFO", "a")
+        history.write_log("dashboard", "dashboard.app", "INFO", "b")
+        assert history.get_log_loggers("bridge") == ["bridge.satel"]
+        assert history.get_log_loggers("dashboard") == ["dashboard.app"]
+
+    def test_get_log_loggers_empty_when_no_logs(self, history):
+        assert history.get_log_loggers() == []
+
+
 class TestCommandQueue:
     def test_enqueue_and_fetch_pending(self, history):
         cmd_id = history.enqueue_command("satel_arm", {"partitions": [1], "mode": 0})

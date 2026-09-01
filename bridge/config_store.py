@@ -216,8 +216,10 @@ class ConfigStore:
            `BridgeConfig._validate()` NIE sprawdza (bo interesuje ją tylko
            obecność sekcji najwyższego poziomu), a bez których
            `RulesEngine` i tak wywali się `KeyError`-em zaraz po starcie
-           (`bridge/rules_engine.py`: `config.satel["host"/"port"/
-           "integration_key"]`, odczytywane bezpośrednio, bez `.get()`).
+           (`bridge/rules_engine.py`: `config.satel["host"/"port"]`,
+           odczytywane bezpośrednio, bez `.get()`). `integration_key` jest
+           CELOWO pominięty tutaj - jest opcjonalny, panel bez niego działa
+           tylko do odczytu (patrz bridge/satel_client.py).
 
         Nic NIE trafia do prawdziwej bazy, dopóki oba sprawdzenia nie
         przejdą - błąd podnosi ValueError z czytelnym opisem, zamiast
@@ -258,7 +260,7 @@ class ConfigStore:
                 raise ValueError(f"Zaimportowana konfiguracja nie przejdzie startu procesu: {exc}") from exc
 
             missing_satel = [
-                key for key in ("host", "port", "integration_key")
+                key for key in ("host", "port")
                 if not simulated.raw.get("satel", {}).get(key)
             ]
             if missing_satel:

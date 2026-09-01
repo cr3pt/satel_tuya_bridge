@@ -95,7 +95,13 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
             timeout_seconds = min(float(payload.get("timeout_seconds") or 30), 120)
         except (TypeError, ValueError):
             timeout_seconds = 30.0
-        encryption_key = payload.get("encryption_key") or satel_cfg.get("encryption_key") or None
+        # Przełącznik włącz/wyłącz gate'uje klucz - patrz analogiczny
+        # komentarz w bridge/rules_engine.py.
+        encryption_enabled = (
+            payload["encryption_enabled"] if "encryption_enabled" in payload
+            else satel_cfg.get("encryption_enabled")
+        )
+        encryption_key = (payload.get("encryption_key") or satel_cfg.get("encryption_key") or None) if encryption_enabled else None
 
         try:
             result = asyncio.run(discover_active_zones_and_outputs(

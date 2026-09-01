@@ -1,5 +1,6 @@
 """Testy dla dashboard/setup.py i tras kreatora (/setup, /api/setup/save,
 /api/setup/draft)."""
+import copy
 import pathlib
 
 import pytest
@@ -43,10 +44,14 @@ class TestValidation:
         errors = validate(form)
         assert any("Satel" in e and "IP" in e for e in errors)
 
-    def test_missing_integration_key_is_error(self):
+    def test_missing_integration_key_is_not_an_error(self):
+        """Klucz integracji jest CELOWO opcjonalny - bez niego kreator się
+        kończy, a panel działa w trybie tylko do odczytu (sterowanie
+        zablokowane z czytelnym komunikatem, patrz
+        SatelIntegraClient.set_output/arm/disarm w bridge/satel_client.py)."""
         form = {**VALID_FORM, "satel": {**VALID_FORM["satel"], "integration_key": ""}}
         errors = validate(form)
-        assert any("klucz integracji" in e for e in errors)
+        assert errors == []
 
     def test_short_password_is_error(self):
         form = {**VALID_FORM, "admin_password": "krotkie"}
@@ -75,6 +80,18 @@ class TestBuildConfigDict:
         assert config["satel"]["host"] == "192.168.1.10"
         assert config["satel"]["port"] == 7094
         assert config["satel"]["integration_key"] == "klucz123"
+
+    def test_encryption_enabled_defaults_to_false(self):
+        """Domyślnie wyłączone przy pierwszym zapisie kreatora, nawet jeśli
+        VALID_FORM nie zawiera pola w ogóle."""
+        config = build_config_dict(VALID_FORM)
+        assert config["satel"]["encryption_enabled"] is False
+
+    def test_encryption_enabled_true_when_form_sets_it(self):
+        form = {**VALID_FORM, "satel": {**VALID_FORM["satel"], "encryption_enabled": True, "encryption_key": "AESKEY"}}
+        config = build_config_dict(form)
+        assert config["satel"]["encryption_enabled"] is True
+        assert config["satel"]["encryption_key"] == "AESKEY"
 
     def test_satel_config_has_fields_file_marker_not_inline_fields(self):
         config = build_config_dict(VALID_FORM)
@@ -203,6 +220,25 @@ class TestBuildConfigDict:
         config = build_config_dict(form)
         assert config["tuya"]["cloud"]["api_endpoint"] == "https://openapi.tuyaeu.com"
         assert config["tuya"]["cloud"]["mq_endpoint"] == "wss://mqe.tuyaeu.com:8285/"
+
+    def test_tuya_cloud_persists_api_region(self):
+        """Regresja: build_config_dict NIE zapisywał w ogóle api_region z
+        formularza kreatora (tylko api_endpoint/mq_endpoint, pochodne od
+        regionu, ale używane WYŁĄCZNIE do detekcji ruchu z kamer/Pulsar) -
+        TuyaCloudController (sterowanie urządzeniami przez chmurę, patrz
+        bridge/tuya_cloud.py) czyta apiRegion osobno i bez tego pola zawsze
+        dostawał pusty string, co Tuya OpenAPI odrzuca błędem "cross-region
+        access is not allowed" niezależnie od regionu wybranego w kreatorze."""
+        form = {**VALID_FORM, "tuya_cloud": {
+            "enabled": True, "access_id": "id1", "access_key": "key1", "api_region": "us",
+        }}
+        config = build_config_dict(form)
+        assert config["tuya"]["cloud"]["api_region"] == "us"
+
+    def test_tuya_cloud_missing_api_region_defaults_to_eu(self):
+        form = {**VALID_FORM, "tuya_cloud": {"enabled": True, "access_id": "id1", "access_key": "key1"}}
+        config = build_config_dict(form)
+        assert config["tuya"]["cloud"]["api_region"] == "eu"
 
     def test_result_is_yaml_serializable(self):
         """Krytyczne - jeśli to się nie da zserializować, zapis configu
@@ -478,6 +514,34 @@ class TestConnectionsBuilder:
         patched = build_connections_patch(form, self.EXISTING)
         assert patched["satel"]["integration_key"] == "nowy_klucz"
 
+    def test_encryption_enabled_defaults_to_false_when_absent_from_form(self):
+        """Zwykły checkbox (nie sekret) - zawsze nadpisywany wprost stanem
+        formularza, w odróżnieniu od kluczy wyżej (puste = zostaw bez
+        zmian) - regresja dla "szyfrowanie musi być włącz/wyłącz, a nie
+        włączone-ale-bez-klucza"."""
+        form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["satel"]["encryption_enabled"] is False
+
+    def test_encryption_enabled_true_persists(self):
+        form = {
+            "satel": {"host": "192.168.1.10", "encryption_enabled": True},
+            "ebus": {"mqtt_host": "127.0.0.1"},
+        }
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["satel"]["encryption_enabled"] is True
+
+    def test_encryption_enabled_can_be_turned_back_off(self):
+        """W odróżnieniu od kluczy-sekretów, "brak w formularzu" dla tego
+        pola NIE oznacza "zostaw bez zmian" - checkbox niezaznaczony po
+        prostu nie jest wysyłany przez przeglądarkę, więc musi to znaczyć
+        "wyłączone", nawet jeśli wcześniej było włączone."""
+        existing = copy.deepcopy(self.EXISTING)
+        existing["satel"]["encryption_enabled"] = True
+        form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        patched = build_connections_patch(form, existing)
+        assert patched["satel"]["encryption_enabled"] is False
+
     def test_ebus_topic_prefix_updates_boiler_output_mqtt(self):
         form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1", "topic_prefix": "ebusd_state"}}
         patched = build_connections_patch(form, self.EXISTING)
@@ -512,6 +576,34 @@ class TestConnectionsBuilder:
         patched = build_connections_patch(form, self.EXISTING)
         assert patched["tuya"]["cloud"]["access_id"] == "id1"
         assert patched["tuya"]["cloud"]["access_key"] == "secret1"
+
+    def test_tuya_cloud_save_preserves_api_region_set_elsewhere(self):
+        """Regresja: ta funkcja przepisuje CAŁY słownik tuya.cloud od zera -
+        zakładka Połączenia (config.html) nie edytuje w ogóle regionu (to
+        robi osobna strona /plugins/tuya_cloud), więc każdy zapis TUTAJ bez
+        zachowania już ustawionego api_region kasowałby go, psując
+        sterowanie chmurowe (Tuya OpenAPI "cross-region access is not
+        allowed") przy następnym połączeniu, mimo że region był poprawnie
+        skonfigurowany gdzie indziej."""
+        existing = {**self.EXISTING, "tuya": {**self.EXISTING["tuya"], "cloud": {
+            "access_id": "id1", "access_key": "secret1", "api_region": "us",
+            "api_endpoint": "https://openapi.tuyaus.com", "mq_endpoint": "wss://mqe.tuyaus.com:8285/",
+            "camera_device_ids": ["cam1"],
+        }}}
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya_cloud": {"enabled": True, "access_id": "id1", "access_key": ""},
+        }
+        patched = build_connections_patch(form, existing)
+        assert patched["tuya"]["cloud"]["api_region"] == "us"
+
+    def test_tuya_cloud_new_config_without_region_defaults_to_eu(self):
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya_cloud": {"enabled": True, "access_id": "id1", "access_key": "secret1"},
+        }
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["tuya"]["cloud"]["api_region"] == "eu"
 
     def test_tuya_cloud_blank_secret_keeps_existing(self):
         existing = {**self.EXISTING, "tuya": {**self.EXISTING["tuya"], "cloud": {
@@ -710,6 +802,36 @@ class TestConnectionsToForm:
         form = connections_to_form(existing)
         assert form["satel"]["integration_key_set"] is False
         assert form["tuya_cloud"]["enabled"] is False
+
+    def test_exposes_tuya_cloud_api_region(self):
+        """Regresja: api_region (używany przez TuyaCloudController do
+        łączenia się z właściwym centrum danych Tuya) nie był tu wcale
+        eksponowany, mimo że api_endpoint/mq_endpoint (używane tylko do
+        detekcji kamer) już były."""
+        existing = {
+            "satel": {"host": "1.2.3.4"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya": {"cloud": {"access_id": "id1", "api_region": "us"}},
+        }
+        form = connections_to_form(existing)
+        assert form["tuya_cloud"]["api_region"] == "us"
+
+    def test_exposes_encryption_enabled_flag(self):
+        """encryption_enabled NIE jest sekretem (zwykły bool, nie klucz) -
+        w odróżnieniu od encryption_key_set (który tylko mówi, CZY klucz
+        jest zapisany), to pole musi nieść jego RZECZYWISTĄ wartość, żeby
+        formularz mógł poprawnie ustawić stan checkboxa przy wczytaniu."""
+        existing = {
+            "satel": {"host": "1.2.3.4", "encryption_key": "AESKEY", "encryption_enabled": True},
+            "ebus": {"mqtt_host": "127.0.0.1"},
+        }
+        form = connections_to_form(existing)
+        assert form["satel"]["encryption_enabled"] is True
+        assert form["satel"]["encryption_key_set"] is True
+
+    def test_encryption_enabled_defaults_to_false(self):
+        existing = {"satel": {"host": "1.2.3.4"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        form = connections_to_form(existing)
+        assert form["satel"]["encryption_enabled"] is False
 
     def test_roundtrip_with_build_connections_patch(self):
         """connections_to_form(existing) -> uzupełnij formularz w
@@ -1788,7 +1910,7 @@ class TestListPlugins:
 
     def test_poll_interval_defaults(self):
         by_id = {p["id"]: p for p in list_plugins({})}
-        assert by_id["satel"]["poll_interval_seconds"] == 15
+        assert by_id["satel"]["poll_interval_seconds"] == 3
         assert by_id["tuya_local"]["poll_interval_seconds"] == 30
 
     def test_poll_interval_reflects_config(self):

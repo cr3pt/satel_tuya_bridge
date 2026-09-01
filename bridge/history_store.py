@@ -353,6 +353,23 @@ class HistoryStore:
             for r in rows
         ]
 
+    def get_log_loggers(self, component: str | None = None) -> list[str]:
+        """Zwraca posortowaną listę WYSTĘPUJĄCYCH nazw loggerów (np.
+        'bridge.satel') - do wypełnienia rozwijanej listy filtra w panelu
+        (⚙ Ogólne -> Logi), zamiast pola tekstowego, gdzie trzeba było
+        zgadywać/pamiętać dokładną nazwę. Celowo z samej tabeli `logs`
+        (co FAKTYCZNIE się zalogowało), nie z jakiejś statycznej listy
+        modułów - dokładnie odzwierciedla to, co można przefiltrować."""
+        query = "SELECT DISTINCT logger FROM logs WHERE 1=1"
+        params: list = []
+        if component:
+            query += " AND component = ?"
+            params.append(component)
+        query += " ORDER BY logger"
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [r[0] for r in rows]
+
     def prune_logs(self, keep: int = 10000) -> None:
         """Trzyma tylko `keep` najnowszych wpisów - logi (zwłaszcza na
         DEBUG) mogą rosnąć dużo szybciej niż zdarzenia/odczyty, więc
