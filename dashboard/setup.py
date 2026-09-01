@@ -794,10 +794,10 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     # Tryb wirtualnych wejść IP (patrz obszerny docstring
     # bridge/satel_client.py) - "library" (set_output, przez połączenie
     # integracji) albo "http" (funkcja "Wejścia IP" ETHM-1 Plus, osobne
-    # połączenie, niezależne od kolejki poleceń integracji). UWAGA: zmiana
-    # trybu NIE przekształca automatycznie już zapisanych wierszy "inputs"
-    # (kształt int vs {number,key}) - trzeba je ręcznie uzupełnić/zapisać
-    # ponownie w zakładce Satel po zmianie trybu.
+    # połączenie, niezależne od kolejki poleceń integracji). Kształt
+    # zapisanych wierszy "inputs" (nazwa -> numer) jest TEN SAM w obu
+    # trybach, więc zmiana trybu nie wymaga ponownego uzupełniania wejść -
+    # tylko "key" (hasło HTTP) niżej dotyczy wyłącznie trybu "http".
     vi_mode = satel_form.get("virtual_inputs_mode") or config["satel"]["virtual_inputs"].get("mode") or "library"
     config["satel"]["virtual_inputs"]["mode"] = vi_mode
     config["satel"]["virtual_inputs"]["port"] = int(
