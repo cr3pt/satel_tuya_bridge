@@ -506,11 +506,11 @@ DP po stronie Tuya oczekuje typu liczbowego.
 
 ## Rotacja i backup bazy
 
-RPi Zero W ma ograniczoną kartę SD - `bridge_history.db` rosłaby w
-nieskończoność bez czyszczenia (odczyty z kotła co kilkadziesiąt sekund,
-zdarzenia ruchu, itd.). Domyślnie bridge **sam, automatycznie** czyści
-dane starsze niż 90 dni raz na dobę (konfigurowalne, sekcja `maintenance`
-w `config.yaml`) - zero dodatkowej konfiguracji potrzebnej "z pudełka".
+`bridge_history.db` rosłaby w nieskończoność bez czyszczenia (odczyty z
+kotła co kilkadziesiąt sekund, zdarzenia ruchu, itd.). Domyślnie bridge
+**sam, automatycznie** czyści dane starsze niż 180 dni raz na dobę
+(konfigurowalne, sekcja `maintenance` w `config.yaml`) - zero dodatkowej
+konfiguracji potrzebnej "z pudełka".
 
 **Ważne rozróżnienie**: aktywne alerty i oczekujące komendy (jeszcze nie
 wykonane przez bridge) NIGDY nie są usuwane niezależnie od wieku -
@@ -845,8 +845,8 @@ przy każdym przeładowaniu konfiguracji).
 **Interwał odpytywania (Satel i Tuya lokalnie).** Te dwie karty mają
 dodatkowo pole "Interwał odpytywania" - jak często bridge SAM dopytuje o
 bieżący stan wejść/wyjść (Satel: `satel.status_poll_interval_seconds`,
-domyślnie 15s) i urządzeń Tuya (`tuya.status_poll_interval_seconds`,
-domyślnie 30s, obejmuje też podurządzenia Zigbee - ta sama pętla). To
+domyślnie 10s) i urządzeń Tuya (`tuya.status_poll_interval_seconds`,
+domyślnie 15s, obejmuje też podurządzenia Zigbee - ta sama pętla). To
 osobny mechanizm od broadcastów samej centrali/urządzeń o zmianie stanu -
 zaobserwowano na realnej instalacji, że zmiana stanu WYJŚCIA nie zawsze
 dociera jako broadcast (w odróżnieniu od wejść), więc samo poleganie na

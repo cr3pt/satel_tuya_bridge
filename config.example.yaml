@@ -109,15 +109,15 @@ satel:
   # zaobserwowano, że wyjścia nie zawsze to robią, w odróżnieniu od wejść).
   # Edytowalne też z panelu (zakładka 🧩 Wtyczki) BEZ restartu procesu -
   # minimum 3s, żeby nie zalewać centrali zapytaniami.
-  status_poll_interval_seconds: 15
+  status_poll_interval_seconds: 10
 
 tuya:
   # Co ile sekund odpytywać lokalnie urządzenia Tuya (WiFi i podurządzenia
   # Zigbee przez bramkę - patrz zigbee_gateways niżej) o status (on/off,
   # jasność) do panelu webowego. Krótszy interwał = szybciej widoczna
-  # zmiana w panelu, ale więcej ruchu sieciowego/obciążenia RPi. Edytowalne
-  # też z panelu (zakładka 🧩 Wtyczki) BEZ restartu procesu - minimum 3s.
-  status_poll_interval_seconds: 30
+  # zmiana w panelu, ale więcej ruchu sieciowego. Edytowalne też z panelu
+  # (zakładka 🧩 Wtyczki) BEZ restartu procesu - minimum 3s.
+  status_poll_interval_seconds: 15
 
   # Lokalne sterowanie (tinytuya) - gniazdka, włączniki, ściemniacze.
   # local_key wyciągasz raz narzędziem: `python -m tinytuya wizard` (albo
@@ -400,11 +400,11 @@ alarm_rules:
     max_age_seconds: 600        # 10 minut bez nowego odczytu = alarm
 
 maintenance:
-  # Rotacja starych danych - baza SQLite rosłaby w nieskończoność na
-  # karcie SD bez czyszczenia. AKTYWNE alerty i OCZEKUJĄCE komendy nigdy
-  # nie są usuwane niezależnie od wieku - reprezentują bieżący stan.
+  # Rotacja starych danych - baza SQLite rosłaby w nieskończoność bez
+  # czyszczenia. AKTYWNE alerty i OCZEKUJĄCE komendy nigdy nie są usuwane
+  # niezależnie od wieku - reprezentują bieżący stan.
   purge_enabled: true
-  retention_days: 90          # jak długo trzymać historyczne odczyty/zdarzenia
+  retention_days: 180         # jak długo trzymać historyczne odczyty/zdarzenia
 
   # Backup - kopia bazy przez wbudowane API SQLite (bezpieczne nawet gdy
   # bridge jednocześnie zapisuje). Domyślnie WYŁĄCZONY - włącz i ustaw

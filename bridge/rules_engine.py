@@ -87,7 +87,7 @@ class RulesEngine:
             history=self.history,
             notify_cfg=notify_cfg,
             grace_seconds=grace_seconds,
-            status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 15),
+            status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 10),
         )
         # Tryb "http" wirtualnych wejść IP (satel.virtual_inputs.mode) - osobne
         # połączenie HTTP, niezależne od kolejki poleceń protokołu integracji
@@ -899,8 +899,8 @@ class RulesEngine:
 
     # ------------------------------------------------------------------
     # Cykliczne odpytywanie statusów Tuya (nie mają callbacków lokalnie -
-    # trzeba je samemu pollingować; interwał dobrany tak, żeby nie
-    # obciążać RPi Zero W ani sieci)
+    # trzeba je samemu pollingować; projekt nie jest już ograniczony do
+    # RPi Zero W, patrz README "Status tego kodu")
     # ------------------------------------------------------------------
     async def _tuya_status_poll_loop(self) -> None:
         # HealthReporter tworzony tutaj (nie w __init__) - potrzebuje
@@ -980,7 +980,7 @@ class RulesEngine:
             # podmienić interwał na żywo, bez restartu procesu (patrz
             # analogiczne rozwiązanie dla Satela: SatelIntegraClient.
             # status_poll_interval_seconds).
-            await asyncio.sleep(self.config.tuya.get("status_poll_interval_seconds", 30))
+            await asyncio.sleep(self.config.tuya.get("status_poll_interval_seconds", 15))
 
     def _seed_satel_status_labels(self) -> None:
         """Zapisuje początkowy stan (OK/nieaktywne) dla wszystkich

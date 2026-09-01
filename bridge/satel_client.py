@@ -417,7 +417,7 @@ class SatelIntegraClient:
                  monitored_zones: dict | None = None, monitored_outputs: dict | None = None,
                  virtual_inputs: dict | None = None, encryption_key: str | None = None,
                  history=None, notify_cfg: dict | None = None, grace_seconds: float = 120,
-                 status_poll_interval_seconds: float = 15.0):
+                 status_poll_interval_seconds: float = 10.0):
         self.host = host
         self.port = port
         # Kod użytkownika (DLOADX/GUARDX) - wysyłany PER KOMENDA zapisu
