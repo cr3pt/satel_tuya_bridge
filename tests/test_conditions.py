@@ -1,7 +1,3 @@
-"""Testy bridge/conditions.py: evaluate_condition (and/or/not/state/
-time_window) - logika czysta, bez RulesEngine/HistoryStore (patrz
-tests/test_rules_engine.py: TestMotionRuleCondition/TestMotionRuleChaining
-dla testów integracyjnych przez pełną ścieżkę reguł ruchu)."""
 import datetime as dt
 
 import pytest
@@ -90,7 +86,6 @@ class TestComposite:
         assert evaluate_condition(cond, get_status_value=_status({"a": "2"})) is True
 
     def test_not_negates_and_of_multiple(self):
-        # not [(A and B)] - fałszywe TYLKO gdy A i B są prawdziwe naraz
         cond = {"type": "not", "conditions": [
             {"type": "state", "key": "a", "equals": "1"},
             {"type": "state", "key": "b", "equals": "2"},

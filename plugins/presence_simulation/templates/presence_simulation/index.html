@@ -122,7 +122,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 refreshAuthNav();
@@ -134,10 +134,7 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// ------------------------------------------------------------------
-// Ustawienia wtyczki (włącznik + poziom logowania) - ten sam wzorzec
-// GET/POST /api/plugins/<id>/settings co reszta stron wtyczek.
-// ------------------------------------------------------------------
+
 const PLUGIN_ID = 'presence_simulation';
 
 async function loadPluginSettings() {
@@ -169,9 +166,7 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
   }
 });
 
-// ------------------------------------------------------------------
-// Podsumowanie urządzeń (tylko do odczytu - edycja w /automations)
-// ------------------------------------------------------------------
+
 async function loadSummary() {
   const data = await (await fetch('/api/plugins/presence_simulation/summary')).json();
   const el = document.getElementById('devicesSummary');

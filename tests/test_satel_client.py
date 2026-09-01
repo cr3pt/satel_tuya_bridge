@@ -1,32 +1,19 @@
-"""Testy dla bridge/satel_client.py - głównie test_connection() (podpowiedź
-"Testuj połączenie" w kreatorze/panelu), bez prawdziwej centrali Satel.
-
-Napisane pod satel_integra >=1.4.0 (patrz obszerny docstring
-bridge/satel_client.py) - fejki poniżej odzwierciedlają PUBLICZNE API tej
-wersji (register_callbacks()/start()/close()/stopped/_send_data/
-_send_data_and_wait), nie starsze, prywatne API 0.3.x."""
 import asyncio
 import contextlib
+import time
 
 import pytest
 
 from bridge.satel_client import (
     SatelIntegraClient, SatelVirtualInputTrigger, _wait_for_command_result,
-    discover_active_zones_and_outputs,
+    discover_active_zones_and_outputs, BackgroundZoneOutputScan,
 )
 from bridge.satel_client import test_connection as satel_test_connection
 from bridge.satel_client import test_output as satel_test_output
 from bridge.satel_client import test_virtual_input_http as satel_test_virtual_input_http
-# ^ import aliasu jest CELOWY, nie kosmetyczny - pytest zbiera każdą funkcję
-# o nazwie pasującej do "test_*" widoczną w module testowym, więc zwykłe
-# "from ... import test_connection" sprawiłoby, że pytest próbowałby
-# uruchomić samą funkcję produkcyjną jako (bezargumentowy) test i wywalał
-# się błędem "fixture 'host' not found".
 
 
 class _FakeResult:
-    """Odpowiednik SatelReadMessage zwracanego przez client._send_data_and_wait()
-    - jedyne, co _wait_for_command_result() z niego czyta, to .msg_data[0]."""
 
     def __init__(self, msg_data: bytearray):
         self.msg_data = msg_data
@@ -41,13 +28,6 @@ def _error_result(error_byte: int) -> _FakeResult:
 
 
 class FakeAsyncSatel:
-    """Fejk `satel_integra.AsyncSatel` (publiczne API >=1.0.0, patrz obszerny
-    docstring bridge/satel_client.py) - patchuje `satel_integra.AsyncSatel`
-    na poziomie PAKIETU (`satel_integra.AsyncSatel`), bo bridge/satel_client.py
-    zawsze robi `from satel_integra import AsyncSatel` WEWNĄTRZ funkcji
-    (odroczony import) - podmiana atrybutu na `satel_integra.satel_integra`
-    (podmoduł) NIE zostałaby zauważona, bo lookup dzieje się na atrybucie
-    pakietu w momencie wywołania, nie submodułu."""
 
     def __init__(self, host, port, monitored_zones=None, monitored_outputs=None,
                  partitions=None, integration_key=None,
@@ -57,9 +37,6 @@ class FakeAsyncSatel:
         self.port = port
         self.monitored_zones = list(monitored_zones or [])
         self.monitored_outputs = list(monitored_outputs or [])
-        # Nazwa pola biblioteki to `integration_key`, ale to KLUCZ SZYFROWANIA
-        # (patrz obszerny docstring modułu) - przechowujemy pod jawną nazwą,
-        # żeby testy nie myliły go z kodem użytkownika.
         self.encryption_key = integration_key
         self._connect_result = connect_result
         self._connect_exception = connect_exception
@@ -123,14 +100,6 @@ class FakeAsyncSatel:
 
 
 def _patch_async_satel(monkeypatch, factory=None, **behavior):
-    """Patchuje satel_integra.AsyncSatel tak, żeby konstruować `factory`
-    (domyślnie FakeAsyncSatel) z argumentami PRODUKCYJNYMI (monitored_zones/
-    monitored_outputs/integration_key, przekazywanymi przez sam kod
-    bridge/satel_client.py) scalonymi ze stałymi `behavior` (connect_result/
-    connect_exception/hang_connect/confirm_response/hang_confirm - do
-    sterowania zachowaniem fejka z poziomu testu). Zwraca listę utworzonych
-    instancji (zwykle jeden element - jeden connect - ale np. test
-    ponawiania połączenia tworzy ich kilka)."""
     cls = factory or FakeAsyncSatel
     fakes: list = []
 
@@ -144,14 +113,10 @@ def _patch_async_satel(monkeypatch, factory=None, **behavior):
 
 
 class TestConnectionTest:
-    """test_connection() - podpowiedź "Testuj połączenie" w kreatorze/
-    panelu. satel_integra >=1.0.0 sam wykonuje pełną weryfikację (busy-check
-    + sonda protokołu) przy connect(raise_exceptions=True) - inaczej niż
-    0.3.x (samo otwarcie gniazda TCP)."""
 
     async def test_succeeds_silently_when_connect_returns_true(self, monkeypatch):
         _patch_async_satel(monkeypatch, connect_result=True)
-        await satel_test_connection("127.0.0.1", 7094)  # nie powinno rzucić wyjątku
+        await satel_test_connection("127.0.0.1", 7094)
 
     async def test_raises_connection_error_when_connect_fails(self, monkeypatch):
         from satel_integra.exceptions import SatelConnectFailedError
@@ -160,10 +125,6 @@ class TestConnectionTest:
             await satel_test_connection("127.0.0.1", 7094)
 
     async def test_raises_connection_error_when_panel_busy(self, monkeypatch):
-        """SatelPanelBusyError - nowość w satel_integra >=1.0.0 (patrz
-        obszerny docstring bridge/satel_client.py) - jednoznaczny sygnał
-        "inny klient integracji już podłączony", zamiast zgadywania po
-        serii rozłączeń jak w 0.3.x."""
         from satel_integra.exceptions import SatelPanelBusyError
         _patch_async_satel(monkeypatch, connect_exception=SatelPanelBusyError("busy"))
         with pytest.raises(ConnectionError, match="zajęta"):
@@ -180,10 +141,6 @@ class TestConnectionTest:
         assert fakes[0].closed_called is True
 
     async def test_passes_encryption_key_as_library_integration_key_param(self, monkeypatch):
-        """Regresja dla rozróżnienia dwóch RÓŻNYCH kluczy (patrz obszerny
-        docstring modułu): `encryption_key` z configu musi trafić do
-        biblioteki jako jej WŁASNY parametr konstruktora `integration_key`
-        (klucz szyfrowania AES), NIE do żadnego innego pola."""
         fakes = _patch_async_satel(monkeypatch)
         await satel_test_connection("127.0.0.1", 7094, encryption_key="AESKEY")
         assert fakes[0].encryption_key == "AESKEY"
@@ -195,7 +152,6 @@ class TestConnectionTest:
 
 
 class TestSatelIntegraClientConnect:
-    """SatelIntegraClient.connect() - argumenty przekazywane do AsyncSatel."""
 
     async def test_passes_empty_lists_when_no_monitored_items(self, monkeypatch):
         fakes = _patch_async_satel(monkeypatch)
@@ -217,11 +173,6 @@ class TestSatelIntegraClientConnect:
         assert fakes[0].monitored_outputs == [3]
 
     async def test_passes_encryption_key_as_library_integration_key_not_user_code(self, monkeypatch):
-        """KLUCZOWE rozróżnienie (patrz obszerny docstring modułu): kod
-        użytkownika (`self.integration_key`, drugi argument konstruktora
-        SatelIntegraClient) NIE MOŻE trafić do biblioteki jako jej
-        `integration_key` (klucz szyfrowania) - tam trafia WYŁĄCZNIE
-        `encryption_key`."""
         fakes = _patch_async_satel(monkeypatch)
         client = SatelIntegraClient("127.0.0.1", 7094, "kod_uzytkownika", encryption_key="AESKEY")
         await client.connect()
@@ -253,11 +204,6 @@ class TestSatelIntegraClientConnect:
 
 
 class FakeAsyncSatelDiscovery(FakeAsyncSatel):
-    """start() 'odgrywa' zadaną sekwencję zdarzeń (kolejne stany
-    violated_zones/violated_outputs, wywołując zarejestrowane callbacki),
-    potem zasypia w nieskończoność - dokładnie jak prawdziwe start(), które
-    wraca od razu po wystartowaniu zadań w tle i kończy działanie tylko
-    przez close()."""
     _events: list[tuple[list[int], list[int]]] = []
 
     async def start(self, enable_monitoring=True):
@@ -283,10 +229,6 @@ class FakeAsyncSatelDiscovery(FakeAsyncSatel):
 
 
 class TestDiscoverActiveZonesAndOutputs:
-    """discover_active_zones_and_outputs() - wykrywanie best-effort w kroku
-    1 kreatora: numery stref/wyjść, które ZMIENIŁY STAN podczas nasłuchu
-    (nie pełna lista skonfigurowanych stref - to niemożliwe do uzyskania z
-    samego protokołu integracji, patrz docstring funkcji)."""
 
     async def test_accumulates_zones_and_outputs_across_multiple_events(self, monkeypatch):
         class Fake(FakeAsyncSatelDiscovery):
@@ -314,11 +256,6 @@ class TestDiscoverActiveZonesAndOutputs:
             await discover_active_zones_and_outputs("127.0.0.1", 7094, timeout_seconds=0.05)
 
     async def test_panel_busy_raises_readable_connection_error(self, monkeypatch):
-        """satel_integra >=1.0.0 rozpoznaje zajętą centralę JEDNOZNACZNIE i
-        natychmiast przy connect() (SatelPanelBusyError) - poprzednia wersja
-        0.3.x nie miała takiego wyjątku, trzeba było zgadywać po serii
-        rozłączeń podczas nasłuchu (usunięty heurystyczny klucz "warning" w
-        wyniku - patrz docstring discover_active_zones_and_outputs())."""
         from satel_integra.exceptions import SatelPanelBusyError
         _patch_async_satel(
             monkeypatch, factory=FakeAsyncSatelDiscovery, connect_exception=SatelPanelBusyError("busy"),
@@ -341,12 +278,83 @@ class TestDiscoverActiveZonesAndOutputs:
         assert fakes[0].encryption_key == "AESKEY"
 
 
+def _wait_until_finished(scan: BackgroundZoneOutputScan, timeout: float = 5.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = scan.status()
+        if not status["running"]:
+            return status
+        time.sleep(0.02)
+    raise AssertionError("skan w tle nie zakończył się w oczekiwanym czasie")
+
+
+class TestBackgroundZoneOutputScan:
+
+    def test_status_reports_running_immediately_after_start(self, monkeypatch):
+        _patch_async_satel(monkeypatch, factory=FakeAsyncSatelDiscovery)
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.3)
+        try:
+            status = scan.status()
+            assert status["running"] is True
+            assert status["duration_seconds"] == 0.3
+        finally:
+            _wait_until_finished(scan)
+
+    def test_status_reports_result_after_completion(self, monkeypatch):
+        class Fake(FakeAsyncSatelDiscovery):
+            _events = [([12], [3])]
+
+        _patch_async_satel(monkeypatch, factory=Fake)
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.05)
+        status = _wait_until_finished(scan)
+        assert status["result"] == {"zones": [12], "outputs": [3]}
+        assert status["error"] is None
+
+    def test_connection_error_surfaces_in_status(self, monkeypatch):
+        from satel_integra.exceptions import SatelConnectFailedError
+        _patch_async_satel(
+            monkeypatch, factory=FakeAsyncSatelDiscovery, connect_exception=SatelConnectFailedError("boom"),
+        )
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.05)
+        status = _wait_until_finished(scan)
+        assert status["result"] is None
+        assert "127.0.0.1" in status["error"]
+
+    def test_import_error_produces_friendly_message(self, monkeypatch):
+        async def fake_discover(*args, **kwargs):
+            raise ImportError("no module named satel_integra")
+
+        monkeypatch.setattr("bridge.satel_client.discover_active_zones_and_outputs", fake_discover)
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.05)
+        status = _wait_until_finished(scan)
+        assert status["error"] == "Biblioteka satel_integra nie jest zainstalowana na serwerze"
+
+    def test_generic_exception_wrapped_with_prefix(self, monkeypatch):
+        async def fake_discover(*args, **kwargs):
+            raise RuntimeError("coś nieoczekiwanego")
+
+        monkeypatch.setattr("bridge.satel_client.discover_active_zones_and_outputs", fake_discover)
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.05)
+        status = _wait_until_finished(scan)
+        assert status["error"] == "Błąd wykrywania: coś nieoczekiwanego"
+
+    def test_starting_twice_while_running_raises(self, monkeypatch):
+        _patch_async_satel(monkeypatch, factory=FakeAsyncSatelDiscovery)
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.5)
+        try:
+            with pytest.raises(RuntimeError):
+                scan.start("127.0.0.1", 7094, timeout_seconds=0.5)
+        finally:
+            _wait_until_finished(scan)
+
+
 class TestRunForever:
-    """SatelIntegraClient.run_forever() - ISTOTNIE PROSTSZE niż dla
-    satel_integra 0.3.x (patrz obszerny docstring modułu): biblioteka 1.x
-    SAMA obsługuje keepalive/reconnect/wykrywanie "centrala zajęta"
-    wewnątrz start() - nie trzeba już własnego watchdoga "sprawdzaj
-    `connected` z zewnątrz co 5s"."""
 
     async def test_connects_and_starts_monitoring(self, monkeypatch):
         fakes = _patch_async_satel(monkeypatch)
@@ -390,15 +398,6 @@ class TestRunForever:
         assert fakes[0]._alarm_status_callback is not None
 
     async def test_callbacks_actually_run_when_library_calls_them_synchronously(self, monkeypatch):
-        """Regresja dla realnego buga: biblioteka satel_integra woła
-        _zone_changed_callback/_output_changed_callback/_alarm_status_callback
-        SYNCHRONICZNIE (zwykłe wywołanie funkcji, bez await) - bez zmian
-        względem 0.3.x. Skoro nasze callbacki (zone_cb/output_cb/alarm_cb
-        niżej) są `async def`, wywołanie ich BEZ await tylko tworzy i
-        odrzuca obiekt korutyny - CIAŁO NIGDY SIĘ NIE WYKONUJE.
-        register_*_callback() musi więc rejestrować w bibliotece
-        synchroniczny wrapper, który sam planuje korutynę (patrz
-        SatelIntegraClient._schedule())."""
         fakes = _patch_async_satel(monkeypatch)
         client = SatelIntegraClient("127.0.0.1", 7094, "key")
 
@@ -418,15 +417,13 @@ class TestRunForever:
         client.register_alarm_status_callback(alarm_cb)
 
         task = asyncio.create_task(client.run_forever())
-        await asyncio.sleep(0.05)  # daje monitor_status() fejka czas na start
+        await asyncio.sleep(0.05)
 
-        # Symuluje bibliotekę: wywołuje zarejestrowane callbacki
-        # SYNCHRONICZNIE, dokładnie tak jak w prawdziwej AsyncSatel.
         fakes[0]._zone_changed_callback({1: 1})
         fakes[0]._output_changed_callback({2: 0})
         fakes[0]._alarm_status_callback()
 
-        await asyncio.sleep(0.05)  # da zaplanowanym zadaniom szansę się wykonać
+        await asyncio.sleep(0.05)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -436,13 +433,6 @@ class TestRunForever:
         assert calls["alarm"] is True
 
     async def test_reconnects_when_client_reports_stopped(self, monkeypatch):
-        """`stopped` (właściwość AsyncSatel, patrz obszerny docstring modułu)
-        staje się True TYLKO po jawnym close() albo nienaprawialnym błędzie
-        WEWNĘTRZNYM biblioteki - zwykłe, przejściowe zerwania sieci biblioteka
-        naprawia sama w tle i `stopped` zostaje False. Watchdog w
-        run_forever() musi wykryć terminalne `stopped=True` i pozwolić
-        Supervisor.run() ponowić connect() (nowy obiekt AsyncSatel) zamiast
-        wisieć w nieskończoność, obserwując martwe połączenie."""
         real_sleep = asyncio.sleep
         monkeypatch.setattr(asyncio, "sleep", lambda *a, **k: real_sleep(0))
 
@@ -490,12 +480,6 @@ class TestIsConnected:
 
 class TestPeriodicStatusSync:
     async def test_queries_zones_and_outputs_after_connect(self, monkeypatch):
-        """Regresja/funkcja: biblioteka satel_integra wywołuje
-        zone_changed_callback/output_changed_callback TYLKO przy faktycznej
-        zmianie stanu - na spokojnym systemie panel/MQTT nigdy nie
-        dostałyby żadnego stanu wejść/wyjść aż do pierwszej zmiany.
-        SatelIntegraClient.connect() dopytuje więc aktywnie o bieżący stan
-        (funkcje protokołu 0x00/0x17)."""
         from satel_integra.commands import SatelReadCommand
 
         fakes = _patch_async_satel(monkeypatch)
@@ -531,10 +515,6 @@ class TestPeriodicStatusSync:
         assert fakes[0].sent_queries == []
 
     async def test_queries_repeat_periodically_not_just_once(self, monkeypatch):
-        """Zgłoszone z prawdziwej centrali: zmiana stanu WYJŚCIA nie zawsze
-        dociera jako broadcast (0x17) - samo jednorazowe dopytanie zaraz po
-        połączeniu nie wystarcza do "ciągłej" synchronizacji panelu/MQTT,
-        trzeba dopytywać cyklicznie przez cały czas życia połączenia."""
         from satel_integra.commands import SatelReadCommand
 
         fakes = _patch_async_satel(monkeypatch)
@@ -546,7 +526,7 @@ class TestPeriodicStatusSync:
         client.status_poll_interval_seconds = 0.02
 
         task = asyncio.create_task(client.run_forever())
-        await asyncio.sleep(0.11)  # ok. 5 cykli po 0.02s + pierwsze opóźnienie
+        await asyncio.sleep(0.11)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -558,14 +538,6 @@ class TestPeriodicStatusSync:
         assert len(output_queries) >= 2
 
     async def test_survives_transient_send_error_and_keeps_polling(self):
-        """Zgłoszony błąd (z prawdziwego sprzętu): włączenie wyjścia z
-        innego źródła niż bridge (np. aplikacja Satela na telefonie) nie
-        było widoczne w panelu, mimo że karta "Zdrowie połączeń" cały czas
-        pokazywała "połączono". Przyczyna: _send_data() rzucający wyjątek
-        (np. chwilowa zadyszka sieci) wcześniej TRWALE zatrzymywał tę
-        pętlę (return w except) - kolejne dopytania już nigdy by nie
-        poszły, mimo że samo połączenie TCP/keep-alive zostawało zdrowe.
-        Po jednym nieudanym zapytaniu pętla musi próbować dalej."""
         class FlakyFakeAsyncSatel(FakeAsyncSatel):
             def __init__(self, *a, **kw):
                 super().__init__(*a, **kw)
@@ -593,10 +565,6 @@ class TestPeriodicStatusSync:
         assert len(fake.sent_queries) >= 2, "kolejne (udane) zapytania powinny nadal trafiać do kolejki"
 
     async def test_stops_when_superseded_by_reconnect(self):
-        """Zadanie NIE może żyć wiecznie po utracie aktualności - jeśli
-        connect() (re)połączenia tworzy NOWY obiekt AsyncSatel, stare
-        zadanie cyklicznej synchronizacji musi się samo zakończyć (inaczej
-        dwa zadania wysyłałyby zapytania równolegle bez końca)."""
         client = SatelIntegraClient("127.0.0.1", 7094, "key", monitored_zones={"Hol": 12})
         old_fake = FakeAsyncSatel("127.0.0.1", 7094)
         client._client = old_fake
@@ -604,12 +572,12 @@ class TestPeriodicStatusSync:
         client.status_poll_interval_seconds = 0.02
 
         task = asyncio.create_task(client._periodic_status_sync())
-        await asyncio.sleep(0.07)  # kilka cykli na "starym" połączeniu
+        await asyncio.sleep(0.07)
         count_before_swap = len(old_fake.sent_queries)
         assert count_before_swap > 0
 
         new_fake = FakeAsyncSatel("127.0.0.1", 7094)
-        client._client = new_fake  # symuluje reconnect - nowy obiekt AsyncSatel
+        client._client = new_fake
 
         await asyncio.sleep(0.07)
         task.cancel()
@@ -620,11 +588,6 @@ class TestPeriodicStatusSync:
         assert new_fake.sent_queries == [], "stare zadanie nie powinno zacząć wysyłać na nowym obiekcie"
 
     def test_status_poll_interval_seconds_configurable_via_constructor(self):
-        """Interwał odpytywania jest atrybutem PUBLICZNYM (bez podkreślnika)
-        ustawianym przez konstruktor - RulesEngine.reload_config() musi móc
-        go podmienić na żywo (bez restartu procesu), patrz też
-        test_reload_config_updates_satel_poll_interval_live w
-        tests/test_rules_engine.py."""
         client = SatelIntegraClient(
             "127.0.0.1", 7094, "key", status_poll_interval_seconds=42.0,
         )
@@ -636,12 +599,6 @@ class TestPeriodicStatusSync:
 
 
 class TestArmedPartitionNumbers:
-    """SatelIntegraClient.armed_partition_numbers - odczyt na żądanie
-    (nie push) bieżącego stanu uzbrojenia, potrzebny bo
-    register_alarm_status_callback woła callback BEZ ŻADNYCH argumentów
-    (patrz RulesEngine._handle_alarm_status_change w rules_engine.py -
-    regresja dla zgłoszonego 'missing 1 required positional argument:
-    partition_states')."""
 
     def test_empty_when_not_connected(self):
         client = SatelIntegraClient("127.0.0.1", 7094, "key")
@@ -667,8 +624,6 @@ class TestArmedPartitionNumbers:
 
 
 class TestTriggeredPartitionNumbers:
-    """SatelIntegraClient.triggered_partition_numbers - patrz disarm()
-    niżej, gdzie decyduje, czy po rozbrojeniu wysłać też clear_alarm()."""
 
     def test_empty_when_not_connected(self):
         client = SatelIntegraClient("127.0.0.1", 7094, "key")
@@ -691,23 +646,10 @@ class TestTriggeredPartitionNumbers:
 
 
 class TestDisarmClearsAlarmMemory:
-    """disarm() - tak jak integracja Home Assistant (alarm_control_panel.py:
-    async_alarm_disarm), po rozbrojeniu strefy będącej akurat w stanie
-    TRIGGERED/TRIGGERED_FIRE wysyła też komendę czyszczącą pamięć alarmu
-    (clear_alarm), bo centrala Satel trzyma ją jako osobną flagę. Komendy
-    idą teraz przez _wait_for_command_result()/_send_data_and_wait()
-    (patrz obszerny docstring modułu), nie przez publiczne
-    AsyncSatel.disarm()/clear_alarm() (fire-and-forget, bez potwierdzenia)."""
 
     def _client_with_triggered(self, triggered_partitions: list[int]):
         from satel_integra import AlarmState
 
-        # UWAGA: kod użytkownika MUSI być poprawnym łańcuchem hex - biblioteka
-        # koduje go przez bytearray.fromhex() (SatelWriteMessage.__init__) -
-        # prawdziwe kody DLOADX/GUARDX są numeryczne (same cyfry), więc
-        # zawsze są poprawnym hex, ale placeholder "key" użyty gdzie indziej
-        # w tym pliku (tam, gdzie nigdy nie trafia do SatelWriteMessage) by
-        # nie zadziałał tutaj.
         client = SatelIntegraClient("127.0.0.1", 7094, "1234")
 
         class FakeClient:
@@ -758,8 +700,6 @@ class TestDisarmClearsAlarmMemory:
 
 
 class _FakeCommandClient:
-    """Minimalny fejk do testowania _wait_for_command_result() w izolacji -
-    tylko _send_data_and_wait(), bo to jedyna metoda, z której korzysta."""
 
     def __init__(self, response=None, hang=False):
         self._response = response
@@ -774,25 +714,14 @@ class _FakeCommandClient:
 
 
 class TestWaitForCommandResult:
-    """_wait_for_command_result() - regresja dla zgłoszonego z realnej
-    instalacji 'nie uzbraja stref, ale poprawnie wyświetla ich stan' -
-    biblioteka satel_integra sama NIE czeka na potwierdzenie komendy zapisu
-    (0xEF) - PUBLICZNE arm()/disarm()/set_output()/clear_alarm() zawsze idą
-    fire-and-forget (patrz obszerny docstring modułu). Błędny kod
-    użytkownika albo odrzucenie komendy przez centralę kończyłyby się więc
-    CISZĄ porażką - stąd czytanie stanu działało poprawnie, a same komendy
-    zapisu nie."""
 
     async def test_succeeds_when_panel_confirms_ok(self):
         client = _FakeCommandClient(response=_ok_result())
-        await _wait_for_command_result(client, "test", object())  # nie powinno rzucić
+        await _wait_for_command_result(client, "test", object())
 
     async def test_succeeds_when_panel_confirms_with_0xff(self):
-        """Patrz _RESULT_OK_CODES w satel_client.py - 0xFF też jest sukcesem
-        (zarówno satel_integra 0.3.x jak i 1.x od zawsze tak to traktują,
-        mimo że protokół normalnie rezerwuje 0xFF na "inny błąd")."""
         client = _FakeCommandClient(response=_error_result(0xFF))
-        await _wait_for_command_result(client, "test", object())  # nie powinno rzucić
+        await _wait_for_command_result(client, "test", object())
 
     async def test_raises_when_panel_rejects_command(self):
         client = _FakeCommandClient(response=_error_result(0x01))
@@ -811,15 +740,13 @@ class TestWaitForCommandResult:
 
 
 class TestTestOutput:
-    """test_output() - przycisk "TEST" obok pola klucza integracji
-    (tryb "library")."""
 
     def _patch(self, monkeypatch, **kwargs):
         return _patch_async_satel(monkeypatch, **kwargs)
 
     async def test_succeeds_and_starts_client_without_monitoring(self, monkeypatch):
         fakes = self._patch(monkeypatch)
-        await satel_test_output("127.0.0.1", 7094, "1234", 15, True)  # nie powinno rzucić wyjątku
+        await satel_test_output("127.0.0.1", 7094, "1234", 15, True)
         assert fakes[0].start_called is True
         assert fakes[0].start_enable_monitoring is False
 
@@ -884,13 +811,6 @@ class _FakeHttpSession:
 
 
 class TestVirtualInputHttpTrigger:
-    """SatelVirtualInputTrigger.trigger() i test_virtual_input_http() -
-    tryb "http" wirtualnych wejść IP (funkcja "Wejścia IP" ETHM-1, patrz
-    obszerny docstring bridge/satel_client.py) - czysty aiohttp, bez
-    zależności od satel_integra. Zwykły, NIEUWIERZYTELNIONY GET
-    (host:port/nazwa) - BEZ żadnego klucza/kodu DLOADX (potwierdzone na
-    prawdziwym sprzęcie - dwie wcześniejsze wersje tego modułu błędnie
-    zakładały klucz, najpierw per wejście, potem wspólny dla modułu)."""
 
     def _patch_aiohttp(self, monkeypatch, urls: list, exc=None):
         import aiohttp
@@ -907,13 +827,6 @@ class TestVirtualInputHttpTrigger:
         assert urls == ["http://192.168.1.50:9786/zmywarka"]
 
     async def test_trigger_ignores_stale_stored_url_template(self, monkeypatch):
-        """Regresja: url_template był kiedyś przechowywany w configu z
-        placeholderami {key}/{input_no} (sprzed poprawki protokołu) -
-        instalacje, które zapisały połączenie PRZED poprawką, mają tę
-        STARĄ wartość zamrożoną na stałe w bazie. Konstruktor musi
-        CAŁKOWICIE ignorować cfg["url_template"] i zawsze używać aktualnej
-        stałej z kodu - inaczej .format(host=..., port=..., name=...)
-        wywala się KeyError: 'key' (zgłoszony błąd, realny sprzęt)."""
         urls = []
         self._patch_aiohttp(monkeypatch, urls)
         vi = SatelVirtualInputTrigger("192.168.1.50", {
@@ -921,19 +834,17 @@ class TestVirtualInputHttpTrigger:
             "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}",
             "inputs": {"zmywarka": 17},
         })
-        await vi.trigger("zmywarka")  # nie powinno rzucić KeyError
+        await vi.trigger("zmywarka")
         assert urls == ["http://192.168.1.50:9786/zmywarka"]
 
     async def test_trigger_unknown_name_logs_and_does_not_raise(self, monkeypatch):
         urls = []
         self._patch_aiohttp(monkeypatch, urls)
         vi = SatelVirtualInputTrigger("192.168.1.50", {"inputs": {}})
-        await vi.trigger("nieznane")  # nie powinno rzucić wyjątku
+        await vi.trigger("nieznane")
         assert urls == []
 
     async def test_trigger_uses_default_port_when_absent(self, monkeypatch):
-        """cfg bez "port" (np. stary config.yaml) dostaje bezpieczną
-        wartość domyślną - patrz DEFAULT_VIRTUAL_INPUT_HTTP_PORT."""
         urls = []
         self._patch_aiohttp(monkeypatch, urls)
         vi = SatelVirtualInputTrigger("192.168.1.50", {"inputs": {"x": 1}})
@@ -945,7 +856,7 @@ class TestVirtualInputHttpTrigger:
         self._patch_aiohttp(monkeypatch, urls)
         await satel_test_virtual_input_http(
             "192.168.1.50", 9786, "http://{host}:{port}/{name}", "zmywarka",
-        )  # nie powinno rzucić wyjątku
+        )
         assert urls == ["http://192.168.1.50:9786/zmywarka"]
 
     async def test_test_virtual_input_http_raises_connection_error_on_network_failure(self, monkeypatch):

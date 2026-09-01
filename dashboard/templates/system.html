@@ -253,7 +253,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 refreshAuthNav();
@@ -269,9 +269,7 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-// ------------------------------------------------------------------
-// Konta użytkowników
-// ------------------------------------------------------------------
+
 async function loadUsers() {
   const resp = await authorizedFetch('/api/system/users');
   const users = await resp.json();
@@ -327,9 +325,7 @@ document.getElementById('addUserBtn').addEventListener('click', async () => {
   loadUsers();
 });
 
-// ------------------------------------------------------------------
-// Tryb logowania / poziom logów
-// ------------------------------------------------------------------
+
 async function loadSettings() {
   const resp = await authorizedFetch('/api/system/settings');
   const data = await resp.json();
@@ -368,9 +364,7 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
   }
 });
 
-// ------------------------------------------------------------------
-// Restart i kopia zapasowa
-// ------------------------------------------------------------------
+
 document.getElementById('restartBtn').addEventListener('click', async () => {
   if (!confirm('Zrestartować bridge i panel teraz? Panel przestanie odpowiadać na kilka-kilkanaście sekund.')) {
     return;
@@ -386,8 +380,8 @@ document.getElementById('restartBtn').addEventListener('click', async () => {
       return;
     }
     showMsg('restartMsg', true, data.message);
-    // Panel zaraz zniknie razem z procesem - odśwież stronę po chwili,
-    // żeby złapać go z powrotem, gdy Docker go podniesie.
+    
+    
     setTimeout(() => window.location.reload(), 15000);
   } catch (e) {
     showMsg('restartMsg', false, 'Błąd komunikacji z serwerem: ' + e);
@@ -451,16 +445,12 @@ document.getElementById('importYamlFile').addEventListener('change', async (e) =
   e.target.value = '';
 });
 
-// ------------------------------------------------------------------
-// Logi
-// ------------------------------------------------------------------
+
 let logsAutoTimer = null;
 
 async function loadLoggerOptions() {
-  // Lista loggerów zależy od filtra "Proces" (bridge/dashboard mają różne
-  // zestawy) - stąd wołane też przy zmianie logComponent, nie tylko raz
-  // przy starcie. Zachowuje bieżący wybór, jeśli dalej jest na liście
-  // (np. auto-odświeżanie w tle nie ma zresetować filtra użytkownikowi).
+  
+  
   const select = document.getElementById('logLogger');
   const current = select.value;
   const component = document.getElementById('logComponent').value;
@@ -498,9 +488,8 @@ async function loadLogs() {
 }
 document.getElementById('refreshLogsBtn').addEventListener('click', loadLogs);
 document.getElementById('logComponent').addEventListener('change', () => {
-  // Lista loggerów zależy od procesu - odśwież ją PRZED wpisami, żeby
-  // filtr "Logger" nie proponował już np. loggerów panelu po przełączeniu
-  // na "bridge".
+  
+  
   loadLoggerOptions();
   loadLogs();
 });

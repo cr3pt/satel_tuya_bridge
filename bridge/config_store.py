@@ -1,21 +1,3 @@
-"""Konfiguracja w SQLite zamiast plików YAML.
-
-Wcześniej config.yaml/satel_fields.yaml/tuya_devices.yaml/automations.yaml/
-sensors.yaml były zwykłymi plikami tekstowymi - proste w ręcznej edycji, ale
-`local_key` Tuya (klucz lokalny urządzenia) i inne sekrety (hasła MQTT,
-Tuya Cloud Access Secret, kod integracji Satela) to dowolne ciągi bajtów,
-które w YAML MUSZĄ być poprawnie cytowane, żeby nie zostały błędnie
-zinterpretowane jako co innego (np. string wyglądający jak liczba/bool/null)
-- `yaml.safe_dump` robi to poprawnie przy zapisie z panelu, ale przy RĘCZNEJ
-edycji pliku łatwo to popsuć. SQLite (kolumna TEXT) przechowuje dowolny
-tekst bez żadnej interpretacji składniowej - zero takiego ryzyka.
-
-Baza trzyma jedną tabelę `documents`: każdy "dokument" (config/satel_fields/
-tuya_devices/automations/sensors) to jeden wiersz z całą swoją zawartością
-zserializowaną jako JSON (nie YAML - JSON ma ściśle typowane stringi, bez
-niejawnego rzutowania YAML-a). To bezpośredni odpowiednik tego, czym
-wcześniej były osobne pliki .yaml - ten sam podział, tylko inny nośnik.
-"""
 from __future__ import annotations
 
 import json
@@ -57,8 +39,6 @@ CREATE TABLE IF NOT EXISTS auth_secret (
 );
 """
 
-# Kolejność ma znaczenie tylko dla export/import (czytelność zrzutu) - sam
-# odczyt/zapis pojedynczego dokumentu działa z dowolną nazwą.
 KNOWN_DOCUMENTS = ["config", "sensors", "automations", "satel_fields", "tuya_devices"]
 
 
@@ -104,13 +84,6 @@ class ConfigStore:
             rows = self._conn.execute("SELECT name FROM documents ORDER BY name").fetchall()
         return [r[0] for r in rows]
 
-    # -- konta użytkowników (patrz dashboard/auth.py: AuthGuard) - wiele
-    # kont administratorskich zamiast jednego wpisanego wprost w dokument
-    # "config" (dashboard.auth.username/password_hash) - ten pojedynczy
-    # wpis jest migrowany do pierwszego wiersza tej tabeli przy pierwszym
-    # użyciu, patrz migrate_single_admin_to_users() niżej. Płaski model
-    # uprawnień (jak dawniej): każde zalogowane konto ma pełny dostęp do
-    # zapisu - nie ma ról/uprawnień, bo nikt o nie nie prosił.
     def add_user(self, username: str, password_hash: str) -> int:
         with self._lock:
             try:
@@ -145,8 +118,6 @@ class ConfigStore:
         return row[0]
 
     def update_user(self, user_id: int, *, username: str | None = None, password_hash: str | None = None) -> None:
-        """Aktualizuje wybrane pola (None = zostaw bez zmian). Rzuca
-        ValueError, jeśli nowa nazwa koliduje z innym istniejącym kontem."""
         fields, params = [], []
         if username is not None:
             fields.append("username = ?")
@@ -170,11 +141,6 @@ class ConfigStore:
             self._conn.commit()
 
     def migrate_single_admin_to_users(self) -> None:
-        """Jednorazowo przenosi dashboard.auth.username/password_hash z
-        dokumentu "config" (stary model - jedno konto wpisane wprost w
-        config) do tabeli users, jeśli tabela jest jeszcze pusta, a stary
-        wpis istnieje. Bezpieczne przy wielokrotnym wywołaniu - nie robi
-        nic, gdy jakiekolwiek konto już istnieje."""
         if self.user_count() > 0:
             return
         config = self.get("config")
@@ -186,12 +152,6 @@ class ConfigStore:
         self.add_user(username, password_hash)
 
     def get_or_create_session_secret(self) -> str:
-        """Zwraca trwały sekret do podpisywania ciasteczek sesji (patrz
-        dashboard/auth.py: AuthGuard) - generowany RAZ, przy pierwszym
-        użyciu, i trzymany w tej samej bazie SQLite co reszta configu. Dzięki
-        temu podpisane ciasteczka pozostają ważne PO restarcie procesu
-        (panel/bridge) - w odróżnieniu od poprzedniego modelu, gdzie sesje
-        żyły wyłącznie w pamięci procesu i restart wylogowywał każdego."""
         with self._lock:
             row = self._conn.execute("SELECT secret FROM auth_secret WHERE id = 1").fetchone()
             if row is not None:
@@ -201,11 +161,6 @@ class ConfigStore:
             self._conn.commit()
             return secret
 
-    # -- eksport/import YAML - furtka bezpieczeństwa na wypadek, gdyby ktoś
-    # chciał obejrzeć/edytować konfigurację poza panelem (backup, migracja,
-    # debugowanie) - baza jest źródłem prawdy, ale nikogo nie zamykamy w niej
-    # bez wyjścia. Patrz /api/config/export-yaml i /api/config/import-yaml
-    # w dashboard/app.py.
     def export_yaml_bundle(self) -> dict[str, str]:
         bundle = {}
         for name in KNOWN_DOCUMENTS:
@@ -214,9 +169,6 @@ class ConfigStore:
         return bundle
 
     def import_yaml_bundle(self, files: dict[str, str]) -> None:
-        """`files`: nazwa_pliku.yaml -> zawartość tekstowa. Nierozpoznane
-        nazwy plików są pomijane (nie ma po co wywalać całego importu przez
-        jeden literówkowy plik)."""
         for filename, content in files.items():
             name = filename[:-5] if filename.endswith(".yaml") else filename
             if name not in KNOWN_DOCUMENTS:
@@ -225,35 +177,7 @@ class ConfigStore:
             self.set(name, data)
 
     def import_yaml_bundle_validated(self, files: dict[str, str]) -> list[str]:
-        """Jak `import_yaml_bundle`, ale z PODWÓJNYM sprawdzeniem PRZED
-        zapisem - używane przez import z archiwum ZIP (patrz
-        dashboard/app.py: /api/config/import-zip), gdzie błędny/uszkodzony
-        plik z zewnątrz (przeniesiony z innej instalacji, ręcznie
-        edytowany) nie powinien dać się zapisać "po cichu", a dopiero przy
-        najbliższym restarcie bridge'a ujawnić, że proces w ogóle nie
-        wstaje:
-
-        1) Składnia - każdy rozpoznany plik musi być poprawnym YAML-em
-           reprezentującym słownik.
-        2) Semantyka "czy zadziała" - wynikowa konfiguracja (aktualna
-           zawartość bazy + nadpisania z importu) musi przejść przez
-           PRAWDZIWY `BridgeConfig.load()` na tymczasowej kopii bazy - tę
-           samą ścieżkę kodu, którą bridge/panel uruchamiają przy starcie
-           procesu (zamiast osobno, ręcznie duplikować tu tę logikę, co
-           mogłoby z czasem rozjechać się z rzeczywistym zachowaniem) -
-           plus jawne sprawdzenie kilku pól Satela, które
-           `BridgeConfig._validate()` NIE sprawdza (bo interesuje ją tylko
-           obecność sekcji najwyższego poziomu), a bez których
-           `RulesEngine` i tak wywali się `KeyError`-em zaraz po starcie
-           (`bridge/rules_engine.py`: `config.satel["host"/"port"]`,
-           odczytywane bezpośrednio, bez `.get()`). `integration_key` jest
-           CELOWO pominięty tutaj - jest opcjonalny, panel bez niego działa
-           tylko do odczytu (patrz bridge/satel_client.py).
-
-        Nic NIE trafia do prawdziwej bazy, dopóki oba sprawdzenia nie
-        przejdą - błąd podnosi ValueError z czytelnym opisem, zamiast
-        zapisać część dokumentów a resztę pominąć."""
-        from .config import BridgeConfig  # lokalny import - unika cyklu (config.py importuje ten moduł)
+        from .config import BridgeConfig
 
         parsed: dict[str, dict] = {}
         for filename, content in files.items():
@@ -304,15 +228,6 @@ class ConfigStore:
 
 
 def resolve_db_and_legacy_paths(path: str | pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
-    """Normalizuje ścieżkę podaną przez wywołującego (`--config`, testy,
-    itd.) do pary (db_path, legacy_yaml_path) w TYM SAMYM katalogu i pod
-    tym samym "rdzeniem" nazwy - niezależnie, czy wywołujący podał
-    `config.db` (konwencja od tej wersji) czy `config.yaml`/`.yml` (stara
-    konwencja, jeszcze niezmigrowana instalacja). Każde miejsce, które
-    samo tworzy/otwiera ConfigStore z surowej ścieżki (BridgeConfig.load,
-    dashboard/app.py: main()/api_setup_save), MUSI przejść przez tę samą
-    funkcję - inaczej `.yaml`-owa ścieżka trafiłaby jako plik bazy wprost
-    (SQLite pod nazwą .yaml, myląco i niespójnie z resztą kodu)."""
     path = pathlib.Path(path)
     if path.suffix in (".yaml", ".yml"):
         return path.with_suffix(".db"), path
@@ -320,12 +235,6 @@ def resolve_db_and_legacy_paths(path: str | pathlib.Path) -> tuple[pathlib.Path,
 
 
 def migrate_legacy_yaml_dir(store: ConfigStore, config_yaml_path: pathlib.Path) -> bool:
-    """Jednorazowa migracja starej instalacji (config.yaml + siostrzane pliki
-    w tym samym katalogu) do `store`. Zwraca True, jeśli migracja faktycznie
-    coś zaimportowała (czyli config.yaml istniał). Bezpieczna do wywołania
-    wielokrotnie - jeśli dokument już jest w bazie, NIE nadpisuje go (żeby
-    powtórne uruchomienie z resztkami starych plików na dysku nigdy nie
-    cofnęło zmian zrobionych już przez panel po migracji)."""
     if not config_yaml_path.exists():
         return False
 
@@ -359,14 +268,11 @@ def migrate_legacy_yaml_dir(store: ConfigStore, config_yaml_path: pathlib.Path) 
     if not store.has("sensors"):
         store.set("sensors", _load(sensors_path))
 
-    # Oznacz stare pliki jako nieaktualne (nie kasujemy - to nadal czyjeś
-    # dane na dysku, mogłyby się przydać do ręcznej weryfikacji migracji),
-    # żeby nikt przypadkiem nie edytował pliku, który już nic nie robi.
     for path in [config_yaml_path, automations_path, satel_fields_path, tuya_devices_path, sensors_path]:
         if path.exists() and not path.name.endswith(".migrated"):
             try:
                 path.rename(path.with_name(path.name + ".migrated"))
             except OSError:
-                pass  # kosmetyczne - brak uprawnień do rename nie może zablokować migracji
+                pass
 
     return True

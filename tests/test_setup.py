@@ -1,5 +1,3 @@
-"""Testy dla dashboard/setup.py i tras kreatora (/setup, /api/setup/save,
-/api/setup/draft)."""
 import copy
 import pathlib
 
@@ -47,10 +45,6 @@ class TestValidation:
         assert any("Satel" in e and "IP" in e for e in errors)
 
     def test_missing_integration_key_is_not_an_error(self):
-        """Klucz integracji jest CELOWO opcjonalny - bez niego kreator się
-        kończy, a panel działa w trybie tylko do odczytu (sterowanie
-        zablokowane z czytelnym komunikatem, patrz
-        SatelIntegraClient.set_output/arm/disarm w bridge/satel_client.py)."""
         form = {**VALID_FORM, "satel": {**VALID_FORM["satel"], "integration_key": ""}}
         errors = validate(form)
         assert errors == []
@@ -84,8 +78,6 @@ class TestBuildConfigDict:
         assert config["satel"]["integration_key"] == "klucz123"
 
     def test_encryption_enabled_defaults_to_false(self):
-        """Domyślnie wyłączone przy pierwszym zapisie kreatora, nawet jeśli
-        VALID_FORM nie zawiera pola w ogóle."""
         config = build_config_dict(VALID_FORM)
         assert config["satel"]["encryption_enabled"] is False
 
@@ -100,9 +92,6 @@ class TestBuildConfigDict:
         assert config["satel"]["fields_file"] == "satel_fields.yaml"
         assert "partitions" not in config["satel"]
         assert "monitored_zones" not in config["satel"]
-        # "inputs" (nazwane wirtualne wejścia) trafiają do satel_fields.yaml,
-        # nie tutaj - w config.yaml zostaje tylko pusty słownik jako
-        # bezpieczna wartość domyślna (patrz build_satel_fields_dict).
         assert config["satel"]["virtual_inputs"]["inputs"] == {}
 
     def test_tuya_config_has_devices_file_marker_not_inline_devices(self):
@@ -140,8 +129,6 @@ class TestBuildConfigDict:
         assert stored.startswith("scrypt:") or stored.startswith("pbkdf2:")
 
     def test_username_is_stored_as_plaintext(self):
-        """W odróżnieniu od hasła, nazwa użytkownika NIE jest sekretem (jak
-        login) - zapisywana jawnym tekstem, nie hashowana."""
         form = {**VALID_FORM, "admin_username": "szef"}
         config = build_config_dict(form)
         assert config["dashboard"]["auth"]["username"] == "szef"
@@ -155,8 +142,6 @@ class TestBuildConfigDict:
         config = build_config_dict(VALID_FORM)
         assert config["alarm_rules"] == []
         assert config["automations_file"] == "automations.yaml"
-        # Sceny/reguły_ruchu/presence_simulation NIE są tutaj - patrz
-        # build_automations_dict (automations.yaml), testowane osobno niżej.
         assert "scenes" not in config
         assert "reguły_ruchu" not in config
         assert "presence_simulation" not in config
@@ -184,7 +169,6 @@ class TestBuildConfigDict:
         form = {**VALID_FORM, "home_assistant": {"enabled": True, "mqtt_host": ""}}
         config = build_config_dict(form)
         assert config["home_assistant"]["enabled"] is True
-        # brak własnego mqtt_host -> spada na ten sam co eBUS
         assert config["home_assistant"]["mqtt_host"] == "127.0.0.1"
 
     def test_unifi_protect_omitted_when_no_host(self):
@@ -197,12 +181,6 @@ class TestBuildConfigDict:
         assert config["unifi_protect"]["host"] == "192.168.1.5"
 
     def test_tuya_cloud_uses_region_derived_endpoints_from_wizard(self):
-        """Kreator wyprowadza api_endpoint/mq_endpoint z regionu wybranego w
-        kroku 2 (patrz setup.html: TUYA_REGION_ENDPOINTS) i wysyła je wprost
-        w formularzu - build_config_dict ma je zapisać, NIE nadpisywać
-        domyślnym (UE), inaczej integracja łączy się z niewłaściwym regionem
-        mimo poprawnie wybranego przez użytkownika (dokładnie ten bug, który
-        mógł powodować 401 na Pulsar mimo poprawnych danych)."""
         form = {**VALID_FORM, "tuya_cloud": {
             "enabled": True, "access_id": "id1", "access_key": "key1",
             "api_endpoint": "https://openapi.tuyaus.com", "mq_endpoint": "wss://mqe.tuyaus.com:8285/",
@@ -212,9 +190,6 @@ class TestBuildConfigDict:
         assert config["tuya"]["cloud"]["mq_endpoint"] == "wss://mqe.tuyaus.com:8285/"
 
     def test_tuya_cloud_blank_endpoints_fall_back_to_eu_defaults(self):
-        """Dla regionów bez pewnego adresu Pulsar (us-e/eu-w/sg) kreator
-        celowo wysyła mq_endpoint jako pusty string zamiast zgadywać - to
-        MUSI spaść na domyślny adres UE, nie zostać zapisane jako pusty."""
         form = {**VALID_FORM, "tuya_cloud": {
             "enabled": True, "access_id": "id1", "access_key": "key1",
             "api_endpoint": "", "mq_endpoint": "",
@@ -224,13 +199,6 @@ class TestBuildConfigDict:
         assert config["tuya"]["cloud"]["mq_endpoint"] == "wss://mqe.tuyaeu.com:8285/"
 
     def test_tuya_cloud_persists_api_region(self):
-        """Regresja: build_config_dict NIE zapisywał w ogóle api_region z
-        formularza kreatora (tylko api_endpoint/mq_endpoint, pochodne od
-        regionu, ale używane WYŁĄCZNIE do detekcji ruchu z kamer/Pulsar) -
-        TuyaCloudController (sterowanie urządzeniami przez chmurę, patrz
-        bridge/tuya_cloud.py) czyta apiRegion osobno i bez tego pola zawsze
-        dostawał pusty string, co Tuya OpenAPI odrzuca błędem "cross-region
-        access is not allowed" niezależnie od regionu wybranego w kreatorze."""
         form = {**VALID_FORM, "tuya_cloud": {
             "enabled": True, "access_id": "id1", "access_key": "key1", "api_region": "us",
         }}
@@ -243,8 +211,6 @@ class TestBuildConfigDict:
         assert config["tuya"]["cloud"]["api_region"] == "eu"
 
     def test_result_is_yaml_serializable(self):
-        """Krytyczne - jeśli to się nie da zserializować, zapis configu
-        wywali się w runtime, więc test to wyłapuje na sucho."""
         config = build_config_dict(VALID_FORM)
         dumped = yaml.safe_dump(config, allow_unicode=True, sort_keys=False)
         reloaded = yaml.safe_load(dumped)
@@ -252,15 +218,8 @@ class TestBuildConfigDict:
 
 
 class TestSatelFieldsAndTuyaDevicesBuilders:
-    """build_satel_fields_dict/build_tuya_devices_dict i ich walidatory -
-    współdzielone przez kreator i strony wtyczek Satel/Tuya (patrz
-    plugins/satel/routes.py: /api/plugins/satel/fields,
-    plugins/tuya_local/routes.py: /api/plugins/tuya/devices)."""
 
     def test_build_satel_fields_shape(self):
-        """Tryb domyślny "library" (patrz obszerny docstring
-        bridge/satel_client.py) - wirtualne wejście to zwykły int (numer
-        wyjścia), bez klucza."""
         form = {
             "partitions": [{"name": "Dom", "number": "1"}, {"name": "Garaz", "number": "2"}],
             "monitored_zones": [{"name": "Salon", "number": "12", "type": "ruch"}],
@@ -278,9 +237,6 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         }
 
     def test_build_satel_fields_shape_same_regardless_of_mode(self):
-        """Kształt "virtual_inputs" (nazwa -> numer) jest TEN SAM w obu
-        trybach - tryb "http" to zwykły, nieuwierzytelniony GET, BEZ
-        żadnego klucza/kodu DLOADX (patrz docstring bridge/satel_client.py)."""
         form = {
             "virtual_inputs": [{"name": "motion_hall_camera", "number": "17"}],
         }
@@ -288,8 +244,6 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         assert fields["virtual_inputs"] == {"motion_hall_camera": 17}
 
     def test_build_satel_fields_type_ignored_when_unknown_slug(self):
-        """Nieznany slug rodzaju (np. literówka albo stary zapis sprzed tej
-        funkcji) jest po prostu pomijany - nie wywala walidacji/zapisu."""
         form = {"monitored_zones": [{"name": "Salon", "number": "12", "type": "cos-nieznanego"}]}
         fields = build_satel_fields_dict(form)
         assert fields["zone_types"] == {}
@@ -320,8 +274,6 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         assert any("Wirtualne wejście" in e for e in errors)
 
     def test_validate_satel_fields_does_not_require_zone_number_pairs(self):
-        """Niepełne wiersze stref/wyjść/partycji nie są błędem - po prostu
-        pomijane przy zapisie (patrz build_satel_fields_dict)."""
         form = {"monitored_zones": [{"name": "x", "number": ""}]}
         assert validate_satel_fields(form) == []
 
@@ -339,9 +291,6 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         }
 
     def test_build_tuya_devices_zigbee_sub_device_has_no_ip_or_local_key(self):
-        """Podurządzenie Zigbee (pole 'gateway') idzie przez połączenie
-        bramki - nie ma sensu żądać od niego własnego ip/local_key/version
-        (patrz TuyaLocalController w bridge/tuya_local.py)."""
         form = {
             "tuya_devices": [
                 {"name": "lampka", "id": "sub1", "gateway": "brama", "cid": "node1", "type": "socket"},
@@ -411,11 +360,6 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
 
 
 class TestCloudDevicesBuilder:
-    """Urządzenia sterowane WYŁĄCZNIE przez Tuya Cloud (bez local_key/IP) -
-    zgłoszony błąd: import z Tuya Cloud dawał "nazwa, ID, adres IP i
-    local_key są wymagane" dla KAŻDEGO urządzenia bez local_key/IP, bo
-    lądowały w walidacji urządzeń lokalnych (validate_tuya_devices) zamiast
-    tutaj (validate_cloud_devices, wymaga tylko nazwy i ID)."""
 
     def test_build_cloud_devices_requires_only_name_and_id(self):
         form = {"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]}
@@ -436,8 +380,6 @@ class TestCloudDevicesBuilder:
         assert validate_cloud_devices(form) == []
 
     def test_validate_cloud_devices_does_not_require_ip_or_local_key(self):
-        """To jest sedno naprawy - w odróżnieniu od validate_tuya_devices,
-        BRAK ip/local_key nie jest błędem tutaj."""
         form = {"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]}
         errors = validate_cloud_devices(form)
         assert not any("local_key" in e or "adres IP" in e for e in errors)
@@ -454,9 +396,6 @@ class TestCloudDevicesBuilder:
         ]
 
     def test_build_tuya_devices_dict_includes_cloud_devices_key(self):
-        """Reprodukcja pełnego zgłoszonego formularza z 40 urządzeniami bez
-        local_key/IP - żaden nie powinien dawać błędu walidacji, wszystkie
-        powinny wylądować w cloud_devices, nie w devices."""
         form = {"cloud_devices": [{"name": f"urzadzenie_{i}", "id": f"id{i}"} for i in range(40)]}
         assert validate_cloud_devices(form) == []
         result = build_tuya_devices_dict(form)
@@ -465,13 +404,6 @@ class TestCloudDevicesBuilder:
 
 
 class TestConnectionsBuilder:
-    """build_connections_patch/validate_connections/connections_to_form -
-    zakładka "Połączenia" panelu /config, jedyne miejsce do zmiany
-    host/port/kluczy/tematów MQTT PO pierwszej konfiguracji (patrz
-    dashboard/app.py: /api/config/connections). W przeciwieństwie do
-    build_config_dict (kreator) - patchuje ISTNIEJĄCY config.yaml, nie
-    buduje go od zera, więc testy skupiają się na tym, co jest ZACHOWANE
-    z `existing`, a co NADPISANE formularzem."""
 
     EXISTING = {
         "satel": {
@@ -484,7 +416,6 @@ class TestConnectionsBuilder:
         "boiler_output": {"mqtt": {"host": "127.0.0.1", "port": 1883, "topic_prefix": "home/boiler"},
                            "tuya_virtual_device": {"device_id": ""}},
         "notifications": {"ntfy_topic_url": "", "grace_seconds": 120},
-        # Pola spoza formularza połączeń - MUSZĄ przetrwać nietknięte.
         "reguły_kamera_alarm": [{"source": "unifi_protect", "camera_id": "cam1", "action": "arm"}],
         "boiler_rules": [{"some": "rule"}],
         "maintenance": {"purge_enabled": True, "retention_days": 90},
@@ -506,9 +437,6 @@ class TestConnectionsBuilder:
         assert patched["satel"]["port"] == 7095
 
     def test_blank_integration_key_keeps_existing_secret(self):
-        """Kluczowy przypadek: pusty klucz w formularzu (bo formularz NIGDY
-        nie dostaje prawdziwego sekretu z powrotem - patrz connections_to_form)
-        NIE MOŻE skasować już zapisanego klucza integracji."""
         form = {"satel": {"host": "192.168.1.10", "integration_key": ""}, "ebus": {"mqtt_host": "127.0.0.1"}}
         patched = build_connections_patch(form, self.EXISTING)
         assert patched["satel"]["integration_key"] == "stary_klucz"
@@ -519,10 +447,6 @@ class TestConnectionsBuilder:
         assert patched["satel"]["integration_key"] == "nowy_klucz"
 
     def test_encryption_enabled_defaults_to_false_when_absent_from_form(self):
-        """Zwykły checkbox (nie sekret) - zawsze nadpisywany wprost stanem
-        formularza, w odróżnieniu od kluczy wyżej (puste = zostaw bez
-        zmian) - regresja dla "szyfrowanie musi być włącz/wyłącz, a nie
-        włączone-ale-bez-klucza"."""
         form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"}}
         patched = build_connections_patch(form, self.EXISTING)
         assert patched["satel"]["encryption_enabled"] is False
@@ -536,10 +460,6 @@ class TestConnectionsBuilder:
         assert patched["satel"]["encryption_enabled"] is True
 
     def test_encryption_enabled_can_be_turned_back_off(self):
-        """W odróżnieniu od kluczy-sekretów, "brak w formularzu" dla tego
-        pola NIE oznacza "zostaw bez zmian" - checkbox niezaznaczony po
-        prostu nie jest wysyłany przez przeglądarkę, więc musi to znaczyć
-        "wyłączone", nawet jeśli wcześniej było włączone."""
         existing = copy.deepcopy(self.EXISTING)
         existing["satel"]["encryption_enabled"] = True
         form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"}}
@@ -582,14 +502,6 @@ class TestConnectionsBuilder:
         assert patched["tuya"]["cloud"]["access_key"] == "secret1"
 
     def test_tuya_cloud_save_preserves_api_region_set_elsewhere(self):
-        """Regresja: ta funkcja przepisuje CAŁY słownik tuya.cloud od zera -
-        jedyny dziś żywy wywołujący (GET/POST /api/plugins, przełącznik
-        enabled na zakładce 🧩 Wtyczki) nie edytuje w ogóle regionu (to
-        robi osobna strona /plugins/tuya_cloud), więc każdy zapis TUTAJ bez
-        zachowania już ustawionego api_region kasowałby go, psując
-        sterowanie chmurowe (Tuya OpenAPI "cross-region access is not
-        allowed") przy następnym połączeniu, mimo że region był poprawnie
-        skonfigurowany gdzie indziej."""
         existing = {**self.EXISTING, "tuya": {**self.EXISTING["tuya"], "cloud": {
             "access_id": "id1", "access_key": "secret1", "api_region": "us",
             "api_endpoint": "https://openapi.tuyaus.com", "mq_endpoint": "wss://mqe.tuyaus.com:8285/",
@@ -647,9 +559,6 @@ class TestConnectionsBuilder:
         assert patched["home_assistant"]["enabled"] is False
 
     def test_mqtt_publish_preserves_log_level_set_via_dedicated_page(self):
-        """log_level (patrz plugins/mqtt_publish/routes.py) nie pochodzi z
-        TEGO formularza - musi przetrwać, nawet gdy zapisujemy stąd tylko
-        tematy MQTT."""
         existing = {**self.EXISTING, "mqtt_publish": {"enabled": True, "topics": {"satel": "satel", "tuya": "tuya"}, "log_level": "DEBUG"}}
         form = {
             "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
@@ -660,10 +569,6 @@ class TestConnectionsBuilder:
         assert patched["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home"}
 
     def test_tuya_cloud_preserves_log_level_and_real_enabled_flag(self):
-        """log_level i "enabled" ustawione przez /plugins/tuya_cloud (⚙
-        Ustawienia wtyczki) muszą przetrwać zapis stąd - w odróżnieniu od
-        "enabled" w TYM formularzu (tylko sygnał "czy w ogóle
-        skonfigurowane", patrz connections_to_form: bool(tuya_cloud))."""
         existing = {**self.EXISTING, "tuya": {**self.EXISTING["tuya"], "cloud": {
             "access_id": "id1", "access_key": "secret1", "api_endpoint": "https://openapi.tuyaeu.com",
             "mq_endpoint": "wss://mqe.tuyaeu.com:8285/", "camera_device_ids": [],
@@ -675,7 +580,7 @@ class TestConnectionsBuilder:
         }
         patched = build_connections_patch(form, existing)
         assert patched["tuya"]["cloud"]["log_level"] == "WARNING"
-        assert patched["tuya"]["cloud"]["enabled"] is False  # nietknięte, mimo enabled=True w formularzu
+        assert patched["tuya"]["cloud"]["enabled"] is False
 
     def test_home_assistant_preserves_log_level_set_via_dedicated_page(self):
         existing = {**self.EXISTING, "home_assistant": {"enabled": True, "mqtt_host": "127.0.0.1", "mqtt_port": 1883, "log_level": "ERROR"}}
@@ -721,12 +626,6 @@ class TestValidateConnections:
 
 
 class TestLocationBuilder:
-    """build_location_patch/validate_location - zakładka "Połączenia",
-    sekcja "Lokalizacja" (współrzędne do wschodu/zachodu słońca w
-    okienkach czasowych reguł ruchu, patrz bridge/scheduling.py), patrz
-    dashboard/app.py: /api/config/location. W odróżnieniu od reszty pól
-    Połączeń - patchuje TYLKO sekcję "location", cała reszta configu
-    zostaje nietknięta, i nie wymaga pełnego restartu bridge'a."""
 
     EXISTING = {
         "satel": {"host": "1.2.3.4"},
@@ -809,10 +708,6 @@ class TestConnectionsToForm:
         assert form["tuya_cloud"]["enabled"] is False
 
     def test_exposes_tuya_cloud_api_region(self):
-        """Regresja: api_region (używany przez TuyaCloudController do
-        łączenia się z właściwym centrum danych Tuya) nie był tu wcale
-        eksponowany, mimo że api_endpoint/mq_endpoint (używane tylko do
-        detekcji kamer) już były."""
         existing = {
             "satel": {"host": "1.2.3.4"}, "ebus": {"mqtt_host": "127.0.0.1"},
             "tuya": {"cloud": {"access_id": "id1", "api_region": "us"}},
@@ -821,10 +716,6 @@ class TestConnectionsToForm:
         assert form["tuya_cloud"]["api_region"] == "us"
 
     def test_exposes_encryption_enabled_flag(self):
-        """encryption_enabled NIE jest sekretem (zwykły bool, nie klucz) -
-        w odróżnieniu od encryption_key_set (który tylko mówi, CZY klucz
-        jest zapisany), to pole musi nieść jego RZECZYWISTĄ wartość, żeby
-        formularz mógł poprawnie ustawić stan checkboxa przy wczytaniu."""
         existing = {
             "satel": {"host": "1.2.3.4", "encryption_key": "AESKEY", "encryption_enabled": True},
             "ebus": {"mqtt_host": "127.0.0.1"},
@@ -839,13 +730,8 @@ class TestConnectionsToForm:
         assert form["satel"]["encryption_enabled"] is False
 
     def test_roundtrip_with_build_connections_patch(self):
-        """connections_to_form(existing) -> uzupełnij formularz w
-        przeglądarce (bez zmiany sekretów, bo user zostawia je puste) ->
-        build_connections_patch -> te same wartości niesekretne."""
         existing = TestConnectionsBuilder.EXISTING
         form = connections_to_form(existing)
-        # Symulacja formularza po stronie przeglądarki: sekrety puste
-        # (użytkownik ich nie zmienił), reszta wypełniona z GET.
         browser_form = {
             "satel": {
                 "host": form["satel"]["host"], "port": str(form["satel"]["port"]),
@@ -861,11 +747,6 @@ class TestConnectionsToForm:
 
 
 class TestSatelConnectionForm:
-    """satel_connection_to_form/build_satel_connection_patch/
-    validate_satel_connection - wersja scoped-do-sekcji-satel dawnego
-    connections_to_form/build_connections_patch/validate_connections,
-    używana przez /api/plugins/satel/connection (patrz zgłoszenie:
-    rozdzielić dawną wspólną zakładkę Połączenia na właściwe wtyczki)."""
 
     def test_validate_requires_host(self):
         assert validate_satel_connection({"host": ""}) != []
@@ -911,23 +792,10 @@ class TestSatelConnectionForm:
         assert patched["encryption_key"] is None
 
     def test_patch_does_not_store_url_template(self):
-        """"url_template" (tryb "http" - funkcja "Wejścia IP" ETHM-1) NIE
-        jest w ogóle zapisywany dla NOWEJ sekcji - to stała w kodzie (żaden
-        formularz go nie edytuje). Regresja: przechowywanie go groziło (i
-        groziło naprawdę - zgłoszony błąd) zamrożeniem STAREGO formatu URL
-        sprzed poprawki protokołu w instalacjach zapisanych wcześniej -
-        endpoint testu/RulesEngine już go w ogóle nie czytają (patrz
-        SatelVirtualInputTrigger), więc nawet stary, przetrwały wpis jest
-        nieszkodliwym, martwym polem."""
         patched = build_satel_connection_patch({"host": "1.2.3.4"}, {"host": "1.2.3.4"})
         assert "url_template" not in patched["virtual_inputs"]
 
     def test_patch_preserves_fields_not_in_this_form(self):
-        """monitored_zones/partitions/zone_types itd. żyją w OSOBNYM
-        dokumencie satel_fields (nadpisują to, co w configu, patrz
-        BridgeConfig.load) - obecność/nieobecność tutaj nie ma znaczenia,
-        ale status_poll_interval_seconds/outputs/fields_file (edytowane
-        gdzie indziej) muszą przetrwać zapis stąd niezmienione."""
         existing = {
             "host": "1.2.3.4", "status_poll_interval_seconds": 5, "outputs": {"a": 1},
             "fields_file": "custom.yaml",
@@ -954,9 +822,6 @@ class TestSatelConnectionForm:
 
 
 class TestEbusConnectionForm:
-    """ebus_connection_to_form/build_ebus_connection_patch/
-    validate_ebus_connection - odpowiednik TestSatelConnectionForm dla
-    /api/plugins/ebus/connection."""
 
     def test_validate_requires_mqtt_host(self):
         assert validate_ebus_connection({"mqtt_host": ""}) != []
@@ -980,7 +845,6 @@ class TestEbusConnectionForm:
         assert patched["ebus"]["mqtt_port"] == 1884
         assert patched["boiler_output"]["mqtt"]["host"] == "10.0.0.5"
         assert patched["boiler_output"]["mqtt"]["port"] == 1884
-        # nietknięta sekcja spoza tego formularza
         assert patched["satel"]["host"] == "9.9.9.9"
 
     def test_patch_updates_topic_prefix(self):
@@ -998,15 +862,13 @@ class TestEbusConnectionForm:
 
 @pytest.fixture
 def setup_client(tmp_path):
-    """Klient testowy w stanie 'NIE skonfigurowany' - config.yaml jeszcze
-    nie istnieje, dokładnie jak przy pierwszym uruchomieniu na czystym RPi."""
     import dashboard.app as app_module
 
     app_module.history = None
     app_module.config_store = None
     app_module.auth_guard = None
     app_module.satel_partitions_cfg = {}
-    app_module.config_path = tmp_path / "config.yaml"  # celowo NIE tworzymy tego pliku
+    app_module.config_path = tmp_path / "config.yaml"
     app_module.app.config["TESTING"] = True
     return app_module.app.test_client(), tmp_path
 
@@ -1029,9 +891,6 @@ class TestSetupRedirect:
         assert resp.status_code == 200
 
     def test_satel_connection_test_reachable_without_redirect(self, setup_client, monkeypatch):
-        """Kreator (krok "Centrala Satel") musi móc wywołać test połączenia
-        ZANIM config.yaml w ogóle istnieje - endpoint jest zwolniony z
-        przekierowania na /setup (patrz _SETUP_EXEMPT_ENDPOINTS)."""
         client, _ = setup_client
 
         async def fake_test_connection(host, port, **_kwargs):
@@ -1076,14 +935,6 @@ class TestSetupSave:
         assert "details" in resp.get_json()
 
     def test_save_with_non_numeric_field_returns_json_400_not_html_500(self, setup_client):
-        """Reprodukcja zgłoszonego błędu: pole "liczbowe" (tu: numer strefy)
-        z tekstem zamiast liczby nie może lecieć jako nieobsłużony wyjątek
-        (HTML 500 - JS robi `await resp.json()`, więc dostawałby
-        `SyntaxError: Unexpected token '<'` bez żadnej wskazówki) - musi
-        wrócić jako czytelny JSON 400. `validate()` świadomie nie sprawdza
-        formatu KAŻDEGO pola liczbowego (za dużo miejsc), więc to
-        `build_config_dict` (przez `int()`) naturalnie rzuca ValueError -
-        `api_setup_save` musi to złapać (patrz dashboard/app.py)."""
         client, _ = setup_client
         bad_form = {
             **VALID_FORM,
@@ -1096,9 +947,6 @@ class TestSetupSave:
         assert "liczbow" in data["details"][0].lower()
 
     def test_unexpected_error_in_api_route_returns_json_not_html(self, setup_client, monkeypatch):
-        """Zabezpieczenie ogólne (handle_unexpected_error w dashboard/app.py)
-        - NIEZALEŻNIE od tego, gdzie dokładnie wybuchnie, każdy endpoint
-        /api/* musi zwrócić JSON, nie domyślną stronę HTML Flaska."""
         import dashboard.setup as setup_module
 
         client, _ = setup_client
@@ -1116,10 +964,6 @@ class TestSetupSave:
         assert "błąd serwera" in resp.get_json()["error"].lower()
 
     def test_permission_error_in_api_route_returns_actionable_message(self, setup_client, monkeypatch):
-        """Reprodukcja realnego zgłoszonego przypadku: wolumen danych w
-        Dockerze niezapisywalny dla appuser (UID 1000) - PermissionError
-        (np. z save_draft) musi wrócić jako JSON z konkretną wskazówką
-        o uprawnieniach/chown, nie ogólnikowe "nieoczekiwany błąd"."""
         import dashboard.setup as setup_module
 
         client, _ = setup_client
@@ -1139,16 +983,12 @@ class TestSetupSave:
         assert "chown" in error
 
     def test_dashboard_usable_immediately_after_save(self, setup_client):
-        """Po zapisie panel powinien być od razu dostępny w TYM SAMYM
-        procesie, bez ręcznego restartu dashboardu."""
         client, _ = setup_client
         client.post("/api/setup/save", json=VALID_FORM)
         resp = client.get("/", follow_redirects=False)
-        assert resp.status_code == 200  # już NIE przekierowuje na /setup
+        assert resp.status_code == 200
 
     def test_second_save_attempt_rejected(self, setup_client):
-        """Kreator nie może nadpisać istniejącej, być może ręcznie
-        zmienionej konfiguracji."""
         client, _ = setup_client
         client.post("/api/setup/save", json=VALID_FORM)
         resp = client.post("/api/setup/save", json=VALID_FORM)
@@ -1162,21 +1002,14 @@ class TestSetupSave:
         assert resp.headers["Location"].endswith("/") or "index" in resp.headers["Location"] or resp.headers["Location"] == "/"
 
     def test_saved_config_is_loadable_by_bridge_config(self, setup_client):
-        """Sprawdza, że plik wygenerowany przez kreator to nie tylko
-        poprawny YAML, ale też przechodzi pełną walidację BridgeConfig,
-        której będzie używał GŁÓWNY proces bridge'a."""
         from bridge.config import BridgeConfig
 
         client, tmp_path = setup_client
         client.post("/api/setup/save", json=VALID_FORM)
         config = BridgeConfig.load(tmp_path / "config.yaml")
         assert config.satel["host"] == "192.168.1.10"
-        assert config.ebus["sensors"] == []  # pusta lista - dodaje się przez /config
+        assert config.ebus["sensors"] == []
 
-
-# ---------------------------------------------------------------------
-# Sceny, reguły ruchu (harmonogram + eskalacja), wirtualne wejścia
-# ---------------------------------------------------------------------
 
 FORM_WITH_ADVANCED = {
     **VALID_FORM,
@@ -1285,8 +1118,6 @@ class TestValidationAdvanced:
         assert not any("czas włączenia" in e for e in errors)
 
     def test_motion_rule_device_action_blank_duration_is_not_an_error(self):
-        """Puste "Czas włączenia" dla zwykłej akcji "włącz urządzenie" NIE
-        jest błędem - oznacza "aż do ustania naruszenia", patrz README."""
         rule = {"zone_number": "16", "target_device": "swiatlo_korytarz", "duration_seconds": ""}
         form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
         assert validate(form) == []
@@ -1309,8 +1140,6 @@ class TestValidationAdvanced:
         assert validate(form) == []
 
     def test_motion_rule_device_state_source_is_not_an_error(self):
-        """Wejście "stan urządzenia" (Tuya/HomeWhiz) - patrz
-        RulesEngine.handle_device_state. Nie wymaga zone_number."""
         rule = {
             "source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
             "target_device": "gniazdko_salon", "duration_seconds": "5",
@@ -1354,8 +1183,6 @@ class TestValidationAdvanced:
         assert not any("numer wejścia" in e for e in errors)
 
     def test_motion_rule_virtual_input_action_is_not_an_error(self):
-        """Akcja "Aktywuj wejście IP Satela" (pole virtual_input) zastępuje
-        target_device - nie wymaga urządzenia docelowego/systemu/czasu."""
         rule = {
             "source": "satel_zone", "zone_number": "5", "virtual_input": "motion_hall_camera",
         }
@@ -1381,9 +1208,6 @@ class TestValidationAdvanced:
 
 
 class TestConditionAndChainingValidation:
-    """Walidacja nowych pól reguły ruchu: nazwa (do wyzwalania łańcuchowego),
-    then_trigger_rule i dodatkowy warunek (and/or/not/state/time_window) -
-    patrz dashboard/setup.py: _validate_condition/_validate_motion_rules."""
 
     def test_duplicate_rule_names_is_error(self):
         rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "name": "dup"}
@@ -1392,10 +1216,6 @@ class TestConditionAndChainingValidation:
         assert any("nazwa 'dup' powtarza się" in e for e in errors)
 
     def test_scene_and_rule_sharing_a_name_is_error(self):
-        """Sceny i reguły ruchu dzielą wspólny klucz statusu
-        "automation:<nazwa>" (warunek "inna automatyzacja jest uruchomiona")
-        - kolizja nazw nadpisywałaby sobie nawzajem status, więc musi być
-        odrzucona przy zapisie (patrz validate_automations)."""
         rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "name": "wykryto_intruza"}
         form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
         errors = validate(form)
@@ -1462,9 +1282,6 @@ class TestConditionAndChainingValidation:
 
 
 class TestPresenceSimulation:
-    """presence_simulation nie jest częścią formularza kreatora, ale JEST
-    częścią panelu /automations - build_automations_dict/validate_automations
-    muszą obsłużyć ten sam kształt danych, co scenesy/reguły ruchu."""
 
     def test_disabled_presence_needs_no_fields(self):
         form = {"presence_simulation": {"enabled": False}}
@@ -1538,10 +1355,6 @@ class TestBuildConfigDictAdvanced:
         assert actions[3] == {"type": "satel_virtual_input", "virtual_input": "motion_hall_camera"}
 
     def test_scene_enabled_default_is_omitted(self):
-        """enabled=true (przełącznik "Włączona" zaznaczony, domyślnie) NIE
-        jest zapisywane jawnie - żeby nie zaśmiecać configu istniejących
-        scen bez zmiany zachowania (patrz analogiczny wzorzec dla
-        trigger_on reguł ruchu)."""
         automations = build_automations_dict(FORM_WITH_ADVANCED)
         assert "enabled" not in automations["scenes"][0]
 
@@ -1563,11 +1376,6 @@ class TestBuildConfigDictAdvanced:
         assert built_rule["enabled"] is False
 
     def test_arm_disarm_actions_capture_explicit_partitions(self):
-        """Regresja: sceny wcześniej nie miały żadnego sposobu na wskazanie,
-        KTÓRE strefy uzbroić/rozbroić - zawsze dotykały tylko domyślnej
-        (patrz bridge/scenes.py). `partitions` jest opcjonalne (pominięte =
-        stare zachowanie), ale gdy podane, musi przejść przez build w
-        całości, jako liczby całkowite (nie stringi z formularza)."""
         form = {**VALID_FORM, "scenes": [
             {
                 "name": "wyjscie_z_domu",
@@ -1630,9 +1438,6 @@ class TestBuildConfigDictAdvanced:
         assert "dimmer_level_percent" not in rule
 
     def test_motion_rule_blank_duration_omits_duration_seconds(self):
-        """Puste "Czas włączenia" ("duration_seconds": "") - NIE zapisujemy
-        klucza wcale (nie 0), bo jego BRAK jest tym, co RulesEngine
-        rozpoznaje jako "włącz aż do ustania naruszenia" (patrz README)."""
         form = {**FORM_WITH_ADVANCED, "motion_rules": [
             {
                 "zone_number": "16", "target_device": "swiatlo_korytarz",
@@ -1646,15 +1451,10 @@ class TestBuildConfigDictAdvanced:
         assert "action" not in rule
 
     def test_motion_rule_default_trigger_on_is_omitted(self):
-        """trigger_on nieobecne w wybudowanej regule = domyślne "violated" -
-        nie zapisujemy go jawnie, żeby nie zaśmiecać configu istniejących
-        (starszych) reguł bez zmiany zachowania."""
         automations = build_automations_dict(FORM_WITH_ADVANCED)
         assert "trigger_on" not in automations["reguły_ruchu"][0]
 
     def test_motion_rule_default_target_system_is_omitted(self):
-        """target_system nieobecny = domyślne "tuya" (jak dotąd) - nie
-        zapisujemy go jawnie, żeby nie zaśmiecać configu istniejących reguł."""
         automations = build_automations_dict(FORM_WITH_ADVANCED)
         assert "target_system" not in automations["reguły_ruchu"][0]
 
@@ -1670,8 +1470,6 @@ class TestBuildConfigDictAdvanced:
         assert rule["target_system"] == "satel_output"
         assert rule["target_device"] == "Brama"
         assert rule["duration_seconds"] == 10
-        # Jasność nie ma zastosowania dla wyjścia Satela - pomijana nawet
-        # jeśli formularz jakoś ją przekazał (np. stary stan pola z Tuya).
         assert "dimmer_level_percent" not in rule
 
     def test_motion_rule_satel_output_turn_off_is_built(self):
@@ -1688,11 +1486,6 @@ class TestBuildConfigDictAdvanced:
         assert "dimmer_level_percent" not in rule
 
     def test_motion_rule_duration_zero_is_kept_explicit(self):
-        """duration_seconds: "0" (wpisane JAWNIE w edytorze, w odróżnieniu
-        od pustego pola) MUSI zostać zapisane jako 0, nie pominięte - to
-        RulesEngine (nie ten builder) traktuje 0 tak samo jak brak pola
-        ("aż do ustania naruszenia"), patrz test_motion_rule_blank_duration_
-        omits_duration_seconds wyżej dla przypadku pustego pola."""
         form = {**FORM_WITH_ADVANCED, "motion_rules": [
             {
                 "zone_number": "16", "target_device": "swiatlo_korytarz",
@@ -1765,10 +1558,6 @@ class TestBuildConfigDictAdvanced:
         assert rule["duration_seconds"] == 0
 
     def test_motion_rule_scene_takes_priority_over_virtual_input(self):
-        """Gdyby oba pola (scene i virtual_input) jakoś trafiły do formularza
-        naraz (nie powinno się zdarzyć z edytora - to wzajemnie wykluczające
-        się opcje "Akcji") - scena wygrywa, tak jak w edytorze/backendzie
-        scena jest sprawdzana jako pierwsza."""
         form = {**FORM_WITH_ADVANCED, "motion_rules": [
             {
                 "source": "satel_zone", "zone_number": "5",
@@ -1781,18 +1570,12 @@ class TestBuildConfigDictAdvanced:
         assert "virtual_input" not in rule
 
     def test_motion_rule_device_state_source_without_device_or_value_is_skipped(self):
-        """Niekompletna reguła "stan urządzenia" (brak source_device albo
-        trigger_value) jest po prostu pomijana - analogicznie do reguł
-        Satela bez zone_number (patrz _build_motion_rules)."""
         form = {**FORM_WITH_ADVANCED, "motion_rules": [
             {"source": "tuya_state", "source_device": "", "trigger_value": "włączone"},
         ]}
         assert build_automations_dict(form)["reguły_ruchu"] == []
 
     def test_virtual_inputs_built_into_satel_fields(self):
-        """Kształt jest teraz TEN SAM niezależnie od trybu - tryb "http" nie
-        ma już osobnego klucza per wejście (patrz obszerny docstring
-        bridge/satel_client.py)."""
         satel_fields = build_satel_fields_dict(FORM_WITH_ADVANCED)
         assert satel_fields["virtual_inputs"] == {"motion_hall_camera": 17}
 
@@ -1870,9 +1653,6 @@ class TestBuildConfigDictAdvanced:
         assert reloaded_automations["scenes"][0]["name"] == "wykryto_intruza"
 
     def test_saved_advanced_config_is_loadable_and_runs_scene_runner(self):
-        """Sprawdza integrację end-to-end: automations.yaml z kreatora
-        (sceny + reguła z harmonogramem/eskalacją) da się podać wprost do
-        SceneRunner bez żadnych transformacji."""
         from bridge.scenes import SceneRunner
 
         automations = build_automations_dict(FORM_WITH_ADVANCED)
@@ -1947,7 +1727,7 @@ class TestDraftHelpers:
 
     def test_delete_draft_is_idempotent(self, tmp_path):
         path = tmp_path / ".setup_draft.json"
-        delete_draft(path)  # nie istnieje - nie powinno wywalić
+        delete_draft(path)
         save_draft(path, {"a": 1})
         delete_draft(path)
         assert not path.exists()
@@ -1958,15 +1738,11 @@ class TestDraftHelpers:
 
 
 class TestListPlugins:
-    """list_plugins() - zakładka 🧩 Wtyczki, spójny przegląd wszystkich
-    integracji na bazie AKTUALNEGO config.raw (patrz PLUGIN_DEFS)."""
 
     def test_empty_config_does_not_crash_and_all_unconfigured(self):
         plugins = list_plugins({})
         by_id = {p["id"]: p for p in plugins}
         assert len(plugins) == len(by_id) == 11
-        # przy pustym configu nic nie jest skonfigurowane, więc nic nie jest
-        # też "enabled" (satel/tuya/ebus itd. wymagają realnej konfiguracji)
         for plugin_id in (
             "satel", "tuya_local", "tuya_zigbee", "tuya_cloud", "ebus", "home_assistant",
             "mqtt_publish", "unifi_protect", "homewhiz", "presence_simulation", "notifications",
@@ -2024,15 +1800,11 @@ class TestListPlugins:
         assert by_id["presence_simulation"]["enabled"] is True
 
     def test_mqtt_publish_disabled_without_ebus_broker_even_if_flag_true(self):
-        """mqtt_publish.enabled samo w sobie nic nie znaczy bez brokera
-        (patrz RulesEngine.__init__: wymaga też config.ebus.mqtt_host)."""
         by_id = {p["id"]: p for p in list_plugins({"mqtt_publish": {"enabled": True}})}
         assert by_id["mqtt_publish"]["enabled"] is False
 
     def test_toggleable_ids_match_expected_set(self):
         toggleable = {p["id"] for p in list_plugins({}) if p["toggleable"]}
-        # tuya_zigbee to jedyny wyjątek - dzieli połączenie/runtime z tuya_local,
-        # więc nie ma niezależnego cyklu życia do włączania/wyłączania
         assert toggleable == {
             "satel", "tuya_local", "tuya_cloud", "ebus", "home_assistant",
             "mqtt_publish", "unifi_protect", "homewhiz", "presence_simulation", "notifications",

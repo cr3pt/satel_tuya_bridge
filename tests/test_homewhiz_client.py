@@ -1,13 +1,3 @@
-"""Testy bridge/homewhiz_client.py.
-
-Podpisywanie SigV4 (`_sigv4_headers`/`_canonical_query_string`) jest
-zweryfikowane względem OFICJALNEGO zestawu testowego AWS Signature Version 4
-(https://docs.aws.amazon.com/general/latest/gr/signature-v4-test-suite.html,
-licencja Apache 2.0, lustro: github.com/saibotsivad/aws-sig-v4-test-suite)
-- przypadki "get-vanilla" (podstawowe podpisywanie nagłówkiem) i
-"get-vanilla-query-order-key" (kanoniczna kolejność parametrów zapytania,
-w tym DWA parametry o tej samej nazwie). Stałe (klucze/daty/oczekiwane
-skróty) pochodzą wprost z plików tego zestawu testowego, nie są zgadywane."""
 import hashlib
 import hmac
 import json
@@ -16,7 +6,6 @@ import pytest
 
 from bridge import homewhiz_client as hw
 
-# --- Stałe z oficjalnego testu "get-vanilla" AWS SigV4 --------------------
 _AWS_ACCESS_KEY = "AKIDEXAMPLE"
 _AWS_SECRET_KEY = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
 _AWS_REGION = "us-east-1"
@@ -25,9 +14,7 @@ _AWS_HOST = "example.amazonaws.com"
 
 
 class _FixedNow:
-    """`_sigv4_headers` liczy datę SAMO (wewnątrz `_amz_dates()`) - podmieniamy
-    `datetime.datetime.now` na stałą wartość z testu AWS, żeby porównać
-    wynik z opublikowanym oczekiwanym podpisem."""
+    pass
 
 
 @pytest.fixture(autouse=True)
@@ -36,8 +23,6 @@ def _fixed_amz_dates(monkeypatch):
 
 
 class TestSigV4HeaderSigning:
-    """`_sigv4_headers` - odpowiednik oficjalnego przypadku "get-vanilla"
-    (GET / bez parametrów, bez tokenu sesji)."""
 
     def test_matches_official_get_vanilla_signature(self):
         headers = hw._sigv4_headers(
@@ -52,7 +37,7 @@ class TestSigV4HeaderSigning:
         )
         assert headers["X-Amz-Date"] == "20150830T123600Z"
         assert "X-Amz-Security-Token" not in headers
-        assert "host" not in headers  # aiohttp dokłada Host sam
+        assert "host" not in headers
 
     def test_includes_security_token_when_session_based(self):
         headers = hw._sigv4_headers(
@@ -65,9 +50,6 @@ class TestSigV4HeaderSigning:
 
 
 class TestCanonicalQueryString:
-    """Odpowiednik oficjalnego przypadku "get-vanilla-query-order-key" -
-    DWA parametry o tej samej nazwie muszą trafić do kanonicznego zapytania
-    posortowane po WARTOŚCI (bajtowo: 'V' < 'v'), nie w kolejności podanej."""
 
     def test_sorts_duplicate_keys_by_value(self):
         assert hw._canonical_query_string("Param1=value2&Param1=Value1") == "Param1=Value1&Param1=value2"
@@ -86,12 +68,6 @@ class TestCanonicalQueryString:
 
 
 class TestPresignIotWebsocketUrl:
-    """`presign_iot_websocket_url` używa TYCH SAMYCH, już zweryfikowanych
-    prymitywów (_signing_key/canoniczne żądanie) - dla parametrów zapytania
-    zamiast nagłówka. Niezależnie odtwarzamy oczekiwany podpis z tych samych
-    prymitywów, żeby wyłapać błędy w SAMYM wiązaniu (zła usługa/URI/kolejność
-    parametrów), a osobno sprawdzamy udokumentowaną przez AWS osobliwość:
-    X-Amz-Security-Token dokłada się PO policzeniu podpisu."""
 
     def test_url_shape_and_required_params(self):
         url = hw.presign_iot_websocket_url(
@@ -111,9 +87,6 @@ class TestPresignIotWebsocketUrl:
         assert url.index("X-Amz-Signature=") < url.index("X-Amz-Security-Token=")
 
     def test_security_token_not_part_of_signed_query(self):
-        """Token sesji NIE bierze udziału w podpisywanym zapytaniu
-        kanonicznym - dwa wywołania z RÓŻNYMI tokenami, ale tym samym
-        `now`, muszą dać TEN SAM podpis."""
         kwargs = dict(endpoint="abc.iot.eu-west-1.amazonaws.com", region="eu-west-1",
                       access_key="AKID", secret_key="SECRET")
         url_a = hw.presign_iot_websocket_url(session_token="TOKEN-A", **kwargs)
@@ -130,9 +103,6 @@ class TestPresignIotWebsocketUrl:
             secret_key=secret_key, session_token=session_token, expires_seconds=3600,
         )
 
-        # Niezależne odtworzenie oczekiwanego podpisu z JUŻ zweryfikowanych
-        # prymitywów (_signing_key), krok po kroku wg dokumentacji AWS -
-        # celowo NIE wołając presign_iot_websocket_url samego siebie.
         amz_date, date_stamp = "20150830T123600Z", "20150830"
         credential_scope = f"{date_stamp}/{region}/iotdevicegateway/aws4_request"
         canonical_querystring = (
@@ -208,8 +178,6 @@ class TestDecodeState:
         assert hw.decode_state(self.CONFIG, 0, [9, 9, 1]) == "running"
 
     def test_decodes_with_nonzero_offset(self):
-        # offset=2 -> wfa zaczyna się od indeksu 2, więc wfa[0] LĄDUJE pod
-        # indeksem 2 tablicy (dokładnie tam, gdzie czyta wifiArrayReadIndex).
         assert hw.decode_state(self.CONFIG, 2, [2]) == "finished"
 
     def test_unmatched_value_returns_none(self):
@@ -222,8 +190,6 @@ class TestDecodeState:
         assert hw.decode_state({}, 0, [1]) is None
 
     def test_clamps_wrapped_value_before_matching(self):
-        # 128 + 1 = wartość "1, ale zmieniona od ostatniego odczytu" - dla
-        # samego odczytu stanu liczy się tylko dolne 128 wartości.
         assert hw.decode_state(self.CONFIG, 0, [9, 9, 129]) == "running"
 
 
@@ -242,9 +208,6 @@ class TestListPossibleStates:
         assert hw.list_possible_states(config) == ["idle", "running", "finished"]
 
     def test_deduplicates_names(self):
-        """Dwa surowe klucze mogą sanityzować się do TEJ SAMEJ czytelnej
-        nazwy (np. różne warianty tego samego stanu) - lista wyboru w
-        edytorze nie powinna pokazywać duplikatów."""
         config = {
             "deviceStates": {
                 "states": [
@@ -262,8 +225,6 @@ class TestListPossibleStates:
         assert hw.list_possible_states({"deviceStates": {}}) == []
 
 
-# --- REST (login/list_appliances/fetch_config_descriptor), aiohttp ------
-
 class _FakeResponse:
     def __init__(self, status=200, json_data=None):
         self.status = status
@@ -280,9 +241,6 @@ class _FakeResponse:
 
 
 class _FakeSession:
-    """Kolejka odpowiedzi wyskakiwanych PO KOLEI, w kolejności wołania
-    get()/post() - podmienia aiohttp.ClientSession w bridge/homewhiz_client.py
-    (ten moduł tworzy nową sesję na KAŻDE żądanie, tak jak bridge/notifier.py)."""
 
     def __init__(self, queue: list, calls: list):
         self._queue = queue
@@ -310,12 +268,6 @@ def _patch_session(monkeypatch, responses: list):
 
 
 class TestUnwrapEnvelope:
-    """Każda odpowiedź API HomeWhiz jest opakowana w
-    `{"success": bool, "data": ...}` - potwierdzone w źródle integracji
-    Home Assistant (custom_components/homewhiz/api.py). Prawdziwa awaria
-    (złe hasło, brak dostępu) potrafi wrócić z kodem HTTP 200 i
-    `"success": false` zamiast kodu błędu - `_unwrap_envelope` musi to
-    wykryć samo, bo sam kod HTTP na to nie wskaże."""
 
     def test_extracts_data(self):
         assert hw._unwrap_envelope({"success": True, "data": {"x": 1}}, context="t") == {"x": 1}
@@ -356,15 +308,13 @@ class TestLogin:
             await hw.login("user@example.com", "wrong")
 
     async def test_success_false_with_http_200_raises(self, monkeypatch):
-        """Dokładnie scenariusz ze zgłoszenia: złe hasło potrafi wrócić z
-        kodem HTTP 200 i {"success": false, ...} zamiast kodu błędu."""
         _patch_session(monkeypatch, [_FakeResponse(200, {"success": False, "message": "invalid credentials"})])
         with pytest.raises(hw.HomeWhizError):
             await hw.login("user@example.com", "wrong")
 
     async def test_malformed_response_raises_homewhiz_error(self, monkeypatch):
         _patch_session(monkeypatch, [_FakeResponse(200, {
-            "success": True, "data": {"credentials": {"accessKey": "AK"}},  # brak reszty pól
+            "success": True, "data": {"credentials": {"accessKey": "AK"}},
         })])
         with pytest.raises(hw.HomeWhizError):
             await hw.login("user@example.com", "pw")
@@ -376,9 +326,6 @@ class TestLogin:
 
 
 class TestListAppliances:
-    """Kształt odpowiedzi: `{"data": [{"id": ...}, ...]}` dla `/my-homes`,
-    `{"data": {"appliances": [...]}}` dla `/my-homes/{id}` - potwierdzone w
-    źródle integracji Home Assistant (`MyHomesResponse`/`HomeResponseData`)."""
 
     async def test_flattens_appliances_across_homes(self, monkeypatch):
         session = hw.HomeWhizSession(access_key="AK", secret_key="SK", session_token="ST")
@@ -421,8 +368,6 @@ class TestListAppliances:
 
 
 class TestFetchConfigDescriptor:
-    """Kształt odpowiedzi: `{"data": {"results": [...]}}` (`ContentsIndexResponse`
-    w źródle integracji Home Assistant), NIE goła lista pod `data`."""
 
     async def test_fetches_descriptor_from_s3(self, monkeypatch):
         session = hw.HomeWhizSession(access_key="AK", secret_key="SK", session_token="ST")
@@ -443,9 +388,6 @@ class TestFetchConfigDescriptor:
 
 
 class TestHomeWhizClientMessageHandling:
-    """`_handle_message` - część czysto logiczna klienta (dekodowanie
-    payloadu MQTT do wywołania on_state), bez faktycznego łączenia się z
-    AWS IoT Core (patrz TestByteDecoding/TestDecodeState po sam algorytm)."""
 
     def _make_client(self):
         calls = []

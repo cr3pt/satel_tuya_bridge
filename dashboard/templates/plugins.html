@@ -149,7 +149,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 
@@ -160,9 +160,7 @@ function showMsg(ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// Gdzie faktycznie skonfigurować każdą wtyczkę (link w karcie) - każda ma
-// już własną, dedykowaną stronę (patrz plugins/<id>/routes.py), oprócz
-// tuya_zigbee (dzieli edytor urządzeń z tuya_local - ta sama sekcja "tuya").
+
 const PLUGIN_CONFIG_LINKS = {
   satel: { href: '/plugins/satel', label: '⚙ Konfiguruj →' },
   tuya_local: { href: '/plugins/tuya', label: '⚙ Konfiguruj →' },
@@ -177,14 +175,10 @@ const PLUGIN_CONFIG_LINKS = {
   notifications: { href: '/plugins/notifications', label: '⚙ Konfiguruj →' },
 };
 
-// tuya_zigbee dzieli logger (bridge.tuya_local) i sekcję configu z Tuya
-// lokalnie - nie ma WŁASNEGO /api/plugins/tuya_zigbee/settings (patrz
-// plugins/tuya_local/routes.py) - poziom logowania ustawia się więc przez
-// endpoint tuya_local, tak samo jak konfigurację (patrz PLUGIN_CONFIG_LINKS
-// wyżej, ten sam wyjątek).
+
 const PLUGIN_SETTINGS_ENDPOINT_ID = { tuya_zigbee: 'tuya_local' };
 
-let pendingChanges = {};  // {plugin_id: {enabled?: bool, status_poll_interval_seconds?: number}} - zebrane, ale jeszcze niezapisane zmiany
+let pendingChanges = {};  
 
 function updateSaveButtonState() {
   const count = Object.keys(pendingChanges).length;
@@ -194,10 +188,7 @@ function updateSaveButtonState() {
     count > 0 ? `${count} niezapisana(e) zmiana(y)` : '';
 }
 
-// Zbiera pojedynczą zmianę pola (enabled / status_poll_interval_seconds)
-// dla danej wtyczki do pendingChanges - {plugin_id: {pole: wartość, ...}},
-// usuwając wpis, gdy pole wraca do wartości oryginalnej (żeby "Zapisz"
-// zgasło, kiedy nic już się nie różni od stanu z serwera).
+
 function setPendingField(pluginId, field, value, originalValue) {
   if (value === originalValue) {
     if (pendingChanges[pluginId]) {
@@ -210,10 +201,7 @@ function setPendingField(pluginId, field, value, originalValue) {
   updateSaveButtonState();
 }
 
-// Wiersze listy startują zwinięte - zbiór ID wtyczek aktualnie rozwiniętych,
-// żeby stan rozwinięcia PRZETRWAŁ odświeżenie listy po zapisie zmian
-// (loadPlugins() woła się ponownie po "Zapisz zmiany" - bez tego karta,
-// którą użytkownik właśnie rozwinął, zwijałaby się sama).
+
 const expandedPluginIds = new Set();
 
 function renderPlugin(p) {
@@ -278,9 +266,7 @@ function renderPlugin(p) {
     </div>
   `;
 
-  // Rozwijanie/zwijanie karty - klika się w prawą część nagłówka (status +
-  // strzałka), nie w całą kartę, żeby dało się np. zaznaczyć nazwę bez
-  // przypadkowego zwinięcia/rozwinięcia.
+  
   const body = row.querySelector('.plugin-row-body');
   const rightZone = row.querySelector('.plugin-row-right');
   function toggleExpanded() {
@@ -312,11 +298,8 @@ function renderPlugin(p) {
   }
 
   if (p.has_log_level) {
-    // Osobny endpoint od reszty karty (nie idzie przez pendingChanges/
-    // "Zapisz zmiany" wyżej) - /api/plugins/<id>/settings to ten sam,
-    // wspólny wzorzec co na dedykowanej stronie każdej wtyczki (patrz
-    // plugins/__init__.py: register_settings_route) - zapisuje się od
-    // razu przy zmianie, bez osobnego przycisku.
+    
+    
     const select = row.querySelector('.log-level-select');
     const savedBadge = row.querySelector('.log-level-saved');
     select.value = p.log_level || '';

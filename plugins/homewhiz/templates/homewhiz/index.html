@@ -189,7 +189,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 refreshAuthNav();
@@ -201,10 +201,7 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// ------------------------------------------------------------------
-// Ustawienia wtyczki (włącznik + poziom logowania) - ten sam wzorzec
-// GET/POST /api/plugins/<id>/settings co reszta stron wtyczek.
-// ------------------------------------------------------------------
+
 const PLUGIN_ID = 'homewhiz';
 
 async function loadPluginSettings() {
@@ -236,9 +233,7 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
   }
 });
 
-// ------------------------------------------------------------------
-// Poświadczenia konta HomeWhiz
-// ------------------------------------------------------------------
+
 async function loadCredentials() {
   const data = await (await fetch('/api/plugins/homewhiz/credentials')).json();
   document.getElementById('usernameInput').value = data.username || '';
@@ -272,9 +267,7 @@ document.getElementById('saveCredentialsBtn').addEventListener('click', async ()
   }
 });
 
-// ------------------------------------------------------------------
-// Monitorowane urządzenia
-// ------------------------------------------------------------------
+
 function addApplianceRow(initial) {
   const container = document.getElementById('appliancesRows');
   const row = document.createElement('div');
@@ -326,9 +319,7 @@ document.getElementById('saveAppliancesBtn').addEventListener('click', async () 
   }
 });
 
-// ------------------------------------------------------------------
-// Odkrywanie urządzeń (poświadczenia JUŻ ZAPISANE wyżej)
-// ------------------------------------------------------------------
+
 document.getElementById('discoverBtn').addEventListener('click', async () => {
   const btn = document.getElementById('discoverBtn');
   const status = document.getElementById('discoverStatus');

@@ -1,18 +1,3 @@
-"""Wtyczka Tuya Cloud (poświadczenia API + import/lista urządzeń sterowanych
-przez chmurę + kamery) - własna strona konfiguracji, wydzielona ze wspólnej
-zakładki 🔌 Połączenia (patrz zakładka 🧩 Wtyczki -> "⚙ Konfiguruj").
-
-Urządzenia zaimportowane z Tuya Cloud, dla których NIE udało się uzyskać
-local_key i/albo adresu IP w sieci LAN (import zwraca puste pola - patrz
-bridge/tuya_local.py: fetch_cloud_devices), trafiają tutaj jako
-"cloud_devices" - sterowane przez TuyaCloudController (bridge/tuya_cloud.py)
-jako fallback, dopóki nie zostaną ręcznie skonfigurowane lokalnie (zakładka
-Tuya Local, plugins/tuya_local/routes.py - lokalne ZAWSZE ma pierwszeństwo,
-patrz bridge/tuya_dispatch.py). Urządzenia z kompletem danych (local_key +
-IP) trafiają od razu do Tuya Local, jak dotychczas.
-
-Skan LAN zostaje w plugins/tuya_local/routes.py - patrz plugins/satel/routes.py
-po ten sam wzorzec wstrzykiwania zależności."""
 from __future__ import annotations
 
 from flask import Flask, jsonify, render_template, request
@@ -32,9 +17,6 @@ META = PluginMeta(
 
 def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
-    """Rejestruje routing wtyczki Tuya Cloud. `_ignored` połyka zależności
-    przeznaczone dla INNYCH wtyczek - register_all() w plugins/__init__.py
-    woła każdą wtyczkę z tym samym, wspólnym zestawem `deps`."""
 
     def _get_cloud_section() -> dict:
         return get_config_store().get("config").get("tuya", {}).get("cloud", {}) or {}
@@ -73,17 +55,10 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
             return jsonify({"error": f"Nieznany region: {api_region}"}), 400
 
         existing = _get_cloud_section()
-        # Pole-sekret (Access Secret): pusta wartość w formularzu = ZACHOWAJ
-        # dotychczasową (przeglądarka nigdy nie dostaje prawdziwego sekretu
-        # z powrotem - patrz GET wyżej, tylko flaga access_key_set).
         section = dict(existing)
         section.update({
             "access_id": access_id,
             "access_key": (form.get("access_key") or "").strip() or existing.get("access_key", ""),
-            # api_region: kod regionu (np. "eu"/"us") używany przez
-            # tinytuya.Cloud (import urządzeń, sterowanie chmurowe) - RÓŻNY
-            # od api_endpoint/mq_endpoint niżej (pełne URL-e używane tylko
-            # przez nasłuch zdarzeń kamer Pulsar, bridge/tuya_cloud_events.py).
             "api_region": api_region or existing.get("api_region", "eu"),
             "api_endpoint": (form.get("api_endpoint") or "").strip() or existing.get("api_endpoint", "https://openapi.tuyaeu.com"),
             "mq_endpoint": (form.get("mq_endpoint") or "").strip() or existing.get("mq_endpoint", "wss://mqe.tuyaeu.com:8285/"),
@@ -110,10 +85,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         if errors:
             return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
-        # Ta strona edytuje TYLKO urządzenia chmurowe - "devices"/
-        # "zigbee_gateways" (zakładka Tuya Local, plugins/tuya_local/routes.py)
-        # dzielą ten sam dokument ConfigStore, więc trzeba je zachować,
-        # inaczej zapis stąd kasowałby lokalne urządzenia.
         tuya_devices_dict = build_tuya_devices_dict(form)
         existing = get_config_store().get("tuya_devices")
         existing["cloud_devices"] = tuya_devices_dict["cloud_devices"]
@@ -130,12 +101,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
     @app.route("/api/plugins/tuya_cloud/cloud-import", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
     def api_plugin_tuya_cloud_cloud_import():
-        """Import urządzeń z Tuya Cloud, przy użyciu JUŻ ZAPISANYCH
-        poświadczeń (zakładka wyżej) - w odróżnieniu od importu w panelu
-        Tuya Local (plugins/tuya_local/routes.py), który wciąż wymaga
-        wpisania poświadczeń ręcznie za każdym razem (kreator, PRZED
-        zapisaniem jakiejkolwiek konfiguracji, kiedy nic jeszcze nie jest
-        zapisane)."""
         cloud = _get_cloud_section()
         api_region = cloud.get("api_region", "")
         access_id = cloud.get("access_id", "")

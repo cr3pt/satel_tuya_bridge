@@ -1,5 +1,3 @@
-"""Testy dla plugins/*/routes.py - własne strony konfiguracji wtyczek
-(Satel/Tuya lokalne/eBUS), patrz plugins/__init__.py po opis wzorca."""
 import base64
 
 import pytest
@@ -55,10 +53,6 @@ def client(tmp_path):
 
     import dashboard.app as app_module
     app_module.config_path = config.db_path
-    # create_app() od teraz PONOWNIE UŻYWA istniejącego auth_guard (żeby
-    # zapis configu z panelu nie wylogowywał wszystkich - patrz
-    # AuthGuard.update_config) - dla izolacji testów między sobą trzeba
-    # więc jawnie wymusić świeży obiekt na starcie każdego testu.
     app_module.auth_guard = None
 
     create_app(config)
@@ -68,9 +62,6 @@ def client(tmp_path):
 
 class TestSatelPluginPage:
     def test_page_redirects_to_login_without_auth(self, client):
-        """Strony wtyczek (/plugins/<id>) TERAZ wymagają zalogowania -
-        patrz dashboard/app.py: _require_login_for_settings_and_control -
-        wcześniej były publiczne, chronione było tylko zapisywanie."""
         resp = client.get("/plugins/satel", follow_redirects=False)
         assert resp.status_code == 302
         assert "/login" in resp.headers["Location"]
@@ -108,13 +99,56 @@ class TestSatelPluginPage:
         pending = app_module.history.get_pending_commands()
         assert any(c["command"] == "reload_config" for c in pending)
 
-    def test_scan_requires_auth_and_handles_connection_error(self, client):
-        assert client.post("/api/plugins/satel/scan", json={"host": "127.0.0.1", "timeout_seconds": 0.1}).status_code == 401
+    def test_scan_start_requires_auth(self, client):
+        assert client.post("/api/plugins/satel/scan/start", json={"host": "127.0.0.1"}).status_code == 401
+
+    def test_scan_status_requires_auth(self, client):
+        assert client.get("/api/plugins/satel/scan/status").status_code == 401
+
+    def test_scan_start_missing_host_returns_400(self, client, monkeypatch):
+        import dashboard.app as app_module
+
+        raw = app_module.config_store.get("config")
+        raw["satel"] = {}
+        app_module.config_store.set("config", raw)
+        app_module.create_app(BridgeConfig.load(app_module.config_path))
+
         resp = client.post(
-            "/api/plugins/satel/scan", json={"host": "127.0.0.1", "timeout_seconds": 0.1},
+            "/api/plugins/satel/scan/start", json={}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_scan_start_status_runs_in_background(self, client, monkeypatch):
+        import plugins.satel.routes as satel_routes
+
+        monkeypatch.setattr(satel_routes._background_scan, "start", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            satel_routes._background_scan, "status",
+            lambda: {"running": True, "elapsed_seconds": 0, "duration_seconds": 30, "result": None, "error": None},
+        )
+        resp = client.post(
+            "/api/plugins/satel/scan/start", json={"host": "127.0.0.1", "timeout_seconds": 30},
             headers=_basic_auth_header("test_haslo_123"),
         )
-        assert resp.status_code == 502
+        assert resp.status_code == 200
+        assert resp.get_json()["running"] is True
+
+        resp = client.get("/api/plugins/satel/scan/status", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json()["running"] is True
+
+    def test_scan_start_already_running_returns_409(self, client, monkeypatch):
+        import plugins.satel.routes as satel_routes
+
+        def _raise(*a, **kw):
+            raise RuntimeError("Nasłuch już trwa - poczekaj na koniec i spróbuj ponownie")
+
+        monkeypatch.setattr(satel_routes._background_scan, "start", _raise)
+        resp = client.post(
+            "/api/plugins/satel/scan/start", json={"host": "127.0.0.1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 409
 
     def test_settings_get_requires_auth(self, client):
         assert client.get("/api/plugins/satel/settings").status_code == 401
@@ -136,7 +170,7 @@ class TestSatelPluginPage:
         assert "bez restartu" in resp.get_json()["message"]
         saved = app_module.config_store.get("config")["satel"]
         assert saved["log_level"] == "DEBUG"
-        assert saved["host"] == "127.0.0.1"  # nietknięte
+        assert saved["host"] == "127.0.0.1"
 
     def test_settings_post_rejects_invalid_log_level(self, client):
         resp = client.post(
@@ -157,11 +191,6 @@ class TestSatelPluginPage:
         assert app_module.config_store.get("config")["satel"]["enabled"] is False
 
     def test_settings_post_does_not_clobber_fields_saved_via_satel_fields_doc(self, client):
-        """Po zapisie przez /api/plugins/satel/fields, monitored_zones/
-        partitions żyją w OSOBNYM dokumencie satel_fields (nadpisują to,
-        co w configu - patrz BridgeConfig.load) - zapis /settings (log_level/
-        enabled) nie może cofnąć tej zmiany, bo bierze/zapisuje sekcję
-        "satel" wprost z dokumentu "config", nie ze scalonego widoku."""
         import dashboard.app as app_module
 
         client.post(
@@ -173,16 +202,11 @@ class TestSatelPluginPage:
             headers=_basic_auth_header("test_haslo_123"),
         )
         assert app_module.config_store.get("config")["satel"]["log_level"] == "INFO"
-        # scalony widok wciąż pokazuje partycję zapisaną przez /fields,
-        # NIE tę wciąż leżącą (nieaktualną) w samym dokumencie "config"
         fields = client.get("/api/plugins/satel/fields", headers=_basic_auth_header("test_haslo_123")).get_json()
         assert {"name": "Piwnica", "number": 9} in fields["partitions"]
 
 
 class TestSatelConnectionEndpoint:
-    """GET/POST /api/plugins/satel/connection - host/port/klucze/tryb
-    wejść IP, przeniesione tutaj z dawnej wspólnej zakładki 🔌 Połączenia
-    (patrz zgłoszenie: rozdzielić Połączenia na właściwe wtyczki)."""
 
     def test_get_requires_auth(self, client):
         assert client.get("/api/plugins/satel/connection").status_code == 401
@@ -198,7 +222,7 @@ class TestSatelConnectionEndpoint:
         assert data["encryption_key_set"] is False
         assert data["encryption_enabled"] is False
         assert data["virtual_inputs_mode"] == "library"
-        assert '"x"' not in resp.get_data(as_text=True)  # "x" to integration_key w CONFIG_TEMPLATE
+        assert '"x"' not in resp.get_data(as_text=True)
 
     def test_post_without_auth_returns_401(self, client):
         resp = client.post("/api/plugins/satel/connection", json={})
@@ -226,10 +250,6 @@ class TestSatelConnectionEndpoint:
         assert app_module.config_store.get("config")["satel"]["integration_key"] == "x"
 
     def test_post_does_not_touch_zones_or_partitions(self, client):
-        """build_satel_connection_patch operuje TYLKO na polach połączenia -
-        monitored_zones/partitions (współdzielone z /api/plugins/satel/fields
-        przez ten sam dokument "satel_fields", patrz BridgeConfig.load) nie
-        mogą zniknąć po zapisie stąd."""
         import dashboard.app as app_module
 
         client.post(
@@ -292,9 +312,6 @@ class TestTuyaLocalPluginPage:
         assert resp.status_code == 400
 
     def test_saved_zigbee_gateway_and_sub_device_round_trip(self, client):
-        """Bramka Zigbee + podurządzenie wskazujące na nią (pole "gateway")
-        - patrz TuyaLocalController w bridge/tuya_local.py. Podurządzenie
-        NIE ma własnego ip/local_key, dostaje za to gateway/cid."""
         payload = {
             "tuya_devices": [
                 {"name": "gniazdko", "id": "d1", "ip": "1.2.3.4", "local_key": "k", "type": "socket"},
@@ -321,11 +338,6 @@ class TestTuyaLocalPluginPage:
         assert resp.status_code == 400
 
     def test_post_devices_preserves_cloud_devices(self, client):
-        """Odwrotny kierunek do
-        TestTuyaCloudPluginPage.test_devices_post_preserves_local_devices_and_gateways -
-        zapis stąd (urządzenia lokalne) nie może skasować urządzeń
-        chmurowych zapisanych z zakładki Tuya Cloud (współdzielony
-        dokument ConfigStore "tuya_devices")."""
         client.post(
             "/api/plugins/tuya_cloud/devices",
             json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
@@ -347,8 +359,6 @@ class TestTuyaLocalPluginPage:
         assert client.post("/api/plugins/tuya/scan").status_code == 401
         resp = client.post("/api/plugins/tuya/scan", headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 200
-        # "known_name" - dopasowanie po ID do już skonfigurowanego urządzenia
-        # (patrz CONFIG_TEMPLATE tego pliku: tuya.devices ma "gniazdko" -> id "d1").
         assert resp.get_json()["devices"] == [{"id": "d1", "ip": "1.2.3.4", "known_name": "gniazdko"}]
 
     def test_scan_known_name_empty_when_no_id_match(self, client, monkeypatch):
@@ -387,11 +397,6 @@ class TestTuyaLocalPluginPage:
         assert client.post("/api/plugins/tuya_local/settings", json={"log_level": "DEBUG"}).status_code == 401
 
     def test_settings_post_does_not_clobber_devices_saved_via_tuya_devices_doc(self, client):
-        """Tak jak dla satel - po zapisie przez /api/plugins/tuya/devices,
-        zapis /settings (enabled/log_level) nie może cofnąć zmiany
-        urządzeń, bo bierze/zapisuje sekcję "tuya" wprost z dokumentu
-        "config", nie ze scalonego widoku (gdzie devices nadpisane są z
-        osobnego dokumentu tuya_devices)."""
         import dashboard.app as app_module
 
         client.post(
@@ -451,9 +456,6 @@ class TestEbusPluginPage:
         assert resp.status_code == 400
 
     def test_mqtt_field_round_trips_for_composite_json_topics(self, client):
-        """mqtt_field - do wyboru pola z tematu ebusd publikującego kilka
-        naraz w trybie --mqttjson (patrz bridge/ebus_client.py:
-        EbusMqttListener._parse_payload)."""
         payload = [{
             "name": "temp_podlogowa", "label": "Temp. podłogowa", "mqtt_topic": "ebusd/hc1",
             "mqtt_field": "TempFloor",
@@ -554,11 +556,6 @@ class TestEbusPluginPage:
 
 
 class TestEbusConnectionEndpoint:
-    """GET/POST /api/plugins/ebus/connection - adres/port brokera MQTT i
-    temat stanu, przeniesione tutaj z dawnej wspólnej zakładki
-    🔌 Połączenia (patrz zgłoszenie: rozdzielić Połączenia na właściwe
-    wtyczki). Publiczny odczyt (bez sekretów), chroniony globalnie tak
-    samo jak /api/plugins/ebus/sensors."""
 
     def test_get_requires_auth(self, client):
         assert client.get("/api/plugins/ebus/connection").status_code == 401
@@ -585,8 +582,6 @@ class TestEbusConnectionEndpoint:
         saved = app_module.config_store.get("config")
         assert saved["ebus"]["mqtt_host"] == "10.0.0.5"
         assert saved["ebus"]["mqtt_port"] == 1884
-        # host/port mirroring do boiler_output.mqtt (ten sam broker obsługuje
-        # odczyt z kotła i publikację jego stanu, patrz build_ebus_connection_patch)
         assert saved["boiler_output"]["mqtt"]["host"] == "10.0.0.5"
         assert saved["boiler_output"]["mqtt"]["port"] == 1884
         assert saved["boiler_output"]["mqtt"]["topic_prefix"] == "dom/kociol"
@@ -684,7 +679,7 @@ class TestTuyaCloudPluginPage:
             headers=_basic_auth_header("test_haslo_123"),
         )
         saved = app_module.config_store.get("config")["tuya"]["cloud"]
-        assert saved["access_key"] == "secret1"  # nietknięte
+        assert saved["access_key"] == "secret1"
 
     def test_settings_get_requires_auth_and_defaults(self, client):
         assert client.get("/api/plugins/tuya_cloud/settings").status_code == 401
@@ -706,7 +701,7 @@ class TestTuyaCloudPluginPage:
         assert resp.status_code == 200
         saved = app_module.config_store.get("config")["tuya"]["cloud"]
         assert saved["log_level"] == "DEBUG"
-        assert saved["access_id"] == "aid1"  # nietknięte
+        assert saved["access_id"] == "aid1"
 
     def test_devices_get_requires_auth_and_empty_by_default(self, client):
         assert client.get("/api/plugins/tuya_cloud/devices").status_code == 401
@@ -739,12 +734,6 @@ class TestTuyaCloudPluginPage:
         assert data["devices"] == [{"name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1"}]
 
     def test_devices_post_preserves_local_devices_and_gateways(self, client):
-        """Ta strona edytuje TYLKO cloud_devices - zapis stąd nie może
-        skasować lokalnych urządzeń/bramek zapisanych z zakładki Tuya
-        Local (współdzielony dokument ConfigStore "tuya_devices").
-        "gniazdko" (id "d1") jest już skonfigurowane przez CONFIG_TEMPLATE
-        tego pliku (patrz tuya.devices w fixture `client`) - widoczne przez
-        /api/plugins/tuya/devices, tak jak faktycznie widziałby to panel."""
         before = client.get("/api/plugins/tuya/devices", headers=_basic_auth_header("test_haslo_123")).get_json()
         assert any(d["name"] == "gniazdko" for d in before["devices"])
 
@@ -970,7 +959,7 @@ class TestUnifiProtectPluginPage:
         saved = app_module.config_store.get("config")["unifi_protect"]
         assert saved["enabled"] is True
         assert saved["log_level"] == "ERROR"
-        assert saved["host"] == "192.168.1.1"  # nietknięte
+        assert saved["host"] == "192.168.1.1"
 
 
 class TestHomeWhizPluginPage:
@@ -1114,7 +1103,7 @@ class TestHomeWhizPluginPage:
         saved = app_module.config_store.get("config")["homewhiz"]
         assert saved["enabled"] is True
         assert saved["log_level"] == "ERROR"
-        assert saved["username"] == "u"  # nietknięte
+        assert saved["username"] == "u"
 
     def test_discover_without_auth_returns_401(self, client):
         assert client.post("/api/plugins/homewhiz/discover").status_code == 401
@@ -1333,8 +1322,8 @@ class TestPresenceSimulationPluginPage:
         saved = app_module.config_store.get("automations")
         assert saved["presence_simulation"]["enabled"] is True
         assert saved["presence_simulation"]["log_level"] == "DEBUG"
-        assert saved["presence_simulation"]["devices"] == ["gniazdko"]  # nietknięte
-        assert saved["scenes"][0]["name"] == "powitanie"  # nietknięte
+        assert saved["presence_simulation"]["devices"] == ["gniazdko"]
+        assert saved["scenes"][0]["name"] == "powitanie"
 
     def test_summary_reflects_devices_from_automations_doc(self, client):
         import dashboard.app as app_module
@@ -1351,10 +1340,6 @@ class TestPresenceSimulationPluginPage:
         assert data["devices"] == ["gniazdko", "lampka"]
 
     def test_automations_page_save_does_not_clobber_log_level(self, client):
-        """Zakładka /automations nie zna pola log_level (żyje tylko na
-        /plugins/presence_simulation) - zapis stamtąd (nawet samych scen)
-        nie może po cichu skasować wcześniej ustawionego poziomu logowania
-        (patrz komentarz w dashboard/app.py: api_config_automations_post)."""
         import dashboard.app as app_module
 
         client.post(

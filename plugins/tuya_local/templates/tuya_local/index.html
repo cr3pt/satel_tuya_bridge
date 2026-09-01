@@ -169,7 +169,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 refreshAuthNav();
@@ -181,10 +181,7 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// ------------------------------------------------------------------
-// Ustawienia wtyczki (włącznik + poziom logowania) - ten sam wzorzec
-// GET/POST /api/plugins/<id>/settings co reszta stron wtyczek.
-// ------------------------------------------------------------------
+
 const PLUGIN_ID = 'tuya_local';
 
 async function loadPluginSettings() {
@@ -216,9 +213,7 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
   }
 });
 
-// ------------------------------------------------------------------
-// Bramki Zigbee
-// ------------------------------------------------------------------
+
 function addGatewayRow(initial) {
   const container = document.getElementById('gatewaysRows');
   const row = document.createElement('div');
@@ -254,9 +249,7 @@ function collectGateways() {
     .filter(g => g.name);
 }
 
-// ------------------------------------------------------------------
-// Urządzenia
-// ------------------------------------------------------------------
+
 const DEVICE_TYPES = { socket: 'Gniazdko/przełącznik', dimmer: 'Ściemniacz' };
 
 function addDeviceRow(initial) {

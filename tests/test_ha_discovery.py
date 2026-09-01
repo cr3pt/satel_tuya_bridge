@@ -1,4 +1,3 @@
-"""Testy dla bridge/ha_discovery.py - budowanie payloadów MQTT Discovery."""
 from bridge.ha_discovery import (
     build_all_entities,
     build_boiler_sensor_entities,
@@ -54,7 +53,7 @@ class TestTuyaSwitchEntities:
         assert len(entities) == 1
         assert entities[0]["command_topic"] == "home/bridge/tuya/gniazdko_salon/set"
         assert entities[0]["state_topic"] == "home/bridge/tuya/gniazdko_salon/state"
-        assert entities[0]["payload"]["command_topic"] is not None  # switch MA sterowanie, w przeciwieństwie do sensorów
+        assert entities[0]["payload"]["command_topic"] is not None
 
     def test_multiple_devices(self):
         devices = {"a": {}, "b": {}, "c": {}}
@@ -66,7 +65,7 @@ class TestSatelInputEntities:
     def test_input_is_read_only_binary_sensor(self):
         zones = {"Salon": 12}
         entities = build_satel_input_entities(zones, HA_CFG, "home/bridge")
-        assert entities[0]["command_topic"] is None  # wejście NIE ma sterowania
+        assert entities[0]["command_topic"] is None
         assert entities[0]["payload"]["device_class"] == "motion"
 
     def test_discovery_topic_uses_binary_sensor_component(self):
@@ -84,9 +83,6 @@ class TestSatelOutputEntities:
 
 class TestSatelPartitionEntities:
     def test_partition_is_read_only_never_controllable(self):
-        """Kluczowe zabezpieczenie: strefy NIGDY nie mają command_topic -
-        to świadoma decyzja, żeby nie omijać autoryzacji panelu webowego
-        (patrz docstring modułu ha_discovery.py)."""
         partitions = {"Dom": 1, "Garaż": 2}
         entities = build_satel_partition_entities(partitions, HA_CFG, "home/bridge")
         assert len(entities) == 2
@@ -112,7 +108,6 @@ class TestBuildAllEntities:
             }
 
         entities = build_all_entities(FakeConfig(), "home/boiler")
-        # 1 boiler sensor + 1 tuya switch + 1 input + 1 output + 1 partition
         assert len(entities) == 5
 
     def test_all_discovery_topics_unique(self):

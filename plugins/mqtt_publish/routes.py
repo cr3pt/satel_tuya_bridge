@@ -1,8 +1,3 @@
-"""Wtyczka publikacji stanu po MQTT (Satel/Tuya, generyczny format - nie
-Home Assistant Discovery, patrz plugins/home_assistant/routes.py po ten
-drugi) - własna strona konfiguracji tematów, wydzielona ze wspólnej
-zakładki 🔌 Połączenia. Patrz plugins/satel/routes.py po ten sam wzorzec
-wstrzykiwania zależności."""
 from __future__ import annotations
 
 from flask import Flask, jsonify, render_template, request
@@ -20,10 +15,6 @@ META = PluginMeta(
 
 def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
-    """Rejestruje routing wtyczki publikacji MQTT. `_ignored` połyka
-    zależności przeznaczone dla INNYCH wtyczek - register_all() w
-    plugins/__init__.py woła każdą wtyczkę z tym samym, wspólnym zestawem
-    `deps`."""
 
     def _get_mqtt_publish_section() -> dict:
         return get_config_store().get("config").get("mqtt_publish", {}) or {}

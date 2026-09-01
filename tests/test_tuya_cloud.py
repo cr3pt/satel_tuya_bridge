@@ -1,5 +1,3 @@
-"""Testy dla bridge/tuya_cloud.py - sterowanie urządzeniami Tuya przez
-REST API (tinytuya.Cloud), fallback dla urządzeń bez local_key/adresu IP."""
 import pytest
 
 from bridge.tuya_cloud import TuyaCloudController
@@ -13,9 +11,6 @@ CREDENTIALS = {"api_region": "eu", "access_id": "aid", "access_key": "akey"}
 
 
 class FakeTinytuyaCloud:
-    """Symuluje tinytuya.Cloud na tyle, ile potrzebuje TuyaCloudController -
-    sendcommand()/getstatus() zwracają surowy kształt odpowiedzi Tuya OpenAPI
-    (patrz prawdziwa biblioteka: {"success": True, "result": [...]})."""
 
     def __init__(self, fail_times: int = 0, **kwargs):
         self.fail_times = fail_times
@@ -43,13 +38,6 @@ def controller():
 
 
 def test_client_defaults_missing_api_region_to_eu(monkeypatch):
-    """Regresja: dashboard/setup.py (kreator, potem odtworzona w
-    build_connections_patch) do niedawna w ogóle nie zapisywała
-    api_region - już zapisane, starsze config.yaml mogą go więc nie mieć.
-    tinytuya.Cloud dostaje wtedy apiRegion="" bez tego fallbacku, co Tuya
-    OpenAPI odrzuca błędem "cross-region access is not allowed"
-    niezależnie od faktycznego regionu konta - musi spaść na "eu", ten
-    sam domyślny region co reszta configu."""
     captured = {}
 
     def fake_cloud_ctor(apiRegion=None, apiKey=None, apiSecret=None):
@@ -98,7 +86,6 @@ async def test_turn_off_sends_switch_code_false(controller):
 
 
 async def test_uses_per_device_switch_code(controller):
-    """'wentylator' ma switch_code='switch' (nie domyślny 'switch_1')."""
     fake = FakeTinytuyaCloud()
     controller._cloud = fake
     await controller.turn_on("wentylator")
@@ -120,9 +107,6 @@ async def test_raises_connection_error_after_exhausting_retries(controller):
 
 
 async def test_get_status_normalizes_to_key_1_like_local_controller(controller):
-    """Tuya OpenAPI zwraca kod tekstowy (np. 'switch_1'), ale
-    RulesEngine._tuya_status_poll_loop robi dps.get("1") - patrz
-    TuyaLocalController.get_status, ten sam kształt klucza tutaj."""
     fake = FakeTinytuyaCloud()
     fake.status_by_device["cloud1"] = [{"code": "switch_1", "value": True}, {"code": "other", "value": 5}]
     controller._cloud = fake
@@ -163,8 +147,6 @@ async def test_turn_on_for_duration_turns_off_after_delay(controller):
 
 
 def test_client_created_lazily_with_credentials(monkeypatch):
-    """_client() tworzy tinytuya.Cloud dopiero przy pierwszym użyciu, z
-    zapisanych poświadczeń - nie przy konstrukcji obiektu."""
     created_with = {}
 
     class FakeCloudCtor:
@@ -175,7 +157,7 @@ def test_client_created_lazily_with_credentials(monkeypatch):
     monkeypatch.setattr(tuya_cloud_module.tinytuya, "Cloud", FakeCloudCtor)
 
     controller = TuyaCloudController(DEVICES_CFG, CREDENTIALS)
-    assert created_with == {}  # jeszcze nic nie utworzone
+    assert created_with == {}
     client = controller._client()
     assert created_with == {"apiRegion": "eu", "apiKey": "aid", "apiSecret": "akey"}
-    assert controller._client() is client  # cache'owany, nie tworzony ponownie
+    assert controller._client() is client

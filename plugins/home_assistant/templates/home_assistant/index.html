@@ -146,7 +146,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 refreshAuthNav();
@@ -158,10 +158,7 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// ------------------------------------------------------------------
-// Ustawienia wtyczki (włącznik + poziom logowania) - ten sam wzorzec
-// GET/POST /api/plugins/<id>/settings co reszta stron wtyczek.
-// ------------------------------------------------------------------
+
 const PLUGIN_ID = 'home_assistant';
 
 async function loadPluginSettings() {
@@ -193,9 +190,7 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
   }
 });
 
-// ------------------------------------------------------------------
-// Broker MQTT / identyfikacja urządzenia
-// ------------------------------------------------------------------
+
 async function loadBroker() {
   const data = await (await fetch('/api/plugins/home_assistant/broker')).json();
   document.getElementById('mqttHostInput').value = data.mqtt_host || '';

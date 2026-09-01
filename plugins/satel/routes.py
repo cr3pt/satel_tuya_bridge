@@ -1,14 +1,8 @@
-"""Wtyczka Satel - własna strona konfiguracji (strefy/wyjścia/wejścia IP/
-partycje) i wykrywanie aktywnych stref/wyjść, wydzielone z dashboard/app.py
-(patrz zakładka 🧩 Wtyczki -> "⚙ Konfiguruj"). Logika zapisu/walidacji
-pozostaje w dashboard/setup.py (współdzielona z kreatorem /setup, patrz
-tamtejsze docstringi) - ten moduł tylko routuje i wywołuje."""
 from __future__ import annotations
 
-import asyncio
 from flask import Flask, jsonify, render_template, request
 
-from bridge.satel_client import discover_active_zones_and_outputs
+from bridge.satel_client import BackgroundZoneOutputScan
 from dashboard.setup import (
     build_satel_fields_dict, validate_satel_fields,
     dict_to_name_number_rows, zones_to_rows, virtual_inputs_to_rows,
@@ -24,12 +18,11 @@ META = PluginMeta(
     config_url="/plugins/satel",
 )
 
+_background_scan = BackgroundZoneOutputScan()
+
 
 def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              get_config_path, reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
-    """Rejestruje routing wtyczki Satel. `_ignored` połyka zależności
-    przeznaczone dla INNYCH wtyczek - register_all() w plugins/__init__.py
-    woła każdą wtyczkę z tym samym, wspólnym zestawem `deps`."""
 
     @app.route("/plugins/satel")
     def satel_plugin_page():
@@ -43,10 +36,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
             "monitored_zones": zones_to_rows(satel.get("monitored_zones", {}), satel.get("zone_types", {})),
             "monitored_outputs": zones_to_rows(satel.get("monitored_outputs", {}), satel.get("output_types", {})),
             "virtual_inputs": virtual_inputs_to_rows(satel.get("virtual_inputs", {}).get("inputs", {})),
-            # Tryb wirtualnych wejść IP (satel.virtual_inputs.mode, patrz
-            # docstring bridge/satel_client.py) - CZYTELNY tu (edytowalny w
-            # zakładce ⚙ Ustawienia -> Połączenia, nie tutaj), żeby ten
-            # formularz wiedział, czy pokazać pole klucza per wiersz.
             "virtual_inputs_mode": satel.get("virtual_inputs", {}).get("mode", "library"),
             "zone_types": satel.get("zone_types", {}),
             "output_types": satel.get("output_types", {}),
@@ -74,12 +63,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
             "message": "Zapisano. Bridge sam przeładuje konfigurację w ciągu ok. 1-2s, bez restartu procesu.",
         })
 
-    @app.route("/api/plugins/satel/scan", methods=["POST"])
-    def api_plugin_satel_scan():
-        """Publiczny (jak /api/discover/satel w kreatorze) - to tylko
-        nasłuch, nic nie zmienia w centrali. Host/port brane domyślnie z
-        JUŻ ZAPISANEJ konfiguracji (nie trzeba ich przepisywać z
-        zablokowanej hasłem zakładki 🔌 Połączenia)."""
+    @app.route("/api/plugins/satel/scan/start", methods=["POST"])
+    def api_plugin_satel_scan_start():
         payload = request.get_json(silent=True) or {}
         satel_cfg = get_config_raw().get("satel", {})
         host = (payload.get("host") or satel_cfg.get("host") or "").strip()
@@ -93,8 +78,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
             timeout_seconds = min(float(payload.get("timeout_seconds") or 30), 120)
         except (TypeError, ValueError):
             timeout_seconds = 30.0
-        # Przełącznik włącz/wyłącz gate'uje klucz - patrz analogiczny
-        # komentarz w bridge/rules_engine.py.
         encryption_enabled = (
             payload["encryption_enabled"] if "encryption_enabled" in payload
             else satel_cfg.get("encryption_enabled")
@@ -102,25 +85,17 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         encryption_key = (payload.get("encryption_key") or satel_cfg.get("encryption_key") or None) if encryption_enabled else None
 
         try:
-            result = asyncio.run(discover_active_zones_and_outputs(
-                host, port, timeout_seconds=timeout_seconds, encryption_key=encryption_key,
-            ))
-        except ImportError:
-            return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
-        except ConnectionError as exc:
-            return jsonify({"error": str(exc)}), 502
-        except Exception as exc:
-            return jsonify({"error": f"Błąd wykrywania: {exc}"}), 502
+            _background_scan.start(host, port, timeout_seconds=timeout_seconds, encryption_key=encryption_key)
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 409
 
-        return jsonify(result)
+        return jsonify(_background_scan.status())
+
+    @app.route("/api/plugins/satel/scan/status")
+    def api_plugin_satel_scan_status():
+        return jsonify(_background_scan.status())
 
     def _get_satel_section() -> dict:
-        # UWAGA: bierzemy STORED sekcję wprost z dokumentu "config", NIE z
-        # get_config_raw() - ta druga jest scalonym widokiem, gdzie
-        # monitored_zones/monitored_outputs/partitions/virtual_inputs
-        # nadpisane są z OSOBNEGO dokumentu "satel_fields" (patrz
-        # bridge/config.py: BridgeConfig.load). Zapisanie scalonego widoku
-        # z powrotem do "config" zdublowałoby te dane w niewłaściwym miejscu.
         return get_config_store().get("config").get("satel", {})
 
     def _save_satel_section(section: dict) -> None:
@@ -131,22 +106,11 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
     @app.route("/api/plugins/satel/connection", methods=["GET"])
     @require_auth(get_guard=get_auth_guard)
     def api_plugin_satel_connection_get():
-        """Host/port/klucze centrali - dawniej zakładka 🔌 Połączenia
-        (/config), przeniesione tutaj razem z resztą konfiguracji Satela
-        (patrz zgłoszenie: rozdzielić Połączenia na właściwe wtyczki).
-        Wymaga hasła administratora NAWET do odczytu (w odróżnieniu od
-        /api/plugins/satel/fields) - zwracane dane obejmują, czy klucz
-        integracji/klucz szyfrowania SĄ ustawione, nigdy ich wartości."""
         return jsonify(satel_connection_to_form(_get_satel_section()))
 
     @app.route("/api/plugins/satel/connection", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
     def api_plugin_satel_connection_post():
-        """Zapisuje TYLKO host/port/klucze/tryb wejść IP - zmiany zaczną
-        działać dopiero po pełnym restarcie procesu bridge'a (żywe
-        połączenie TCP z centralą nie jest odtwarzane w locie), w
-        odróżnieniu od /api/plugins/satel/fields (strefy/wyjścia), które
-        bridge przeładowuje sam, bez restartu."""
         form = request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane formularza"}), 400

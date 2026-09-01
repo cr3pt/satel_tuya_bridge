@@ -1,11 +1,3 @@
-"""Symulacja obecności - losowe włączanie/wyłączanie wybranych urządzeń
-Tuya w oknie czasowym (np. wieczorami), gdy funkcja jest włączona.
-
-Celowo NIEZALEŻNA od stanu uzbrojenia centrali Satel - włączasz/wyłączasz
-ją ręcznie w config.yaml (`presence_simulation.enabled`), np. na czas
-wyjazdu. Prostsze i bardziej przewidywalne niż automatyczne wiązanie z
-trybem uzbrojenia (które i tak włącza się/wyłącza też wtedy, gdy ktoś w
-domu tylko wychodzi na chwilę i uzbraja "na wszelki wypadek")."""
 from __future__ import annotations
 
 import asyncio

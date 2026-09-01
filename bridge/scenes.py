@@ -1,27 +1,3 @@
-"""Sceny - nazwane grupy akcji wykonywane razem, jednym wywołaniem.
-
-To wspólny fundament dla kilku funkcji naraz: reguła ruchu może wywołać
-scenę zamiast pojedynczego "włącz urządzenie", eskalacja przy powtarzających
-się naruszeniach wywołuje inną (mocniejszą) scenę, automatyka kotła
-(np. ochrona przed mrozem) też wywołuje scenę, tak samo harmonogram.
-Zamiast pięciu osobnych mechanizmów "zrób coś na wielu urządzeniach" -
-jeden, reużywalny.
-
-Przykład definicji w config.yaml:
-  scenes:
-    - name: "wieczorne_powitanie"
-      actions:
-        - {type: tuya_on, device: swiatlo_korytarz, dimmer_level_percent: 30}
-        - {type: satel_virtual_input, virtual_input: light_on_living_room}
-
-    - name: "wykryto_intruza"
-      actions:
-        - {type: tuya_on, device: gniazdko_salon}
-        - {type: tuya_on, device: swiatlo_korytarz}
-        - {type: satel_output, output_number: 1, state: true}
-        - {type: delay, seconds: 2}
-        - {type: satel_virtual_input, virtual_input: motion_hall_camera}
-"""
 from __future__ import annotations
 
 import asyncio
@@ -36,12 +12,6 @@ class SceneRunner:
         self.scenes = {s["name"]: s for s in (scenes_cfg or [])}
         self.tuya = tuya
         self.satel = satel
-        # Tryb "http" wirtualnych wejść IP (satel.virtual_inputs.mode, patrz
-        # obszerny docstring bridge/satel_client.py) - `satel_virtual_inputs`
-        # to osobny klient HTTP (SatelVirtualInputTrigger), używany TYLKO gdy
-        # virtual_input_mode == "http"; w trybie domyślnym "library" akcja
-        # satel_virtual_input idzie przez self.satel.set_output() (patrz
-        # _run_action niżej).
         self.satel_virtual_inputs = satel_virtual_inputs
         self.virtual_input_mode = virtual_input_mode
         self.history = history
@@ -55,31 +25,17 @@ class SceneRunner:
             logger.error("Nieznana scena: '%s' (sprawdź sekcję 'scenes' w config.yaml)", scene_name)
             return
         if not scene.get("enabled", True):
-            # Wyłączona w edytorze (przełącznik "Włączona" w karcie sceny) -
-            # scena nie uruchamia się z ŻADNEGO miejsca, które przez nią
-            # przechodzi (reguła ruchu, eskalacja, kamera, kocioł...), bo to
-            # jedyny punkt faktycznego wykonania sceny w całym bridge'u.
             logger.debug("Scena '%s' pominięta - wyłączona w edytorze", scene_name)
             return
         logger.info("Uruchamiam scenę '%s' (%d akcji)", scene_name, len(scene.get("actions", [])))
         if self.history:
             self.history.write_event("scene", source=scene_name, detail={"actions": len(scene.get("actions", []))})
-            # Status "automation:<nazwa>" (kategoria "automation") - pozwala
-            # innej regule/scenie sprawdzić w warunku (state), czy TA scena
-            # jest właśnie w trakcie wykonywania (patrz bridge/conditions.py:
-            # to zwykły warunek "state", bez żadnej specjalnej obsługi -
-            # wystarczy, że ktoś zapisuje i czyta ten sam klucz statusu).
-            # Okno "uruchomiona" obejmuje cały czas wykonywania akcji sceny
-            # PO KOLEI (włącznie z `delay`), NIE licząc ewentualnego
-            # wystrzelonego w tle `tuya_on_for_duration` (patrz niżej).
             self.history.set_status(f"automation:{scene_name}", "automation", "uruchomiona", label=scene_name)
         try:
             for action in scene.get("actions", []):
                 try:
                     await self._run_action(action)
                 except Exception:
-                    # Jedna nieudana akcja (np. martwe urządzenie Tuya) nie może
-                    # przerwać reszty sceny - reszta akcji i tak powinna się wykonać.
                     logger.exception("Błąd akcji w scenie '%s': %s", scene_name, action)
         finally:
             if self.history:
@@ -92,20 +48,12 @@ class SceneRunner:
         elif kind == "tuya_off":
             await self.tuya.turn_off(action["device"])
         elif kind == "tuya_on_for_duration":
-            # nieblokujące - scena nie czeka, aż upłynie czas, żeby wykonać
-            # kolejne akcje
             asyncio.create_task(self.tuya.turn_on_for_duration(
                 action["device"], action["duration_seconds"], action.get("dimmer_level_percent"),
             ))
         elif kind == "satel_output":
             await self.satel.set_output(action["output_number"], action.get("state", True))
         elif kind == "satel_virtual_input":
-            # "Wirtualne wejście IP" - dwa tryby (satel.virtual_inputs.mode,
-            # patrz obszerny docstring bridge/satel_client.py). `state`
-            # domyślnie True (aktywacja), dla symetrii z akcją satel_output
-            # wyżej można też jawnie podać False (dezaktywacja) - IGNOROWANE
-            # w trybie "http" (jednorazowy impuls, brak odpowiednika
-            # "przywróć" w tym protokole).
             name = action["virtual_input"]
             if self.virtual_input_mode == "http":
                 if self.satel_virtual_inputs is None:
@@ -124,11 +72,6 @@ class SceneRunner:
                 return
             await self.satel.set_output(output_number, action.get("state", True))
         elif kind == "satel_arm":
-            # `partitions` opcjonalne - gdy akcja go nie poda (stare sceny
-            # sprzed tego pola, albo instalacja z jedną strefą), arm()
-            # sam spada na domyślną (SatelIntegraClient.partition) - patrz
-            # tam. Z wieloma strefami warto podać je JAWNIE per scena
-            # (jedna scena może uzbrajać tylko "Garaż", inna wszystko).
             await self.satel.arm(action.get("mode", 0), action.get("partitions"))
         elif kind == "satel_disarm":
             await self.satel.disarm(action.get("partitions"))

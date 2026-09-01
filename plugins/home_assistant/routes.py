@@ -1,9 +1,3 @@
-"""Wtyczka Home Assistant (MQTT Discovery) - własna strona konfiguracji,
-wydzielona ze wspólnej zakładki 🔌 Połączenia. Bridge NIE osadza kodu samego
-Home Assistant (wymagałby pełnego runtime'u HA) - integruje się przez
-standardowy protokół MQTT Discovery, korzystając z tych samych bibliotek co
-reszta bridge'a (satel-integra/tinytuya), patrz bridge/ha_mqtt.py. Patrz
-plugins/satel/routes.py po ten sam wzorzec wstrzykiwania zależności."""
 from __future__ import annotations
 
 from flask import Flask, jsonify, render_template, request
@@ -21,10 +15,6 @@ META = PluginMeta(
 
 def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
-    """Rejestruje routing wtyczki Home Assistant. `_ignored` połyka
-    zależności przeznaczone dla INNYCH wtyczek - register_all() w
-    plugins/__init__.py woła każdą wtyczkę z tym samym, wspólnym zestawem
-    `deps`."""
 
     def _get_ha_section() -> dict:
         return get_config_store().get("config").get("home_assistant", {}) or {}

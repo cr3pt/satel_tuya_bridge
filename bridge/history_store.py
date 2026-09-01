@@ -1,20 +1,3 @@
-"""Lokalna baza danych historycznych (SQLite).
-
-Wybór SQLite (a nie InfluxDB) jest celowy: RPi Zero W ma procesor ARMv6
-(ARM11), dla którego większość nowoczesnych baz szeregów czasowych
-(InfluxDB, Prometheus - obie w Go) NIE ma oficjalnych binarek - tylko od
-ARMv7 wzwyż. SQLite to czysty kod C wbudowany w Pythona - działa wszędzie,
-zero dodatkowej usługi do administrowania, a dla domowej skali danych
-(kilka czujników, odczyty co kilkadziesiąt sekund) jego wydajność jest
-zupełnie wystarczająca.
-
-Baza trzyma dwie tabele:
-  - readings: znormalizowane odczyty liczbowe (temperatury z kotła, ale
-    też można tu wrzucać inne wartości liczbowe)
-  - events: zdarzenia dyskretne (ruch, włączenie światła, alarm, wpis
-    systemowy) - do przeglądania w logu i filtrowania w panelu
-  - alerts: aktywne/rozwiązane alarmy progowe (patrz alarms.py)
-"""
 from __future__ import annotations
 
 import json
@@ -84,9 +67,6 @@ CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
 """
 
 _LOG_LEVEL_ORDER = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-# minimalny_poziom -> lista poziomów "co najmniej tak poważnych" - do
-# filtrowania get_logs(level=...) po WWW (np. level="WARNING" pokazuje też
-# ERROR/CRITICAL, nie tylko dokładnie WARNING).
 LOG_LEVELS_AT_OR_ABOVE = {
     level: _LOG_LEVEL_ORDER[i:] for i, level in enumerate(_LOG_LEVEL_ORDER)
 }
@@ -102,7 +82,6 @@ class HistoryStore:
         self._conn.executescript(SCHEMA)
         self._conn.commit()
 
-    # -- zapisy --------------------------------------------------------
     def write_reading(self, sensor: str, value: float, ts: float | None = None) -> None:
         ts = ts if ts is not None else time.time()
         with self._lock:
@@ -139,7 +118,6 @@ class HistoryStore:
             )
             self._conn.commit()
 
-    # -- statusy na żywo (Tuya, wejścia/wyjścia Satela, kocioł) ---------
     def set_status(self, key: str, category: str, value, label: str | None = None,
                    ts: float | None = None) -> None:
         ts = ts if ts is not None else time.time()
@@ -153,10 +131,6 @@ class HistoryStore:
             self._conn.commit()
 
     def get_status_value(self, key: str) -> str | None:
-        """Pojedyncza wartość statusu po kluczu (np. "satel_input:3") -
-        używane przez bridge/conditions.py do ewaluacji warunków typu
-        "state" w regułach ruchu, gdzie liczy się jedna konkretna wartość,
-        nie cała lista jak w get_status()."""
         with self._lock:
             row = self._conn.execute("SELECT value FROM status WHERE key = ?", (key,)).fetchone()
         return row[0] if row else None
@@ -176,20 +150,6 @@ class HistoryStore:
         ]
 
     def prune_status(self, category: str, keep_keys) -> int:
-        """Usuwa z tabeli `status` wpisy danej kategorii, których klucza NIE
-        MA w `keep_keys` - sprząta status po wejściu/wyjściu/urządzeniu
-        USUNIĘTYM albo PRZEMIANOWANYM w konfiguracji wtyczki. `set_status()`
-        jest samym upsertem (INSERT ... ON CONFLICT DO UPDATE) i NIGDY nie
-        kasuje - bez tego sprzątania stary wpis (pod starym kluczem/nazwą)
-        zostawałby w bazie NA ZAWSZE i dalej pokazywał się na stronie
-        głównej, mimo że w ⚙ Ustawienia dawno go już nie ma (zgłoszony błąd:
-        liczba wejść/wyjść/urządzeń na stronie głównej rozjeżdżała się z
-        aktualną konfiguracją wtyczki). Wołane przez RulesEngine
-        (_seed_satel_status_labels/_seed_tuya_status_labels/
-        _seed_automation_status_labels) razem z zasiewaniem, więc uruchamia
-        się przy KAŻDYM starcie i KAŻDYM reload_config() - dokładnie tam,
-        gdzie już i tak liczymy aktualny zestaw skonfigurowanych kluczy.
-        Zwraca liczbę usuniętych wierszy (do logowania)."""
         keep_keys = list(keep_keys)
         with self._lock:
             if not keep_keys:
@@ -203,13 +163,6 @@ class HistoryStore:
             self._conn.commit()
             return cur.rowcount
 
-    # -- kolejka komend (panel webowy -> proces bridge'a) ---------------
-    # Panel webowy i główny proces bridge'a to DWA OSOBNE procesy - panel
-    # nie ma bezpośredniego dostępu do żywego połączenia z Satelem. Zamiast
-    # dodawać drugi serwer HTTP w procesie bridge'a (więcej ruchomych
-    # części, więcej powierzchni do zabezpieczenia), panel zapisuje komendę
-    # do tej tabeli, a bridge odpytuje ją cyklicznie (patrz
-    # rules_engine.py: _command_poll_loop) i wykonuje.
     def enqueue_command(self, command: str, params: dict) -> int:
         ts = time.time()
         with self._lock:
@@ -256,7 +209,6 @@ class HistoryStore:
             "status": row[4], "result": json.loads(row[5]) if row[5] else None, "done_ts": row[6],
         }
 
-    # -- odczyty (używane przez panel webowy) ---------------------------
     def get_history(self, sensor: str, ts_from: float, ts_to: float) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
@@ -310,7 +262,6 @@ class HistoryStore:
             for r in rows
         ]
 
-    # -- logi (przechwytywane z modułu logging, patrz bridge/log_capture.py) --
     def write_log(self, component: str, logger_name: str, level: str, message: str,
                    ts: float | None = None) -> None:
         ts = ts if ts is not None else time.time()
@@ -332,10 +283,6 @@ class HistoryStore:
             query += " AND logger = ?"
             params.append(logger_name)
         if level:
-            # poziom "co najmniej tak poważne jak X" - alfabetyczna
-            # kolejność nazw akurat NIE odpowiada powadze (CRITICAL < DEBUG
-            # alfabetycznie), więc filtrujemy po jawnej liście dopuszczonych
-            # poziomów zamiast liczyć na sortowanie tekstowe.
             allowed = LOG_LEVELS_AT_OR_ABOVE.get(level.upper())
             if allowed:
                 placeholders = ",".join("?" * len(allowed))
@@ -354,12 +301,6 @@ class HistoryStore:
         ]
 
     def get_log_loggers(self, component: str | None = None) -> list[str]:
-        """Zwraca posortowaną listę WYSTĘPUJĄCYCH nazw loggerów (np.
-        'bridge.satel') - do wypełnienia rozwijanej listy filtra w panelu
-        (⚙ Ogólne -> Logi), zamiast pola tekstowego, gdzie trzeba było
-        zgadywać/pamiętać dokładną nazwę. Celowo z samej tabeli `logs`
-        (co FAKTYCZNIE się zalogowało), nie z jakiejś statycznej listy
-        modułów - dokładnie odzwierciedla to, co można przefiltrować."""
         query = "SELECT DISTINCT logger FROM logs WHERE 1=1"
         params: list = []
         if component:
@@ -371,10 +312,6 @@ class HistoryStore:
         return [r[0] for r in rows]
 
     def prune_logs(self, keep: int = 10000) -> None:
-        """Trzyma tylko `keep` najnowszych wpisów - logi (zwłaszcza na
-        DEBUG) mogą rosnąć dużo szybciej niż zdarzenia/odczyty, więc
-        przycinanie po LICZBIE wierszy (nie tylko wieku, jak
-        bridge/maintenance.py dla reszty tabel) jest tu ważniejsze."""
         with self._lock:
             self._conn.execute(
                 "DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY ts DESC LIMIT ?)",

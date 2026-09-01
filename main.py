@@ -1,8 +1,3 @@
-"""Punkt wejścia bridge'a Satel <-> Tuya <-> eBUS.
-
-Uruchomienie:
-    python main.py [--config config.yaml]
-"""
 from __future__ import annotations
 
 import argparse
@@ -39,8 +34,6 @@ async def main() -> None:
     attach_log_capture(engine.history, "bridge")
     await engine.start()
 
-    # Utrzymuj proces przy życiu - cała logika działa w zarejestrowanych
-    # callbackach i zadaniach w tle.
     await asyncio.Event().wait()
 
 

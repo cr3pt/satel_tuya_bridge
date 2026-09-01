@@ -1,38 +1,3 @@
-"""Kreator pierwszej konfiguracji - budowanie config.yaml i jego towarzyszy
-(sensors.yaml/automations.yaml/satel_fields.yaml/tuya_devices.yaml) z danych
-wypełnionych w formularzu webowym (/setup).
-
-Wieloetapowy kreator (/setup): każdy krok to osobna "strona" w
-templates/setup.html, przechodzona przyciskiem "Dalej". Po każdym takim
-kliknięciu cały dotychczasowy stan formularza trafia do pliku roboczego
-(patrz save_draft/load_draft niżej) - dzięki temu konfigurację da się
-przerwać i wznowić później (np. inna sesja przeglądarki), zanim finalny
-config.yaml w ogóle powstanie.
-
-Pokrywa PODSTAWOWĄ konfigurację potrzebną do uruchomienia bridge'a (Satel,
-Tuya lokalnie, eBUS/MQTT, hasło panelu, powiadomienia, opcjonalnie Home
-Assistant/UniFi Protect/Tuya cloud) ORAZ bardziej zaawansowane rzeczy
-zbudowane na wspólnym fundamencie scen (bridge/scenes.py): sceny,
-harmonogramy czasowe (time_window) i eskalację przy powtarzających się
-naruszeniach (obie ostatnie jako pola reguł ruchu).
-
-Cztery rodzaje "pól" - czujniki eBUS, sceny/reguły ruchu/symulacja
-obecności, strefy/wyjścia/wejścia IP/partycje Satela, urządzenia Tuya -
-trafiają do OSOBNYCH plików (odpowiednio sensors.yaml/automations.yaml/
-satel_fields.yaml/tuya_devices.yaml), NIE do config.yaml: to jedyne pliki,
-które UI (kreator i panele /config, /automations - patrz dashboard/app.py)
-wolno mu bezpiecznie nadpisywać w całości, bez ryzyka skasowania ręcznych
-zmian i komentarzy w config.yaml. Po pierwszej konfiguracji wszystkie
-cztery da się w pełni edytować z powrotem w przeglądarce, w zabezpieczonych
-hasłem panelach - żadne z nich nie wymagają ręcznej edycji YAML-a (choć to
-wciąż działa, patrz bridge/config.py - wsteczna zgodność ze starszymi
-configami).
-
-Rzeczy, których panel WCIĄŻ nie obsługuje (reguły_kamera_alarm,
-reguły_swiatlo_do_satela, boiler_rules, alarm_rules) dostają puste/domyślne
-wartości w config.yaml - dodaje się je później ręcznie (plik zostaje w
-pełni edytowalny, to nie jest jednorazowy generator).
-"""
 from __future__ import annotations
 
 import copy
@@ -43,8 +8,6 @@ from werkzeug.security import generate_password_hash
 
 DRAFT_FILENAME = ".setup_draft.json"
 
-# Typy akcji scen obsługiwane przez SceneRunner (bridge/scenes.py) i pola,
-# które KAŻDA z nich wymaga - używane do walidacji formularza kreatora.
 SCENE_ACTION_REQUIRED_FIELDS = {
     "tuya_on": ["device"],
     "tuya_off": ["device"],
@@ -58,19 +21,11 @@ SCENE_ACTION_REQUIRED_FIELDS = {
 
 
 def validate(form: dict) -> list[str]:
-    """Zwraca listę komunikatów błędów (pusta lista = wszystko OK)."""
     errors = []
 
     satel = form.get("satel", {})
     if not satel.get("host"):
         errors.append("Satel: adres IP centrali/modułu ETHM jest wymagany")
-    # Kod użytkownika centrali CELOWO opcjonalny - bez niego panel działa w trybie
-    # tylko do odczytu (stan wejść/wyjść/stref widoczny normalnie, protokół
-    # integracji Satela nie wymaga klucza do samego czytania), ale
-    # sterowanie (uzbrojenie/rozbrojenie/wyjścia) jest zablokowane z
-    # czytelnym komunikatem, patrz SatelIntegraClient.set_output/arm/disarm
-    # w bridge/satel_client.py. Klucz można dodać później w zakładce
-    # ⚙ Ustawienia -> 🔌 Połączenia, bez ponownego przechodzenia kreatora.
 
     ebus = form.get("ebus", {})
     if not ebus.get("mqtt_host"):
@@ -93,18 +48,6 @@ def validate(form: dict) -> list[str]:
 
 
 def validate_satel_fields(form: dict) -> list[str]:
-    """Waliduje TYLKO "pola" Satela (wirtualne wejścia IP - jedyne z nich
-    wymagające kompletu danych, żeby scenom/regułom było do czego się
-    odwołać). Strefy/wyjścia/partycje nie mają twardej walidacji - niepełny
-    wiersz (brakująca nazwa albo numer) jest po prostu pomijany przy
-    zapisie (patrz _build_monitored_zones/_build_monitored_outputs/
-    _build_partitions). Współdzielone przez kreator (/setup) i stronę
-    wtyczki Satel (/plugins/satel, patrz plugins/satel/routes.py).
-
-    Wirtualne wejście to nazwa+numer, NIEZALEŻNIE od trybu (satel.
-    virtual_inputs.mode, patrz obszerny docstring bridge/satel_client.py) -
-    tryb "http" (funkcja "Wejścia IP" ETHM-1) to zwykły, NIEUWIERZYTELNIONY
-    GET, BEZ żadnego klucza/kodu DLOADX."""
     errors = []
     for i, vi in enumerate(form.get("virtual_inputs", [])):
         if not vi.get("name") or not vi.get("number"):
@@ -113,13 +56,6 @@ def validate_satel_fields(form: dict) -> list[str]:
 
 
 def validate_tuya_devices(form: dict) -> list[str]:
-    """Waliduje urządzenia Tuya ORAZ bramki Zigbee - współdzielone przez
-    kreator (/setup) i strony wtyczek Tuya (/plugins/tuya, /plugins/tuya_cloud,
-    patrz validate_satel_fields wyżej - ten sam wzorzec). Urządzenie
-    WSKAZUJĄCE bramkę (pole "gateway" - podurządzenie
-    Zigbee) nie ma własnego ip/local_key (tinytuya kieruje ruch przez
-    połączenie bramki, patrz bridge/tuya_local.py) - wymaga za to, żeby
-    wskazana bramka faktycznie istniała wśród zdefiniowanych niżej."""
     errors = []
     gateway_names = {
         g["name"].strip() for g in form.get("zigbee_gateways", [])
@@ -146,12 +82,6 @@ def validate_tuya_devices(form: dict) -> list[str]:
 
 
 def validate_cloud_devices(form: dict) -> list[str]:
-    """Waliduje urządzenia sterowane WYŁĄCZNIE przez Tuya Cloud (REST) -
-    CELOWO NIE wymaga ip/local_key (w odróżnieniu od validate_tuya_devices
-    wyżej) - to jest właśnie sens tej listy: urządzenia zaimportowane z
-    Tuya Cloud, dla których nie udało się (albo nie próbowano) uzyskać
-    local_key/adresu IP w sieci LAN, więc sterowanie lokalne
-    (TuyaLocalController) nie jest możliwe - patrz TuyaCloudController."""
     errors = []
     for i, device in enumerate(form.get("cloud_devices", [])):
         label = f"Urządzenie Tuya Cloud #{i + 1}"
@@ -161,22 +91,12 @@ def validate_cloud_devices(form: dict) -> list[str]:
 
 
 def validate_automations(form: dict) -> list[str]:
-    """Waliduje TYLKO część "automatyzacje" formularza (scenes/motion_rules/
-    presence_simulation) - używane zarówno przez kreator (`validate()`
-    wyżej), jak i samodzielnie przez panel /automations (dashboard/app.py),
-    który nie ma (i nie potrzebuje) reszty pól kreatora."""
     scene_names = {s.get("name", "").strip() for s in form.get("scenes", []) if s.get("name", "").strip()}
     rule_names = {r.get("name", "").strip() for r in form.get("motion_rules", []) if r.get("name", "").strip()}
     errors = []
     errors.extend(_validate_scenes(form.get("scenes", [])))
     errors.extend(_validate_motion_rules(form.get("motion_rules", []), scene_names))
     errors.extend(_validate_presence_simulation(form.get("presence_simulation", {})))
-    # Sceny i reguły ruchu dzielą JEDEN wspólny klucz statusu
-    # "automation:<nazwa>" (patrz warunek "state" z kategorią "automation" -
-    # bridge/rules_engine.py: _seed_automation_status_labels/SceneRunner.run)
-    # - kolizja nazw sprawiłaby, że stan sceny i reguły nadpisywałyby się
-    # nawzajem w tym samym kluczu, więc warunek "inna automatyzacja jest
-    # uruchomiona" wskazywałby na przypadkowy, mylący stan.
     collision = scene_names & rule_names
     if collision:
         errors.append(
@@ -220,10 +140,6 @@ _CONDITION_LEAF_TYPES = ("state", "time_window")
 
 
 def _validate_condition(condition: dict | None, label: str, depth: int = 0) -> list[str]:
-    """Rekurencyjnie waliduje warunek and/or/not/state/time_window - patrz
-    bridge/conditions.py po opis dokładnie tego samego kształtu, który tu
-    weryfikujemy PRZED zapisem (evaluate_condition w bridge zakłada, że
-    warunek jest już poprawny)."""
     errors: list[str] = []
     if not condition:
         return errors
@@ -267,11 +183,6 @@ def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str
             if not rule.get("zone_number"):
                 errors.append(f"{label}: numer wejścia Satela jest wymagany")
         else:
-            # Wejście "stan urządzenia" (Tuya/HomeWhiz) - patrz
-            # RulesEngine.handle_device_state. `source_device` to nazwa
-            # urządzenia/urządzenia AGD, `trigger_value` to wartość statusu,
-            # przy której reguła ma zadziałać (odpowiednik "naruszenia" dla
-            # Satela, ale dla dowolnej wartości, nie tylko naruszone/OK).
             if not (rule.get("source_device") or "").strip():
                 errors.append(f"{label}: wybierz urządzenie źródłowe")
             if not (rule.get("trigger_value") or "").strip():
@@ -293,22 +204,10 @@ def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str
             if scene_name not in scene_names:
                 errors.append(f"{label}: wybrana scena '{scene_name}' nie istnieje wśród zdefiniowanych scen")
         elif uses_virtual_input:
-            # Nazwa wirtualnego wejścia NIE jest tu walidowana względem
-            # faktycznie skonfigurowanych (patrz plugins/satel/routes.py) -
-            # ten formularz (validate_automations) nie ma dostępu do
-            # dokumentu satel_fields, tak samo jak target_device niżej nie
-            # jest walidowany względem urządzeń Tuya. Nieznana nazwa
-            # ujawni się dopiero przy próbie wywołania (SatelVirtualInputTrigger
-            # loguje błąd i po prostu nic nie robi).
             pass
         else:
             if not rule.get("target_device"):
                 errors.append(f"{label}: wybierz urządzenie docelowe, wirtualne wejście albo scenę")
-            # Puste "czas włączenia" dla akcji "włącz urządzenie" NIE jest
-            # błędem - oznacza "aż do ustania naruszenia czujki" zamiast
-            # stałego czasu (patrz RulesEngine._fire_motion_rule/
-            # _rule_matches_trigger - jedna reguła wtedy reaguje zarówno na
-            # naruszenie, jak i jego ustanie).
             target_system = (rule.get("target_system") or "tuya").strip()
             if target_system not in ("tuya", "satel_output"):
                 errors.append(f"{label}: nieznany system urządzenia docelowego '{target_system}'")
@@ -390,8 +289,6 @@ def _build_scene_action(action: dict) -> dict:
         if action.get("partitions"):
             built["partitions"] = [int(p) for p in action["partitions"]]
     elif action_type == "satel_disarm":
-        # Opcjonalne - patrz komentarz w bridge/scenes.py: gdy pominięte,
-        # dotyka domyślnej (jedynej) strefy skonfigurowanej dla instalacji.
         if action.get("partitions"):
             built["partitions"] = [int(p) for p in action["partitions"]]
     elif action_type == "delay":
@@ -408,11 +305,6 @@ def _build_scenes(scenes_form: list[dict]) -> list[dict]:
             "name": scene["name"].strip(),
             "actions": [_build_scene_action(a) for a in scene.get("actions", [])],
         }
-        # enabled=true jest domyślne (i pomijane w zapisie - stare configi
-        # bez tego pola mają dalej działać identycznie) - zapisujemy tylko
-        # jawne wyłączenie. Wyłączona scena nie uruchomi się z ŻADNEGO
-        # miejsca (reguła ruchu, eskalacja, kamera, kocioł...) - patrz
-        # SceneRunner.run(), jedyny punkt wykonania sceny.
         if scene.get("enabled") is False:
             built["enabled"] = False
         built_scenes.append(built)
@@ -420,12 +312,6 @@ def _build_scenes(scenes_form: list[dict]) -> list[dict]:
 
 
 def _build_condition(condition: dict | None, depth: int = 0) -> dict | None:
-    """Odwrotność _validate_condition - normalizuje warunek and/or/not/
-    state/time_window do kształtu, jaki oczekuje bridge/conditions.py.
-    Puste/niekompletne warunki podrzędne są pomijane (przefiltrowane), a
-    kompozyt bez ŻADNEGO poprawnego warunku podrzędnego znika w całości -
-    to samo (brak warunku = zawsze spełniony), co explicit brak sekcji
-    "condition" w ogóle."""
     if not condition or depth > 10:
         return None
     ctype = condition.get("type")
@@ -468,8 +354,6 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
                 continue
             built = {"source": "satel_zone", "zone_number": int(rule["zone_number"])}
         else:
-            # Wejście "stan urządzenia" (Tuya/HomeWhiz) - patrz komentarz w
-            # _validate_motion_rules wyżej i RulesEngine.handle_device_state.
             source_device = (rule.get("source_device") or "").strip()
             trigger_value = (rule.get("trigger_value") or "").strip()
             if not source_device or not trigger_value:
@@ -486,34 +370,18 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
             built["scene"] = scene_name
         elif virtual_input_name:
             built["virtual_input"] = virtual_input_name
-            # Analogicznie do "czasu włączenia" urządzenia wyżej - puste
-            # pole NIE zapisuje duration_seconds wcale (jego BRAK = "do
-            # ustania naruszenia/wyłączenia wyzwalacza"), jawne 0 jest
-            # zapisywane wprost (patrz RulesEngine._is_until_restored -
-            # obie wartości znaczą to samo).
             if rule.get("duration_seconds") not in (None, ""):
                 built["duration_seconds"] = int(rule["duration_seconds"])
         else:
             built["target_device"] = rule["target_device"]
-            # target_system=tuya jest domyślne i pomijane w zapisie (patrz
-            # analogiczny komentarz dla trigger_on/enabled niżej) - "device"
-            # jest wtedy nazwą urządzenia Tuya. "satel_output" zamienia
-            # znaczenie na nazwę wyjścia Satela (klucz w
-            # satel.monitored_outputs) - patrz RulesEngine._set_target_state.
             target_system = (rule.get("target_system") or "tuya").strip()
             if target_system == "satel_output":
                 built["target_system"] = "satel_output"
             if rule.get("action") == "turn_off":
                 built["action"] = "turn_off"
             else:
-                # Puste "czas włączenia" - NIE zapisujemy duration_seconds
-                # wcale (zamiast np. 0) - jego BRAK jest tym, co
-                # RulesEngine._rule_matches_trigger/_fire_motion_rule
-                # rozpoznaje jako "włącz aż do ustania naruszenia".
                 if rule.get("duration_seconds") not in (None, ""):
                     built["duration_seconds"] = int(rule["duration_seconds"])
-                # Jasność ma sens tylko dla urządzeń Tuya (ściemniacz) -
-                # wyjścia Satela są zwykłym przekaźnikiem on/off.
                 if target_system != "satel_output":
                     built["dimmer_level_percent"] = (
                         int(rule["dimmer_level_percent"])
@@ -525,10 +393,6 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
             if trigger_on == "restored":
                 built["trigger_on"] = "restored"
 
-        # enabled=true jest domyślne i pomijane w zapisie (patrz analogiczny
-        # komentarz w _build_scenes) - wyłączona reguła w ogóle nie jest
-        # brana pod uwagę w RulesEngine.handle_motion() (ani przez
-        # wyzwalanie łańcuchowe - patrz _chain_trigger).
         if rule.get("enabled") is False:
             built["enabled"] = False
 
@@ -558,12 +422,6 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
 
 def _build_presence_simulation(form: dict) -> dict:
     ps = form.get("presence_simulation") or {}
-    # log_level (patrz plugins/presence_simulation/routes.py - jedyna
-    # wtyczka, której "enabled"/"log_level" żyją w TYM dokumencie zamiast
-    # "config") nie pochodzi z tego formularza (kreator/zakładka
-    # Automatyzacje o nim nie wiedzą) - trzeba go jawnie przenieść, inaczej
-    # KAŻDY zapis stąd (nawet samych scen) po cichu skasowałby ustawiony
-    # wcześniej poziom logowania.
     log_level = ps.get("log_level")
 
     if not ps.get("enabled"):
@@ -599,9 +457,6 @@ def _build_monitored_outputs(form: dict) -> dict:
     return {o["name"]: int(o["number"]) for o in form.get("monitored_outputs", []) if o.get("name") and o.get("number")}
 
 
-# Rodzaje wejść (czujek) i wyjść Satela - CZYSTO opisowe (ikona/etykieta w
-# panelu, patrz index.html), nie wpływają na logikę bridge'a. "inne"/brak
-# wyboru = zachowanie jak dotychczas (generyczna czujka/wyjście).
 SATEL_ZONE_TYPES = {
     "drzwi": "Drzwi", "okno": "Okno", "ruch": "Czujka ruchu (PIR)",
     "dym": "Czujka dymu", "zalanie": "Czujka zalania", "wibracja": "Czujka wibracji/stłuczenia",
@@ -628,10 +483,6 @@ def _build_output_types(form: dict) -> dict:
 
 
 def _build_virtual_inputs(form: dict) -> dict:
-    """nazwa -> numer wejścia (int) - TEN SAM kształt NIEZALEŻNIE od trybu
-    (satel.virtual_inputs.mode, patrz docstring bridge/satel_client.py):
-    numer jest nieużywany w trybie "http" (zwykły, nieuwierzytelniony GET,
-    ścieżka URL niesie samą nazwę - BEZ żadnego klucza/kodu DLOADX)."""
     return {
         vi["name"]: int(vi["number"])
         for vi in form.get("virtual_inputs", [])
@@ -646,9 +497,6 @@ def _build_tuya_devices(form: dict) -> dict:
             continue
         gateway_name = (d.get("gateway") or "").strip()
         if gateway_name:
-            # Podurządzenie Zigbee bramki - BEZ własnego ip/local_key/version,
-            # ruch idzie przez połączenie bramki (patrz TuyaLocalController w
-            # bridge/tuya_local.py). cid domyślnie = id, jeśli puste.
             entry = {"id": d["id"], "gateway": gateway_name, "type": d.get("type", "socket")}
             if d.get("cid"):
                 entry["cid"] = d["cid"]
@@ -676,11 +524,6 @@ def _build_zigbee_gateways(form: dict) -> dict:
 
 
 def _build_cloud_devices(form: dict) -> dict:
-    # "switch_code" - kod DP (data point) wysyłany do Tuya Cloud przy
-    # włączaniu/wyłączaniu (patrz TuyaCloudController.turn_on/turn_off) -
-    # "switch_1" pasuje do WIĘKSZOŚCI prostych przełączników/gniazdek, ale
-    # różni się między kategoriami urządzeń (np. niektóre lampy używają
-    # "switch_led") - stąd pole edytowalne per urządzenie, nie na sztywno.
     return {
         d["name"]: {
             "id": d["id"], "category": d.get("category", ""),
@@ -692,14 +535,6 @@ def _build_cloud_devices(form: dict) -> dict:
 
 
 def validate_connections(form: dict) -> list[str]:
-    """Waliduje formularz połączeń (host/klucze/tematy MQTT już
-    skonfigurowanej instalacji) - współdzielony wzorzec z validate()
-    (kreator), ale bez wymogu hasła. Dawna wspólna zakładka "Połączenia"
-    (/config) została rozdzielona na strony poszczególnych wtyczek (patrz
-    validate_satel_connection/validate_ebus_connection niżej) - ta funkcja
-    dziś obsługuje już tylko wąski przypadek: GET/POST /api/plugins
-    (zakładka 🧩 Wtyczki, przełącznik enabled + interwał odpytywania dla
-    satel/tuya_local, patrz dashboard/app.py)."""
     errors = []
     satel = form.get("satel", {})
     if not satel.get("host"):
@@ -717,12 +552,6 @@ def validate_connections(form: dict) -> list[str]:
     if ha.get("enabled") and not (ha.get("mqtt_host") or ebus.get("mqtt_host")):
         errors.append("Home Assistant: adres brokera MQTT jest wymagany, jeśli integracja włączona")
 
-    # Interwały odpytywania (zakładka 🧩 Wtyczki) - minimum tak dobrane, żeby
-    # nie zalewać centrali/urządzeń zapytaniami przy pomyłce we wpisanej
-    # wartości. Satel: 2s (zalecany zakres 2-5s - kolejka komend biblioteki
-    # i tak sekwencjonuje zapytania względem innych poleceń, patrz obszerny
-    # docstring bridge/satel_client.py, więc krótszy interwał niż dawniej
-    # jest bezpieczny).
     satel_interval = satel.get("status_poll_interval_seconds")
     if satel_interval not in (None, ""):
         try:
@@ -743,21 +572,6 @@ def validate_connections(form: dict) -> list[str]:
 
 
 def build_connections_patch(form: dict, existing: dict) -> dict:
-    """Buduje NOWY słownik config.yaml na bazie JUŻ ISTNIEJĄCEGO (`existing`)
-    - nadpisuje TYLKO pola połączeń (host/port/klucze/tematy MQTT per
-    integracja), zostawiając nietknięte wszystkie inne sekcje
-    (reguły_kamera_alarm, boiler_rules, alarm_rules, maintenance,
-    dashboard.auth, itd.). W przeciwieństwie do build_config_dict()
-    (kreator, buduje config.yaml OD ZERA) - to jedyny bezpieczny sposób na
-    "rekonfigurację" już działającej instalacji bez ryzyka skasowania
-    ręcznych zmian w config.yaml (stąd /setup zostaje zablokowany po
-    pierwszym zapisie - patrz CONFIG_HEADER i api_setup_save).
-
-    Pola-sekrety (kod użytkownika Satela, Tuya Cloud Access Secret): pusta
-    wartość w formularzu = ZACHOWAJ dotychczasową (formularz w przeglądarce
-    nigdy nie dostaje prawdziwego sekretu z powrotem - patrz
-    connections_to_form - więc "nic nie wpisano" nie może oznaczać
-    "wyczyść")."""
     config = copy.deepcopy(existing)
     satel_form = form.get("satel", {})
     ebus_form = form.get("ebus", {})
@@ -770,40 +584,19 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
         config["satel"]["integration_key"] = satel_form["integration_key"].strip()
     else:
         config["satel"].setdefault("integration_key", "")
-    # Klucz SZYFROWANIA transmisji (AES, satel_integra >=1.0.0) - NIE kod
-    # użytkownika wyżej, patrz obszerny docstring bridge/satel_client.py.
-    # Opcjonalny - puste pole = brak szyfrowania (cleartext, jak dotychczas)
-    # ALBO "zostaw bez zmian", jeśli już ustawiony (ten sam wzorzec sekretu
-    # co integration_key wyżej). Jawne czyszczenie: patrz
-    # "encryption_key_clear" niżej.
     if (satel_form.get("encryption_key") or "").strip():
         config["satel"]["encryption_key"] = satel_form["encryption_key"].strip()
     elif satel_form.get("encryption_key_clear"):
         config["satel"]["encryption_key"] = None
     else:
         config["satel"].setdefault("encryption_key", None)
-    # Jawny przełącznik włącz/wyłącz - CELOWO osobny od samego faktu
-    # zapisania klucza wyżej (zgłoszony błąd projektowy: "szyfrowanie musi
-    # być włącz/wyłącz, a nie włączone-ale-bez-klucza"). Zwykły checkbox w
-    # formularzu (nie sekret) - zawsze nadpisywany wprost stanem z
-    # formularza, bez wzorca "puste = zostaw bez zmian".
     config["satel"]["encryption_enabled"] = bool(satel_form.get("encryption_enabled"))
     config["satel"].setdefault("virtual_inputs", {})
-    # Tryb wirtualnych wejść IP (patrz obszerny docstring
-    # bridge/satel_client.py) - "library" (set_output, przez połączenie
-    # integracji) albo "http" (funkcja "Wejścia IP" ETHM-1, zwykły
-    # nieuwierzytelniony GET, BEZ żadnego klucza/kodu DLOADX - potwierdzone
-    # na prawdziwym sprzęcie). Kształt zapisanych wierszy "inputs"
-    # (nazwa -> numer) jest TEN SAM w obu trybach, więc zmiana trybu nie
-    # wymaga ponownego uzupełniania wejść.
     vi_mode = satel_form.get("virtual_inputs_mode") or config["satel"]["virtual_inputs"].get("mode") or "library"
     config["satel"]["virtual_inputs"]["mode"] = vi_mode
     config["satel"]["virtual_inputs"]["port"] = int(
         satel_form.get("virtual_inputs_port") or config["satel"]["virtual_inputs"].get("port") or 8888
     )
-    # "url_template" CELOWO NIE jest tu ustawiany - to szczegół protokołu
-    # (żaden formularz go nie edytuje), SatelVirtualInputTrigger używa
-    # stałej wprost - patrz komentarz w bridge/config.py.
     config["satel"]["virtual_inputs"].setdefault("inputs", {})
     config["satel"].setdefault("outputs", {})
     config["satel"].setdefault("fields_file", "satel_fields.yaml")
@@ -827,12 +620,6 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     )
     config["boiler_output"].setdefault("tuya_virtual_device", {"device_id": ""})
 
-    # log_level (patrz plugins/*/routes.py: register_settings_route) nie
-    # pochodzi z TEGO formularza (ani stary /config, ani zakładka Wtyczki o
-    # nim nie wiedzą - żyje tylko na dedykowanej stronie każdej wtyczki) -
-    # trzeba go jawnie przenieść przy KAŻDYM przebudowaniu sekcji od zera
-    # niżej, inaczej zapis stąd (nawet samego hosta/tematu) po cichu
-    # skasowałby wcześniej ustawiony poziom logowania tej wtyczki.
     existing_mqtt_publish = config.get("mqtt_publish", {})
     mqtt_publish_form = form.get("mqtt_publish", {})
     config["mqtt_publish"] = {
@@ -850,20 +637,9 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     if tuya_cloud_form.get("enabled") and (tuya_cloud_form.get("access_id") or "").strip():
         existing_cloud = config["tuya"].get("cloud", {})
         config["tuya"]["cloud"] = {
-            # "enabled" tutaj w formularzu to sygnał "czy w ogóle
-            # skonfigurowane" (patrz connections_to_form: bool(tuya_cloud))
-            # - RZECZYWISTY włącznik z /plugins/tuya_cloud (⚙ Ustawienia
-            # wtyczki) to osobne pole wewnątrz sekcji, zachowaj je.
             "enabled": existing_cloud.get("enabled", True),
             "access_id": tuya_cloud_form["access_id"].strip(),
             "access_key": (tuya_cloud_form.get("access_key") or "").strip() or existing_cloud.get("access_key", ""),
-            # REGRESJA: ta sekcja przepisuje cały słownik "cloud" od zera -
-            # brak api_region tutaj wcześniej znaczyłby, że KAŻDY zapis
-            # zakładki Połączenia kasowałby region ustawiony osobno w
-            # /plugins/tuya_cloud, psując sterowanie chmurowe (Tuya OpenAPI
-            # "cross-region access is not allowed"). Formularz Połączeń NIE
-            # edytuje regionu (to robi /plugins/tuya_cloud) - więc zawsze
-            # zachowaj już zapisaną wartość.
             "api_region": (tuya_cloud_form.get("api_region") or "").strip() or existing_cloud.get("api_region", "eu"),
             "api_endpoint": (tuya_cloud_form.get("api_endpoint") or "").strip()
                 or existing_cloud.get("api_endpoint", "https://openapi.tuyaeu.com"),
@@ -909,18 +685,6 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
 
 
 def connections_to_form(existing: dict) -> dict:
-    """Odwrotność build_connections_patch - konwertuje AKTUALNY config.yaml
-    na kształt formularza dawnej wspólnej zakładki "Połączenia", dziś
-    używany już tylko wewnętrznie przez GET/POST /api/plugins (patrz
-    docstring validate_connections wyżej) - GET/POST /api/config/connections
-    zostało usunięte, host/port/klucze edytuje się teraz na stronach
-    poszczególnych wtyczek (satel_connection_to_form/ebus_connection_to_form
-    niżej). Sekretne pola (kod użytkownika Satela, Tuya Cloud Access
-    Secret) NIE są tu NIGDY zwracane w jawnej postaci - tylko flaga
-    `*_set`, czy są w ogóle ustawione, żeby nie wyciekały przez GET do
-    każdego w sieci LAN (w odróżnieniu od np. local_key urządzeń Tuya w
-    /api/plugins/tuya/devices - tam ryzyko jest dużo mniejsze niż tu, bo
-    kod użytkownika Satela pozwala rozbroić fizyczny system alarmowy)."""
     satel = existing.get("satel", {})
     tuya = existing.get("tuya", {})
     ebus = existing.get("ebus", {})
@@ -973,10 +737,6 @@ def connections_to_form(existing: dict) -> dict:
 
 
 def validate_satel_connection(form: dict) -> list[str]:
-    """Waliduje formularz sekcji "🔌 Połączenia" na stronie /plugins/satel
-    (host/port/klucze - w odróżnieniu od /api/plugins/satel/fields, który
-    edytuje tylko strefy/wyjścia/partycje/wejścia IP). Interwał odpytywania
-    zostaje na stronie 🧩 Wtyczki (patrz PLUGIN_DEFS), nie tutaj."""
     errors = []
     if not (form.get("host") or "").strip():
         errors.append("Adres IP centrali/modułu ETHM jest wymagany")
@@ -984,13 +744,6 @@ def validate_satel_connection(form: dict) -> list[str]:
 
 
 def satel_connection_to_form(satel_section: dict) -> dict:
-    """Odwrotność build_satel_connection_patch - konwertuje SUROWĄ sekcję
-    `satel` (dokument "config", patrz plugins/satel/routes.py:
-    _get_satel_section) na kształt formularza GET /api/plugins/satel/connection.
-    Kod użytkownika/klucz szyfrowania NIGDY nie wracają w jawnej postaci -
-    tylko flaga `*_set`, ten sam wzorzec co connections_to_form(). Tryb
-    "http" wejść IP nie ma żadnego klucza/hasła do maskowania (patrz
-    obszerny docstring bridge/satel_client.py)."""
     return {
         "host": satel_section.get("host", ""),
         "port": satel_section.get("port", 7094),
@@ -1004,22 +757,6 @@ def satel_connection_to_form(satel_section: dict) -> dict:
 
 
 def build_satel_connection_patch(form: dict, existing_satel_section: dict) -> dict:
-    """Buduje NOWĄ sekcję `satel` (do zapisania z powrotem w dokumencie
-    "config") na bazie JUŻ ISTNIEJĄCEJ - nadpisuje TYLKO pola połączenia
-    (host/port/partycja/klucze/tryb wejść IP), zostawiając nietknięte
-    pozostałe klucze tej sekcji (monitored_zones/monitored_outputs/
-    partitions/zone_types/virtual_inputs.inputs i tak są nadpisywane przy
-    starcie z dokumentu "satel_fields" - patrz bridge/config.py:
-    BridgeConfig.load - więc ich obecność/nieobecność tutaj nie ma
-    znaczenia; status_poll_interval_seconds/outputs/fields_file zostają,
-    bo edytuje je inna strona). Odpowiednik build_connections_patch, ale
-    scoped do samej sekcji `satel` zamiast całego config.yaml - węższy zakres
-    = mniejsze ryzyko przypadkowego skasowania czegoś z innej wtyczki (patrz
-    ostrzeżenie w build_connections_patch o Tuya Cloud/HA).
-
-    Pola-sekrety: pusta wartość w formularzu = ZACHOWAJ dotychczasową
-    (formularz nigdy nie dostaje prawdziwego sekretu z powrotem, patrz
-    satel_connection_to_form)."""
     section = copy.deepcopy(existing_satel_section)
     section["host"] = (form.get("host") or "").strip()
     section["port"] = int(form.get("port") or section.get("port") or 7094)
@@ -1041,9 +778,6 @@ def build_satel_connection_patch(form: dict, existing_satel_section: dict) -> di
     section["virtual_inputs"]["port"] = int(
         form.get("virtual_inputs_port") or section["virtual_inputs"].get("port") or 8888
     )
-    # "url_template" CELOWO NIE jest tu ustawiany - to szczegół protokołu
-    # (żaden formularz go nie edytuje), SatelVirtualInputTrigger używa
-    # stałej wprost - patrz komentarz w bridge/config.py.
     section["virtual_inputs"].setdefault("inputs", {})
     section.setdefault("outputs", {})
     section.setdefault("fields_file", "satel_fields.yaml")
@@ -1052,9 +786,6 @@ def build_satel_connection_patch(form: dict, existing_satel_section: dict) -> di
 
 
 def validate_ebus_connection(form: dict) -> list[str]:
-    """Waliduje formularz sekcji "🔌 Połączenia" na stronie /plugins/ebus
-    (adres/port brokera MQTT/temat stanu - w odróżnieniu od
-    /api/plugins/ebus/sensors, który edytuje listę czujników)."""
     errors = []
     if not (form.get("mqtt_host") or "").strip():
         errors.append("Adres brokera MQTT jest wymagany")
@@ -1062,9 +793,6 @@ def validate_ebus_connection(form: dict) -> list[str]:
 
 
 def ebus_connection_to_form(ebus_section: dict, boiler_output_section: dict) -> dict:
-    """Odwrotność build_ebus_connection_patch - `topic_prefix` żyje
-    historycznie w config["boiler_output"]["mqtt"]["topic_prefix"], nie w
-    samej sekcji `ebus` (patrz build_ebus_connection_patch)."""
     return {
         "mqtt_host": ebus_section.get("mqtt_host", ""),
         "mqtt_port": ebus_section.get("mqtt_port", 1883),
@@ -1073,14 +801,6 @@ def ebus_connection_to_form(ebus_section: dict, boiler_output_section: dict) -> 
 
 
 def build_ebus_connection_patch(form: dict, existing_config: dict) -> dict:
-    """Buduje NOWY słownik config.yaml na bazie JUŻ ISTNIEJĄCEGO - nadpisuje
-    TYLKO `ebus.mqtt_host`/`mqtt_port` i `boiler_output.mqtt.*` (adres/port
-    są zwierciadlane w obu miejscach - ten sam broker obsługuje odczyt z
-    kotła i publikację jego stanu, patrz analogiczny fragment
-    build_connections_patch), zostawiając nietknięte wszystkie inne sekcje.
-    Zwraca cały config (nie samą sekcję `ebus`), bo dotyka dwóch sekcji na
-    najwyższym poziomie naraz - odpowiednik `_save_ebus_section` w
-    plugins/ebus/routes.py woła to i zapisuje wynik od razu."""
     config = copy.deepcopy(existing_config)
     config.setdefault("ebus", {})
     config["ebus"]["mqtt_host"] = (form.get("mqtt_host") or "").strip()
@@ -1100,16 +820,10 @@ def build_ebus_connection_patch(form: dict, existing_config: dict) -> dict:
 
 
 def validate_location(form: dict) -> list[str]:
-    """Waliduje formularz sekcji "Lokalizacja" zakładki Połączenia (GET/POST
-    /api/config/location) - współrzędne używane WYŁĄCZNIE do obliczenia
-    wschodu/zachodu słońca dla harmonogramów reguł ruchu (bridge/scheduling.py,
-    okna czasowe "sunset"/"sunrise"). W odróżnieniu od reszty pól tej
-    zakładki (host/port/klucze) lokalizacja NIE wymaga restartu procesu -
-    patrz RulesEngine.reload_config."""
     errors = []
     lat, lon = form.get("latitude"), form.get("longitude")
     if lat in (None, "") and lon in (None, ""):
-        return errors  # brak lokalizacji jest dozwolony - po prostu sunset/sunrise nie zadziała
+        return errors
     if lat in (None, "") or lon in (None, ""):
         errors.append("Lokalizacja: podaj oba pola (szerokość i długość geograficzna) albo żadne")
         return errors
@@ -1126,11 +840,6 @@ def validate_location(form: dict) -> list[str]:
 
 
 def build_location_patch(form: dict, existing: dict) -> dict:
-    """Buduje NOWY słownik config.yaml na bazie istniejącego (`existing`) -
-    nadpisuje TYLKO sekcję "location", zostawia resztę configu nietkniętą -
-    ten sam wzorzec co build_connections_patch wyżej. Puste pola usuwają
-    sekcję (= "nie licz wschodu/zachodu", zamiast zostawiać niekompletne
-    współrzędne)."""
     config = copy.deepcopy(existing)
     lat, lon = form.get("latitude"), form.get("longitude")
     if lat in (None, "") or lon in (None, ""):
@@ -1140,17 +849,6 @@ def build_location_patch(form: dict, existing: dict) -> dict:
     return config
 
 
-# Integracje pokazywane na zakładce 🧩 Wtyczki - jedno spójne miejsce z
-# przeglądem WSZYSTKICH integracji (dotychczas rozrzucone po zakładkach
-# ⚙ Ustawienia/🔌 Połączenia/🎬 Automatyzacje). "toggleable" = ma osobną,
-# zapisaną flagę enabled, którą da się przełączyć wprost stąd (POST
-# /api/plugins) - reszta jest włączona/wyłączona PRZEZ SAMĄ OBECNOŚĆ
-# konfiguracji (np. dodanie choć jednego urządzenia Tuya) i wciąż wymaga
-# przejścia do właściwej zakładki, żeby to zmienić - to NIE jest w pełni
-# dynamiczny system wtyczek (start/stop w locie bez restartu) - taka
-# architektura wymagałaby dużo większej, ryzykowniejszej przebudowy
-# cyklu życia żywych połączeń sieciowych (Satel TCP, klienci MQTT, Tuya
-# Cloud Pulsar), a przełączanie integracji jest i tak rzadką operacją.
 PLUGIN_DEFS = [
     {"id": "satel", "name": "Centrala Satel Integra", "icon": "🔒", "toggleable": True, "restart_required": True,
      "has_poll_interval": True, "min_poll_interval_seconds": 2, "has_log_level": True,
@@ -1189,9 +887,6 @@ PLUGIN_DEFS = [
 
 
 def list_plugins(config_raw: dict) -> list[dict]:
-    """Buduje listę integracji (zakładka 🧩 Wtyczki) na bazie AKTUALNEGO
-    config.raw - każdy wpis mówi, czy jest włączony/skonfigurowany i czy da
-    się to przełączyć wprost stąd (patrz PLUGIN_DEFS wyżej)."""
     satel = config_raw.get("satel", {})
     tuya = config_raw.get("tuya", {})
     ebus = config_raw.get("ebus", {})
@@ -1210,11 +905,6 @@ def list_plugins(config_raw: dict) -> list[dict]:
 
     state = {
         "satel": {
-            # Kod użytkownika centrali NIE jest wymagany do połączenia/odczytu
-            # (patrz obszerny komentarz w validate() wyżej) - tylko host
-            # decyduje o "skonfigurowaniu", "detail" niżej jawnie sygnalizuje
-            # brak kodu (sterowanie zablokowane, dopóki go nie dodasz w
-            # Połączeniach).
             "enabled": satel.get("enabled", True) and bool(satel.get("host")),
             "configured": bool(satel.get("host")),
             "detail": (
@@ -1292,17 +982,10 @@ def dict_to_name_number_rows(d: dict) -> list[dict]:
 
 
 def zones_to_rows(numbers: dict, types: dict) -> list[dict]:
-    """Jak dict_to_name_number_rows, ale dokłada opcjonalny "type" (rodzaj
-    czujki/wyjścia - patrz SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES niżej) do
-    edycji w panelu i wyświetlania ikon na stronie głównej."""
     return [{"name": name, "number": number, "type": types.get(name, "")} for name, number in numbers.items()]
 
 
 def virtual_inputs_to_rows(inputs: dict) -> list[dict]:
-    """Wartość to zwykle int (numer wejścia) - obsługujemy też STARY kształt
-    {number, key} (sprzed usunięcia osobnego klucza per wejście, patrz
-    docstring bridge/satel_client.py), żeby konwersja nie wywalała się na
-    jeszcze niezmigrowanych configach - klucz stamtąd jest ignorowany."""
     rows = []
     for name, value in inputs.items():
         number = value.get("number") if isinstance(value, dict) else value
@@ -1316,8 +999,6 @@ def tuya_devices_to_rows(devices: dict) -> list[dict]:
             "name": name, "id": cfg.get("id", ""), "ip": cfg.get("ip", ""),
             "local_key": cfg.get("local_key", ""), "type": cfg.get("type", "socket"),
             "dimmer_dp": cfg.get("dimmer_dp", ""),
-            # Podurządzenie Zigbee bramki (patrz TuyaLocalController) - puste
-            # dla zwykłych urządzeń WiFi, które mają własne ip/local_key wyżej.
             "gateway": cfg.get("gateway", ""), "cid": cfg.get("cid", ""),
         }
         for name, cfg in devices.items()
@@ -1345,10 +1026,6 @@ def cloud_devices_to_rows(devices: dict) -> list[dict]:
 
 
 def build_satel_fields_dict(form: dict) -> dict:
-    """Buduje zawartość satel_fields.yaml (strefy/wyjścia/wejścia IP/
-    partycje) - używane zarówno przez kreator (razem z build_config_dict),
-    jak i samodzielnie przez stronę wtyczki Satel (/plugins/satel, patrz
-    plugins/satel/routes.py) przy każdym zapisie."""
     return {
         "monitored_zones": _build_monitored_zones(form),
         "monitored_outputs": _build_monitored_outputs(form),
@@ -1360,10 +1037,6 @@ def build_satel_fields_dict(form: dict) -> dict:
 
 
 def build_tuya_devices_dict(form: dict) -> dict:
-    """Buduje zawartość tuya_devices.yaml - analogicznie do
-    build_satel_fields_dict wyżej. "zigbee_gateways" to bramki Zigbee Tuya,
-    na które mogą wskazywać poszczególne "devices" (pole "gateway") zamiast
-    mieć własne ip/local_key - patrz TuyaLocalController."""
     return {
         "devices": _build_tuya_devices(form),
         "zigbee_gateways": _build_zigbee_gateways(form),
@@ -1372,11 +1045,6 @@ def build_tuya_devices_dict(form: dict) -> dict:
 
 
 def clean_sensors_payload(payload) -> tuple[list | None, str | None]:
-    """Waliduje i normalizuje listę czujników eBUS przesłaną z panelu
-    (`/api/plugins/ebus/sensors` w plugins/ebus/routes.py). Walidacja jest
-    celowo minimalna (tylko to, co faktycznie zepsułoby resztę bridge'a
-    przy starcie) - reszta pól ma sensowne wartości domyślne. Zwraca
-    (cleaned, None) albo (None, komunikat_błędu)."""
     if not isinstance(payload, list):
         return None, "Oczekiwano listy czujników w ciele żądania"
 
@@ -1396,12 +1064,6 @@ def clean_sensors_payload(payload) -> tuple[list | None, str | None]:
             "name": name,
             "label": (item.get("label") or name).strip(),
             "mqtt_topic": mqtt_topic,
-            # Opcjonalne - potrzebne TYLKO gdy ebusd publikuje na ten temat
-            # tryb --mqttjson z KILKOMA polami naraz (temat na poziomie
-            # obwodu, np. "ebusd/hc1") - wskazuje, który klucz z obiektu
-            # JSON wziąć jako wartość tego czujnika. Puste dla zwykłych
-            # tematów (czysty tekst albo JSON z jednym polem) - patrz
-            # EbusMqttListener._parse_payload w bridge/ebus_client.py.
             "mqtt_field": (item.get("mqtt_field") or "").strip(),
             "targets": {
                 "history": bool(targets.get("history", True)),
@@ -1414,9 +1076,6 @@ def clean_sensors_payload(payload) -> tuple[list | None, str | None]:
 
 
 def build_automations_dict(form: dict) -> dict:
-    """Buduje zawartość automations.yaml (sceny/reguły ruchu/symulacja
-    obecności) - używane zarówno przez kreator (razem z build_config_dict),
-    jak i samodzielnie przez panel /automations przy każdym zapisie."""
     return {
         "scenes": _build_scenes(form.get("scenes", [])),
         "reguły_ruchu": _build_motion_rules(form.get("motion_rules", [])),
@@ -1425,57 +1084,28 @@ def build_automations_dict(form: dict) -> dict:
 
 
 def build_config_dict(form: dict) -> dict:
-    """Buduje pełny słownik config.yaml z danych formularza. Pola spoza
-    formularza (alarmy progowe, reguły kamer, automatyka kotła itd.) dostają
-    bezpieczne, puste wartości domyślne - użytkownik dopisze je później
-    ręcznie, jeśli będzie chciał (patrz docstring modułu i README)."""
     satel_form = form.get("satel", {})
 
     config = {
         "satel": {
             "host": satel_form["host"],
             "port": int(satel_form.get("port", 7094)),
-            # Opcjonalny (patrz validate() wyżej) - puste = panel tylko do
-            # odczytu, dopóki klucz nie zostanie dodany w Połączeniach.
             "integration_key": (satel_form.get("integration_key") or "").strip(),
-            # Opcjonalny klucz szyfrowania transmisji (AES) - patrz
-            # obszerny docstring bridge/satel_client.py, NIE mylić z
-            # kluczem integracji wyżej. Puste/brak = brak szyfrowania.
             "encryption_key": (satel_form.get("encryption_key") or "").strip() or None,
-            # Jawny przełącznik włącz/wyłącz - CELOWO osobny od samego
-            # faktu podania klucza wyżej (patrz analogiczny komentarz w
-            # build_connections_patch) - domyślnie wyłączone, nawet jeśli
-            # klucz akurat wpisano.
             "encryption_enabled": bool(satel_form.get("encryption_enabled")),
             "partition": int(satel_form.get("partition", 1)),
             "virtual_inputs": {
                 "mode": satel_form.get("virtual_inputs_mode") or "library",
                 "port": int(satel_form.get("virtual_inputs_port") or 8888),
-                # "url_template" CELOWO NIE jest tu ustawiany - to szczegół
-                # protokołu, SatelVirtualInputTrigger używa stałej wprost -
-                # patrz komentarz w bridge/config.py.
                 "inputs": {},
             },
             "outputs": {},
-            # Strefy/wyjścia/wejścia IP/partycje NIE są tutaj - trafiają do
-            # osobnego satel_fields.yaml (patrz build_satel_fields_dict),
-            # które zapisuje api_setup_save() zaraz po tym pliku.
-            # "fields_file" to jedyny ślad tego w config.yaml - analogicznie
-            # do ebus.sensors_file dla sensors.yaml.
             "fields_file": "satel_fields.yaml",
         },
         "tuya": {
             "status_poll_interval_seconds": 30,
-            # Urządzenia Tuya NIE są tutaj - trafiają do osobnego
-            # tuya_devices.yaml (patrz build_tuya_devices_dict), analogicznie
-            # do satel.fields_file wyżej.
             "devices_file": "tuya_devices.yaml",
         },
-        # Sceny/reguły ruchu/symulacja obecności NIE są tutaj - trafiają do
-        # osobnego automations.yaml (patrz build_automations_dict), które
-        # zapisuje api_setup_save() zaraz po tym pliku. "automations_file"
-        # to jedyny ślad tego w config.yaml - analogicznie do
-        # ebus.sensors_file dla sensors.yaml.
         "automations_file": "automations.yaml",
         "reguły_swiatlo_do_satela": [],
         "reguły_kamera_alarm": [],
@@ -1539,18 +1169,7 @@ def build_config_dict(form: dict) -> dict:
         config["tuya"]["cloud"] = {
             "access_id": form["tuya_cloud"]["access_id"],
             "access_key": form["tuya_cloud"].get("access_key", ""),
-            # Kod regionu (np. "eu"/"us") - REGRESJA: brakowało go tu do tej
-            # pory, więc TuyaCloudController (sterowanie urządzeniami przez
-            # chmurę, patrz bridge/tuya_cloud.py) zawsze dostawał pusty
-            # apiRegion, co Tuya OpenAPI odrzuca błędem "cross-region access
-            # is not allowed" niezależnie od regionu wybranego w kreatorze.
-            # Domyślnie "eu" - ten sam fallback co plugins/tuya_cloud/routes.py.
             "api_region": form["tuya_cloud"].get("api_region") or "eu",
-            # `or` (nie .get(key, default)) celowo - kreator wysyła ""
-            # (nie brak klucza) dla regionów, dla których nie zgadujemy
-            # nieudokumentowanego adresu Pulsar (patrz setup.html:
-            # TUYA_REGION_ENDPOINTS) - pusty string ma spaść do domyślnego
-            # (UE), nie zostać zapisany jako pusty adres.
             "api_endpoint": form["tuya_cloud"].get("api_endpoint") or "https://openapi.tuyaeu.com",
             "mq_endpoint": form["tuya_cloud"].get("mq_endpoint") or "wss://mqe.tuyaeu.com:8285/",
             "camera_device_ids": [],
@@ -1560,16 +1179,10 @@ def build_config_dict(form: dict) -> dict:
 
 
 def draft_path_for(config_path: pathlib.Path) -> pathlib.Path:
-    """Ścieżka do pliku roboczego kreatora - obok docelowego config.yaml,
-    ale z kropką na początku (ukryty, nigdy nie mylony z prawdziwą
-    konfiguracją)."""
     return config_path.parent / DRAFT_FILENAME
 
 
 def load_draft(path: pathlib.Path) -> dict:
-    """Wczytuje zapisany wcześniej stan formularza. Zwraca pusty słownik,
-    jeśli pliku nie ma albo jest uszkodzony (np. przerwany zapis) - kreator
-    ma wtedy po prostu zacząć od kroku 1, zamiast się wywalić."""
     if not path.exists():
         return {}
     try:
@@ -1581,9 +1194,6 @@ def load_draft(path: pathlib.Path) -> dict:
 
 def save_draft(path: pathlib.Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Zapis przez plik tymczasowy + atomowa podmiana - żeby przerwany zapis
-    # (np. utrata zasilania RPi) nie zostawił uszkodzonego/pustego pliku
-    # roboczego, przez który load_draft zgubiłoby dotychczasowy postęp.
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

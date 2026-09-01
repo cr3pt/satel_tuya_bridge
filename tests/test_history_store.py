@@ -1,4 +1,3 @@
-"""Testy dla bridge/history_store.py - odczyty, zdarzenia, alarmy, statusy, kolejka komend."""
 import time
 
 
@@ -133,9 +132,6 @@ class TestLogs:
         assert history.get_log_loggers() == ["bridge.satel", "bridge.tuya_local"]
 
     def test_get_log_loggers_filters_by_component(self, history):
-        """Do rozwijanej listy filtra w panelu (⚙ Ogólne -> Logi) - wybór
-        procesu (bridge/panel) musi zawężać też listę loggerów, inaczej
-        użytkownik mógłby wybrać logger, który i tak nic nie zwróci."""
         history.write_log("bridge", "bridge.satel", "INFO", "a")
         history.write_log("dashboard", "dashboard.app", "INFO", "b")
         assert history.get_log_loggers("bridge") == ["bridge.satel"]

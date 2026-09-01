@@ -1,22 +1,3 @@
-"""Wtyczki - jeden podkatalog na integrację (plugins/<id>/), każda ze
-swoim routingiem (konfiguracja + skanowanie specyficzne dla tego systemu)
-i własnym szablonem HTML (plugins/<id>/templates/<id>/index.html).
-
-Rejestracja jest jawna (patrz register_all() niżej), nie przez
-auto-discovery skanujące katalog - to repo ma stałą, znaną listę integracji
-(nie jest to ogólny framework wtyczek osób trzecich), więc jawna lista jest
-prostsza do prześledzenia niż magia importu wszystkiego z katalogu.
-
-WAŻNE o imporcie z dashboard/app.py: każdy plugins/<id>/routes.py
-eksportuje `register(app, **deps)`, które PRZYJMUJE potrzebny stan
-(require_auth, ścieżki plików, referencję do `history` itd.) jako
-JAWNE argumenty zamiast importować `dashboard.app` samemu. Powód:
-`python -m dashboard.app` uruchamia ten plik jako `__main__`, więc gdyby
-plugins/<id>/routes.py zrobiło `import dashboard.app`, dostałoby DRUGĄ,
-osobną kopię tego modułu w sys.modules (pod inną nazwą niż "__main__") -
-z własnymi, nigdy nie zainicjowanymi zmiennymi globalnymi (ten sam problem,
-który dashboard/auth.py:require_auth() już obchodzi przez fn.__globals__).
-Wstrzykiwanie zależności zamiast importu omija to ryzyko całkowicie."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,10 +10,6 @@ from bridge.logging_config import VALID_LEVELS
 
 @dataclass(frozen=True)
 class PluginMeta:
-    """Metadane do zakładki 🧩 Wtyczki - `config_url` to link 'Konfiguruj'
-    do własnej strony wtyczki (None, jeśli integracja nie ma jeszcze
-    własnej strony - wtedy Wtyczki kierują do 🔌 Połączenia/🎬 Automatyzacje
-    jak dotychczas)."""
     id: str
     name: str
     icon: str
@@ -47,30 +24,10 @@ def register_settings_route(
     supports_enabled: bool = True,
     validate_enable: Callable[[], str | None] | None = None,
 ) -> None:
-    """Rejestruje GET/POST /api/plugins/<id>/settings - wspólny wzorzec
-    "włącznik + poziom logowania zdarzeń", ten sam dla każdej wtyczki (patrz
-    bridge/logging_config.py po globalny/per-wtyczka poziom logowania).
-    `get_section`/`save_section` izolują to, GDZIE faktycznie żyje sekcja
-    configu danej wtyczki (różne dokumenty ConfigStore - "config" vs
-    "automations" dla presence_simulation - i różne zagnieżdżenie, np.
-    tuya_cloud to config["tuya"]["cloud"]) - ten kod zna tylko dwa wspólne
-    pola: "enabled" i "log_level". Włączenie/wyłączenie wymaga pełnego
-    restartu procesu bridge'a (patrz rules_engine.py: start()), poziom
-    logowania działa na żywo przez zwykłe reload_config().
-
-    `validate_enable` - opcjonalny hak dla wtyczek, których "enabled" nie
-    ma sensu bez wcześniej zapisanych innych pól (np. UniFi Protect bez
-    hosta kontrolera) - zwraca komunikat błędu (odrzuca żądanie) albo
-    `None` (zezwala). Wywoływany TYLKO gdy żądanie faktycznie włącza
-    wtyczkę (nie przy wyłączaniu/samym poziomie logowania)."""
 
     @app.route(f"/api/plugins/{plugin_id}/settings", methods=["GET"],
                endpoint=f"plugin_{plugin_id}_settings_get")
     def _settings_get():
-        # Publiczny, tak jak GET /api/plugins (przegląd Wtyczek) - "enabled"/
-        # "log_level" to nie sekrety, a strona wtyczki musi dać się otworzyć
-        # i odczytać bez logowania (jak reszta jej zawartości), zapis wciąż
-        # wymaga hasła (patrz _settings_post niżej).
         section = get_section() or {}
         result = {"log_level": section.get("log_level") or ""}
         if supports_enabled:
@@ -117,11 +74,6 @@ def register_settings_route(
 
 
 def register_all(app: Flask, **deps) -> list[PluginMeta]:
-    """Rejestruje routing wszystkich wtyczek z WŁASNĄ stroną konfiguracji na
-    podanej aplikacji Flask i zwraca ich metadane (do zakładki Wtyczki).
-    `deps` to współdzielony stan z dashboard/app.py (patrz docstring modułu
-    wyżej) - każdy plugins/<id>/routes.py bierze z niego tylko to, czego
-    faktycznie potrzebuje."""
     from plugins.satel import routes as satel_routes
     from plugins.tuya_local import routes as tuya_routes
     from plugins.ebus import routes as ebus_routes

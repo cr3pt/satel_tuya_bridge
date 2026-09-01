@@ -1,19 +1,3 @@
-"""CLI do ręcznego lub cronowego uruchamiania czyszczenia i backupu bazy.
-
-Uruchomienie ręczne:
-    python maintenance.py --config config.db
-
-Zalecane uruchamianie przez cron (codziennie o 3:00, poza godzinami
-szczytu ruchu w domu):
-    0 3 * * * /home/pi/satel_tuya_bridge/venv/bin/python \\
-        /home/pi/satel_tuya_bridge/maintenance.py --config /home/pi/satel_tuya_bridge/config.db \\
-        >> /home/pi/satel_tuya_bridge/maintenance.log 2>&1
-
-Bridge sam robi to samo automatycznie raz na dobę (patrz
-`maintenance.run_in_process` w config.yaml) - użyj crona zamiast tego (nie
-oprócz), jeśli wolisz mieć pełną kontrolę nad dokładną porą i niezależność
-od tego, czy proces bridge'a akurat działa.
-"""
 import argparse
 import logging
 

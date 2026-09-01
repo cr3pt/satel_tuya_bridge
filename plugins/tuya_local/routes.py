@@ -1,9 +1,3 @@
-"""Wtyczka Tuya lokalne (LAN) - własna strona konfiguracji (urządzenia +
-bramki Zigbee), skan sieci LAN i import z Tuya Cloud, wydzielone z
-dashboard/app.py (patrz zakładka 🧩 Wtyczki -> "⚙ Konfiguruj"). Logika
-zapisu/walidacji zostaje w dashboard/setup.py (współdzielona z kreatorem
-/setup), ten moduł tylko routuje i wywołuje - patrz plugins/satel/routes.py
-po ten sam wzorzec."""
 from __future__ import annotations
 
 from flask import Flask, jsonify, render_template, request
@@ -25,9 +19,6 @@ META = PluginMeta(
 
 def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
-    """Rejestruje routing wtyczki Tuya. `_ignored` połyka zależności
-    przeznaczone dla INNYCH wtyczek - register_all() w plugins/__init__.py
-    woła każdą wtyczkę z tym samym, wspólnym zestawem `deps`."""
 
     @app.route("/plugins/tuya")
     def tuya_plugin_page():
@@ -52,10 +43,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         if errors:
             return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
-        # Ta strona edytuje TYLKO urządzenia lokalne/bramki - "cloud_devices"
-        # (zakładka Tuya Cloud, plugins/tuya_cloud/routes.py) dzieli ten sam
-        # dokument ConfigStore, więc trzeba go zachować, inaczej zapis stąd
-        # kasowałby listę urządzeń chmurowych.
         tuya_devices_dict = build_tuya_devices_dict(form)
         existing = get_config_store().get("tuya_devices")
         existing["devices"] = tuya_devices_dict["devices"]
@@ -72,18 +59,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
 
     @app.route("/api/plugins/tuya/scan", methods=["POST"])
     def api_plugin_tuya_scan():
-        """Publiczny (jak /api/discover/tuya w kreatorze) - tylko skan
-        broadcastu UDP w sieci LAN, nic nie zmienia. NIE zwraca local_key
-        (nie jest rozgłaszany ze względów bezpieczeństwa) - trzeba go
-        osobno wyciągnąć narzędziem `python -m tinytuya wizard` (patrz
-        README) albo importem z Tuya Cloud (zakładka ☁ Tuya Cloud).
-
-        Dopasowuje wyniki po ID do JUŻ ZNANYCH urządzeń (lokalnych i
-        chmurowych) - jeśli dane urządzenie było wcześniej zaimportowane z
-        Tuya Cloud (ma nazwę w tuya.cloud_devices, ale nie miało wtedy
-        adresu IP w sieci LAN), a teraz pojawia się w skanie, dokładamy jego
-        znaną nazwę - żeby nie trzeba było zgadywać, które urządzenie
-        fizyczne odpowiada któremu wpisowi."""
         tuya = get_config_raw().get("tuya", {})
         known_by_id: dict[str, str] = {}
         for name, cfg in tuya.get("cloud_devices", {}).items():
@@ -103,9 +78,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
 
     @app.route("/api/plugins/tuya/cloud-import", methods=["POST"])
     def api_plugin_tuya_cloud_import():
-        """Publiczny - poświadczenia Tuya Cloud przychodzą w ciele żądania
-        i NIE są nigdzie zapisywane przez ten endpoint (o zapis dba osobny
-        krok - "Zapisz urządzenia" wyżej)."""
         payload = request.get_json(silent=True) or {}
         api_region = (payload.get("api_region") or "").strip()
         access_id = (payload.get("access_id") or "").strip()
@@ -122,10 +94,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         return jsonify({"devices": devices})
 
     def _get_tuya_section() -> dict:
-        # STORED sekcja z dokumentu "config" - NIE scalony widok
-        # get_config_raw() (tam "devices"/"zigbee_gateways" nadpisane są z
-        # osobnego dokumentu "tuya_devices", patrz plugins/satel/routes.py
-        # po ten sam komentarz o dlaczego).
         return get_config_store().get("config").get("tuya", {})
 
     def _save_tuya_section(section: dict) -> None:
@@ -133,9 +101,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         current["tuya"] = section
         get_config_store().set("config", current)
 
-    # Współdzielone przez tuya_local i tuya_zigbee (ta sama sekcja "tuya" w
-    # configu - patrz dashboard/setup.py: PLUGIN_DEFS, tuya_zigbee nie ma
-    # własnego przełącznika/wpisu tutaj, bo dzieli runtime z tuya_local).
     register_settings_route(
         app, "tuya_local", require_auth=require_auth, get_auth_guard=get_auth_guard,
         get_section=_get_tuya_section, save_section=_save_tuya_section,

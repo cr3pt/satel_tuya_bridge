@@ -587,16 +587,7 @@ sudo systemctl enable --now satel-tuya-bridge</pre>
 const TOTAL_STEPS = 10;
 let currentStep = 1;
 
-// ------------------------------------------------------------------
-// Tryb debugowania - "🐛 Pokaż debug" ujawnia dziennik komunikacji
-// sieciowej (żądanie/odpowiedź) dla akcji w kreatorze (test połączenia,
-// wykrywanie stref/czujników, import z Tuya Cloud, skan sieci, zapis) -
-// przydatne, żeby zobaczyć DOKŁADNIE co poszło nie tak, bez zaglądania do
-// logów serwera/konsoli przeglądarki. Hasła/klucze/sekrety są ZAWSZE
-// ukryte (patrz redactForDebug) - panel pokazuje tylko to, co i tak widać
-// w devtoolsach przeglądarki (Network), tylko zebrane w jednym miejscu i
-// bez surowych nagłówków/ciasteczek.
-// ------------------------------------------------------------------
+
 let debugEntries = [];
 const DEBUG_REDACT_KEYS = new Set([
   'password', 'admin_password', 'admin_password_confirm', 'access_key',
@@ -665,9 +656,7 @@ document.getElementById('debugClearBtn').addEventListener('click', () => {
   renderDebugPanel();
 });
 
-// ------------------------------------------------------------------
-// Sekcje typu "nazwa + numer" (strefy, wejścia, wyjścia)
-// ------------------------------------------------------------------
+
 function addNameNumberRow(containerId, initial) {
   const container = document.getElementById(containerId);
   const row = document.createElement('div');
@@ -693,12 +682,7 @@ function collectNameNumberRows(containerId) {
     .filter(r => r.name && r.number);
 }
 
-// ------------------------------------------------------------------
-// Wirtualne wejścia IP - nazwa + numer, TEN SAM kształt niezależnie od
-// trybu (patrz obszerny docstring bridge/satel_client.py): tryb "http" to
-// zwykły, NIEUWIERZYTELNIONY GET (host:port/nazwa), BEZ żadnego
-// klucza/kodu DLOADX - numer jest w nim po prostu nieużywany.
-// ------------------------------------------------------------------
+
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');
   const row = document.createElement('div');
@@ -810,9 +794,7 @@ document.getElementById('discoverSatelBtn').addEventListener('click', async () =
   }
 });
 
-// ------------------------------------------------------------------
-// Urządzenia Tuya
-// ------------------------------------------------------------------
+
 function addTuyaDeviceRow(initial) {
   const container = document.getElementById('tuyaDevicesRows');
   const row = document.createElement('div');
@@ -857,10 +839,7 @@ function collectTuyaDevices() {
   })).filter(d => d.name || d.id || d.ip || d.local_key);
 }
 
-// Dodaje wykryte urządzenie (skan LAN albo import z Tuya Cloud) - jeśli
-// wiersz z tym samym ID już istnieje (np. skan LAN dodał samo ID+IP, a
-// import z Cloud dorzuca teraz nazwę+local_key), UZUPEŁNIA go zamiast
-// tworzyć duplikat.
+
 function upsertTuyaDeviceRow(device) {
   if (!device.id) { addTuyaDeviceRow(device); return; }
   const existingRow = Array.from(document.querySelectorAll('#tuyaDevicesRows .repeatable-row'))
@@ -877,9 +856,7 @@ function upsertTuyaDeviceRow(device) {
   return true;
 }
 
-// Zakładki "Ręcznie / skanuj sieć" vs "Import z Tuya Cloud" - obie
-// dopisują do TEJ SAMEJ listy urządzeń na dole, więc przełączanie
-// zakładek niczego nie ukrywa ani nie kasuje.
+
 document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
   btn.addEventListener('click', () => {
     const targetId = btn.dataset.tab;
@@ -945,13 +922,7 @@ document.getElementById('fetchTuyaCloudBtn').addEventListener('click', async () 
   }
 });
 
-// ------------------------------------------------------------------
-// Tuya Cloud: te same poświadczenia (Access ID/Secret) są potrzebne w
-// DWÓCH miejscach kreatora - import urządzeń (krok 2) i integracja
-// kamer/wirtualnego urządzenia (krok 7) - zamiast pytać dwa razy,
-// synchronizujemy pola na bieżąco w OBIE strony (wpisanie w
-// którymkolwiek miejscu wypełnia drugie).
-// ------------------------------------------------------------------
+
 [
   ['tuya_cloud_import_id', 'tuya_access_id'],
   ['tuya_cloud_import_key', 'tuya_access_key'],
@@ -962,15 +933,7 @@ document.getElementById('fetchTuyaCloudBtn').addEventListener('click', async () 
   elB.addEventListener('input', () => { if (elA.value !== elB.value) elA.value = elB.value; });
 });
 
-// Endpointy API/Pulsar zależą od regionu Tuya Cloud - wyprowadzane z
-// jedynego selektora regionu w kreatorze (krok 2, dotyczy też integracji
-// z kroku 7, patrz collectFormData). Hosty API potwierdzone wprost ze
-// źródeł tinytuya (Cloud.setregion) - hosty Pulsar/Message Service (mqe.*)
-// są pewne TYLKO dla głównych regionów (eu/us/cn/in, ten sam wzorzec co w
-// config.example.yaml); dla us-e/eu-w/sg NIE zgadujemy nieudokumentowanej
-// nazwy hosta - zostaje domyślny (UE) z wyraźnym ostrzeżeniem, żeby
-// zweryfikować go w developer.tuya.com (Cloud -> projekt -> Message
-// Service pokazuje faktyczny adres subskrypcji).
+
 const TUYA_REGION_ENDPOINTS = {
   'eu':   { api: 'https://openapi.tuyaeu.com',        mq: 'wss://mqe.tuyaeu.com:8285/' },
   'us':   { api: 'https://openapi.tuyaus.com',         mq: 'wss://mqe.tuyaus.com:8285/' },
@@ -1020,7 +983,7 @@ function refreshVirtualInputsDatalist() {
   list.innerHTML = getVirtualInputNames().map(n => `<option value="${escapeHtml(n)}">`).join('');
 }
 
-// Rozwijanie sekcji integracji opcjonalnych po zaznaczeniu checkboxa
+
 [['ha_enabled', 'haContent'], ['unifi_enabled', 'unifiContent'], ['tuya_cloud_enabled', 'tuyaCloudContent']]
   .forEach(([checkboxId, contentId]) => {
     document.getElementById(checkboxId).addEventListener('change', (e) => {
@@ -1028,11 +991,7 @@ function refreshVirtualInputsDatalist() {
     });
   });
 
-// "Uruchom lokalny broker MQTT dla mnie" - po zaznaczeniu adres/port
-// wypełniają się same (127.0.0.1:1883, tam gdzie wyląduje mosquitto z
-// instrukcji w info-boxie) i znikają jako pole do ręcznego wypełnienia -
-// nie pytamy o to drugi raz. Po odznaczeniu wracamy do pustego pola do
-// ręcznego wpisania adresu istniejącego brokera.
+
 document.getElementById('ebus_run_local_broker').addEventListener('change', (e) => {
   const hostField = document.getElementById('ebus_mqtt_host');
   const portField = document.getElementById('ebus_mqtt_port');
@@ -1052,9 +1011,7 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
-// ------------------------------------------------------------------
-// Sceny - karta na scenę, wewnątrz repeatable-row na każdą akcję
-// ------------------------------------------------------------------
+
 const SCENE_ACTION_LABELS = {
   tuya_on: 'Włącz urządzenie Tuya',
   tuya_off: 'Wyłącz urządzenie Tuya',
@@ -1171,10 +1128,7 @@ function collectScenes() {
   }));
 }
 
-// ------------------------------------------------------------------
-// Reguły ruchu - karta na regułę (Satel zone -> urządzenie/scena),
-// z opcjonalnym harmonogramem i eskalacją
-// ------------------------------------------------------------------
+
 function sceneOptionsHtml(selected) {
   const names = getSceneNames();
   const placeholder = `<option value="">${names.length ? '(wybierz scenę)' : '(brak scen - dodaj je w kroku 8)'}</option>`;
@@ -1300,9 +1254,7 @@ function collectMotionRules() {
   });
 }
 
-// ------------------------------------------------------------------
-// Zbieranie / wypełnianie całego formularza
-// ------------------------------------------------------------------
+
 function collectFormData() {
   return {
     satel: {
@@ -1345,16 +1297,11 @@ function collectFormData() {
         enabled: document.getElementById('tuya_cloud_enabled').checked,
         access_id: document.getElementById('tuya_cloud_enabled').checked ? document.getElementById('tuya_access_id').value.trim() : '',
         access_key: document.getElementById('tuya_access_key').value,
-        // Kod regionu (np. "eu"/"us") - UŻYWANY przez TuyaCloudController
-        // (sterowanie urządzeniami przez chmurę, patrz bridge/tuya_cloud.py)
-        // jako apiRegion dla tinytuya.Cloud. Bez tego pola sterowanie
-        // chmurowe łączyłoby się z niewłaściwym centrum danych (błąd Tuya
-        // "cross-region access is not allowed").
+        
+        
         api_region: region,
-        // Wyprowadzone z JEDYNEGO selektora regionu w kreatorze (krok 2) -
-        // patrz TUYA_REGION_ENDPOINTS i tuyaCloudRegionWarning() wyżej.
-        // Używane TYLKO do detekcji ruchu z kamer (Pulsar), nie do
-        // sterowania - stąd osobne od api_region wyżej.
+        
+        
         api_endpoint: endpoints.api || '',
         mq_endpoint: endpoints.mq || '',
       };
@@ -1424,9 +1371,7 @@ function populateForm(data) {
   refreshRuleDropdowns();
 }
 
-// ------------------------------------------------------------------
-// Walidacja pojedynczego kroku (przed przejściem "Dalej"/zapisem)
-// ------------------------------------------------------------------
+
 const SCENE_ACTION_REQUIRED = {
   tuya_on: ['device'], tuya_off: ['device'], tuya_on_for_duration: ['device', 'duration_seconds'],
   satel_output: ['output_number'], satel_virtual_input: ['virtual_input'],
@@ -1437,9 +1382,8 @@ function validateStep(n, data) {
   const errors = [];
   if (n === 1) {
     if (!data.satel.host) errors.push('Adres IP centrali/ETHM jest wymagany');
-    // Kod użytkownika centrali jest CELOWO opcjonalny - bez niego panel
-    // działa tylko do odczytu (patrz krótki opis pod polem i README), więc
-    // brak walidacji "wymagany" tutaj.
+    
+    
     data.virtual_inputs.forEach((v, i) => {
       if (!(v.name && v.number)) errors.push(`Wirtualne wejście #${i + 1}: uzupełnij nazwę i numer (albo usuń wiersz)`);
     });
@@ -1516,9 +1460,7 @@ function showStepError(errors) {
   box.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-// ------------------------------------------------------------------
-// Nawigacja między krokami + autozapis postępu na serwer
-// ------------------------------------------------------------------
+
 function renderProgressDots() {
   const dots = document.getElementById('progressDots');
   dots.innerHTML = '';
@@ -1555,8 +1497,8 @@ async function saveDraft(step, data) {
       body: JSON.stringify({ step, data }),
     });
   } catch (err) {
-    // Brak sieci nie powinien blokować dalszej pracy w kreatorze - spróbujemy
-    // zapisać przy kolejnym kroku. Ostateczny zapis i tak wymaga /api/setup/save.
+    
+    
     console.warn('Nie udało się zapisać postępu kreatora:', err);
   }
 }
@@ -1625,16 +1567,8 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
       resultBox.innerHTML = '✅ ' + respData.message + '<br>' +
         respData.next_steps.map(s => `<code>${escapeHtml(s)}</code>`).join('<br>') +
         '<br><br>Przenoszę do panelu (już zalogowany)...';
-      // Kreator ma się już nie pokazać ponownie po zapisie (/setup samo
-      // przekierowuje na / po tym, jak config.yaml istnieje - patrz
-      // dashboard/app.py: is_configured()) - tutaj tylko dajemy chwilę na
-      // przeczytanie komunikatu, zanim przełączymy stronę. api_setup_save
-      // już ustawiło ciasteczko sesji w SWOJEJ odpowiedzi (patrz
-      // dashboard/app.py), więc panel po przeładowaniu jest od razu
-      // zalogowany - nie trzeba niczego dodatkowo robić ani przekazywać
-      // hasła w adresie URL (wcześniejsza wersja robiła dokładnie to:
-      // #auth=base64(hasło) - jawne, odwracalne kodowanie hasła w pasku
-      // adresu, widoczne w historii przeglądarki).
+      
+      
       setTimeout(() => {
         window.location.href = '/';
       }, 1800);
@@ -1654,11 +1588,9 @@ document.getElementById('discardDraftBtn').addEventListener('click', async () =>
   location.reload();
 });
 
-// ------------------------------------------------------------------
-// Start: wczytaj zapisany postęp (jeśli jest), inaczej pusty krok 1
-// ------------------------------------------------------------------
+
 (async function init() {
-  addTuyaDeviceRow(); // domyślny jeden wiersz, nadpisywany przez populateForm() jeśli jest draft
+  addTuyaDeviceRow(); 
 
   let draft = {};
   try {

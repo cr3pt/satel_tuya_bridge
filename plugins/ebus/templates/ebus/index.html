@@ -187,7 +187,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 refreshAuthNav();
@@ -199,10 +199,7 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// ------------------------------------------------------------------
-// Ustawienia wtyczki (włącznik + poziom logowania) - ten sam wzorzec
-// GET/POST /api/plugins/<id>/settings co reszta stron wtyczek.
-// ------------------------------------------------------------------
+
 const PLUGIN_ID = 'ebus';
 
 async function loadPluginSettings() {
@@ -234,11 +231,7 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
   }
 });
 
-// ------------------------------------------------------------------
-// Połączenie (adres/port brokera MQTT/temat stanu) - publiczny odczyt (bez
-// sekretów, w odróżnieniu od /plugins/satel), więc wczytujemy od razu przy
-// starcie strony zamiast za przyciskiem.
-// ------------------------------------------------------------------
+
 async function loadConnection() {
   const data = await (await fetch('/api/plugins/ebus/connection')).json();
   document.getElementById('conn_mqtt_host').value = data.mqtt_host || '';
@@ -271,9 +264,7 @@ document.getElementById('saveConnectionBtn').addEventListener('click', async () 
   }
 });
 
-// ------------------------------------------------------------------
-// Czujniki
-// ------------------------------------------------------------------
+
 function addSensorRow(initial) {
   const container = document.getElementById('sensorsRows');
   const row = document.createElement('div');
@@ -347,9 +338,7 @@ document.getElementById('saveSensorsBtn').addEventListener('click', async () => 
   }
 });
 
-// ------------------------------------------------------------------
-// Nasłuch tematów MQTT w tle
-// ------------------------------------------------------------------
+
 let pollTimer = null;
 
 function renderDiscoverStatus(status) {

@@ -1,18 +1,3 @@
-"""Sterowanie urządzeniami Tuya przez Tuya Cloud (REST OpenAPI, przez
-`tinytuya.Cloud`) - fallback dla urządzeń, dla których nie udało się (albo
-nie próbowano) skonfigurować sterowania lokalnego (patrz TuyaLocalController
-w bridge/tuya_local.py) - typowo dlatego, że Tuya Cloud nie zwróciła
-local_key, albo urządzenie nie jest w tej samej sieci LAN co bridge.
-
-WOLNIEJSZE i zależne od internetu/dostępności chmury Tuya w odróżnieniu od
-sterowania lokalnego - używane WYŁĄCZNIE gdy urządzenie nie ma wpisu w
-tuya.devices (lokalne), patrz RulesEngine._build_tuya_controller.
-
-Na start CELOWO ograniczone do prostych przełączników on/off (bez
-ściemniania) - różne kategorie urządzeń Tuya mają różne kody DP (data
-point), np. "switch_1" dla większości gniazdek/przełączników, ale inne dla
-np. lamp - stąd `switch_code` konfigurowalny per urządzenie (domyślnie
-"switch_1"), zamiast prób automatycznego wykrywania."""
 from __future__ import annotations
 
 import asyncio
@@ -25,11 +10,6 @@ logger = logging.getLogger("bridge.tuya_cloud")
 
 class TuyaCloudController:
     def __init__(self, devices_cfg: dict, credentials: dict, retries: int = 2, retry_delay: float = 1.5):
-        """`devices_cfg`: nazwa -> {id, category, switch_code} (patrz
-        dashboard/setup.py: _build_cloud_devices/cloud_devices_to_rows).
-        `credentials`: {api_region, access_id, access_key} - TE SAME
-        poświadczenia projektu Tuya IoT co import urządzeń/kamer Pulsar
-        (zakładka Tuya Cloud, plugins/tuya_cloud/routes.py)."""
         self.devices_cfg = devices_cfg
         self.credentials = credentials
         self.retries = retries
@@ -37,19 +17,7 @@ class TuyaCloudController:
         self._cloud: tinytuya.Cloud | None = None
 
     def _client(self) -> tinytuya.Cloud:
-        # Leniwie tworzony i CACHE'OWANY na obiekcie - logowanie do Tuya
-        # Cloud (uzyskanie tokenu) to osobne zapytanie sieciowe, a
-        # tinytuya.Cloud sam odświeża token przy wygaśnięciu (patrz
-        # _tuyaplatform w bibliotece), więc nie ma powodu tworzyć nowego
-        # klienta przy każdej komendzie.
         if self._cloud is None:
-            # Domyślnie "eu" (nie ""), ten sam fallback co reszta configu
-            # (dashboard/setup.py, plugins/tuya_cloud/routes.py) - pusty
-            # region Tuya OpenAPI odrzuca błędem "cross-region access is
-            # not allowed" niezależnie od faktycznego regionu konta, więc
-            # brak tego pola w już zapisanym config.yaml (starsze instalacje
-            # sprzed naprawienia tego bugu w kreatorze) samo się naprawia
-            # po aktualizacji, bez wymuszania ręcznego zapisu w /plugins/tuya_cloud.
             self._cloud = tinytuya.Cloud(
                 apiRegion=self.credentials.get("api_region") or "eu",
                 apiKey=self.credentials.get("access_id", ""),
@@ -58,9 +26,6 @@ class TuyaCloudController:
         return self._cloud
 
     async def _call_with_retry(self, device_name: str, func, *args):
-        """Analogicznie do TuyaLocalController._call_with_retry - tinytuya
-        (i tu, i tam) nie zawsze rzuca wyjątek przy błędzie, częściej zwraca
-        słownik z kluczem 'Error' (patrz tinytuya.error_json)."""
         loop = asyncio.get_event_loop()
         last_error = None
         for attempt in range(self.retries + 1):
@@ -85,7 +50,6 @@ class TuyaCloudController:
         raise ConnectionError(f"Nie udało się wysłać komendy do Tuya Cloud dla '{device_name}': {last_error}")
 
     async def turn_on(self, device_name: str, dimmer_level_percent: int | None = None) -> None:
-        # dimmer_level_percent celowo ignorowany - patrz docstring modułu.
         cfg = self.devices_cfg[device_name]
         client = self._client()
         commands = {"commands": [{"code": cfg.get("switch_code") or "switch_1", "value": True}]}
@@ -100,12 +64,6 @@ class TuyaCloudController:
         logger.info("Wyłączono '%s' przez Tuya Cloud", device_name)
 
     async def get_status(self, device_name: str) -> dict:
-        """Zwraca {'1': True/False} - CELOWO ten sam kształt klucza co
-        TuyaLocalController.get_status (tam DP '1' to konwencjonalny stan
-        on/off lokalnego protokołu Tuya) - dzięki temu
-        RulesEngine._tuya_status_poll_loop (dps.get("1")) działa NIEZMIENIONE
-        dla obu kontrolerów, mimo że Tuya OpenAPI faktycznie zwraca kod
-        tekstowy (np. "switch_1"), nie numeryczny."""
         cfg = self.devices_cfg[device_name]
         client = self._client()
         result = await self._call_with_retry(device_name, client.getstatus, cfg["id"])
@@ -117,8 +75,6 @@ class TuyaCloudController:
         return {}
 
     async def get_all_statuses(self) -> dict[str, dict | None]:
-        """Odpytuje wszystkie skonfigurowane urządzenia RÓWNOLEGLE -
-        analogicznie do TuyaLocalController.get_all_statuses."""
         names = list(self.devices_cfg)
         results_list = await asyncio.gather(
             *(self.get_status(name) for name in names), return_exceptions=True,

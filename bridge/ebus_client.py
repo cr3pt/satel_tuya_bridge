@@ -1,18 +1,3 @@
-"""Odczyt danych z kotła Wolf przez eBUS.
-
-Zamiast pisać własny dekoder protokołu eBUS (skomplikowany, specyficzny dla
-producenta), wykorzystujemy `ebusd` (https://github.com/john30/ebusd) -
-dojrzały, open-source'owy daemon z gotowymi definicjami dla kotłów Wolf.
-ebusd łączy się z modułem eBUS podpiętym do RPi i wystawia odczytane
-wartości przez MQTT (zalecane) albo swój natywny protokół TCP.
-
-Ten moduł subskrybuje topiki MQTT publikowane przez ebusd i przekazuje
-wartości dalej (do reguł automatyki oraz do publish_boiler_data.py).
-
-Instalacja/konfiguracja ebusd z wyjściem MQTT (skrót, patrz README):
-  ebusd --mqtthost=127.0.0.1 --mqttport=1883 --mqtttopic=ebusd \
-        -d /dev/ttyUSB0 --scanconfig
-"""
 from __future__ import annotations
 
 import asyncio
@@ -31,17 +16,6 @@ logger = logging.getLogger("bridge.ebus")
 
 def discover_topics(mqtt_host: str, mqtt_port: int = 1883, topic_prefix: str = "ebusd",
                      timeout_seconds: float = 4.0) -> list[str]:
-    """Krótko nasłuchuje na `{topic_prefix}/#` i zwraca posortowaną listę
-    tematów, na które ebusd FAKTYCZNIE coś opublikował w tym czasie -
-    najprostszy sposób podpowiedzenia dostępnych pól w panelu (/config) bez
-    własnej integracji z komendą `find` ebusd (TCP/HTTP, nie zawsze
-    włączona). To tylko PODPOWIEDŹ: pola, które ebusd publikuje rzadziej niż
-    raz na `timeout_seconds`, mogą się nie pojawić - użytkownik może wtedy
-    dodać czujnik ręcznie (patrz README, sekcja "Jak znaleźć listę
-    dostępnych pól") albo spróbować wykrywania ponownie.
-
-    Synchroniczna i blokująca (na `timeout_seconds`) - celowo, wywoływana
-    z endpointu Flask (dashboard/app.py), nie z głównej pętli bridge'a."""
     topics: set[str] = set()
 
     def _on_message(client, userdata, msg) -> None:
@@ -66,21 +40,6 @@ def discover_topics(mqtt_host: str, mqtt_port: int = 1883, topic_prefix: str = "
 
 
 class BackgroundTopicDiscovery:
-    """Nasłuch tematów MQTT ebusd W TLE, przez znacznie dłuższy czas (do
-    kilku minut) niż discover_topics() wyżej - ten krótki (~4s), blokujący
-    nasłuch bywa za krótki, żeby złapać rzadziej publikowane pola (patrz
-    komentarz w discover_topics()). Do panelu (/config), gdzie użytkownik
-    klika "Rozpocznij nasłuch" i dostaje wynik od razu (żądanie HTTP NIE
-    czeka na koniec) - dalej odpytuje `status()` (patrz
-    dashboard/app.py: /api/discover/ebus/status), a wykryte tematy
-    przybywają na bieżąco, w miarę jak ebusd je publikuje.
-
-    Własny wątek (nie asyncio) - Flask/waitress i tak obsługuje żądania w
-    wątkach, a paho-mqtt ma już wbudowaną obsługę wątkową
-    (loop_start/loop_stop), więc to naturalne dopasowanie. Jedna instancja
-    obsługuje JEDEN nasłuch naraz (wystarczające dla panelu administrowanego
-    przez jedną osobę na raz) - kolejne `start()` w trakcie trwającego
-    nasłuchu rzuca RuntimeError."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -152,13 +111,7 @@ class EbusMqttListener:
                  notify_cfg: dict | None = None, grace_seconds: float = 120):
         self.cfg = cfg
         self.on_value = on_value
-        # temat MQTT -> pełna konfiguracja czujnika (name, label, targets...)
-        # - patrz config.example.yaml (ebus.sensors)
         self._topic_to_sensor = {s["mqtt_topic"]: s for s in cfg["sensors"]}
-        # HealthReporter dostaje referencję do bieżącej pętli asyncio -
-        # callbacki paho-mqtt wykonują się w OSOBNYM wątku (własny wątek
-        # sieciowy biblioteki), więc powiadomienia (korutyny) trzeba
-        # planować przez run_coroutine_threadsafe, stąd jawny `loop`.
         self._health = HealthReporter(
             "ebus_mqtt", history=history, notify_cfg=notify_cfg,
             grace_seconds=grace_seconds, loop=asyncio.get_event_loop(),
@@ -167,20 +120,9 @@ class EbusMqttListener:
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message
-        # Wbudowany w paho-mqtt automatyczny reconnect (używany przez
-        # loop_start) - exponential backoff między 1s a 120s.
         self._client.reconnect_delay_set(min_delay=1, max_delay=120)
 
     def update_sensors(self, cfg: dict) -> None:
-        """Aktualizuje listę czujników BEZ zrywania połączenia MQTT - do
-        przeładowania konfiguracji w locie (patrz
-        RulesEngine.reload_config w rules_engine.py), wywoływane po zapisie
-        czujników w panelu (/config), zamiast wymagać restartu całego
-        procesu. Subskrybuje temat KAŻDEGO nowego czujnika natychmiast -
-        usunięte czujniki po prostu przestają być rozpoznawane w
-        _on_message (dalej fizycznie zasubskrybowane, ale ignorowane -
-        bez znaczenia praktycznego, nie warte dodatkowej złożoności
-        jawnego odsubskrybowania)."""
         old_topics = set(self._topic_to_sensor)
         self.cfg = cfg
         self._topic_to_sensor = {s["mqtt_topic"]: s for s in cfg["sensors"]}
@@ -189,10 +131,6 @@ class EbusMqttListener:
             logger.info("Subskrybuję nowy topik ebusd (przeładowanie configu): %s", topic)
 
     def start(self) -> None:
-        # connect_async + loop_start: nie blokuje startu procesu jeśli
-        # broker MQTT nie jest jeszcze gotowy (np. ebusd startuje wolniej
-        # niż bridge po restarcie RPi) - połączenie i reconnecty dzieją
-        # się w tle automatycznie.
         self._client.connect_async(self.cfg["mqtt_host"], self.cfg.get("mqtt_port", 1883))
         self._client.loop_start()
         logger.info("Nasłuch MQTT ebusd uruchomiony (%s:%s)", self.cfg["mqtt_host"], self.cfg.get("mqtt_port", 1883))
@@ -229,23 +167,6 @@ class EbusMqttListener:
 
     @staticmethod
     def _parse_payload(raw: str, sensor_cfg: dict) -> object | None:
-        """Wyciąga wartość z jednej wiadomości MQTT ebusd. Domyślny format
-        ebusd (jedno pole na temat) publikuje CZYSTY tekst ("22.5",
-        "heating") - próba `json.loads()` na takim tekście albo się uda
-        (liczby są też poprawnym JSON-em, więc "22.5" -> float 22.5, bez
-        zmiany zachowania), albo rzuci wyjątek dla zwykłego tekstu
-        ("heating" nie jest poprawnym JSON-em bez cudzysłowów) - wtedy
-        zwracamy surowy tekst, jak dotychczas.
-
-        Tryb `--mqttjson` ebusd publikuje zamiast tego JSON-owy obiekt:
-        - pojedyncze pole: `{"FlowTemp": {"value": 22.5}}`
-        - temat na poziomie OBWODU (kilka pól naraz):
-          `{"MixerStatus": {...}, "TempFloor": {"value": 21.3}, ...}`
-        Dla obiektu z JEDNYM kluczem wybieramy go automatycznie. Dla kilku
-        kluczy trzeba wiedzieć, KTÓRY wybrać - stąd opcjonalne pole
-        `mqtt_field` w konfiguracji czujnika (sensors.yaml). Bez niego
-        wiadomość wieloklucza jest pomijana (z ostrzeżeniem w logu) zamiast
-        zapisać nieczytelny surowy JSON jako "wartość"."""
         try:
             parsed = json.loads(raw)
         except (ValueError, TypeError):

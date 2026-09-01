@@ -1,8 +1,3 @@
-"""Wtyczka zmywarek/AGD HomeWhiz (BEQ/Arcelik) - poświadczenia konta chmury
-HomeWhiz + odkrywanie/wybór monitorowanych urządzeń. Patrz
-bridge/homewhiz_client.py po sam mechanizm połączenia (SigV4/MQTT-over-
-WebSocket do AWS IoT Core) i plugins/satel/routes.py po ten sam wzorzec
-wstrzykiwania zależności."""
 from __future__ import annotations
 
 import asyncio
@@ -25,9 +20,6 @@ META = PluginMeta(
 
 def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
-    """Rejestruje routing wtyczki HomeWhiz. `_ignored` połyka zależności
-    przeznaczone dla INNYCH wtyczek - register_all() w plugins/__init__.py
-    woła każdą wtyczkę z tym samym, wspólnym zestawem `deps`."""
 
     def _get_section() -> dict:
         return get_config_store().get("config").get("homewhiz") or {}
@@ -61,8 +53,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
             return jsonify({"error": "Login (e-mail) do konta HomeWhiz jest wymagany"}), 400
 
         existing = _get_section()
-        # Pole-sekret (hasło): pusta wartość w formularzu = ZACHOWAJ
-        # dotychczasowe - patrz GET wyżej, tylko flaga password_set.
         section = dict(existing)
         section.update({
             "username": username,
@@ -130,9 +120,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
     @app.route("/api/plugins/homewhiz/discover", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
     def api_plugin_homewhiz_discover():
-        """Odkrywa urządzenia przypisane do konta HomeWhiz, przy użyciu JUŻ
-        ZAPISANYCH poświadczeń (zakładka wyżej) - analogicznie do importu w
-        panelu Tuya Cloud (plugins/tuya_cloud/routes.py)."""
         section = _get_section()
         username, password = section.get("username", ""), section.get("password", "")
         if not username or not password:
@@ -165,13 +152,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
     @app.route("/api/plugins/homewhiz/appliances/<name>/states", methods=["GET"])
     @require_auth(get_guard=get_auth_guard)
     def api_plugin_homewhiz_appliance_states(name):
-        """Lista możliwych stanów TEGO KONKRETNEGO urządzenia (jego
-        modelu) - pobrana na żywo z chmury HomeWhiz (deskryptor
-        konfiguracji, patrz bridge/homewhiz_client.py: fetch_config_
-        descriptor/list_possible_states) - do wypełnienia listy wyboru
-        "Wyzwalacz - wartość statusu" w edytorze reguł ruchu (source:
-        homewhiz_state). Wymaga zalogowania - to żywe zapytanie do chmury
-        przy użyciu zapisanych poświadczeń, nie tylko odczyt configu."""
         section = _get_section()
         username, password = section.get("username", ""), section.get("password", "")
         if not username or not password:
