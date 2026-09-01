@@ -555,8 +555,18 @@ class SatelIntegraClient:
                 if self.monitored_outputs:
                     await client._send_data(SatelWriteMessage(SatelReadCommand.OUTPUTS_STATE))
             except Exception:
-                logger.exception("Nie udało się dopytać o stan wejść/wyjść Satela")
-                return
+                # ZGŁOSZONY BŁĄD: pojedynczy nieudany zapis (chwilowa
+                # zadyszka sieci) wcześniej TRWALE zatrzymywał tę pętlę
+                # (return) - połączenie TCP/keep-alive (Supervisor "satel")
+                # zostawało "połączono" na zawsze, ale ŻADNE kolejne
+                # dopytanie już nigdy by nie poszło, więc panel przestawał
+                # widzieć zmiany stanu wyjść/wejść (patrz komentarz w
+                # connect() o centralach, które nie wysyłają broadcastu
+                # 0x17 spontanicznie) - do następnego (re)połączenia, które
+                # mogło nie nastąpić przez bardzo długi czas. Logujemy i
+                # próbujemy dalej przy następnym obrocie pętli zamiast
+                # poddawać się na stałe po jednym błędzie.
+                logger.exception("Nie udało się dopytać o stan wejść/wyjść Satela - ponowię próbę")
             await asyncio.sleep(self.status_poll_interval_seconds)
 
     async def set_output(self, output_number: int, state: bool) -> None:
