@@ -88,17 +88,18 @@ class BridgeConfig:
         # (odwrotne mapowanie numer -> nazwa).
         for key in ("zone_types", "output_types"):
             data["satel"][key] = satel_fields.get(key, {})
-        # "port"/"url_template" (do których faktycznie łączy się
-        # SatelVirtualInputTrigger - patrz bridge/satel_client.py) muszą tu
-        # dostać te same wartości domyślne, co dashboard/setup.py
-        # (build_config_dict/build_connections_patch) - inaczej config bez
-        # jawnie zapisanej sekcji "virtual_inputs" (stary, ręcznie
-        # edytowany albo migrowany z config.yaml sprzed tej funkcji)
-        # zostawiłby cfg["port"] nieobecne, co wywala CAŁY silnik reguł
-        # (RulesEngine.__init__ zawsze tworzy SatelVirtualInputTrigger,
-        # niezależnie od tego, czy jakiekolwiek wirtualne wejście jest w
-        # ogóle skonfigurowane) KeyErrorem przy starcie/przeładowaniu.
+        # "Wirtualne wejścia IP" - dwa tryby wyzwalania (satel.virtual_inputs.mode,
+        # patrz obszerny docstring bridge/satel_client.py):
+        # "library" (domyślny) - zwykłe wyjście Satela, set_output(), nazwa ->
+        #   numer (int). "http" - funkcja "Wejścia IP" ETHM-1 Plus, osobne
+        #   połączenie HTTP z portem/kluczem PER WEJŚCIE, nazwa ->
+        #   {number, key}. "port"/"url_template" mają wartości domyślne
+        #   (potrzebne tylko w trybie "http") - inaczej config bez jawnie
+        #   zapisanej sekcji zostawiłby je nieobecne, co wywala silnik reguł
+        #   (RulesEngine.__init__ zawsze tworzy SatelVirtualInputTrigger)
+        #   KeyErrorem przy starcie/przeładowaniu.
         data["satel"].setdefault("virtual_inputs", {})
+        data["satel"]["virtual_inputs"].setdefault("mode", "library")
         data["satel"]["virtual_inputs"].setdefault("port", 8888)
         data["satel"]["virtual_inputs"].setdefault(
             "url_template", "http://{host}:{port}/input.cgi?key={key}&input={input_no}"

@@ -31,11 +31,19 @@ logger = logging.getLogger("bridge.scenes")
 
 
 class SceneRunner:
-    def __init__(self, scenes_cfg: list[dict], tuya, satel, satel_virtual_inputs, history=None):
+    def __init__(self, scenes_cfg: list[dict], tuya, satel, satel_virtual_inputs=None,
+                 virtual_input_mode: str = "library", history=None):
         self.scenes = {s["name"]: s for s in (scenes_cfg or [])}
         self.tuya = tuya
         self.satel = satel
+        # Tryb "http" wirtualnych wejść IP (satel.virtual_inputs.mode, patrz
+        # obszerny docstring bridge/satel_client.py) - `satel_virtual_inputs`
+        # to osobny klient HTTP (SatelVirtualInputTrigger), używany TYLKO gdy
+        # virtual_input_mode == "http"; w trybie domyślnym "library" akcja
+        # satel_virtual_input idzie przez self.satel.set_output() (patrz
+        # _run_action niżej).
         self.satel_virtual_inputs = satel_virtual_inputs
+        self.virtual_input_mode = virtual_input_mode
         self.history = history
 
     def exists(self, scene_name: str) -> bool:
@@ -92,7 +100,29 @@ class SceneRunner:
         elif kind == "satel_output":
             await self.satel.set_output(action["output_number"], action.get("state", True))
         elif kind == "satel_virtual_input":
-            await self.satel_virtual_inputs.trigger(action["virtual_input"])
+            # "Wirtualne wejście IP" - dwa tryby (satel.virtual_inputs.mode,
+            # patrz obszerny docstring bridge/satel_client.py). `state`
+            # domyślnie True (aktywacja), dla symetrii z akcją satel_output
+            # wyżej można też jawnie podać False (dezaktywacja) - IGNOROWANE
+            # w trybie "http" (jednorazowy impuls, brak odpowiednika
+            # "przywróć" w tym protokole).
+            name = action["virtual_input"]
+            if self.virtual_input_mode == "http":
+                if self.satel_virtual_inputs is None:
+                    logger.warning(
+                        "Scena używa wirtualnego wejścia IP '%s' w trybie 'http', ale brak "
+                        "skonfigurowanego klienta HTTP - pomijam", name,
+                    )
+                    return
+                await self.satel_virtual_inputs.trigger(name)
+                return
+            output_number = self.satel.virtual_inputs.get(name)
+            if output_number is None:
+                logger.warning(
+                    "Nieznane wirtualne wejście IP Satela '%s' w scenie - pomijam", name,
+                )
+                return
+            await self.satel.set_output(output_number, action.get("state", True))
         elif kind == "satel_arm":
             # `partitions` opcjonalne - gdy akcja go nie poda (stare sceny
             # sprzed tego pola, albo instalacja z jedną strefą), arm()

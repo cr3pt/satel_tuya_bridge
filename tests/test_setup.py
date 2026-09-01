@@ -81,7 +81,10 @@ class TestBuildConfigDict:
         assert config["satel"]["fields_file"] == "satel_fields.yaml"
         assert "partitions" not in config["satel"]
         assert "monitored_zones" not in config["satel"]
-        assert "inputs" not in config["satel"]["virtual_inputs"]
+        # "inputs" (nazwane wirtualne wejścia) trafiają do satel_fields.yaml,
+        # nie tutaj - w config.yaml zostaje tylko pusty słownik jako
+        # bezpieczna wartość domyślna (patrz build_satel_fields_dict).
+        assert config["satel"]["virtual_inputs"]["inputs"] == {}
 
     def test_tuya_config_has_devices_file_marker_not_inline_devices(self):
         config = build_config_dict(VALID_FORM)
@@ -216,21 +219,33 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
     /api/config/satel-fields, /api/config/tuya-devices)."""
 
     def test_build_satel_fields_shape(self):
+        """Tryb domyślny "library" (patrz obszerny docstring
+        bridge/satel_client.py) - wirtualne wejście to zwykły int (numer
+        wyjścia), bez klucza."""
         form = {
             "partitions": [{"name": "Dom", "number": "1"}, {"name": "Garaz", "number": "2"}],
             "monitored_zones": [{"name": "Salon", "number": "12", "type": "ruch"}],
             "monitored_outputs": [{"name": "Syrena", "number": "1", "type": "syrena"}],
-            "virtual_inputs": [{"name": "motion_hall_camera", "number": "17", "key": "KLUCZ17"}],
+            "virtual_inputs": [{"name": "motion_hall_camera", "number": "17"}],
         }
         fields = build_satel_fields_dict(form)
         assert fields == {
             "partitions": {"Dom": 1, "Garaz": 2},
             "monitored_zones": {"Salon": 12},
             "monitored_outputs": {"Syrena": 1},
-            "virtual_inputs": {"motion_hall_camera": {"number": 17, "key": "KLUCZ17"}},
+            "virtual_inputs": {"motion_hall_camera": 17},
             "zone_types": {"Salon": "ruch"},
             "output_types": {"Syrena": "syrena"},
         }
+
+    def test_build_satel_fields_shape_http_mode(self):
+        """Tryb "http" (funkcja "Wejścia IP" ETHM-1 Plus) - wirtualne
+        wejście potrzebuje też klucza PER WEJŚCIE (z DLOADX)."""
+        form = {
+            "virtual_inputs": [{"name": "motion_hall_camera", "number": "17", "key": "KLUCZ17"}],
+        }
+        fields = build_satel_fields_dict(form, virtual_input_mode="http")
+        assert fields["virtual_inputs"] == {"motion_hall_camera": {"number": 17, "key": "KLUCZ17"}}
 
     def test_build_satel_fields_type_ignored_when_unknown_slug(self):
         """Nieznany slug rodzaju (np. literówka albo stary zapis sprzed tej
@@ -1512,10 +1527,18 @@ class TestBuildConfigDictAdvanced:
         assert build_automations_dict(form)["reguły_ruchu"] == []
 
     def test_virtual_inputs_built_into_satel_fields(self):
-        satel_fields = build_satel_fields_dict(FORM_WITH_ADVANCED)
+        """Tryb "http" jawnie podany - FORM_WITH_ADVANCED niesie klucz per
+        wejście, tylko potrzebny w tym trybie (patrz obszerny docstring
+        bridge/satel_client.py)."""
+        satel_fields = build_satel_fields_dict(FORM_WITH_ADVANCED, virtual_input_mode="http")
         assert satel_fields["virtual_inputs"] == {
             "motion_hall_camera": {"number": 17, "key": "KLUCZ17"},
         }
+
+    def test_virtual_inputs_built_into_satel_fields_library_mode(self):
+        """Tryb domyślny "library" - bez klucza, bez utraty numeru."""
+        satel_fields = build_satel_fields_dict(FORM_WITH_ADVANCED)
+        assert satel_fields["virtual_inputs"] == {"motion_hall_camera": 17}
 
     def test_disabled_time_window_and_escalation_are_omitted(self):
         rule = {

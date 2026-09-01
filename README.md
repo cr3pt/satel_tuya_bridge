@@ -1,4 +1,4 @@
-# Bridge Satel Integra ↔ Tuya ↔ eBUS (RPi Zero W)
+# Bridge Satel Integra ↔ Tuya ↔ eBUS
 
 Szkielet działającej integracji między centralą Satel Integra 128 (moduł
 ETHM-1 Plus), urządzeniami Tuya (lokalnie) oraz danymi z kotła Wolf (eBUS).
@@ -9,10 +9,13 @@ To jest **działający szkielet**, nie gotowe "pod klucz" rozwiązanie -
 kilka miejsc wymaga uzupełnienia danymi specyficznymi dla Twojej instalacji
 (adresy IP, klucze, numery wejść) oraz jednej rzeczy do zweryfikowania:
 
-- **Dokładny format URL dla "Wejść IP" ETHM-1 Plus** (`satel/virtual_inputs/url_template`
-  w `config.example.yaml`) - skopiuj rzeczywisty adres/parametry z zakładki
-  "Wejścia IP" w DLOADX po skonfigurowaniu konkretnego wejścia. Firmware może
-  różnić się formatem zapytania między wersjami.
+- **Tryb "http" wirtualnych wejść IP** (`satel.virtual_inputs.mode: http`,
+  patrz "Wyjście reguły ruchu: aktywacja wirtualnego wejścia IP Satela"
+  niżej) - opcjonalna alternatywa dla domyślnego trybu "library". Jeśli z
+  niej korzystasz: dokładny format URL (`satel.virtual_inputs.url_template`
+  w `config.example.yaml`) skopiuj z zakładki "Wejścia IP" w DLOADX po
+  skonfigurowaniu konkretnego wejścia - firmware może różnić się formatem
+  zapytania między wersjami.
 - **Wersja biblioteki `satel_integra`** (`bridge/satel_client.py`) - nasz
   kod jest napisany pod STARE, prywatne API pakietu (linia 0.3.x: konstruktor
   `AsyncSatel(host, port, loop, ...)`, `monitor_status()`, `keep_alive()`,
@@ -67,9 +70,10 @@ zależności, np. `uiprotect>=6.0`, i tak już wymaga Python ≥3.10).
 
 ## Instalacja
 
-**Zalecany sposób: Docker** (działa tak samo na RPi Zero W jak i na
-zwykłym Linuksie/amd64 - jeden obraz budowany **lokalnie**, z
-`docker-compose.yml` w tym repo, nic nigdzie nie jest publikowane):
+**Docker to JEDYNY oficjalnie wspierany sposób uruchomienia** (działa tak
+samo na RPi jak i na zwykłym Linuksie/amd64 - jeden obraz budowany
+**lokalnie**, z `docker-compose.yml` w tym repo, nic nigdzie nie jest
+publikowane):
 
 ```bash
 mkdir -p data
@@ -79,15 +83,20 @@ docker compose up -d --build
 
 Otwórz `http://<adres-hosta>:8090/setup` w przeglądarce i przejdź kreator.
 Pełny opis (rebuild po `git pull`, logi, profile, sieć LAN, bezpieczeństwo
-obrazu) - patrz sekcja "Uruchomienie w Dockerze" niżej.
+obrazu) - patrz sekcja "Uruchomienie w Dockerze" niżej. Docker Compose sam
+dba o autostart po restarcie hosta (`restart: unless-stopped`) - nie trzeba
+osobno konfigurować usługi systemd.
 
-### Alternatywa: bez Dockera (venv)
+### Instalacja bezpośrednio na hoście (bez Dockera) - PRZESTARZAŁE
 
-Dla instalacji bezpośrednio na hoście (bez kontenerów) - wymaga ręcznego
-zarządzania zależnościami Pythona i (opcjonalnie) usługą systemd
-(patrz "Uruchomienie jako usługa systemd" niżej, żeby proces wstawał po
-restarcie - Docker Compose robi to automatycznie przez `restart:
-unless-stopped`, więc przy Dockerze ten krok nie jest potrzebny):
+Ta ścieżka (venv + ręczna usługa systemd, patrz "Uruchomienie jako usługa
+systemd" niżej) **nie jest już oficjalnie wspierana** - projekt zakłada
+Docker jako jedyne testowane środowisko uruchomieniowe. Zostaje udokumentowana
+niżej wyłącznie dla zaawansowanych użytkowników, którzy świadomie wolą
+zarządzać zależnościami Pythona ręcznie (np. brak Dockera na hoście z innych
+powodów) - bez gwarancji, że wszystkie funkcje (w tym automatyczny restart
+przez panel, patrz "🔄 Zrestartuj bridge i panel teraz") będą działać tak
+samo jak pod Dockerem:
 
 ```bash
 sudo apt update && sudo apt install -y python3-venv python3-pip
@@ -1426,17 +1435,63 @@ tego samego powodu listą wyboru zamiast gołego numeru do wpisania na
 pamięć - podpowiada nazwane wejścia z `satel.monitored_zones` (zakładka
 ⚙ Ustawienia -> Satel), dokładnie tak jak wybór urządzenia docelowego wyżej.
 
+### Wirtualne wejścia IP Satela - dwa tryby wyzwalania
+
+"Wirtualne wejście IP" (nazwa w panelu) to sposób wywołania naruszenia w
+centrali Satel spoza samej centrali - np. żeby naruszenie czujki Tuya albo
+zmiana stanu urządzenia HomeWhiz zgłosiła się jako naruszenie WEJŚCIA w
+Satelu (integracja z systemami trzecimi, które rozumieją tylko wejścia
+Satela, np. stary panel/centralka monitoringu). Konfigurowane w zakładce
+🧩 Wtyczki -> Satel (`satel.virtual_inputs.inputs`), po jednej nazwie na
+wejście - patrz `satel.virtual_inputs.mode` w `config.example.yaml` dla
+wyboru trybu poniżej.
+
+**Tryb "library" (domyślny, zalecany)** - to NIE jest osobna funkcja
+sprzętowa ETHM-1 Plus. To zwykłe WYJŚCIE (numer 1-256, ten sam zakres co
+`satel.monitored_outputs`), które instalator zaprogramował w DLOADX tak,
+żeby jego załączenie symulowało wewnątrz centrali naruszenie wejścia/czujki.
+Wyzwala się je DOKŁADNIE tym samym poleceniem co zwykłe wyjście
+(`SatelIntegraClient.set_output`, biblioteka `satel_integra`) - przez TO
+SAMO połączenie integracji (port 7094) co reszta poleceń (uzbrojenie,
+sterowanie innymi wyjściami), uwierzytelnione wspólnym
+`satel.integration_key` - **bez** osobnego portu/klucza per wejście.
+Konfiguracja wejścia to więc tylko nazwa + numer wyjścia. Ponieważ centrala
+Satel Integra obsługuje TYLKO JEDNEGO klienta integracji naraz i serializuje
+na nim wszystkie polecenia zapisu, wyzwolenie wirtualnego wejścia w tym
+trybie CZEKA w tej samej kolejce co inne polecenia.
+
+**Tryb "http"** - funkcja "Wejścia IP" modułu ETHM-1 Plus: osobne żądanie
+HTTP GET na skonfigurowany w DLOADX port (`satel.virtual_inputs.port`), z
+kluczem PER WEJŚCIE (`satel.virtual_inputs.inputs.<nazwa>.key`) - patrz
+`SatelVirtualInputTrigger` w `bridge/satel_client.py`. Idzie przez OSOBNE
+połączenie, NIEZALEŻNE od kolejki poleceń protokołu integracji - użyj tego
+trybu, jeśli wyzwalanie wirtualnych wejść ma działać bez czekania za innymi
+poleceniami (np. w trakcie intensywnej automatyki). Koszt: dodatkowa
+konfiguracja (port + klucz per wejście) i zależność od wersji firmware
+ETHM-1 Plus (moduł NIE zwraca standardowego kodu HTTP 200 dla tych zapytań -
+klient celowo ignoruje kod odpowiedzi i traktuje sam brak wyjątku sieciowego
+jako sukces). W tym trybie aktywacja jest z definicji JEDNORAZOWYM impulsem
+- protokół nie ma odpowiednika "przywróć".
+
+Tryb wybiera się w zakładce ⚙ Ustawienia -> 🔌 Połączenia (sekcja "Wirtualne
+wejścia IP - tryb wyzwalania"), oddzielnie od samej listy nazwanych wejść.
+**Zmiana trybu nie przekształca automatycznie już zapisanych wierszy** -
+trzeba je ręcznie uzupełnić (numer albo numer+klucz, zależnie od trybu) i
+zapisać ponownie w zakładce Satel po zmianie trybu.
+
+**Przycisk "TEST"** obok pola klucza integracji (zakładka Połączenia)
+pozwala jednorazowo sprawdzić działanie na żywo: w trybie "library" podaje
+się numer wyjścia (używa już zapisanego klucza integracji, bez duplikowania
+go), w trybie "http" wybiera się z listy już skonfigurowanych wejść (bo ten
+tryb wymaga klucza per wejście, którego nie da się podać ad-hoc).
+
 ### Wyjście reguły ruchu: aktywacja wirtualnego wejścia IP Satela
 
 Akcja "Wyjście - co się dzieje" reguły ruchu może, zamiast włączać/wyłączać
-urządzenie docelowe albo uruchamiać scenę, **jednorazowo aktywować
-wirtualne wejście IP** Satela (ten sam mechanizm `SatelVirtualInputTrigger`,
-którego już używa akcja sceny `satel_virtual_input` oraz przycisk "Aktywuj"
-na stronie głównej - patrz "Ręczna aktywacja wirtualnego wejścia z panelu
-głównego" niżej) - np. żeby naruszenie czujki Tuya albo
-zmiana stanu urządzenia HomeWhiz zgłosiła się jako naruszenie WEJŚCIA w
-samej centrali Satel (integracja z systemami trzecimi, które rozumieją
-tylko wejścia Satela, np. stary panel/centralka monitoringu):
+urządzenie docelowe albo uruchamiać scenę, **aktywować wirtualne wejście
+IP** Satela (ten sam mechanizm, którego używa akcja sceny
+`satel_virtual_input` oraz przycisk "Aktywuj" na stronie głównej - patrz
+"Ręczna aktywacja..." niżej):
 
 ```yaml
 reguły_ruchu:
@@ -1454,34 +1509,32 @@ jest ściemniaczem). W edytorze (`/automations`) wybiera się z listy
 wyboru "Aktywuj wejście IP Satela" w polu "Akcja".
 
 **Czas włączenia (`duration_seconds`)** działa analogicznie do włączenia
-urządzenia (patrz "System urządzenia docelowego" wyżej) - z jednym
-zastrzeżeniem wynikającym z samego protokołu: `SatelVirtualInputTrigger`
-ma WYŁĄCZNIE jednorazowe wywołanie HTTP GET, wywołujące naruszenie (patrz
-"Ręczna aktywacja..." niżej) - ETHM-1 Plus nie udostępnia osobnego
-wywołania "przywróć". "Aktywacja" i "dezaktywacja" to więc DWA wywołania
-tego samego `trigger()`, tak jak dwukrotne naciśnięcie tego samego
-przycisku:
+urządzenia (patrz "System urządzenia docelowego" wyżej) - w trybie
+"library" to REALNE włączenie/wyłączenie wyjścia (`set_output`), dokładnie
+jak dla wyjścia Satela:
 
 - **Puste albo `0`** - "do ustania naruszenia/wyłączenia wyzwalacza":
-  reguła wywołuje `trigger()` przy "violated" (aktywacja) i JESZCZE RAZ
-  przy "restored" (dezaktywacja) - jedna reguła sama obsługuje obie
-  strony (jak `RulesEngine._is_until_restored` dla urządzeń), niezależnie
-  od `trigger_on`.
-- **Dodatnia liczba sekund** - wywołuje `trigger()` teraz (na wyzwolenie
-  wskazane przez `trigger_on`, domyślnie "violated"), potem samo wywołuje
-  go DRUGI RAZ po upływie czasu (`RulesEngine._run_virtual_input_for_duration`) -
-  DOKŁADNIE jedno wyzwolenie źródła uruchamia całą sekwencję, tryb "do
-  ustania" jest wtedy wyłączony.
+  reguła włącza wyjście przy "violated" i wyłącza je przy "restored" -
+  jedna reguła sama obsługuje obie strony (jak dla urządzenia/wyjścia),
+  niezależnie od `trigger_on`.
+- **Dodatnia liczba sekund** - włącza wyjście teraz (na wyzwolenie
+  wskazane przez `trigger_on`, domyślnie "violated"), potem samo wyłącza
+  je po upływie czasu - DOKŁADNIE jedno wyzwolenie źródła uruchamia całą
+  sekwencję, tryb "do ustania" jest wtedy wyłączony.
+
+W trybie "http" `duration_seconds` działa analogicznie, ale ponieważ
+aktywacja jest jednorazowym impulsem (brak odpowiednika "przywróć" w tym
+protokole), "włączenie" i "wyłączenie" to DWA wywołania tego samego żądania
+HTTP - jak dwukrotne naciśnięcie tego samego przycisku.
 
 ### Ręczna aktywacja wirtualnego wejścia z panelu głównego
 
 Strona główna (`/`) ma osobną kartę "Wirtualne wejścia IP (Satel)" z
 przyciskiem "▶ Aktywuj" przy każdym skonfigurowanym wirtualnym wejściu
 (`satel.virtual_inputs.inputs`, zakładka 🧩 Wtyczki -> Satel) - do
-jednorazowego, ręcznego wywołania niezależnie od automatyzacji. Wirtualne
-wejście IP to tylko jednorazowa akcja (naruszenie wysyłane przez HTTP GET
-do ETHM-1 Plus), bez żadnego stanu do odczytania - stąd sam przycisk, bez
-statusu jak przy wejściach/wyjściach wyżej na tej samej stronie.
+jednorazowego, ręcznego wywołania niezależnie od automatyzacji (bez stanu
+do odczytania - stąd sam przycisk, bez statusu jak przy wejściach/
+wyjściach wyżej na tej samej stronie).
 
 Wymaga zalogowania (jak reszta sterowania - uzbrojenie/rozbrojenie). Panel
 webowy to osobny proces bez żywego połączenia z Satelem, więc kliknięcie
@@ -1854,12 +1907,13 @@ np. zdarzenie z Satela i odczyt z Tuyi w tej samej chwili dostaną różne
 (`toLocaleString`, strefa czasowa/lokalizacja przeglądarki), co jest
 zamierzone i normalne.
 
-## Uruchomienie jako usługa systemd
+## Uruchomienie jako usługa systemd (PRZESTARZAŁE)
 
-Dotyczy tylko instalacji **bez Dockera** (patrz "Alternatywa: bez Dockera
-(venv)" w sekcji "Instalacja" wyżej) - przy Dockerze auto-restart po
-awarii/restarcie hosta załatwia `restart: unless-stopped` w
-`docker-compose.yml`, ten krok jest wtedy zbędny.
+Dotyczy TYLKO przestarzałej instalacji **bez Dockera** (patrz "Instalacja
+bezpośrednio na hoście (bez Dockera) - PRZESTARZAŁE" w sekcji "Instalacja"
+wyżej) - przy Dockerze (jedynej oficjalnie wspieranej ścieżce) auto-restart
+po awarii/restarcie hosta załatwia `restart: unless-stopped` w
+`docker-compose.yml`, ten krok jest zbędny.
 
 ```ini
 # /etc/systemd/system/satel-tuya-bridge.service
@@ -1890,8 +1944,11 @@ Analogicznie dla panelu webowego (drugi plik `.service`, np.
 
 ## Uruchomienie w Dockerze
 
-**To jest zalecany, główny sposób uruchomienia** (patrz też skrócony
-szybki start w sekcji "Instalacja" wyżej) - jeden obraz (`Dockerfile`),
+**To jest JEDYNY oficjalnie wspierany sposób uruchomienia** (patrz też
+skrócony szybki start w sekcji "Instalacja" wyżej; instalacja bezpośrednio
+na hoście istnieje wyłącznie jako przestarzała, nietestowana alternatywa -
+patrz "Instalacja bezpośrednio na hoście (bez Dockera) - PRZESTARZAŁE") -
+jeden obraz (`Dockerfile`),
 budowany **w całości lokalnie** poleceniem `docker compose build`/`up
 --build` z plików w tym repo (nic nie jest publikowane ani pobierane z
 żadnego prywatnego rejestru - obraz bazowy `python:3.11-slim` pochodzi z

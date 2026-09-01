@@ -126,9 +126,48 @@
       <div class="field"><label>Port</label><input type="number" id="conn_satel_port" placeholder="7094"></div>
       <div class="field"><label>Klucz integracji</label><input type="password" id="conn_satel_key" placeholder="(bez zmian)"></div>
       <div class="field"><label>Strefa główna (numer)</label><input type="number" id="conn_satel_partition" placeholder="1"></div>
-      <div class="field"><label>Port wejść IP (ETHM-1 Plus)</label><input type="number" id="conn_satel_vi_port" placeholder="8888"></div>
     </div>
     <div class="secret-hint" id="conn_satel_key_hint"></div>
+
+    <div class="field-group" style="margin-top: 14px;">
+      <label>Wirtualne wejścia IP - tryb wyzwalania</label>
+      <div class="section-hint" style="margin: 0 0 10px;">
+        <strong>Biblioteka satel_integra</strong> (zalecane) - zwykłe wyjście
+        Satela, przez to samo połączenie integracji co reszta poleceń
+        (uzbrojenie, sterowanie wyjściami) - te polecenia CZEKAJĄ w jednej
+        kolejce, bo centrala obsługuje tylko jednego klienta integracji
+        naraz. <strong>HTTP (Wejścia IP ETHM-1 Plus)</strong> - osobne
+        połączenie, NIEZALEŻNE od tej kolejki (nie blokuje/nie jest
+        blokowane przez inne polecenia), kosztem osobnego portu i klucza
+        PER WEJŚCIE (z DLOADX) - dostępność zależy od wersji firmware.
+      </div>
+      <div class="conn-grid">
+        <div class="field">
+          <label>Tryb</label>
+          <select id="conn_satel_vi_mode">
+            <option value="library">Biblioteka satel_integra (zalecane)</option>
+            <option value="http">HTTP (Wejścia IP ETHM-1 Plus)</option>
+          </select>
+        </div>
+        <div class="field" id="conn_satel_vi_port_field" hidden>
+          <label>Port HTTP (ETHM-1 Plus)</label>
+          <input type="number" id="conn_satel_vi_port" placeholder="8888">
+        </div>
+      </div>
+    </div>
+
+    <div class="discover-row" id="satelTestLibraryRow">
+      <label for="satelTestOutputNumber" style="margin: 0;">Numer wyjścia</label>
+      <input type="number" id="satelTestOutputNumber" min="1" max="256" style="width: 70px;" placeholder="np. 15">
+      <button type="button" class="secondary" id="satelTestOutputBtn">TEST</button>
+      <span class="discover-status" id="satelTestOutputStatus">Jednorazowo włącza/wyłącza podane wyjście (m.in. wirtualne wejście IP) - używa JUŻ ZAPISANEGO klucza integracji wyżej, wymaga zapisanego adresu/portu.</span>
+    </div>
+    <div class="discover-row" id="satelTestHttpRow" hidden>
+      <label for="satelTestVirtualInputName" style="margin: 0;">Wirtualne wejście</label>
+      <select id="satelTestVirtualInputName" style="max-width: 220px;"></select>
+      <button type="button" class="secondary" id="satelTestHttpBtn">TEST</button>
+      <span class="discover-status" id="satelTestHttpStatus">Wysyła żądanie HTTP dla wybranego, JUŻ SKONFIGUROWANEGO wejścia (z kluczem z DLOADX) - patrz zakładka Satel.</span>
+    </div>
   </div>
 
   <div class="field-group">
@@ -304,6 +343,7 @@
 
   <div class="field-group">
     <label>Wirtualne wejścia IP (do scen/reguł ruchu - zakładka 🎬 Automatyzacje)</label>
+    <div class="section-hint" id="virtualInputsModeHint" style="margin: 0 0 10px;"></div>
     <div id="virtualInputsRows"></div>
     <button type="button" class="add-row-btn" id="addVirtualInputBtn">+ Dodaj wirtualne wejście</button>
   </div>
@@ -430,10 +470,12 @@ document.getElementById('loadConnectionsBtn').addEventListener('click', async ()
     document.getElementById('conn_satel_host').value = data.satel.host || '';
     document.getElementById('conn_satel_port').value = data.satel.port || '';
     document.getElementById('conn_satel_partition').value = data.satel.partition || '';
-    document.getElementById('conn_satel_vi_port').value = data.satel.virtual_inputs_port || '';
     document.getElementById('conn_satel_key_hint').textContent = data.satel.integration_key_set
       ? 'Klucz integracji jest już ustawiony - zostaw pole puste, żeby go nie zmieniać.'
       : 'Klucz integracji NIE jest jeszcze ustawiony.';
+    document.getElementById('conn_satel_vi_mode').value = data.satel.virtual_inputs_mode || 'library';
+    document.getElementById('conn_satel_vi_port').value = data.satel.virtual_inputs_port || '';
+    syncVirtualInputModeUI();
 
     document.getElementById('conn_ebus_host').value = data.ebus.mqtt_host || '';
     document.getElementById('conn_ebus_port').value = data.ebus.mqtt_port || '';
@@ -455,8 +497,9 @@ document.getElementById('saveConnectionsBtn').addEventListener('click', async ()
       host: document.getElementById('conn_satel_host').value.trim(),
       port: document.getElementById('conn_satel_port').value,
       partition: document.getElementById('conn_satel_partition').value,
-      virtual_inputs_port: document.getElementById('conn_satel_vi_port').value,
       integration_key: document.getElementById('conn_satel_key').value,
+      virtual_inputs_mode: document.getElementById('conn_satel_vi_mode').value,
+      virtual_inputs_port: document.getElementById('conn_satel_vi_port').value,
     },
     ebus: {
       mqtt_host: document.getElementById('conn_ebus_host').value.trim(),
@@ -503,6 +546,79 @@ document.getElementById('saveConnectionsBtn').addEventListener('click', async ()
     }
   } catch (e) {
     showMsg('connectionsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+function syncVirtualInputModeUI() {
+  const isHttp = document.getElementById('conn_satel_vi_mode').value === 'http';
+  document.getElementById('conn_satel_vi_port_field').hidden = !isHttp;
+  document.getElementById('satelTestLibraryRow').hidden = isHttp;
+  document.getElementById('satelTestHttpRow').hidden = !isHttp;
+  if (isHttp) loadVirtualInputNamesForTest();
+}
+document.getElementById('conn_satel_vi_mode').addEventListener('change', syncVirtualInputModeUI);
+
+async function loadVirtualInputNamesForTest() {
+  const select = document.getElementById('satelTestVirtualInputName');
+  select.innerHTML = '<option value="">(wczytywanie...)</option>';
+  try {
+    const data = await (await fetch('/api/satel/virtual-inputs')).json();
+    const names = data.virtual_inputs || [];
+    select.innerHTML = names.length
+      ? names.map(n => `<option value="${n}">${n}</option>`).join('')
+      : '<option value="">(brak skonfigurowanych - zakładka Satel)</option>';
+  } catch (e) {
+    select.innerHTML = '<option value="">(błąd wczytywania)</option>';
+  }
+}
+
+document.getElementById('satelTestOutputBtn').addEventListener('click', async () => {
+  const status = document.getElementById('satelTestOutputStatus');
+  const outputNumber = parseInt(document.getElementById('satelTestOutputNumber').value, 10);
+  if (!outputNumber || outputNumber < 1 || outputNumber > 256) {
+    status.textContent = '❌ Podaj numer wyjścia (1-256)';
+    return;
+  }
+  const btn = document.getElementById('satelTestOutputBtn');
+  btn.disabled = true;
+  status.textContent = 'Testuję...';
+  try {
+    const resp = await authorizedFetch('/api/satel/test-output', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ output_number: outputNumber, state: true }),
+    });
+    const data = await resp.json();
+    status.textContent = resp.ok ? '✅ ' + data.message : '❌ ' + (data.error || 'Błąd testu');
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('satelTestHttpBtn').addEventListener('click', async () => {
+  const status = document.getElementById('satelTestHttpStatus');
+  const name = document.getElementById('satelTestVirtualInputName').value;
+  if (!name) {
+    status.textContent = '❌ Wybierz wirtualne wejście';
+    return;
+  }
+  const btn = document.getElementById('satelTestHttpBtn');
+  btn.disabled = true;
+  status.textContent = 'Testuję...';
+  try {
+    const resp = await authorizedFetch('/api/satel/test-output', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, state: true }),
+    });
+    const data = await resp.json();
+    status.textContent = resp.ok ? '✅ ' + data.message : '❌ ' + (data.error || 'Błąd testu');
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
   }
 });
 
@@ -873,6 +989,12 @@ function collectZoneOrOutputRows(containerId) {
     .filter(r => r.name && r.number);
 }
 
+// Tryb wirtualnych wejść IP (satel.virtual_inputs.mode) - NIE edytowalny
+// tutaj (to robi się w zakładce Połączenia, patrz conn_satel_vi_mode) -
+// tylko odczytany z GET /api/config/satel-fields, żeby wiedzieć, czy
+// pokazać pole klucza per wiersz (tryb "http"). Ustawiane w loadSatelFields().
+let currentVirtualInputMode = 'library';
+
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');
   const row = document.createElement('div');
@@ -880,7 +1002,7 @@ function addVirtualInputRow(initial) {
   row.innerHTML = `
     <input type="text" placeholder="nazwa (np. motion_hall_camera)" class="vi-name">
     <input type="number" placeholder="numer wejścia" class="vi-number" style="max-width: 120px;">
-    <input type="text" placeholder="klucz z DLOADX" class="vi-key">
+    <input type="text" placeholder="klucz z DLOADX" class="vi-key" ${currentVirtualInputMode === 'http' ? '' : 'hidden'}>
     <button type="button" class="row-remove">✕</button>`;
   if (initial) {
     row.querySelector('.vi-name').value = initial.name ?? '';
@@ -902,6 +1024,10 @@ function collectVirtualInputs() {
 
 async function loadSatelFields() {
   const data = await (await fetch('/api/config/satel-fields')).json();
+  currentVirtualInputMode = data.virtual_inputs_mode || 'library';
+  document.getElementById('virtualInputsModeHint').textContent = currentVirtualInputMode === 'http'
+    ? 'Tryb: HTTP (Wejścia IP ETHM-1 Plus) - podaj też klucz z DLOADX dla każdego wejścia. Zmiana trybu: zakładka Połączenia.'
+    : 'Tryb: biblioteka satel_integra (zalecane) - wystarczy numer wyjścia, bez klucza. Zmiana trybu: zakładka Połączenia.';
   (data.partitions || []).forEach(p => addNameNumberRow('partitionsRows', p));
   (data.monitored_zones || []).forEach(z => addZoneOrOutputRow('zonesRows', z, SATEL_ZONE_TYPES));
   (data.monitored_outputs || []).forEach(o => addZoneOrOutputRow('outputsRows', o, SATEL_OUTPUT_TYPES));

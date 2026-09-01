@@ -75,9 +75,6 @@ class RulesEngine:
         grace_seconds = (notify_cfg or {}).get("grace_seconds", 120)
 
         self.tuya = _build_tuya_controller(config.tuya)
-        self.satel_virtual_inputs = SatelVirtualInputTrigger(
-            config.satel["host"], config.satel["virtual_inputs"]
-        )
         self.satel = SatelIntegraClient(
             config.satel["host"],
             config.satel["port"],
@@ -85,10 +82,21 @@ class RulesEngine:
             config.satel.get("partition", 1),
             monitored_zones=config.satel.get("monitored_zones"),
             monitored_outputs=config.satel.get("monitored_outputs"),
+            virtual_inputs=config.satel.get("virtual_inputs", {}).get("inputs"),
             history=self.history,
             notify_cfg=notify_cfg,
             grace_seconds=grace_seconds,
             status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 15),
+        )
+        # Tryb "http" wirtualnych wejść IP (satel.virtual_inputs.mode) - osobne
+        # połączenie HTTP, niezależne od kolejki poleceń protokołu integracji
+        # (patrz obszerny docstring bridge/satel_client.py). Konstruowany
+        # BEZWARUNKOWO (jak wcześniej) - tani, nie otwiera żadnego połączenia
+        # dopóki .trigger() nie zostanie wywołane - używany tylko gdy
+        # _vi_mode == "http" (patrz _trigger_virtual_input/_set_target_state).
+        self._vi_mode = config.satel.get("virtual_inputs", {}).get("mode", "library")
+        self.satel_virtual_inputs = SatelVirtualInputTrigger(
+            config.satel["host"], config.satel.get("virtual_inputs", {}),
         )
         self._active_timers: dict[str, asyncio.Task] = {}
         # Ostatnia znana wartość statusu per (source, nazwa urządzenia) -
@@ -120,7 +128,9 @@ class RulesEngine:
         # Sceny - wspólny fundament dla harmonogramów, eskalacji i
         # automatyki kotła (patrz bridge/scenes.py)
         self.scenes = SceneRunner(
-            config.raw.get("scenes", []), self.tuya, self.satel, self.satel_virtual_inputs, history=self.history,
+            config.raw.get("scenes", []), self.tuya, self.satel,
+            satel_virtual_inputs=self.satel_virtual_inputs, virtual_input_mode=self._vi_mode,
+            history=self.history,
         )
         self.boiler_automation = BoilerAutomation(config.raw.get("boiler_rules", []), self.scenes)
         self.presence_simulation = PresenceSimulation(
@@ -340,59 +350,24 @@ class RulesEngine:
             return
 
         if "virtual_input" in rule:
-            # Aktywacja wejścia IP Satela (SatelVirtualInputTrigger) jako
-            # akcja reguły ruchu - ta gałąź musi zwrócić PRZED
-            # `device = rule["target_device"]` niżej (taka reguła w ogóle
-            # nie ma tego pola). "Czas włączenia" działa analogicznie do
-            # urządzenia docelowego, tylko że SatelVirtualInputTrigger ma
-            # WYŁĄCZNIE jednorazowe naruszenie (trigger()) - protokół ETHM-1
-            # Plus nie ma osobnego wywołania "przywróć" - więc zarówno
-            # "aktywuj", jak i (po czasie/przy ustaniu naruszenia)
-            # "dezaktywuj" to ten sam trigger() wywołany drugi raz, tak jak
-            # ponowne naciśnięcie tego samego przycisku.
-            vi_name = rule["virtual_input"]
-            timer_key = f"virtual_input:{vi_name}"
-            if timer_key in self._active_timers and not self._active_timers[timer_key].done():
-                self._active_timers[timer_key].cancel()
-
-            if self._is_until_restored(rule):
-                await self.satel_virtual_inputs.trigger(vi_name)
-                logger.info(
-                    "Reguła ruchu: %s(%s) -> wejście IP '%s' (%s, do ustania naruszenia/wyłączenia wyzwalacza)",
-                    source, zone_or_device_id, vi_name,
-                    "dezaktywacja" if trigger == "restored" else "aktywacja",
-                )
-                self.history.write_event(
-                    "motion", source=f"{source}:{zone_or_device_id}",
-                    detail={"virtual_input": vi_name, "until_restored": True, "trigger": trigger},
-                )
-                await self._chain_trigger(rule, trigger, _chain_depth)
-                return
-
-            duration = rule.get("duration_seconds")
-            rule_name = rule.get("name")
-            self._active_timers[timer_key] = asyncio.create_task(
-                self._run_virtual_input_for_duration(vi_name, duration, rule_name)
-            )
-            logger.info(
-                "Reguła ruchu: %s(%s) -> wejście IP '%s' na %ss",
-                source, zone_or_device_id, vi_name, duration,
-            )
-            self.history.write_event(
-                "motion", source=f"{source}:{zone_or_device_id}",
-                detail={"virtual_input": vi_name, "duration_seconds": duration},
-            )
-            await self._chain_trigger(rule, trigger, _chain_depth)
-            return
-
-        device = rule["target_device"]
-        # target_system: "tuya" (domyślne, wsteczna kompatybilność ze
-        # starymi regułami bez tego pola) albo "satel_output" - `device`
-        # jest wtedy NAZWĄ wyjścia (klucz w satel.monitored_outputs), nie
-        # urządzeniem Tuya. Patrz _set_target_state/_run_on_for_duration
-        # niżej - to one rozróżniają system, reszta tej metody jest
-        # wspólna dla obu.
-        target_system = rule.get("target_system", "tuya")
+            # Aktywacja "wirtualnego wejścia IP" Satela jako akcja reguły
+            # ruchu - to zwykłe WYJŚCIE Satela pod inną nazwą w UI (patrz
+            # docstring bridge/satel_client.py), więc od tego miejsca leci
+            # DOKŁADNIE tą samą wspólną ścieżką co akcja "wyjście Satela"/
+            # urządzenie Tuya niżej (ten sam _set_target_state/
+            # _run_on_for_duration, z REALNYM bool wł/wył przez
+            # `set_output`) - wystarczy znormalizować nazwy pól.
+            device = rule["virtual_input"]
+            target_system = "satel_virtual_input"
+        else:
+            device = rule["target_device"]
+            # target_system: "tuya" (domyślne, wsteczna kompatybilność ze
+            # starymi regułami bez tego pola) albo "satel_output" - `device`
+            # jest wtedy NAZWĄ wyjścia (klucz w satel.monitored_outputs), nie
+            # urządzeniem Tuya. Patrz _set_target_state/_run_on_for_duration
+            # niżej - to one rozróżniają system, reszta tej metody jest
+            # wspólna dla obu.
+            target_system = rule.get("target_system", "tuya")
 
         # jeśli timer już trwa dla tego urządzenia - zawsze go anuluj
         # (kolejne wyzwolenie reguły "włącz na czas" przedłuża włączenie
@@ -460,12 +435,21 @@ class RulesEngine:
     async def _set_target_state(
         self, target_system: str, device: str, on: bool, dimmer: int | None = None,
     ) -> None:
-        """Włącza/wyłącza CEL akcji reguły ruchu - Tuya (domyślnie) albo
-        wyjście Satela (target_system: "satel_output", `device` to wtedy
-        NAZWA wyjścia, klucz w satel.monitored_outputs, nie numer). Jeden
-        wspólny punkt dla obu systemów, z którego korzystają akcja "wyłącz
-        urządzenie", tryb "aż do ustania naruszenia" i _run_on_for_duration
-        niżej - żadne z nich nie musi osobno rozróżniać systemu."""
+        """Włącza/wyłącza CEL akcji reguły ruchu - Tuya (domyślnie), wyjście
+        Satela (target_system: "satel_output", `device` to wtedy NAZWA
+        wyjścia, klucz w satel.monitored_outputs) albo "wirtualne wejście
+        IP" Satela (target_system: "satel_virtual_input", `device` to NAZWA
+        - patrz _trigger_virtual_input niżej, który obsługuje OBA tryby,
+        "library" i "http"). Jeden wspólny punkt dla wszystkich trzech, z
+        którego korzystają akcja "wyłącz urządzenie", tryb "aż do ustania
+        naruszenia" i _run_on_for_duration niżej - żadne z nich nie musi
+        osobno rozróżniać systemu.
+
+        UWAGA tryb "http": funkcja "Wejścia IP" ETHM-1 Plus jest z definicji
+        JEDNORAZOWYM impulsem (brak odpowiednika "przywróć" w tym
+        protokole) - `on`/`off` są więc w tym trybie NIEROZRÓŻNIALNE, oba
+        po prostu wywołują ten sam trigger() (jak dwukrotne naciśnięcie
+        tego samego przycisku) - patrz _trigger_virtual_input."""
         if target_system == "satel_output":
             output_number = self.satel.monitored_outputs.get(device)
             if output_number is None:
@@ -475,6 +459,8 @@ class RulesEngine:
                 )
                 return
             await self.satel.set_output(output_number, on)
+        elif target_system == "satel_virtual_input":
+            await self._trigger_virtual_input(device, on)
         elif on:
             await self.tuya.turn_on(device, dimmer)
         else:
@@ -485,9 +471,9 @@ class RulesEngine:
     ) -> None:
         """Włącza cel na czas `duration`, potem sam wyłącza - dla Tuya
         deleguje do tuya.turn_on_for_duration() (własna logika), dla
-        wyjścia Satela robi to samodzielnie (AsyncSatel nie ma
-        odpowiednika: włącz -> śpij -> wyłącz). Owija to zapisem statusu
-        "automation:<nazwa reguły>" (kategoria "automation") na czas
+        wyjścia/wirtualnego wejścia Satela robi to samodzielnie (AsyncSatel
+        nie ma odpowiednika: włącz -> śpij -> wyłącz). Owija to zapisem
+        statusu "automation:<nazwa reguły>" (kategoria "automation") na czas
         trwania włączenia - dzięki temu inna reguła/scena może w warunku
         (state) sprawdzić "czy TA reguła jest właśnie aktywna" (patrz
         analogiczny mechanizm w SceneRunner.run(), bridge/scenes.py).
@@ -497,33 +483,12 @@ class RulesEngine:
         if rule_name:
             self.history.set_status(f"automation:{rule_name}", "automation", "uruchomiona", label=rule_name)
         try:
-            if target_system == "satel_output":
+            if target_system in ("satel_output", "satel_virtual_input"):
                 await self._set_target_state(target_system, device, True)
                 await asyncio.sleep(duration)
                 await self._set_target_state(target_system, device, False)
             else:
                 await self.tuya.turn_on_for_duration(device, duration, dimmer)
-        finally:
-            if rule_name:
-                self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)
-
-    async def _run_virtual_input_for_duration(
-        self, name: str, duration: float, rule_name: str | None,
-    ) -> None:
-        """Odpowiednik _run_on_for_duration wyżej dla akcji "Aktywuj
-        wejście IP Satela" - w odróżnieniu od urządzenia (bool wł/wył) nie
-        ma tu osobnego wywołania "wyłącz": SatelVirtualInputTrigger.trigger()
-        to WYŁĄCZNIE jednorazowe naruszenie (protokół ETHM-1 Plus nie ma
-        odpowiednika "przywróć"), więc "aktywacja" i "dezaktywacja po
-        czasie" to ten sam trigger() wywołany dwa razy - jak dwukrotne
-        naciśnięcie tego samego przycisku. Status automation:<nazwa> - jak
-        wyżej, tylko dla nazwanych reguł."""
-        if rule_name:
-            self.history.set_status(f"automation:{rule_name}", "automation", "uruchomiona", label=rule_name)
-        try:
-            await self.satel_virtual_inputs.trigger(name)
-            await asyncio.sleep(duration)
-            await self.satel_virtual_inputs.trigger(name)
         finally:
             if rule_name:
                 self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)
@@ -576,6 +541,32 @@ class RulesEngine:
             target, f"motion_rule_{idx}", "chain", rule.get("name", "?"), trigger, _chain_depth + 1,
         )
 
+    async def _trigger_virtual_input(self, name: str, state: bool = True) -> None:
+        """Wyzwala "wirtualne wejście IP" Satela po nazwie - JEDYNY punkt w
+        RulesEngine, który zna oba tryby (satel.virtual_inputs.mode, patrz
+        obszerny docstring bridge/satel_client.py):
+        - "library" (domyślny): zwykłe wyjście Satela, set_output() przez
+          już istniejące połączenie integracji.
+        - "http": funkcja "Wejścia IP" ETHM-1 Plus, osobne połączenie HTTP
+          (SatelVirtualInputTrigger) - JEDNORAZOWY impuls, `state` jest w
+          tym trybie ignorowane (protokół nie ma odpowiednika "przywróć").
+
+        Wspólny punkt zarówno dla _set_target_state (pełna ścieżka reguły
+        ruchu z realnym wł/wył w trybie "library"), jak i dla miejsc, które
+        NIE przez nią przechodzą (zmiana stanu światła Tuya, reguła kamery,
+        ręczna aktywacja z panelu - patrz _execute_command)."""
+        if self._vi_mode == "http":
+            await self.satel_virtual_inputs.trigger(name)
+            return
+        output_number = self.satel.virtual_inputs.get(name)
+        if output_number is None:
+            logger.warning(
+                "Nieznane wirtualne wejście IP Satela '%s' (sprawdź zakładkę "
+                "⚙ Ustawienia -> Satel) - pomijam", name,
+            )
+            return
+        await self.satel.set_output(output_number, state)
+
     # ------------------------------------------------------------------
     # Zmiana stanu światła Tuya -> wirtualne wejście ETHM
     # ------------------------------------------------------------------
@@ -584,7 +575,7 @@ class RulesEngine:
             return
         for rule in self.config.light_to_satel_rules:
             if rule["source_device"] == device_name:
-                await self.satel_virtual_inputs.trigger(rule["virtual_input"])
+                await self._trigger_virtual_input(rule["virtual_input"])
                 self.history.write_event(
                     "light_to_satel", source=f"tuya:{device_name}",
                     detail={"virtual_input": rule["virtual_input"]},
@@ -634,7 +625,7 @@ class RulesEngine:
 
             action = rule["action"]
             if action == "virtual_input":
-                await self.satel_virtual_inputs.trigger(rule["virtual_input"])
+                await self._trigger_virtual_input(rule["virtual_input"])
             elif action == "output":
                 await self.satel.set_output(rule["output_number"], True)
             elif action == "arm":
@@ -751,10 +742,10 @@ class RulesEngine:
             elif cmd["command"] == "satel_virtual_input":
                 # Ręczna aktywacja z panelu głównego (osobna od automatyzacji -
                 # patrz RulesEngine._fire_motion_rule, gałąź "virtual_input" in
-                # rule) - ten sam SatelVirtualInputTrigger, ale wywołany na
+                # rule) - ta sama _trigger_virtual_input, ale wywołana na
                 # żądanie użytkownika zamiast przez regułę ruchu.
                 name = cmd["params"]["name"]
-                await self.satel_virtual_inputs.trigger(name)
+                await self._trigger_virtual_input(name)
                 self.history.mark_command_done(cmd["id"], {"message": f"Aktywowano wirtualne wejście '{name}'"})
             elif cmd["command"] == "reload_config":
                 result = await self.reload_config()
@@ -828,19 +819,29 @@ class RulesEngine:
         # start()).
         self.satel.monitored_zones = new_config.satel.get("monitored_zones", {})
         self.satel.monitored_outputs = new_config.satel.get("monitored_outputs", {})
+        # "Wirtualne wejścia IP" - oba tryby (mode: library/http, patrz
+        # docstring bridge/satel_client.py) AKTUALIZOWANE na żywo, bez
+        # restartu - tryb "http" idzie przez OSOBNY klient
+        # (SatelVirtualInputTrigger, bez trwałego połączenia do zerwania,
+        # więc bezpiecznie podmieniamy go w całości, w odróżnieniu od
+        # self.satel wyżej).
+        self.satel.virtual_inputs = new_config.satel.get("virtual_inputs", {}).get("inputs", {})
+        self._vi_mode = new_config.satel.get("virtual_inputs", {}).get("mode", "library")
+        self.satel_virtual_inputs = SatelVirtualInputTrigger(
+            new_config.satel["host"], new_config.satel.get("virtual_inputs", {}),
+        )
         # Interwał cyklicznego dopytywania o stan (patrz satel_client.py:
         # _periodic_status_sync) - W ODRÓŻNIENIU od host/portu/klucza,
         # DZIAŁA NA ŻYWO od razu, bez restartu procesu - pętla czyta ten
         # atrybut na bieżąco przy każdym obrocie, nie tylko raz na starcie.
         self.satel.status_poll_interval_seconds = new_config.satel.get("status_poll_interval_seconds", 15)
-        self.satel_virtual_inputs = SatelVirtualInputTrigger(
-            new_config.satel["host"], new_config.satel["virtual_inputs"],
-        )
 
         # Sceny/automatyka kotła/alarmy progowe - budowane na bieżąco z
         # configu przy każdym wywołaniu, bezpieczne do pełnej podmiany.
         self.scenes = SceneRunner(
-            new_config.raw.get("scenes", []), self.tuya, self.satel, self.satel_virtual_inputs, history=self.history,
+            new_config.raw.get("scenes", []), self.tuya, self.satel,
+            satel_virtual_inputs=self.satel_virtual_inputs, virtual_input_mode=self._vi_mode,
+            history=self.history,
         )
         self.boiler_automation = BoilerAutomation(new_config.raw.get("boiler_rules", []), self.scenes)
         self.alarms = AlarmEngine(new_config.raw.get("alarm_rules", []), self.history, notify_cfg=self._notify_cfg)

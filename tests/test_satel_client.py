@@ -5,8 +5,10 @@ import contextlib
 
 import pytest
 
-from bridge.satel_client import SatelIntegraClient, discover_active_zones_and_outputs
+from bridge.satel_client import SatelIntegraClient, SatelVirtualInputTrigger, discover_active_zones_and_outputs
 from bridge.satel_client import test_connection as satel_test_connection
+from bridge.satel_client import test_output as satel_test_output
+from bridge.satel_client import test_virtual_input_http as satel_test_virtual_input_http
 # ^ import aliasu jest CELOWY, nie kosmetyczny - pytest zbiera każdą funkcję
 # o nazwie pasującej do "test_*" widoczną w module testowym, więc zwykłe
 # "from ... import test_connection" sprawiłoby, że pytest próbowałby
@@ -835,3 +837,153 @@ class TestSendAndConfirm:
 
         with pytest.raises(ConnectionError, match="nie potwierdziła"):
             await client._send_and_confirm("test", send(), timeout=0.05)
+
+
+class FakeAsyncSatelOutput(FakeAsyncSatel):
+    """Do testowania test_output() - tryb "library" wirtualnych wejść IP
+    (patrz obszerny docstring bridge/satel_client.py) - jednorazowe
+    połączenie + set_output + potwierdzenie (0xEF), jak
+    SatelIntegraClient.set_output, tylko bez pełnego SatelIntegraClient."""
+
+    def __init__(self, host, port, loop, confirm_error=None, hang_confirm=False, **kwargs):
+        super().__init__(host, port, loop, **kwargs)
+        self._command_status_event = asyncio.Event()
+        self._command_status = None
+        self._confirm_error = confirm_error
+        self._hang_confirm = hang_confirm
+        self.set_output_calls: list[tuple] = []
+
+    async def connect(self):
+        result = await super().connect()
+
+        class FakeWriter:
+            def close(self):
+                pass
+        self._writer = FakeWriter()
+        return result
+
+    async def set_output(self, code, output_id, state):
+        self.set_output_calls.append((code, output_id, state))
+        if not self._hang_confirm:
+            self._command_status = {"error": self._confirm_error or "OK"}
+            self._command_status_event.set()
+
+
+class TestTestOutput:
+    """test_output() - przycisk "TEST" obok pola klucza integracji
+    (tryb "library")."""
+
+    def _patch(self, monkeypatch, **kwargs):
+        import satel_integra.satel_integra as satel_module
+        monkeypatch.setattr(
+            satel_module, "AsyncSatel",
+            lambda host, port, loop: FakeAsyncSatelOutput(host, port, loop, **kwargs),
+        )
+
+    async def test_succeeds_and_calls_set_output_with_given_args(self, monkeypatch):
+        self._patch(monkeypatch)
+        await satel_test_output("127.0.0.1", 7094, "1234", 15, True)  # nie powinno rzucić wyjątku
+
+    async def test_raises_connection_error_when_connect_fails(self, monkeypatch):
+        self._patch(monkeypatch, connect_result=False)
+        with pytest.raises(ConnectionError, match="127.0.0.1"):
+            await satel_test_output("127.0.0.1", 7094, "1234", 15, True)
+
+    async def test_raises_runtime_error_when_panel_rejects(self, monkeypatch):
+        self._patch(monkeypatch, confirm_error="User code not found")
+        with pytest.raises(RuntimeError, match="User code not found"):
+            await satel_test_output("127.0.0.1", 7094, "bad", 15, True)
+
+    async def test_raises_connection_error_on_confirm_timeout(self, monkeypatch):
+        self._patch(monkeypatch, hang_confirm=True)
+        with pytest.raises(ConnectionError, match="nie potwierdziła"):
+            await satel_test_output("127.0.0.1", 7094, "1234", 15, True, timeout_seconds=0.05)
+
+
+class _FakeHttpResponse:
+    def __init__(self, exc=None):
+        self._exc = exc
+
+    async def __aenter__(self):
+        if self._exc:
+            raise self._exc
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def read(self):
+        return b""
+
+
+class _FakeHttpSession:
+    def __init__(self, urls: list, exc=None):
+        self._urls = urls
+        self._exc = exc
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    def get(self, url, timeout=None):
+        self._urls.append(url)
+        return _FakeHttpResponse(self._exc)
+
+
+class TestVirtualInputHttpTrigger:
+    """SatelVirtualInputTrigger.trigger() i test_virtual_input_http() -
+    tryb "http" wirtualnych wejść IP (funkcja "Wejścia IP" ETHM-1 Plus,
+    patrz obszerny docstring bridge/satel_client.py)."""
+
+    def _patch_aiohttp(self, monkeypatch, urls: list, exc=None):
+        import aiohttp
+        monkeypatch.setattr(aiohttp, "ClientSession", lambda: _FakeHttpSession(urls, exc))
+
+    async def test_trigger_sends_get_with_key_and_input_number(self, monkeypatch):
+        urls = []
+        self._patch_aiohttp(monkeypatch, urls)
+        vi = SatelVirtualInputTrigger("192.168.1.50", {
+            "port": 8888,
+            "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}",
+            "inputs": {"motion_hall_camera": {"number": 17, "key": "KLUCZWE17"}},
+        })
+        await vi.trigger("motion_hall_camera")
+        assert urls == ["http://192.168.1.50:8888/input.cgi?key=KLUCZWE17&input=17"]
+
+    async def test_trigger_unknown_name_logs_and_does_not_raise(self, monkeypatch):
+        urls = []
+        self._patch_aiohttp(monkeypatch, urls)
+        vi = SatelVirtualInputTrigger("192.168.1.50", {"inputs": {}})
+        await vi.trigger("nieznane")  # nie powinno rzucić wyjątku
+        assert urls == []
+
+    async def test_trigger_uses_default_port_and_url_template_when_absent(self, monkeypatch):
+        """cfg bez "port"/"url_template" (np. stary config.yaml) dostaje
+        bezpieczne wartości domyślne - patrz DEFAULT_VIRTUAL_INPUT_HTTP_PORT/
+        DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE."""
+        urls = []
+        self._patch_aiohttp(monkeypatch, urls)
+        vi = SatelVirtualInputTrigger("192.168.1.50", {
+            "inputs": {"x": {"number": 1, "key": "k"}},
+        })
+        await vi.trigger("x")
+        assert urls == ["http://192.168.1.50:8888/input.cgi?key=k&input=1"]
+
+    async def test_test_virtual_input_http_succeeds_silently(self, monkeypatch):
+        urls = []
+        self._patch_aiohttp(monkeypatch, urls)
+        await satel_test_virtual_input_http(
+            "192.168.1.50", 8888, "http://{host}:{port}/input.cgi?key={key}&input={input_no}", "k", 17,
+        )  # nie powinno rzucić wyjątku
+        assert urls == ["http://192.168.1.50:8888/input.cgi?key=k&input=17"]
+
+    async def test_test_virtual_input_http_raises_connection_error_on_network_failure(self, monkeypatch):
+        import aiohttp
+        urls = []
+        self._patch_aiohttp(monkeypatch, urls, exc=aiohttp.ClientConnectionError("refused"))
+        with pytest.raises(ConnectionError, match="Błąd sieci"):
+            await satel_test_virtual_input_http(
+                "192.168.1.50", 8888, "http://{host}:{port}/input.cgi?key={key}&input={input_no}", "k", 17,
+            )

@@ -68,6 +68,10 @@ class FakeSatel:
         self.calls: list[tuple] = []
         self.monitored_zones: dict = {}
         self.monitored_outputs: dict = {}
+        # nazwa -> numer wyjścia dla "wirtualnych wejść IP" (patrz docstring
+        # bridge/satel_client.py - to zwykłe wyjście, wyzwalane tym samym
+        # set_output() poniżej, więc testy odczytują ten sam self.calls).
+        self.virtual_inputs: dict = {}
         self.armed_partition_numbers: set[int] = set()
         self._zone_cb = None
         self._output_cb = None
@@ -96,6 +100,11 @@ class FakeSatel:
 
 
 class FakeVirtualInputs:
+    """Fałszywy SatelVirtualInputTrigger (tryb "http" wirtualnych wejść IP,
+    patrz obszerny docstring bridge/satel_client.py) - do testowania TEGO
+    trybu bez prawdziwych żądań HTTP. Tryb domyślny ("library") NIE go
+    używa - patrz fake_satel.virtual_inputs/fake_satel.calls zamiast tego."""
+
     def __init__(self):
         self.calls: list[tuple] = []
 

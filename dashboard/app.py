@@ -37,6 +37,9 @@ from bridge.logging_config import apply_log_levels, VALID_LEVELS as LOG_LEVELS
 from bridge.ebus_client import discover_topics as discover_ebus_topics, BackgroundTopicDiscovery
 from bridge.history_store import HistoryStore
 from bridge.satel_client import test_connection as test_satel_connection
+from bridge.satel_client import test_output as test_satel_output
+from bridge.satel_client import test_virtual_input_http as test_satel_virtual_input_http
+from bridge.satel_client import DEFAULT_VIRTUAL_INPUT_HTTP_PORT, DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE
 from bridge.satel_client import discover_active_zones_and_outputs
 from bridge.tuya_local import scan_network as scan_tuya_network, fetch_cloud_devices as fetch_tuya_cloud_devices
 from dashboard.auth import AuthGuard, require_auth, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
@@ -396,6 +399,78 @@ def api_setup_test_satel_connection():
     })
 
 
+@app.route("/api/satel/test-output", methods=["POST"])
+@require_auth()
+def api_satel_test_output():
+    """Przycisk "TEST" obok pola klucza integracji (zakładka ⚙ Ustawienia ->
+    Połączenia) - jednorazowo wyzwala wyjście/wirtualne wejście IP, tak jak
+    JUŻ ZAPISANY tryb (satel.virtual_inputs.mode, patrz obszerny docstring
+    bridge/satel_client.py) - świadomie BEZ osobnego pola klucza integracji
+    w tym żądaniu (nie duplikujemy go). Wymaga zalogowania - w odróżnieniu
+    od "Testuj połączenie" wyżej, TO polecenie faktycznie steruje wyjściem/
+    wejściem centrali (nie tylko sprawdza osiągalność sieciową).
+
+    Tryb "library" (domyślny): body {output_number, state} - set_output
+    przez połączenie integracji, wymaga zapisanego klucza integracji.
+    Tryb "http": body {name, state} - `name` to nazwa JUŻ SKONFIGUROWANEGO
+    wirtualnego wejścia (satel.virtual_inputs.inputs), bo ten tryb wymaga
+    klucza PER WEJŚCIE, którego nie da się podać ad-hoc z tego formularza."""
+    satel_cfg = config_raw.get("satel", {})
+    host = (satel_cfg.get("host") or "").strip()
+    port = satel_cfg.get("port")
+    if not host or not port:
+        return jsonify({"error": "Najpierw zapisz adres IP i port centrali (zakładka Połączenia)"}), 400
+
+    vi_cfg = satel_cfg.get("virtual_inputs", {})
+    mode = vi_cfg.get("mode", "library")
+    payload = request.get_json(silent=True) or {}
+    state = bool(payload.get("state", True))
+
+    if mode == "http":
+        name = (payload.get("name") or "").strip()
+        entry = vi_cfg.get("inputs", {}).get(name)
+        if not isinstance(entry, dict) or not entry.get("number") or not entry.get("key"):
+            return jsonify({"error": "Wybierz skonfigurowane wirtualne wejście (z kluczem z DLOADX)"}), 400
+        vi_port = vi_cfg.get("port", DEFAULT_VIRTUAL_INPUT_HTTP_PORT)
+        url_template = vi_cfg.get("url_template", DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE)
+        try:
+            asyncio.run(test_satel_virtual_input_http(
+                host, int(vi_port), url_template, entry["key"], int(entry["number"]),
+            ))
+        except ConnectionError as exc:
+            return jsonify({"error": str(exc)}), 502
+        except Exception as exc:
+            return jsonify({"error": f"Błąd testu wejścia IP (http): {exc}"}), 502
+        return jsonify({
+            "message": f"Wysłano żądanie HTTP dla wejścia '{name}' (tryb http) - "
+                       "ETHM-1 Plus nie potwierdza odbioru, brak wyjątku sieciowego = wysłano.",
+        })
+
+    integration_key = satel_cfg.get("integration_key") or ""
+    if not integration_key:
+        return jsonify({"error": "Najpierw zapisz klucz integracji (zakładka Połączenia)"}), 400
+    try:
+        output_number = int(payload.get("output_number"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Podaj numer wyjścia (1-256)"}), 400
+    if not (1 <= output_number <= 256):
+        return jsonify({"error": "Numer wyjścia musi być w zakresie 1-256"}), 400
+
+    try:
+        asyncio.run(test_satel_output(host, int(port), integration_key, output_number, state))
+    except ImportError:
+        return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
+    except (ConnectionError, RuntimeError) as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:
+        return jsonify({"error": f"Błąd testu wyjścia: {exc}"}), 502
+
+    return jsonify({
+        "message": f"Wyjście {output_number} ustawione na "
+                    f"{'włączone' if state else 'wyłączone'} - centrala potwierdziła komendę.",
+    })
+
+
 @app.route("/api/discover/satel", methods=["POST"])
 def api_discover_satel():
     """Best-effort wykrywanie AKTYWNYCH stref/wyjść Satela (krok 1
@@ -467,7 +542,7 @@ def api_setup_save():
     try:
         config_dict = build_config_dict(form)
         automations_dict = build_automations_dict(form)
-        satel_fields_dict = build_satel_fields_dict(form)
+        satel_fields_dict = build_satel_fields_dict(form, form.get("satel", {}).get("virtual_inputs_mode") or "library")
         tuya_devices_dict = build_tuya_devices_dict(form)
     except (ValueError, TypeError) as exc:
         logger.warning("Błąd budowania configu z formularza kreatora: %s", exc)
@@ -671,6 +746,11 @@ def api_config_satel_fields_get():
         "monitored_zones": zones_to_rows(satel.get("monitored_zones", {}), satel.get("zone_types", {})),
         "monitored_outputs": zones_to_rows(satel.get("monitored_outputs", {}), satel.get("output_types", {})),
         "virtual_inputs": virtual_inputs_to_rows(satel.get("virtual_inputs", {}).get("inputs", {})),
+        # Tryb wirtualnych wejść IP (satel.virtual_inputs.mode, patrz
+        # docstring bridge/satel_client.py) - CZYTELNY tu (nie edytowalny,
+        # to robi się w zakładce Połączenia), żeby ten formularz wiedział,
+        # czy pokazać pole klucza per wiersz (tryb "http") czy nie.
+        "virtual_inputs_mode": satel.get("virtual_inputs", {}).get("mode", "library"),
         # Mapy nazwa -> rodzaj, osobno (obok wierszy wyżej) - wygodne dla
         # panelu głównego (index.html), który dopasowuje typ do statusu po
         # etykiecie (status.label), bez potrzeby osobnego zapytania.
@@ -690,11 +770,16 @@ def api_config_satel_fields_post():
     if not isinstance(form, dict):
         return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
 
-    errors = validate_satel_fields(form)
+    # Tryb wirtualnych wejść IP jest AUTORYTATYWNIE w config.yaml (zakładka
+    # Połączenia, nie ten formularz) - czytamy go stąd, nigdy z przesłanego
+    # `form`, żeby klient nie mógł podszyć się pod inny tryb niż faktycznie
+    # zapisany (patrz walidacja klucza w validate_satel_fields).
+    vi_mode = config_raw.get("satel", {}).get("virtual_inputs", {}).get("mode", "library")
+    errors = validate_satel_fields(form, vi_mode)
     if errors:
         return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
-    satel_fields_dict = build_satel_fields_dict(form)
+    satel_fields_dict = build_satel_fields_dict(form, vi_mode)
     config_store.set("satel_fields", satel_fields_dict)
 
     config = BridgeConfig.load(config_path)

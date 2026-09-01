@@ -294,6 +294,10 @@ function collectZoneOrOutputRows(containerId) {
     .filter(r => r.name && r.number);
 }
 
+// Tryb wirtualnych wejść IP - patrz analogiczny komentarz w
+// dashboard/templates/config.html. NIE edytowalny tutaj.
+let currentVirtualInputMode = 'library';
+
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');
   const row = document.createElement('div');
@@ -301,7 +305,7 @@ function addVirtualInputRow(initial) {
   row.innerHTML = `
     <input type="text" placeholder="nazwa (np. motion_hall_camera)" class="vi-name">
     <input type="number" placeholder="numer wejścia" class="vi-number" style="max-width: 120px;">
-    <input type="text" placeholder="klucz z DLOADX" class="vi-key">
+    <input type="text" placeholder="klucz z DLOADX" class="vi-key" ${currentVirtualInputMode === 'http' ? '' : 'hidden'}>
     <button type="button" class="row-remove">✕</button>`;
   if (initial) {
     row.querySelector('.vi-name').value = initial.name ?? '';
@@ -323,6 +327,7 @@ function collectVirtualInputs() {
 
 async function loadSatelFields() {
   const data = await (await fetch('/api/plugins/satel/fields')).json();
+  currentVirtualInputMode = data.virtual_inputs_mode || 'library';
   (data.partitions || []).forEach(p => addNameNumberRow('partitionsRows', p));
   (data.monitored_zones || []).forEach(z => addZoneOrOutputRow('zonesRows', z, SATEL_ZONE_TYPES));
   (data.monitored_outputs || []).forEach(o => addZoneOrOutputRow('outputsRows', o, SATEL_OUTPUT_TYPES));
