@@ -806,6 +806,11 @@ class RulesEngine:
         self.config = new_config
         apply_log_levels(new_config.raw)
         self._rule_name_index = self._build_rule_name_index()
+        # Współrzędne do liczenia wschodu/zachodu słońca (bridge/scheduling.py,
+        # okna czasowe "sunset"/"sunrise") - CZYSTE DANE bez żadnego żywego
+        # połączenia do zerwania, więc (w odróżnieniu od hosta/portu/klucza
+        # Satela) działa na żywo od razu, bez restartu procesu.
+        self._location_cfg = new_config.raw.get("location")
 
         # Tuya (lokalne + chmurowe) - bezpieczne do podmiany w całości: ani
         # TuyaLocalController, ani TuyaCloudController nie trzymają żywego
@@ -848,6 +853,7 @@ class RulesEngine:
         # starcie procesu było enabled=false, ta pętla już się zakończyła -
         # dopiero TERAZ włączenie tej opcji wciąż wymaga restartu procesu.
         self.presence_simulation.cfg = new_config.raw.get("presence_simulation", {})
+        self.presence_simulation.location_cfg = self._location_cfg
 
         # eBUS - AKTUALIZOWANY na istniejącym listenerze (subskrybuje nowe
         # tematy bez zrywania połączenia MQTT, patrz ebus_client.py).

@@ -44,6 +44,7 @@ from dashboard.setup import (
     build_config_dict, validate, build_automations_dict, validate_automations,
     build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
     build_connections_patch, validate_connections, connections_to_form, list_plugins,
+    build_location_patch, validate_location,
     draft_path_for, load_draft, save_draft, delete_draft,
     dict_to_name_number_rows, zones_to_rows, virtual_inputs_to_rows,
     tuya_devices_to_rows, zigbee_gateways_to_rows, clean_sensors_payload,
@@ -786,6 +787,39 @@ def api_config_connections_post():
         "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
                     "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
     })
+
+
+@app.route("/api/config/location", methods=["GET"])
+@require_auth()
+def api_config_location_get():
+    """Współrzędne do liczenia wschodu/zachodu słońca (bridge/scheduling.py,
+    okna czasowe "sunset"/"sunrise" w HARMONOGRAM reguł ruchu) - zakładka
+    🔌 Połączenia, sekcja "Lokalizacja". W odróżnieniu od reszty pól tej
+    zakładki (host/port/klucze) NIE wymaga restartu procesu po zapisie -
+    patrz POST niżej i RulesEngine.reload_config."""
+    return jsonify(config_raw.get("location") or {})
+
+
+@app.route("/api/config/location", methods=["POST"])
+@require_auth()
+def api_config_location_post():
+    form = request.get_json(silent=True)
+    if not isinstance(form, dict):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+    errors = validate_location(form)
+    if errors:
+        return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+    current = config_store.get("config")
+    new_config = build_location_patch(form, current)
+    config_store.set("config", new_config)
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+    _enqueue_bridge_reload()
+
+    return jsonify({"message": _RELOAD_MESSAGE})
 
 
 @app.route("/api/config/export-yaml", methods=["GET"])
