@@ -474,6 +474,13 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
             built["scene"] = scene_name
         elif virtual_input_name:
             built["virtual_input"] = virtual_input_name
+            # Analogicznie do "czasu włączenia" urządzenia wyżej - puste
+            # pole NIE zapisuje duration_seconds wcale (jego BRAK = "do
+            # ustania naruszenia/wyłączenia wyzwalacza"), jawne 0 jest
+            # zapisywane wprost (patrz RulesEngine._is_until_restored -
+            # obie wartości znaczą to samo).
+            if rule.get("duration_seconds") not in (None, ""):
+                built["duration_seconds"] = int(rule["duration_seconds"])
         else:
             built["target_device"] = rule["target_device"]
             # target_system=tuya jest domyślne i pomijane w zapisie (patrz

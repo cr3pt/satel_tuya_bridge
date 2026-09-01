@@ -1425,17 +1425,34 @@ reguły_ruchu:
     source_device: "czujnik_drzwi_garazowych"
     trigger_value: "włączone"
     virtual_input: motion_hall_camera
+    duration_seconds: 30       # opcjonalne - patrz "Czas włączenia" niżej
 ```
 
 Pole `virtual_input` (nazwa - klucz w `satel.virtual_inputs.inputs`,
 zakładka 🧩 Wtyczki -> Satel) zastępuje `target_device`/`target_system`/
-`duration_seconds`/`dimmer_level_percent` - w odróżnieniu od włączenia
-urządzenia to jednorazowe wywołanie HTTP GET (patrz niżej), więc tryb "aż
-do ustania naruszenia" i jasność % nie mają tu zastosowania. `trigger_on`
-(domyślnie "violated") wciąż działa normalnie - np. `trigger_on: restored`
-wywoła wejście IP dopiero, gdy naruszenie ustanie, a nie gdy się pojawi.
-W edytorze (`/automations`) wybiera się z listy wyboru "Aktywuj wejście IP
-Satela" w polu "Akcja".
+`dimmer_level_percent` - jasność % nie ma tu zastosowania (wejście IP nie
+jest ściemniaczem). W edytorze (`/automations`) wybiera się z listy
+wyboru "Aktywuj wejście IP Satela" w polu "Akcja".
+
+**Czas włączenia (`duration_seconds`)** działa analogicznie do włączenia
+urządzenia (patrz "System urządzenia docelowego" wyżej) - z jednym
+zastrzeżeniem wynikającym z samego protokołu: `SatelVirtualInputTrigger`
+ma WYŁĄCZNIE jednorazowe wywołanie HTTP GET, wywołujące naruszenie (patrz
+"Ręczna aktywacja..." niżej) - ETHM-1 Plus nie udostępnia osobnego
+wywołania "przywróć". "Aktywacja" i "dezaktywacja" to więc DWA wywołania
+tego samego `trigger()`, tak jak dwukrotne naciśnięcie tego samego
+przycisku:
+
+- **Puste albo `0`** - "do ustania naruszenia/wyłączenia wyzwalacza":
+  reguła wywołuje `trigger()` przy "violated" (aktywacja) i JESZCZE RAZ
+  przy "restored" (dezaktywacja) - jedna reguła sama obsługuje obie
+  strony (jak `RulesEngine._is_until_restored` dla urządzeń), niezależnie
+  od `trigger_on`.
+- **Dodatnia liczba sekund** - wywołuje `trigger()` teraz (na wyzwolenie
+  wskazane przez `trigger_on`, domyślnie "violated"), potem samo wywołuje
+  go DRUGI RAZ po upływie czasu (`RulesEngine._run_virtual_input_for_duration`) -
+  DOKŁADNIE jedno wyzwolenie źródła uruchamia całą sekwencję, tryb "do
+  ustania" jest wtedy wyłączony.
 
 ### Ręczna aktywacja wirtualnego wejścia z panelu głównego
 
