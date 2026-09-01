@@ -513,7 +513,14 @@ function statusCardClass(category, value) {
   if (category === 'satel_input') return v === 'naruszone' ? 'violated' : 'ok';
   if (category === 'tuya' && v === 'niedostępne') return 'violated';
   if (category === 'satel_output' || category === 'tuya') return v.startsWith('włącz') ? 'on' : 'off';
-  if (category === 'system_health') return v.startsWith('połączono') ? 'ok' : 'violated';
+  if (category === 'system_health') {
+    if (v.startsWith('połączono')) return 'ok';
+    // "wyłączono (wtyczka)" - świadomie wyłączona integracja, nie awaria -
+    // celowo BEZ koloru (ani czerwonego "violated", ani zielonego "ok"),
+    // żeby się wizualnie nie mylić z prawdziwym rozłączeniem.
+    if (v.startsWith('wyłączono (wtyczka)')) return '';
+    return 'violated';
+  }
   if (category === 'satel_partition') return v === 'uzbrojona' ? 'violated' : 'ok';
   return '';
 }

@@ -431,6 +431,37 @@ class TestSatelTestOutputEndpoint:
         assert resp.status_code == 200
         assert captured["name"] == "zmywarka"
 
+    def test_http_mode_ignores_stale_stored_url_template(self, client, monkeypatch):
+        """Regresja: url_template był kiedyś przechowywany w configu z
+        placeholderami {key}/{input_no} (sprzed poprawki protokołu - patrz
+        bridge/satel_client.py). Instalacje, które zapisały połączenie
+        PRZED tą poprawką, mają tę STARĄ wartość zamrożoną w dokumencie
+        "config" na stałe (setdefault nigdy jej nie nadpisywał) - endpoint
+        czytał ją bezkrytycznie, więc .format(host=..., port=..., name=...)
+        wywalał się KeyError: 'key' (zgłoszony błąd - realny użytkownik z
+        realnym sprzętem). Endpoint musi CAŁKOWICIE ignorować przechowaną
+        wartość i zawsze używać aktualnej stałej z kodu."""
+        import dashboard.app as app_module
+        current = app_module.config_store.get("config")
+        current["satel"]["virtual_inputs"]["mode"] = "http"
+        current["satel"]["virtual_inputs"]["url_template"] = (
+            "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
+        )
+        app_module.config_store.set("config", current)
+
+        captured = {}
+
+        async def fake_test_http(host, port, url_template, name, **_kwargs):
+            captured["url_template"] = url_template
+
+        monkeypatch.setattr("dashboard.app.test_satel_virtual_input_http", fake_test_http)
+        resp = client.post(
+            "/api/satel/test-output", json={"name": "motion_hall", "state": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert captured["url_template"] == "http://{host}:{port}/{name}"
+
 
 class TestSystemLogsLoggersEndpoint:
     """/api/system/logs/loggers - lista WYSTĘPUJĄCYCH nazw loggerów, do

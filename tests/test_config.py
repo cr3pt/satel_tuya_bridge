@@ -68,13 +68,15 @@ def test_missing_required_section_raises(tmp_path):
 def test_missing_virtual_inputs_section_gets_safe_defaults(tmp_path):
     """satel.virtual_inputs to jedyna sekcja, której RulesEngine.__init__
     NIE toleruje pustej/nieobecnej postaci - SatelVirtualInputTrigger (patrz
-    bridge/satel_client.py) czyta cfg["port"]/cfg["url_template"] przez
-    bracket-access i jest tworzony BEZWARUNKOWO, nawet gdy żadne wirtualne
-    wejście nie jest skonfigurowane. Config bez jawnie zapisanej sekcji
-    "virtual_inputs" (stary config.yaml sprzed tej funkcji, ręczna edycja,
-    częściowy import YAML) MUSI dostać te same wartości domyślne co kreator/
-    zakładka Połączenia (dashboard/setup.py), inaczej cały silnik reguł
-    wywala się KeyErrorem przy starcie/przeładowaniu configu."""
+    bridge/satel_client.py) czyta cfg["port"] przez bracket-access i jest
+    tworzony BEZWARUNKOWO, nawet gdy żadne wirtualne wejście nie jest
+    skonfigurowane ("url_template" NIE jest już czytany z configu w ogóle -
+    to stała w kodzie, patrz DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE). Config bez
+    jawnie zapisanej sekcji "virtual_inputs" (stary config.yaml sprzed tej
+    funkcji, ręczna edycja, częściowy import YAML) MUSI dostać te same
+    wartości domyślne co kreator/zakładka Połączenia (dashboard/setup.py),
+    inaczej cały silnik reguł wywala się KeyErrorem przy starcie/
+    przeładowaniu configu."""
     (tmp_path / "config.yaml").write_text(
         """
 satel:
@@ -91,7 +93,6 @@ ebus:
     )
     config = BridgeConfig.load(tmp_path / "config.yaml")
     assert config.satel["virtual_inputs"]["port"] == 8888
-    assert "{host}" in config.satel["virtual_inputs"]["url_template"]
     assert config.satel["virtual_inputs"]["inputs"] == {}
 
     from bridge.satel_client import SatelVirtualInputTrigger

@@ -910,13 +910,17 @@ class TestSatelConnectionForm:
         )
         assert patched["encryption_key"] is None
 
-    def test_patch_http_mode_url_template_has_no_key_or_number(self):
-        """Tryb "http" (funkcja "Wejścia IP" ETHM-1) to zwykły,
-        NIEUWIERZYTELNIONY GET - BEZ żadnego klucza/kodu DLOADX
-        (potwierdzone na prawdziwym sprzęcie), ścieżka URL to WPROST nazwa
-        wejścia - patrz obszerny docstring bridge/satel_client.py."""
+    def test_patch_does_not_store_url_template(self):
+        """"url_template" (tryb "http" - funkcja "Wejścia IP" ETHM-1) NIE
+        jest w ogóle zapisywany dla NOWEJ sekcji - to stała w kodzie (żaden
+        formularz go nie edytuje). Regresja: przechowywanie go groziło (i
+        groziło naprawdę - zgłoszony błąd) zamrożeniem STAREGO formatu URL
+        sprzed poprawki protokołu w instalacjach zapisanych wcześniej -
+        endpoint testu/RulesEngine już go w ogóle nie czytają (patrz
+        SatelVirtualInputTrigger), więc nawet stary, przetrwały wpis jest
+        nieszkodliwym, martwym polem."""
         patched = build_satel_connection_patch({"host": "1.2.3.4"}, {"host": "1.2.3.4"})
-        assert patched["virtual_inputs"]["url_template"] == "http://{host}:{port}/{name}"
+        assert "url_template" not in patched["virtual_inputs"]
 
     def test_patch_preserves_fields_not_in_this_form(self):
         """monitored_zones/partitions/zone_types itd. żyją w OSOBNYM

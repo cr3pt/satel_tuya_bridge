@@ -801,7 +801,9 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     config["satel"]["virtual_inputs"]["port"] = int(
         satel_form.get("virtual_inputs_port") or config["satel"]["virtual_inputs"].get("port") or 8888
     )
-    config["satel"]["virtual_inputs"].setdefault("url_template", "http://{host}:{port}/{name}")
+    # "url_template" CELOWO NIE jest tu ustawiany - to szczegół protokołu
+    # (żaden formularz go nie edytuje), SatelVirtualInputTrigger używa
+    # stałej wprost - patrz komentarz w bridge/config.py.
     config["satel"]["virtual_inputs"].setdefault("inputs", {})
     config["satel"].setdefault("outputs", {})
     config["satel"].setdefault("fields_file", "satel_fields.yaml")
@@ -1039,7 +1041,9 @@ def build_satel_connection_patch(form: dict, existing_satel_section: dict) -> di
     section["virtual_inputs"]["port"] = int(
         form.get("virtual_inputs_port") or section["virtual_inputs"].get("port") or 8888
     )
-    section["virtual_inputs"].setdefault("url_template", "http://{host}:{port}/{name}")
+    # "url_template" CELOWO NIE jest tu ustawiany - to szczegół protokołu
+    # (żaden formularz go nie edytuje), SatelVirtualInputTrigger używa
+    # stałej wprost - patrz komentarz w bridge/config.py.
     section["virtual_inputs"].setdefault("inputs", {})
     section.setdefault("outputs", {})
     section.setdefault("fields_file", "satel_fields.yaml")
@@ -1446,7 +1450,9 @@ def build_config_dict(form: dict) -> dict:
             "virtual_inputs": {
                 "mode": satel_form.get("virtual_inputs_mode") or "library",
                 "port": int(satel_form.get("virtual_inputs_port") or 8888),
-                "url_template": "http://{host}:{port}/{name}",
+                # "url_template" CELOWO NIE jest tu ustawiany - to szczegół
+                # protokołu, SatelVirtualInputTrigger używa stałej wprost -
+                # patrz komentarz w bridge/config.py.
                 "inputs": {},
             },
             "outputs": {},

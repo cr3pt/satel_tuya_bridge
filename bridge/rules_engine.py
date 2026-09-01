@@ -1256,10 +1256,17 @@ class RulesEngine:
             asyncio.create_task(self.satel.run_forever())
         else:
             logger.info("Satel wyłączony w ustawieniach (🧩 Wtyczki) - pomijam nawiązanie połączenia")
+            # BEZ TEGO: status "system_health" zostałby zamrożony na
+            # OSTATNIM stanie sprzed wyłączenia (np. "połączono" z minionej
+            # sesji) - panel pokazywałby więc żywe, zielone "połączono" dla
+            # wtyczki, która w ogóle nie próbuje się już łączyć. Ten wpis
+            # nadpisuje go od razu przy starcie procesu z enabled=false.
+            self.history.set_status("health:satel", "system_health", "wyłączono (wtyczka)", label="satel")
         if self.config.tuya.get("enabled", True):
             asyncio.create_task(self._tuya_status_poll_loop())
         else:
             logger.info("Tuya lokalnie wyłączone w ustawieniach (🧩 Wtyczki) - pomijam odpytywanie")
+            self.history.set_status("health:tuya_local", "system_health", "wyłączono (wtyczka)", label="tuya_local")
         asyncio.create_task(self.presence_simulation.run_forever())
         asyncio.create_task(self._command_poll_loop())
         asyncio.create_task(self._maintenance_loop())
@@ -1278,6 +1285,7 @@ class RulesEngine:
             self.ebus_listener.start()
         else:
             logger.info("eBUS wyłączony w ustawieniach (🧩 Wtyczki) - pomijam połączenie MQTT")
+            self.history.set_status("health:ebus_mqtt", "system_health", "wyłączono (wtyczka)", label="ebus_mqtt")
 
         # Kamera Tuya (opcjonalnie, jeśli skonfigurowana)
         if "cloud" in self.config.tuya:

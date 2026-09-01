@@ -866,10 +866,27 @@ class TestVirtualInputHttpTrigger:
         self._patch_aiohttp(monkeypatch, urls)
         vi = SatelVirtualInputTrigger("192.168.1.50", {
             "port": 9786,
-            "url_template": "http://{host}:{port}/{name}",
             "inputs": {"zmywarka": 17},
         })
         await vi.trigger("zmywarka")
+        assert urls == ["http://192.168.1.50:9786/zmywarka"]
+
+    async def test_trigger_ignores_stale_stored_url_template(self, monkeypatch):
+        """Regresja: url_template był kiedyś przechowywany w configu z
+        placeholderami {key}/{input_no} (sprzed poprawki protokołu) -
+        instalacje, które zapisały połączenie PRZED poprawką, mają tę
+        STARĄ wartość zamrożoną na stałe w bazie. Konstruktor musi
+        CAŁKOWICIE ignorować cfg["url_template"] i zawsze używać aktualnej
+        stałej z kodu - inaczej .format(host=..., port=..., name=...)
+        wywala się KeyError: 'key' (zgłoszony błąd, realny sprzęt)."""
+        urls = []
+        self._patch_aiohttp(monkeypatch, urls)
+        vi = SatelVirtualInputTrigger("192.168.1.50", {
+            "port": 9786,
+            "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}",
+            "inputs": {"zmywarka": 17},
+        })
+        await vi.trigger("zmywarka")  # nie powinno rzucić KeyError
         assert urls == ["http://192.168.1.50:9786/zmywarka"]
 
     async def test_trigger_unknown_name_logs_and_does_not_raise(self, monkeypatch):
@@ -879,10 +896,9 @@ class TestVirtualInputHttpTrigger:
         await vi.trigger("nieznane")  # nie powinno rzucić wyjątku
         assert urls == []
 
-    async def test_trigger_uses_default_port_and_url_template_when_absent(self, monkeypatch):
-        """cfg bez "port"/"url_template" (np. stary config.yaml) dostaje
-        bezpieczne wartości domyślne - patrz DEFAULT_VIRTUAL_INPUT_HTTP_PORT/
-        DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE."""
+    async def test_trigger_uses_default_port_when_absent(self, monkeypatch):
+        """cfg bez "port" (np. stary config.yaml) dostaje bezpieczną
+        wartość domyślną - patrz DEFAULT_VIRTUAL_INPUT_HTTP_PORT."""
         urls = []
         self._patch_aiohttp(monkeypatch, urls)
         vi = SatelVirtualInputTrigger("192.168.1.50", {"inputs": {"x": 1}})

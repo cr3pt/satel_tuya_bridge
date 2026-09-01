@@ -334,7 +334,12 @@ class SatelVirtualInputTrigger:
     def __init__(self, host: str, cfg: dict):
         self.host = host
         self.port = cfg.get("port", DEFAULT_VIRTUAL_INPUT_HTTP_PORT)
-        self.url_template = cfg.get("url_template", DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE)
+        # CELOWO stała, NIE cfg.get("url_template", ...) - to szczegół
+        # protokołu, żaden formularz nigdy go nie edytował, więc trzymanie
+        # go w configu tylko groziło (i groziło naprawdę - zgłoszony błąd)
+        # zamrożeniem STAREGO formatu URL (sprzed poprawki protokołu) w
+        # instalacjach, które zapisały connection PRZED tą poprawką.
+        self.url_template = DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE
         self.inputs = cfg.get("inputs", {})  # nazwa -> numer wejścia (int, nieużywany w trybie http)
 
     async def trigger(self, input_name: str, retries: int = 1) -> None:
