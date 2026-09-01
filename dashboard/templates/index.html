@@ -510,6 +510,12 @@ async function loadSatelFieldTypes() {
 
 function statusCardClass(category, value) {
   const v = (value || '').toString().toLowerCase();
+  // "brak danych (wtyczka wyłączona)" - satel.enabled=false w 🧩 Wtyczki,
+  // nigdy nie doszło do żadnego prawdziwego odczytu (patrz
+  // RulesEngine._seed_satel_status_labels) - celowo BEZ koloru, tak samo
+  // jak "wyłączono (wtyczka)" w system_health niżej, żeby się nie mylić
+  // z prawdziwym "OK"/"wyłączone" (co sugerowałoby żywą komunikację).
+  if (v.startsWith('brak danych (wtyczka wyłączona)')) return '';
   if (category === 'satel_input') return v === 'naruszone' ? 'violated' : 'ok';
   if (category === 'tuya' && v === 'niedostępne') return 'violated';
   if (category === 'satel_output' || category === 'tuya') return v.startsWith('włącz') ? 'on' : 'off';

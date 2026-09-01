@@ -1353,6 +1353,43 @@ class TestPluginDisabledHealthStatus:
         assert engine.history.get_status_value("health:tuya_local") != "wyłączono (wtyczka)"
         assert engine.history.get_status_value("health:ebus_mqtt") != "wyłączono (wtyczka)"
 
+    async def test_disabled_satel_overwrites_frozen_zone_status(self, engine, fake_satel):
+        """Zgłoszony błąd (drugi zrzut ekranu): mimo "wyłączono (wtyczka)"
+        na karcie system_health, sekcja "Wejścia Satel (czujki)" nadal
+        pokazywała "OK" ze świeżą etykietą czasu - bo _seed_satel_status_labels()
+        seeduje/POMIJA już zapisane klucze bez względu na enabled,
+        zostawiając ŻYWY stan "OK" sprzed wyłączenia tak, jakby to był
+        prawdziwy, aktualny odczyt z centrali."""
+        fake_satel.monitored_zones = {"Zmywarka": 1}
+        engine.history.set_status("satel_input:1", "satel_input", "OK", label="Zmywarka")
+        engine.config.satel["enabled"] = False
+        await engine.start()
+        assert engine.history.get_status_value("satel_input:1") == "brak danych (wtyczka wyłączona)"
+
+    async def test_disabled_satel_overwrites_frozen_output_status(self, engine, fake_satel):
+        fake_satel.monitored_outputs = {"Brama": 7}
+        engine.history.set_status("satel_output:7", "satel_output", "włączone", label="Brama")
+        engine.config.satel["enabled"] = False
+        await engine.start()
+        assert engine.history.get_status_value("satel_output:7") == "brak danych (wtyczka wyłączona)"
+
+    async def test_disabled_satel_overwrites_frozen_partition_status(self, engine):
+        engine.history.set_status("satel_partition:1", "satel_partition", "rozbrojona", label="Dom")
+        engine.config.satel["enabled"] = False
+        await engine.start()
+        assert engine.history.get_status_value("satel_partition:1") == "brak danych (wtyczka wyłączona)"
+
+    async def test_enabled_satel_seeds_ok_not_placeholder(self, engine, fake_satel):
+        fake_satel.monitored_zones = {"Zmywarka": 1}
+        await engine.start()
+        assert engine.history.get_status_value("satel_input:1") == "OK"
+
+    async def test_enabled_satel_does_not_overwrite_live_zone_status(self, engine, fake_satel):
+        fake_satel.monitored_zones = {"Zmywarka": 1}
+        engine.history.set_status("satel_input:1", "satel_input", "naruszone", label="Zmywarka")
+        await engine.start()
+        assert engine.history.get_status_value("satel_input:1") == "naruszone"
+
 
 class TestHomeWhizStatusSeeding:
     """_seed_homewhiz_status_labels() - urządzenie HomeWhiz od razu widoczne
