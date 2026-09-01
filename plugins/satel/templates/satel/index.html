@@ -326,13 +326,17 @@ let connectionSnapshot = null;
 // trybu (np. "Podaj numer wyjścia" mimo wybranego trybu HTTP z portem).
 let savedVirtualInputMode = 'library';
 
-document.getElementById('loadConnectionBtn').addEventListener('click', async () => {
+async function loadConnection(auto) {
   const status = document.getElementById('connectionLoadStatus');
   try {
     const resp = await authorizedFetch('/api/plugins/satel/connection');
     const data = await resp.json();
     if (!resp.ok) {
-      status.textContent = '❌ ' + (data.error || 'Błąd wczytywania');
+      // Auto-wczytanie przy starcie strony milczy o błędzie (strona i tak
+      // wymaga zalogowania, więc 401 tu nie powinno się zdarzyć w
+      // normalnym użyciu) - nie chcemy straszyć czerwonym komunikatem
+      // zanim użytkownik cokolwiek kliknął.
+      if (!auto) status.textContent = '❌ ' + (data.error || 'Błąd wczytywania');
       return;
     }
     connectionSnapshot = data;
@@ -355,9 +359,21 @@ document.getElementById('loadConnectionBtn').addEventListener('click', async () 
 
     status.textContent = '✅ Wczytano bieżące ustawienia.';
   } catch (e) {
-    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+    if (!auto) status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
   }
-});
+}
+document.getElementById('loadConnectionBtn').addEventListener('click', () => loadConnection(false));
+// Wczytujemy TEŻ automatycznie przy starcie strony (nie dopiero po
+// kliknięciu przycisku) - strona i tak wymaga zalogowania (globalna
+// bramka w dashboard/app.py), więc nie ma tu nic do ukrywania przed
+// niezalogowanym widzem. BEZ tego savedVirtualInputMode zostawał na
+// domyślnym 'library', dopóki ktoś nie kliknął "Wczytaj bieżące
+// ustawienia" - zmiana trybu na "http" i od razu kliknięcie TEST (bez
+// wcześniejszego wczytania) omijało wtedy całą blokadę niżej i wysyłało
+// żądanie z trybem, którego serwer wcale nie ma zapisanego, dając mylący
+// błąd z niewłaściwej gałęzi (zgłoszony błąd: "Podaj numer wyjścia" mimo
+// wybranego trybu HTTP z portem).
+loadConnection(true);
 
 document.getElementById('saveConnectionBtn').addEventListener('click', async () => {
   if (!connectionSnapshot) {
@@ -409,7 +425,11 @@ function syncVirtualInputModeUI() {
   // Ostrzeżenie + blokada TESTU, dopóki wybrany tryb różni się od
   // faktycznie zapisanego (patrz komentarz przy savedVirtualInputMode) -
   // inaczej TEST używałby po cichu innego trybu niż widoczny w formularzu.
-  const mismatch = connectionSnapshot !== null && selectedMode !== savedVirtualInputMode;
+  // Celowo BEZ warunku "tylko po wczytaniu" - savedVirtualInputMode ma
+  // sensowną domyślną wartość ('library') od razu, a loadConnection(true)
+  // i tak dogania ją automatycznie w tle zaraz po starcie strony (patrz
+  // niżej), więc to porównanie jest poprawne od pierwszej klatki.
+  const mismatch = selectedMode !== savedVirtualInputMode;
   const testOutputBtn = document.getElementById('testOutputBtn');
   const testHttpBtn = document.getElementById('testHttpBtn');
   testOutputBtn.disabled = mismatch;
