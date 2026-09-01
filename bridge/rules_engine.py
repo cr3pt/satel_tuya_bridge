@@ -78,7 +78,11 @@ class RulesEngine:
         self.satel = SatelIntegraClient(
             config.satel["host"],
             config.satel["port"],
-            config.satel["integration_key"],
+            # Opcjonalny - bez niego panel działa tylko do odczytu (patrz
+            # guardy w set_output/arm/disarm w bridge/satel_client.py), więc
+            # .get() zamiast [] - starszy ręcznie edytowany config.yaml mógł
+            # w ogóle nie mieć tego pola.
+            config.satel.get("integration_key") or "",
             config.satel.get("partition", 1),
             monitored_zones=config.satel.get("monitored_zones"),
             monitored_outputs=config.satel.get("monitored_outputs"),

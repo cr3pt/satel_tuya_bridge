@@ -290,10 +290,10 @@ Połączenia:
      nadpisania z importu) jest budowana na TYMCZASOWEJ kopii bazy i
      przepuszczana przez `BridgeConfig.load()` - dokładnie tę samą ścieżkę
      kodu, którą bridge/panel uruchamiają przy prawdziwym starcie procesu -
-     plus jawne sprawdzenie `satel.host`/`satel.port`/
-     `satel.integration_key` (pól, bez których proces i tak zaraz
-     wywaliłby się `KeyError`-em, a których sama obecność sekcji `satel`
-     jeszcze nie gwarantuje).
+     plus jawne sprawdzenie `satel.host`/`satel.port` (pól, bez których
+     proces i tak zaraz wywaliłby się `KeyError`-em, a których sama obecność
+     sekcji `satel` jeszcze nie gwarantuje). `satel.integration_key` jest
+     celowo POMINIĘTY tutaj - jest opcjonalny, patrz niżej.
 
   Jeśli którekolwiek z tych dwóch sprawdzeń się nie powiedzie, **nic nie
   jest zapisywane** - import jest odrzucany w całości z czytelnym opisem
@@ -1048,6 +1048,13 @@ zupełnie różne klucze, celowo osobne pola w konfiguracji - nie mylić ich:
   kroku 1) - **hasło protokołu integracji** (kod użytkownika DLOADX/GUARDX).
   Autoryzuje polecenia (uzbrojenie/rozbrojenie, sterowanie wyjściem),
   wysyłane przy KAŻDEJ komendzie. To NIE jest klucz szyfrowania transmisji.
+  **Opcjonalne** - odczyt stref/wyjść/partycji nie wymaga uwierzytelnienia
+  w protokole integracji, więc bez tego pola kreator i tak da się ukończyć,
+  a panel działa w trybie **tylko do odczytu** (`bridge/satel_client.py`:
+  `set_output()`/`arm()`/`disarm()` odrzucają wtedy komendę z czytelnym
+  komunikatem zamiast wysłać do centrali okaleczoną ramkę - `SatelWriteMessage`
+  po prostu POMIJA pusty kod zamiast go dopełnić). Dopisz klucz później w
+  ⚙ Ustawienia -> 🔌 Połączenia, żeby odblokować sterowanie.
 - **`satel.encryption_key`** (nowe pole, sekcja "Połączenia" w ustawieniach
   oraz krok 1 kreatora) - opcjonalny **klucz szyfrowania AES** transmisji
   TCP, jeśli centrala/moduł ETHM ma włączoną funkcję "Encrypted connections"

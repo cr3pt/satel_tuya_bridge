@@ -64,8 +64,13 @@ def validate(form: dict) -> list[str]:
     satel = form.get("satel", {})
     if not satel.get("host"):
         errors.append("Satel: adres IP centrali/modułu ETHM jest wymagany")
-    if not satel.get("integration_key"):
-        errors.append("Satel: klucz integracji (ustawiony w DLOADX) jest wymagany")
+    # Klucz integracji CELOWO opcjonalny - bez niego panel działa w trybie
+    # tylko do odczytu (stan wejść/wyjść/stref widoczny normalnie, protokół
+    # integracji Satela nie wymaga klucza do samego czytania), ale
+    # sterowanie (uzbrojenie/rozbrojenie/wyjścia) jest zablokowane z
+    # czytelnym komunikatem, patrz SatelIntegraClient.set_output/arm/disarm
+    # w bridge/satel_client.py. Klucz można dodać później w zakładce
+    # ⚙ Ustawienia -> 🔌 Połączenia, bez ponownego przechodzenia kreatora.
 
     ebus = form.get("ebus", {})
     if not ebus.get("mqtt_host"):
@@ -1084,9 +1089,16 @@ def list_plugins(config_raw: dict) -> list[dict]:
 
     state = {
         "satel": {
-            "enabled": satel.get("enabled", True) and bool(satel.get("host") and satel.get("integration_key")),
-            "configured": bool(satel.get("host") and satel.get("integration_key")),
-            "detail": f"{satel.get('host', '?')}:{satel.get('port', '?')}" if satel.get("host") else "nieskonfigurowana",
+            # Klucz integracji NIE jest wymagany do połączenia/odczytu (patrz
+            # obszerny komentarz w validate() wyżej) - tylko host decyduje o
+            # "skonfigurowaniu", "detail" niżej jawnie sygnalizuje brak klucza
+            # (sterowanie zablokowane, dopóki go nie dodasz w Połączeniach).
+            "enabled": satel.get("enabled", True) and bool(satel.get("host")),
+            "configured": bool(satel.get("host")),
+            "detail": (
+                f"{satel.get('host', '?')}:{satel.get('port', '?')}"
+                + ("" if satel.get("integration_key") else " (tylko odczyt - brak klucza integracji)")
+            ) if satel.get("host") else "nieskonfigurowana",
             "poll_interval_seconds": satel.get("status_poll_interval_seconds", 3),
         },
         "tuya_local": {
@@ -1298,7 +1310,9 @@ def build_config_dict(form: dict) -> dict:
         "satel": {
             "host": satel_form["host"],
             "port": int(satel_form.get("port", 7094)),
-            "integration_key": satel_form["integration_key"],
+            # Opcjonalny (patrz validate() wyżej) - puste = panel tylko do
+            # odczytu, dopóki klucz nie zostanie dodany w Połączeniach.
+            "integration_key": (satel_form.get("integration_key") or "").strip(),
             # Opcjonalny klucz szyfrowania transmisji (AES) - patrz
             # obszerny docstring bridge/satel_client.py, NIE mylić z
             # kluczem integracji wyżej. Puste/brak = brak szyfrowania.

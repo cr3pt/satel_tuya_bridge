@@ -200,7 +200,13 @@
       <div class="field"><label>Port (integration protocol)</label><input type="number" id="satel_port" value="7094"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Klucz integracji</label><input type="text" id="satel_integration_key" placeholder="ustawiony w DLOADX"></div>
+      <div class="field"><label>Klucz integracji (opcjonalny)</label><input type="text" id="satel_integration_key" placeholder="ustawiony w DLOADX - zostaw puste dla trybu tylko do odczytu"></div>
+    </div>
+    <div class="step-hint" style="margin: -6px 0 14px;">
+      Bez klucza panel będzie działał <b>tylko do odczytu</b> (podgląd stref/
+      wyjść/partycji) - (roz)uzbrajanie i sterowanie wyjściami będzie
+      zablokowane, dopóki nie dopiszesz klucza później w
+      ⚙ Ustawienia -> 🔌 Połączenia.
     </div>
     <div class="field-row">
       <div class="field" style="flex: none;">
@@ -1432,7 +1438,9 @@ function validateStep(n, data) {
   const errors = [];
   if (n === 1) {
     if (!data.satel.host) errors.push('Adres IP centrali/ETHM jest wymagany');
-    if (!data.satel.integration_key) errors.push('Klucz integracji jest wymagany');
+    // Klucz integracji jest CELOWO opcjonalny - bez niego panel działa tylko
+    // do odczytu (patrz krótki opis pod polem i README), więc brak walidacji
+    // "wymagany" tutaj.
     data.virtual_inputs.forEach((v, i) => {
       if (!(v.name && v.number && v.key)) errors.push(`Wirtualne wejście #${i + 1}: uzupełnij nazwę, numer i klucz (albo usuń wiersz)`);
     });

@@ -556,6 +556,16 @@ class SatelIntegraClient:
     async def set_output(self, output_number: int, state: bool) -> None:
         if self._client is None:
             raise RuntimeError("Klient Satel nie jest połączony - wywołaj connect() najpierw")
+        if not self.integration_key:
+            # Bez tego SatelWriteMessage.__init__ POMIJA całkiem segment kodu
+            # w ramce (jego `if code:` jest fałszywe dla pustego stringa),
+            # zamiast wypełnić go zerowym/domyślnym kodem - wysłałaby więc
+            # do centrali OKALECZONĄ ramkę zamiast czytelnie odrzuconej
+            # komendy. Lepiej odmówić tutaj, z czytelnym komunikatem.
+            raise RuntimeError(
+                "Sterowanie wymaga klucza integracji Satela - ustaw go w zakładce "
+                "⚙ Ustawienia -> 🔌 Połączenia (bez klucza panel działa tylko do odczytu)."
+            )
         from satel_integra.commands import SatelWriteCommand  # type: ignore
         from satel_integra.messages import SatelWriteMessage  # type: ignore
 
@@ -570,6 +580,13 @@ class SatelIntegraClient:
         naraz, np. [1, 2]."""
         if self._client is None:
             raise RuntimeError("Klient Satel nie jest połączony")
+        if not self.integration_key:
+            # Patrz komentarz w set_output() wyżej - bez klucza SatelWriteMessage
+            # wysłałaby okaleczoną ramkę zamiast czytelnie odrzuconej komendy.
+            raise RuntimeError(
+                "Sterowanie wymaga klucza integracji Satela - ustaw go w zakładce "
+                "⚙ Ustawienia -> 🔌 Połączenia (bez klucza panel działa tylko do odczytu)."
+            )
         from satel_integra.commands import SatelWriteCommand  # type: ignore
         from satel_integra.messages import SatelWriteMessage  # type: ignore
 
@@ -591,6 +608,13 @@ class SatelIntegraClient:
         dalej pokazywać TRIGGERED mimo że strefa jest już rozbrojona."""
         if self._client is None:
             raise RuntimeError("Klient Satel nie jest połączony")
+        if not self.integration_key:
+            # Patrz komentarz w set_output() wyżej - bez klucza SatelWriteMessage
+            # wysłałaby okaleczoną ramkę zamiast czytelnie odrzuconej komendy.
+            raise RuntimeError(
+                "Sterowanie wymaga klucza integracji Satela - ustaw go w zakładce "
+                "⚙ Ustawienia -> 🔌 Połączenia (bez klucza panel działa tylko do odczytu)."
+            )
         from satel_integra.commands import SatelWriteCommand  # type: ignore
         from satel_integra.messages import SatelWriteMessage  # type: ignore
 

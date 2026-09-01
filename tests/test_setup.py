@@ -44,10 +44,14 @@ class TestValidation:
         errors = validate(form)
         assert any("Satel" in e and "IP" in e for e in errors)
 
-    def test_missing_integration_key_is_error(self):
+    def test_missing_integration_key_is_not_an_error(self):
+        """Klucz integracji jest CELOWO opcjonalny - bez niego kreator się
+        kończy, a panel działa w trybie tylko do odczytu (sterowanie
+        zablokowane z czytelnym komunikatem, patrz
+        SatelIntegraClient.set_output/arm/disarm w bridge/satel_client.py)."""
         form = {**VALID_FORM, "satel": {**VALID_FORM["satel"], "integration_key": ""}}
         errors = validate(form)
-        assert any("klucz integracji" in e for e in errors)
+        assert errors == []
 
     def test_short_password_is_error(self):
         form = {**VALID_FORM, "admin_password": "krotkie"}

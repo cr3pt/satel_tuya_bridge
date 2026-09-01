@@ -128,7 +128,7 @@
     <div class="conn-grid">
       <div class="field"><label>Adres IP</label><input type="text" id="conn_satel_host" placeholder="192.168.1.20"></div>
       <div class="field"><label>Port</label><input type="number" id="conn_satel_port" placeholder="7094"></div>
-      <div class="field"><label>Klucz integracji</label><input type="password" id="conn_satel_key" placeholder="(bez zmian)"></div>
+      <div class="field"><label>Klucz integracji (opcjonalny)</label><input type="password" id="conn_satel_key" placeholder="(bez zmian)"></div>
       <div class="field"><label>Strefa główna (numer)</label><input type="number" id="conn_satel_partition" placeholder="1"></div>
       <div class="field"><label>Klucz szyfrowania (opcjonalnie)</label><input type="password" id="conn_satel_enc_key" placeholder="(bez zmian)"></div>
     </div>
@@ -495,7 +495,7 @@ document.getElementById('loadConnectionsBtn').addEventListener('click', async ()
     document.getElementById('conn_satel_partition').value = data.satel.partition || '';
     document.getElementById('conn_satel_key_hint').textContent = data.satel.integration_key_set
       ? 'Klucz integracji jest już ustawiony - zostaw pole puste, żeby go nie zmieniać.'
-      : 'Klucz integracji NIE jest jeszcze ustawiony.';
+      : 'Klucz integracji NIE jest jeszcze ustawiony - panel działa tylko do odczytu, bez sterowania.';
     document.getElementById('conn_satel_enc_key_hint').textContent = data.satel.encryption_key_set
       ? 'Klucz szyfrowania jest już ustawiony - zostaw pole puste, żeby go nie zmieniać.'
       : 'Klucz szyfrowania NIE jest ustawiony.';

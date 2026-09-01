@@ -924,6 +924,42 @@ dashboard:
         assert engine.satel.encryption_key == "AESKEY"
 
 
+class TestIntegrationKeyOptional:
+    """satel.integration_key jest CELOWO opcjonalny - bez niego panel działa
+    tylko do odczytu (guardy w set_output/arm/disarm w
+    bridge/satel_client.py), więc RulesEngine.__init__ nie może wywalić się
+    KeyError-em, gdy pole jest puste albo w ogóle nieobecne w configu
+    (starszy ręcznie edytowany config.yaml mógł go nie mieć)."""
+
+    def _build_engine(self, tmp_path, satel_yaml: str) -> RulesEngine:
+        (tmp_path / "sensors.yaml").write_text("", encoding="utf-8")
+        (tmp_path / "config.yaml").write_text(
+            f"""
+satel:
+  host: "127.0.0.1"
+  port: 7094
+{satel_yaml}
+tuya:
+  devices: {{}}
+ebus:
+  sensors: []
+dashboard:
+  db_path: "{tmp_path / 'history.db'}"
+""",
+            encoding="utf-8",
+        )
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+        return RulesEngine(config)
+
+    async def test_construction_succeeds_with_empty_key(self, tmp_path):
+        engine = self._build_engine(tmp_path, '  integration_key: ""\n')
+        assert engine.satel.integration_key == ""
+
+    async def test_construction_succeeds_with_key_field_absent(self, tmp_path):
+        engine = self._build_engine(tmp_path, "")
+        assert engine.satel.integration_key == ""
+
+
 class TestLightToSatelRule:
     """CONFIG_TEMPLATE (reguły_swiatlo_do_satela) wskazuje wirtualne
     wejście "test_input" - w domyślnym trybie "library" (patrz obszerny

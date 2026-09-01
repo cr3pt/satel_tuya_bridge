@@ -428,6 +428,18 @@ class TestImportYamlBundleValidated:
             store.import_yaml_bundle_validated({"config.yaml": broken})
         assert store.get("config") == {"marker": "pre-existing"}
 
+    def test_missing_integration_key_does_not_raise(self, tmp_path):
+        """integration_key jest CELOWO opcjonalny (panel działa tylko do
+        odczytu bez niego, patrz bridge/satel_client.py) - w odróżnieniu od
+        host/port wyżej, jego brak NIE powinien blokować importu."""
+        store = ConfigStore(tmp_path / "config.db")
+        no_key = (
+            "satel:\n  host: \"1.2.3.4\"\n  port: 7094\n"
+            "tuya:\n  devices: {}\nreguły_ruchu: []\nebus:\n  mqtt_host: x\n"
+        )
+        imported = store.import_yaml_bundle_validated({"config.yaml": no_key})
+        assert imported == ["config"]
+
     def test_partial_import_merges_with_existing_valid_config(self, tmp_path):
         """Import samego sensors.yaml (bez config.yaml w archiwum) musi
         zwalidować się WZGLĘDEM już zapisanej, poprawnej reszty configu -
