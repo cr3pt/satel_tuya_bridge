@@ -10,6 +10,7 @@ from dashboard.setup import (
     build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
     validate_cloud_devices, cloud_devices_to_rows,
     build_connections_patch, validate_connections, connections_to_form, list_plugins,
+    build_location_patch, validate_location,
     draft_path_for, load_draft, save_draft, delete_draft,
 )
 
@@ -605,6 +606,75 @@ class TestValidateConnections:
         }
         errors = validate_connections(form)
         assert any("Tuya Cloud" in e for e in errors)
+
+
+class TestLocationBuilder:
+    """build_location_patch/validate_location - zakładka "Połączenia",
+    sekcja "Lokalizacja" (współrzędne do wschodu/zachodu słońca w
+    okienkach czasowych reguł ruchu, patrz bridge/scheduling.py), patrz
+    dashboard/app.py: /api/config/location. W odróżnieniu od reszty pól
+    Połączeń - patchuje TYLKO sekcję "location", cała reszta configu
+    zostaje nietknięta, i nie wymaga pełnego restartu bridge'a."""
+
+    EXISTING = {
+        "satel": {"host": "1.2.3.4"},
+        "reguły_kamera_alarm": [{"source": "unifi_protect", "camera_id": "cam1"}],
+    }
+
+    def test_sets_location_from_form(self):
+        patched = build_location_patch({"latitude": "52.23", "longitude": "21.01"}, self.EXISTING)
+        assert patched["location"] == {"latitude": 52.23, "longitude": 21.01}
+
+    def test_preserves_unrelated_sections(self):
+        patched = build_location_patch({"latitude": "52.23", "longitude": "21.01"}, self.EXISTING)
+        assert patched["satel"] == self.EXISTING["satel"]
+        assert patched["reguły_kamera_alarm"] == self.EXISTING["reguły_kamera_alarm"]
+
+    def test_blank_fields_remove_existing_location(self):
+        existing = {**self.EXISTING, "location": {"latitude": 52.23, "longitude": 21.01}}
+        patched = build_location_patch({"latitude": "", "longitude": ""}, existing)
+        assert "location" not in patched
+
+    def test_missing_fields_remove_existing_location(self):
+        existing = {**self.EXISTING, "location": {"latitude": 52.23, "longitude": 21.01}}
+        patched = build_location_patch({}, existing)
+        assert "location" not in patched
+
+    def test_overwrites_existing_location(self):
+        existing = {**self.EXISTING, "location": {"latitude": 1.0, "longitude": 2.0}}
+        patched = build_location_patch({"latitude": "52.23", "longitude": "21.01"}, existing)
+        assert patched["location"] == {"latitude": 52.23, "longitude": 21.01}
+
+
+class TestValidateLocation:
+    def test_both_blank_is_valid(self):
+        assert validate_location({"latitude": "", "longitude": ""}) == []
+
+    def test_missing_fields_is_valid(self):
+        assert validate_location({}) == []
+
+    def test_valid_coordinates_no_errors(self):
+        assert validate_location({"latitude": "52.23", "longitude": "21.01"}) == []
+
+    def test_only_latitude_is_error(self):
+        errors = validate_location({"latitude": "52.23", "longitude": ""})
+        assert any("oba pola" in e for e in errors)
+
+    def test_only_longitude_is_error(self):
+        errors = validate_location({"latitude": "", "longitude": "21.01"})
+        assert any("oba pola" in e for e in errors)
+
+    def test_non_numeric_is_error(self):
+        errors = validate_location({"latitude": "abc", "longitude": "21.01"})
+        assert any("liczbami" in e for e in errors)
+
+    def test_latitude_out_of_range_is_error(self):
+        errors = validate_location({"latitude": "95", "longitude": "21.01"})
+        assert any("-90..90" in e for e in errors)
+
+    def test_longitude_out_of_range_is_error(self):
+        errors = validate_location({"latitude": "52.23", "longitude": "200"})
+        assert any("-180..180" in e for e in errors)
 
 
 class TestConnectionsToForm:

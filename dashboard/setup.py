@@ -904,6 +904,47 @@ def connections_to_form(existing: dict) -> dict:
     }
 
 
+def validate_location(form: dict) -> list[str]:
+    """Waliduje formularz sekcji "Lokalizacja" zakładki Połączenia (GET/POST
+    /api/config/location) - współrzędne używane WYŁĄCZNIE do obliczenia
+    wschodu/zachodu słońca dla harmonogramów reguł ruchu (bridge/scheduling.py,
+    okna czasowe "sunset"/"sunrise"). W odróżnieniu od reszty pól tej
+    zakładki (host/port/klucze) lokalizacja NIE wymaga restartu procesu -
+    patrz RulesEngine.reload_config."""
+    errors = []
+    lat, lon = form.get("latitude"), form.get("longitude")
+    if lat in (None, "") and lon in (None, ""):
+        return errors  # brak lokalizacji jest dozwolony - po prostu sunset/sunrise nie zadziała
+    if lat in (None, "") or lon in (None, ""):
+        errors.append("Lokalizacja: podaj oba pola (szerokość i długość geograficzna) albo żadne")
+        return errors
+    try:
+        lat_f, lon_f = float(lat), float(lon)
+    except (TypeError, ValueError):
+        errors.append("Lokalizacja: szerokość i długość geograficzna muszą być liczbami")
+        return errors
+    if not (-90 <= lat_f <= 90):
+        errors.append("Lokalizacja: szerokość geograficzna musi być w zakresie -90..90")
+    if not (-180 <= lon_f <= 180):
+        errors.append("Lokalizacja: długość geograficzna musi być w zakresie -180..180")
+    return errors
+
+
+def build_location_patch(form: dict, existing: dict) -> dict:
+    """Buduje NOWY słownik config.yaml na bazie istniejącego (`existing`) -
+    nadpisuje TYLKO sekcję "location", zostawia resztę configu nietkniętą -
+    ten sam wzorzec co build_connections_patch wyżej. Puste pola usuwają
+    sekcję (= "nie licz wschodu/zachodu", zamiast zostawiać niekompletne
+    współrzędne)."""
+    config = copy.deepcopy(existing)
+    lat, lon = form.get("latitude"), form.get("longitude")
+    if lat in (None, "") or lon in (None, ""):
+        config.pop("location", None)
+    else:
+        config["location"] = {"latitude": float(lat), "longitude": float(lon)}
+    return config
+
+
 # Integracje pokazywane na zakładce 🧩 Wtyczki - jedno spójne miejsce z
 # przeglądem WSZYSTKICH integracji (dotychczas rozrzucone po zakładkach
 # ⚙ Ustawienia/🔌 Połączenia/🎬 Automatyzacje). "toggleable" = ma osobną,

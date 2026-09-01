@@ -1004,6 +1004,81 @@ class TestConnectionsEndpoint:
         assert saved["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home"}
 
 
+class TestLocationEndpoint:
+    """Zakładka "Połączenia", sekcja "Lokalizacja" (współrzędne do
+    wschodu/zachodu słońca w oknach czasowych "sunset"/"sunrise" reguł
+    ruchu, patrz bridge/scheduling.py) - dashboard/setup.py:
+    build_location_patch/validate_location. CONFIG_TEMPLATE nie ustawia
+    "location" - startowo nieobecna."""
+
+    def test_get_without_auth_returns_401(self, client):
+        assert client.get("/api/config/location").status_code == 401
+
+    def test_get_with_auth_returns_empty_when_unset(self, client):
+        resp = client.get("/api/config/location", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json() == {}
+
+    def test_post_without_auth_returns_401(self, client):
+        resp = client.post("/api/config/location", json={"latitude": "52.23", "longitude": "21.01"})
+        assert resp.status_code == 401
+
+    def test_post_sets_location(self, client):
+        import dashboard.app as app_module
+
+        payload = {"latitude": "52.23", "longitude": "21.01"}
+        resp = client.post("/api/config/location", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")
+        assert saved["location"] == {"latitude": 52.23, "longitude": 21.01}
+
+    def test_get_reflects_saved_location(self, client):
+        payload = {"latitude": "52.23", "longitude": "21.01"}
+        client.post("/api/config/location", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        resp = client.get("/api/config/location", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.get_json() == {"latitude": 52.23, "longitude": 21.01}
+
+    def test_post_validates_out_of_range_latitude(self, client):
+        payload = {"latitude": "195", "longitude": "21.01"}
+        resp = client.post("/api/config/location", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 400
+
+    def test_post_blank_clears_existing_location(self, client):
+        import dashboard.app as app_module
+
+        client.post(
+            "/api/config/location", json={"latitude": "52.23", "longitude": "21.01"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        client.post(
+            "/api/config/location", json={"latitude": "", "longitude": ""},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        saved = app_module.config_store.get("config")
+        assert "location" not in saved
+
+    def test_post_preserves_other_config_sections(self, client):
+        import dashboard.app as app_module
+
+        payload = {"latitude": "52.23", "longitude": "21.01"}
+        client.post("/api/config/location", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        saved = app_module.config_store.get("config")
+        assert saved["satel"]["host"] == "127.0.0.1"
+        assert saved["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"
+
+    def test_post_enqueues_bridge_reload_not_restart(self, client):
+        """Lokalizacja to czyste dane (brak żywego połączenia sieciowego
+        do zerwania) - w odróżnieniu od /api/config/connections, zapis
+        prosi bridge o LIVE reload_config(), nie wymaga restartu procesu."""
+        import dashboard.app as app_module
+
+        payload = {"latitude": "52.23", "longitude": "21.01"}
+        resp = client.post("/api/config/location", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        assert "bez restartu" in resp.get_json()["message"].lower()
+        commands = [c["command"] for c in app_module.history.get_pending_commands()]
+        assert "reload_config" in commands
+
+
 class TestPluginsEndpoint:
     """Zakładka 🧩 Wtyczki - spójny przegląd wszystkich integracji
     (patrz dashboard/setup.py: list_plugins) i przełącznik pola "enabled" -

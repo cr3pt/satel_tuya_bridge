@@ -968,6 +968,29 @@ class TestReloadConfig:
         assert "lampa_taras" in engine.tuya.cloud.devices_cfg
         assert "lampa_taras" in engine.tuya.devices_cfg  # widoczne też w sumie (dispatcher)
 
+    async def test_picks_up_new_location_without_restart(self, engine):
+        """Współrzędne do wschodu/zachodu słońca (bridge/scheduling.py) -
+        CZYSTE DANE bez żywego połączenia sieciowego do zerwania, więc (w
+        odróżnieniu od hosta/portu/klucza Satela) MUSZĄ działać na żywo
+        od razu, patrz dashboard/app.py: /api/config/location."""
+        config = engine.config.store.get("config")
+        config["location"] = {"latitude": 52.23, "longitude": 21.01}
+        engine.config.store.set("config", config)
+        await engine.reload_config()
+        assert engine._location_cfg == {"latitude": 52.23, "longitude": 21.01}
+
+    async def test_reload_updates_presence_simulation_location_cfg(self, engine):
+        """PresenceSimulation trzyma WŁASNĄ kopię location_cfg (przekazaną
+        w konstruktorze) - reload_config musi ją jawnie zaktualizować,
+        inaczej okno czasowe symulacji obecności z "sunset"/"sunrise"
+        zostałoby ze starą (albo brakującą) lokalizacją mimo odświeżenia
+        reszty configu."""
+        config = engine.config.store.get("config")
+        config["location"] = {"latitude": 52.23, "longitude": 21.01}
+        engine.config.store.set("config", config)
+        await engine.reload_config()
+        assert engine.presence_simulation.location_cfg == {"latitude": 52.23, "longitude": 21.01}
+
     async def test_local_device_takes_precedence_over_cloud_after_local_configured(self, engine, tmp_path):
         """Dokładnie scenariusz ze zgłoszenia: urządzenie zaczyna jako
         sterowane przez chmurę, a potem użytkownik konfiguruje je lokalnie

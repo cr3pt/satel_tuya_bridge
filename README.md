@@ -1356,9 +1356,28 @@ time_window:
 
 Obliczenia wschodu/zachodu robi biblioteka `astral` w pełni lokalnie (bez
 zewnętrznego API pogodowego) - wymaga sekcji `location` (szerokość/
-długość geograficzna) w `config.yaml`. Okna przechodzące przez północ
+długość geograficzna) w `config.yaml`. Bez niej `sunset`/`sunrise` po
+cichu NIE DZIAŁA - reguła jest wtedy traktowana jako zawsze aktywna
+(patrz `bridge/scheduling.py: is_within_window`, komunikat trafia do logu,
+nie przerywa działania reszty automatyki). Okna przechodzące przez północ
 (np. `22:00`-`06:00`) działają poprawnie - sprawdzone testem na kilku
 przypadkach brzegowych.
+
+**Skąd bridge ma znać lokalizację?** Zakładka ⚙ Ustawienia -> 🔌 Połączenia,
+sekcja "🌍 Lokalizacja" - trzy sposoby wyboru (jak w kreatorze onboardingu
+Home Assistant): kliknięcie na interaktywnej mapie (Leaflet + OpenStreetMap,
+przeciągalny znacznik), przycisk "📍 Wykryj lokalizację przeglądarki"
+(`navigator.geolocation` - przeglądarka najpierw zapyta o pozwolenie),
+albo ręczne wpisanie współrzędnych. W ODRÓŻNIENIU od reszty tej zakładki
+(host/port/klucze Satela/eBUS) **zapisuje się na żywo, bez restartu
+procesu** - lokalizacja to czyste dane, nie żywe połączenie sieciowe do
+zerwania (`dashboard/app.py`: `/api/config/location`, `RulesEngine.
+reload_config` odświeża `self._location_cfg` i `presence_simulation.
+location_cfg` od razu przy każdym przeładowaniu). Wymaga zalogowania jak
+reszta ustawień; mapa i tile'e OpenStreetMap wymagają internetu tylko w
+momencie wyboru punktu na mapie w przeglądarce - sama praca bridge'a
+(obliczanie wschodu/zachodu z już zapisanych współrzędnych) zostaje w
+pełni lokalna.
 
 **W panelu (`/automations`) harmonogram jest "wyklikiwany"**, nie wpisywany
 ręcznie - wybierasz z listy "Stały czas" / "Zachód słońca" / "Wschód
