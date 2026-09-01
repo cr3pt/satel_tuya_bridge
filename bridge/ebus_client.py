@@ -16,6 +16,7 @@ Instalacja/konfiguracja ebusd z wyjściem MQTT (skrót, patrz README):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -220,14 +221,59 @@ class EbusMqttListener:
         if sensor_cfg is None:
             return
         raw = msg.payload.decode().strip()
-        try:
-            value: object = float(raw)
-        except ValueError:
-            # Nie każde pole eBUS jest liczbą (np. status palnika może być
-            # tekstem typu "heating"/"idle") - przekazujemy dalej jako
-            # tekst; handle_boiler_value() w rules_engine.py sam decyduje,
-            # co da się z takim polem zrobić (np. pomija numeryczny alarm
-            # progowy, ale nadal zapisuje status i publikuje wartość).
-            value = raw
+        value = self._parse_payload(raw, sensor_cfg)
+        if value is None:
+            return
         logger.debug("Odczyt eBUS: %s = %s", sensor_cfg["name"], value)
         self.on_value(sensor_cfg, value)
+
+    @staticmethod
+    def _parse_payload(raw: str, sensor_cfg: dict) -> object | None:
+        """Wyciąga wartość z jednej wiadomości MQTT ebusd. Domyślny format
+        ebusd (jedno pole na temat) publikuje CZYSTY tekst ("22.5",
+        "heating") - próba `json.loads()` na takim tekście albo się uda
+        (liczby są też poprawnym JSON-em, więc "22.5" -> float 22.5, bez
+        zmiany zachowania), albo rzuci wyjątek dla zwykłego tekstu
+        ("heating" nie jest poprawnym JSON-em bez cudzysłowów) - wtedy
+        zwracamy surowy tekst, jak dotychczas.
+
+        Tryb `--mqttjson` ebusd publikuje zamiast tego JSON-owy obiekt:
+        - pojedyncze pole: `{"FlowTemp": {"value": 22.5}}`
+        - temat na poziomie OBWODU (kilka pól naraz):
+          `{"MixerStatus": {...}, "TempFloor": {"value": 21.3}, ...}`
+        Dla obiektu z JEDNYM kluczem wybieramy go automatycznie. Dla kilku
+        kluczy trzeba wiedzieć, KTÓRY wybrać - stąd opcjonalne pole
+        `mqtt_field` w konfiguracji czujnika (sensors.yaml). Bez niego
+        wiadomość wieloklucza jest pomijana (z ostrzeżeniem w logu) zamiast
+        zapisać nieczytelny surowy JSON jako "wartość"."""
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return raw
+
+        if not isinstance(parsed, dict):
+            return parsed
+
+        mqtt_field = (sensor_cfg.get("mqtt_field") or "").strip()
+        if mqtt_field:
+            if mqtt_field not in parsed:
+                logger.warning(
+                    "Temat %s: skonfigurowane pole '%s' (czujnik '%s') nie występuje w tej "
+                    "wiadomości JSON (dostępne pola: %s)",
+                    sensor_cfg["mqtt_topic"], mqtt_field, sensor_cfg["name"], ", ".join(sorted(parsed)) or "brak",
+                )
+                return None
+            field_value = parsed[mqtt_field]
+        elif len(parsed) == 1:
+            field_value = next(iter(parsed.values()))
+        else:
+            logger.warning(
+                "Temat %s: wiadomość JSON zawiera kilka pól (%s), ale czujnik '%s' nie ma "
+                "ustawionego 'mqtt_field' - nie wiadomo, które wybrać, pomijam",
+                sensor_cfg["mqtt_topic"], ", ".join(sorted(parsed)), sensor_cfg["name"],
+            )
+            return None
+
+        if isinstance(field_value, dict) and "value" in field_value:
+            return field_value["value"]
+        return field_value

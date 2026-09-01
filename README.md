@@ -504,6 +504,40 @@ każdego pola z osobna**. Pola tekstowe (np. status palnika: `"heating"` /
 MQTT, ale NIE do wykresu historycznego (wymaga liczby) ani do Tuya, jeśli
 DP po stronie Tuya oczekuje typu liczbowego.
 
+### Tryb `--mqttjson` ebusd (kilka pól na jeden temat)
+
+Domyślnie ebusd publikuje **jedno pole na jeden temat MQTT**, czystym
+tekstem (np. temat `ebusd/bai/FlowTemp`, treść `"22.5"`) - dokładnie to,
+czego oczekuje przykład wyżej. Jeśli jednak uruchomiłeś `ebusd` z opcją
+`--mqttjson`, część tematów (zwłaszcza na poziomie CAŁEGO OBWODU, np.
+`ebusd/hc1`) publikuje zamiast tego **obiekt JSON z kilkoma polami naraz**,
+np.:
+
+```json
+{"MixerStatus": {"value": "on"}, "TempFloor": {"value": 21.3}}
+```
+
+Bridge rozpoznaje ten format automatycznie i wyciąga liczbę/tekst z
+`"value"` zamiast pokazywać surowy JSON jako "wartość" czujnika:
+- **temat z JEDNYM polem** (`{"FlowTemp": {"value": 22.5}}`) - działa bez
+  żadnej dodatkowej konfiguracji, pole wybiera się samo.
+- **temat z KILKOMA polami** (jak `ebusd/hc1` wyżej) - trzeba wskazać,
+  które pole wziąć, przez opcjonalne pole **`mqtt_field`** (nazwa panelu:
+  "pole JSON") przy czujniku - w kreatorze/panelu to drugie, mniejsze pole
+  pod tematem MQTT, w `sensors.yaml`:
+  ```yaml
+  - name: kociol_temp_podlogowa
+    label: "Temperatura podłogowa (obwód 1)"
+    mqtt_topic: "ebusd/hc1"
+    mqtt_field: "TempFloor"
+    targets: { history: true, mqtt_publish: true, tuya_virtual_device: false, tuya_dp: "" }
+  ```
+  Bez `mqtt_field` na temacie z kilkoma polami czujnik po prostu nie
+  dostaje nowych wartości (w logach bridge'a pojawi się czytelne
+  ostrzeżenie z listą dostępnych pól w tej wiadomości) - to świadomy wybór
+  zamiast zgadywania, które pole miałeś na myśli. Implementacja:
+  `EbusMqttListener._parse_payload()` w `bridge/ebus_client.py`.
+
 ## Rotacja i backup bazy
 
 `bridge_history.db` rosłaby w nieskończoność bez czyszczenia (odczyty z

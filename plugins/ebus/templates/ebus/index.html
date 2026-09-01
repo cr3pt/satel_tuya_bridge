@@ -67,7 +67,11 @@
   każdego, dokąd ma trafiać: <strong>Historia</strong> (wykres i status w
   panelu), <strong>MQTT</strong> (publikacja dalej, np. do Home Assistant) i
   <strong>Tuya</strong> (wirtualne urządzenie w aplikacji Tuya). Adres
-  brokera MQTT ustawia się osobno w zakładce 🔌 Połączenia.
+  brokera MQTT ustawia się osobno w zakładce 🔌 Połączenia. Pole "pole JSON"
+  jest potrzebne TYLKO gdy <code>ebusd</code> działa z opcją
+  <code>--mqttjson</code> i publikuje na dany temat kilka pól naraz (temat
+  na poziomie obwodu, np. <code>ebusd/hc1</code>) - wskazuje wtedy, które
+  pole z wiadomości wziąć jako wartość tego czujnika.
   <strong>Wymagane zalogowanie administratora panelu</strong> - dotyczy zarówno przeglądania tej strony, jak i zapisu.
 </div>
 
@@ -219,6 +223,7 @@ function addSensorRow(initial) {
     <input type="text" placeholder="nazwa (np. kociol_temp)" class="s-name">
     <input type="text" placeholder="etykieta w panelu" class="s-label">
     <input type="text" placeholder="temat MQTT (np. ebusd/bai/FlowTemp)" class="s-topic" style="flex: 2;">
+    <input type="text" placeholder="pole JSON (tylko --mqttjson, kilka pól na temat)" class="s-field" style="flex: 1.5;">
     <div class="chk-group">
       <label><input type="checkbox" class="s-history"> Historia</label>
       <label><input type="checkbox" class="s-mqtt"> MQTT</label>
@@ -230,6 +235,7 @@ function addSensorRow(initial) {
     row.querySelector('.s-name').value = initial.name ?? '';
     row.querySelector('.s-label').value = initial.label ?? '';
     row.querySelector('.s-topic').value = initial.mqtt_topic ?? '';
+    row.querySelector('.s-field').value = initial.mqtt_field ?? '';
   }
   row.querySelector('.s-history').checked = !!targets.history;
   row.querySelector('.s-mqtt').checked = !!targets.mqtt_publish;
@@ -246,6 +252,7 @@ function collectSensors() {
       name: row.querySelector('.s-name').value.trim(),
       label: row.querySelector('.s-label').value.trim(),
       mqtt_topic: row.querySelector('.s-topic').value.trim(),
+      mqtt_field: row.querySelector('.s-field').value.trim(),
       targets: {
         history: row.querySelector('.s-history').checked,
         mqtt_publish: row.querySelector('.s-mqtt').checked,

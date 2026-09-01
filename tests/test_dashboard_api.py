@@ -317,6 +317,30 @@ class TestProtectedConfigEndpoint:
         names = [s["name"] for s in resp.get_json()]
         assert "trwaly_czujnik" in names
 
+    def test_mqtt_field_round_trips_for_composite_json_topics(self, client):
+        """mqtt_field - do wyboru pola z tematu ebusd publikującego kilka
+        naraz w trybie --mqttjson (patrz bridge/ebus_client.py:
+        EbusMqttListener._parse_payload)."""
+        payload = [{
+            "name": "temp_podlogowa", "label": "Temp. podłogowa", "mqtt_topic": "ebusd/hc1",
+            "mqtt_field": "TempFloor",
+            "targets": {"history": True, "mqtt_publish": False, "tuya_virtual_device": False, "tuya_dp": ""},
+        }]
+        client.post("/api/config/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        resp = client.get("/api/config/sensors", headers=_basic_auth_header("test_haslo_123"))
+        saved = next(s for s in resp.get_json() if s["name"] == "temp_podlogowa")
+        assert saved["mqtt_field"] == "TempFloor"
+
+    def test_mqtt_field_defaults_to_empty_string(self, client):
+        payload = [{
+            "name": "zwykly_czujnik", "mqtt_topic": "ebusd/bai/FlowTemp",
+            "targets": {"history": True, "mqtt_publish": False, "tuya_virtual_device": False, "tuya_dp": ""},
+        }]
+        client.post("/api/config/sensors", json=payload, headers=_basic_auth_header("test_haslo_123"))
+        resp = client.get("/api/config/sensors", headers=_basic_auth_header("test_haslo_123"))
+        saved = next(s for s in resp.get_json() if s["name"] == "zwykly_czujnik")
+        assert saved["mqtt_field"] == ""
+
 
 class TestProtectedArmDisarmEndpoints:
     def test_arm_without_auth_returns_401(self, client):
