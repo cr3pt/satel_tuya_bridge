@@ -1001,27 +1001,46 @@ class RulesEngine:
         status (patrz seen niżej) - ta metoda jest wołana też z
         reload_config() (przy KAŻDYM zapisie dowolnego formularza w /config,
         nie tylko pól Satela), więc bez tego pomijania nadpisywałaby żywy,
-        aktualny stan placeholderem przy każdym takim zapisie."""
-        seen = {s["key"] for s in self.history.get_status("satel_input")}
-        seen |= {s["key"] for s in self.history.get_status("satel_output")}
-        seen |= {s["key"] for s in self.history.get_status("satel_partition")}
+        aktualny stan placeholderem przy każdym takim zapisie.
+
+        Zgłoszony błąd: gdy satel.enabled=false (🧩 Wtyczki), run_forever()
+        nigdy się nie łączy, więc żadna z tych wartości NIGDY nie zostanie
+        zaktualizowana żywym odczytem - a mimo to placeholder "OK"/
+        "wyłączone" wyglądał jak prawdziwy, świeży wynik odczytu (ze
+        świeżą etykietą czasu), sugerując komunikację z centralą, której w
+        ogóle nie ma. Gdy wtyczka jest wyłączona, WYMUSZAMY (bez pomijania
+        "seen") jeden, jednoznaczny placeholder na wszystkich trzech
+        kategoriach - także nadpisując stary, żywy stan sprzed wyłączenia -
+        i statusCardClass() w index.html renderuje go neutralnie, tak samo
+        jak "wyłączono (wtyczka)" dla system_health."""
+        satel_enabled = self.config.satel.get("enabled", True)
+        seen = set() if not satel_enabled else (
+            {s["key"] for s in self.history.get_status("satel_input")}
+            | {s["key"] for s in self.history.get_status("satel_output")}
+            | {s["key"] for s in self.history.get_status("satel_partition")}
+        )
         input_keys = {f"satel_input:{number}" for number in self.satel.monitored_zones.values()}
         output_keys = {f"satel_output:{number}" for number in self.satel.monitored_outputs.values()}
         partition_keys = {
             f"satel_partition:{number}" for number in self.config.satel.get("partitions", {}).values()
         }
+        unavailable = "brak danych (wtyczka wyłączona)"
         for name, number in self.satel.monitored_zones.items():
             key = f"satel_input:{number}"
             if key not in seen:
-                self.history.set_status(key, "satel_input", "OK", label=name)
+                self.history.set_status(key, "satel_input", unavailable if not satel_enabled else "OK", label=name)
         for name, number in self.satel.monitored_outputs.items():
             key = f"satel_output:{number}"
             if key not in seen:
-                self.history.set_status(key, "satel_output", "wyłączone", label=name)
+                self.history.set_status(
+                    key, "satel_output", unavailable if not satel_enabled else "wyłączone", label=name,
+                )
         for name, number in self.config.satel.get("partitions", {}).items():
             key = f"satel_partition:{number}"
             if key not in seen:
-                self.history.set_status(key, "satel_partition", "nieznany", label=name)
+                self.history.set_status(
+                    key, "satel_partition", unavailable if not satel_enabled else "nieznany", label=name,
+                )
 
         # Sprzątanie wejść/wyjść/stref USUNIĘTYCH albo PRZEMIANOWANYCH
         # (zmiana numeru) w ⚙ Ustawienia od poprzedniego seedowania - patrz
