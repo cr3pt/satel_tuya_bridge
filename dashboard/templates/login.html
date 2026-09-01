@@ -70,8 +70,8 @@
 function nextUrl() {
   const params = new URLSearchParams(location.search);
   const next = params.get('next');
-  // Tylko ścieżki WEWNĄTRZ tej samej aplikacji - nigdy pełny URL (ochrona
-  // przed open-redirect przez spreparowany link "?next=https://zla-strona").
+  
+  
   return (next && next.startsWith('/')) ? next : '/';
 }
 

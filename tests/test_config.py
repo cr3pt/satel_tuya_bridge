@@ -1,4 +1,3 @@
-"""Testy dla bridge/config.py - wczytywanie config.yaml + scalanie z sensors.yaml."""
 import pytest
 import yaml
 
@@ -66,17 +65,6 @@ def test_missing_required_section_raises(tmp_path):
 
 
 def test_missing_virtual_inputs_section_gets_safe_defaults(tmp_path):
-    """satel.virtual_inputs to jedyna sekcja, której RulesEngine.__init__
-    NIE toleruje pustej/nieobecnej postaci - SatelVirtualInputTrigger (patrz
-    bridge/satel_client.py) czyta cfg["port"] przez bracket-access i jest
-    tworzony BEZWARUNKOWO, nawet gdy żadne wirtualne wejście nie jest
-    skonfigurowane ("url_template" NIE jest już czytany z configu w ogóle -
-    to stała w kodzie, patrz DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE). Config bez
-    jawnie zapisanej sekcji "virtual_inputs" (stary config.yaml sprzed tej
-    funkcji, ręczna edycja, częściowy import YAML) MUSI dostać te same
-    wartości domyślne co kreator/zakładka Połączenia (dashboard/setup.py),
-    inaczej cały silnik reguł wywala się KeyErrorem przy starcie/
-    przeładowaniu configu."""
     (tmp_path / "config.yaml").write_text(
         """
 satel:
@@ -126,7 +114,7 @@ def test_convenience_properties(config_dir):
     assert config.satel["host"] == "127.0.0.1"
     assert config.tuya == {"devices": {}, "zigbee_gateways": {}, "cloud_devices": {}}
     assert config.motion_rules == []
-    assert config.boiler_output == {"mode": "mqtt"}  # wartość domyślna gdy sekcja nieobecna
+    assert config.boiler_output == {"mode": "mqtt"}
     assert config.unifi_protect is None
 
 
@@ -147,9 +135,6 @@ presence_simulation:
 
 
 class TestAutomationsFile:
-    """Sceny/reguły ruchu/symulacja obecności - wczytywane z osobnego
-    automations.yaml (patrz dashboard/setup.py i dashboard/app.py:
-    panel /automations), analogicznie do sensors.yaml dla czujników."""
 
     def test_automations_file_overrides_inline_config_values(self, config_dir):
         (config_dir / "automations.yaml").write_text(AUTOMATIONS_YAML, encoding="utf-8")
@@ -166,9 +151,6 @@ class TestAutomationsFile:
         assert config.raw["presence_simulation"] == {"enabled": False}
 
     def test_inline_values_used_when_automations_file_missing(self, tmp_path):
-        """Wsteczna zgodność - configi sprzed rozdzielenia do automations.yaml
-        mają sceny/reguły wpisane wprost w config.yaml; muszą wciąż działać,
-        dopóki nikt nie zapisze niczego przez panel /automations."""
         inline_config = MINIMAL_CONFIG.replace("reguły_ruchu: []", """reguły_ruchu:
   - source: satel_zone
     zone_number: 9
@@ -184,10 +166,6 @@ scenes:
         assert config.raw["scenes"][0]["name"] == "legacy_scene"
 
     def test_custom_automations_file_path_used_only_for_one_time_migration(self, tmp_path):
-        """Niestandardowa nazwa pliku (`automations_file`) miała sens tylko
-        dla starych, plikowych instalacji - respektowana PRZY MIGRACJI (żeby
-        znaleźć zawartość do zaimportowania), ale PO migracji to zwykły
-        dokument "automations" w bazie, bez własnej ścieżki."""
         config_text = MINIMAL_CONFIG + "automations_file: custom_automations.yaml\n"
         (tmp_path / "config.yaml").write_text(config_text, encoding="utf-8")
         (tmp_path / "custom_automations.yaml").write_text(
@@ -239,10 +217,6 @@ zigbee_gateways:
 
 
 class TestSatelFieldsAndTuyaDevicesFiles:
-    """Strefy/wyjścia/wejścia IP/partycje Satela i urządzenia Tuya - też
-    wczytywane z osobnych plików (satel_fields.yaml / tuya_devices.yaml),
-    z tego samego powodu co automations.yaml/sensors.yaml: panel /config
-    może je bezpiecznie nadpisywać w całości."""
 
     def test_satel_fields_file_overrides_inline_values(self, config_dir):
         (config_dir / "satel_fields.yaml").write_text(SATEL_FIELDS_YAML, encoding="utf-8")
@@ -281,8 +255,6 @@ class TestSatelFieldsAndTuyaDevicesFiles:
         assert config.raw["tuya"]["zigbee_gateways"] == {}
 
     def test_inline_values_used_when_satel_fields_file_missing(self, tmp_path):
-        """Wsteczna zgodność - configi z polami wpisanymi wprost w
-        config.yaml (jak generował stary kreator) wciąż działają."""
         inline_config = MINIMAL_CONFIG.replace(
             'inputs: {}', 'inputs: {motion_hall_camera: {number: 17, key: "K"}}',
         ).replace(
@@ -305,9 +277,6 @@ class TestSatelFieldsAndTuyaDevicesFiles:
         assert config.raw["tuya"]["devices"]["gniazdko"]["ip"] == "1.2.3.4"
 
     def test_custom_satel_fields_and_tuya_devices_file_paths_used_only_for_migration(self, tmp_path):
-        """Jak wyżej dla automations_file - `fields_file`/`devices_file`
-        respektowane tylko przy jednorazowej migracji ze starej instalacji
-        plikowej, żeby znaleźć zawartość do zaimportowania."""
         config_text = MINIMAL_CONFIG.replace(
             'integration_key: "x"\n', 'integration_key: "x"\n  fields_file: custom_satel.yaml\n',
         ).replace("tuya:\n  devices: {}", "tuya:\n  devices: {}\n  devices_file: custom_tuya.yaml")
@@ -323,9 +292,6 @@ class TestSatelFieldsAndTuyaDevicesFiles:
 
 
 class TestDatabaseMigration:
-    """Konfiguracja żyje w config.db (bridge/config_store.py) - stare
-    instalacje plikowe migrują się do niej automatycznie i jednorazowo,
-    patrz docstring migrate_legacy_yaml_dir()."""
 
     def test_first_load_creates_db_and_renames_legacy_files(self, config_dir):
         assert not (config_dir / "config.db").exists()
@@ -336,12 +302,7 @@ class TestDatabaseMigration:
         assert (config_dir / "sensors.yaml.migrated").exists()
 
     def test_second_load_reads_db_directly_ignores_stale_legacy_content(self, config_dir):
-        """Migracja jest jednorazowa - modyfikacja resztek starych plików
-        (albo ich przywrócenie z backupu) PO migracji nie powinna niczego
-        cofnąć, bo od tego momentu bridge w ogóle ich nie czyta."""
         BridgeConfig.load(config_dir / "config.yaml")
-        # Symulujemy "przywrócony z backupu" stary plik z innym adresem -
-        # gdyby migracja odpalała się ponownie, dostalibyśmy 9.9.9.9.
         (config_dir / "config.yaml").write_text(
             MINIMAL_CONFIG.replace('"127.0.0.1"', '"9.9.9.9"', 1), encoding="utf-8",
         )
@@ -349,9 +310,6 @@ class TestDatabaseMigration:
         assert config.raw["satel"]["host"] == "127.0.0.1"
 
     def test_passing_db_path_directly_works_for_fresh_install(self, tmp_path):
-        """Konwencja od tej wersji: kreator/panel tworzą config.db wprost
-        (bez żadnego pośredniczącego pliku .yaml) - BridgeConfig.load musi
-        to obsłużyć tak samo jak migrację ze starej instalacji."""
         store = ConfigStore(tmp_path / "config.db")
         store.set("config", {
             "satel": {"host": "1.2.3.4", "port": 7094, "integration_key": "x",
@@ -365,10 +323,6 @@ class TestDatabaseMigration:
 
 
 class TestSessionSecret:
-    """ConfigStore.get_or_create_session_secret() - sekret podpisujący
-    ciasteczka sesji panelu (dashboard/auth.py: AuthGuard), trwały w bazie
-    tak, żeby ciasteczka wystawione PRZED restartem procesu nadal działały
-    PO restarcie (patrz obszerny docstring dashboard/auth.py)."""
 
     def test_generates_secret_on_first_call(self, tmp_path):
         store = ConfigStore(tmp_path / "config.db")
@@ -380,9 +334,6 @@ class TestSessionSecret:
         assert store.get_or_create_session_secret() == store.get_or_create_session_secret()
 
     def test_secret_survives_reopening_same_db_file(self, tmp_path):
-        """Kluczowa właściwość: NOWY obiekt ConfigStore wskazujący na TĘ
-        SAMĄ bazę musi zwrócić TEN SAM sekret - dokładnie to się dzieje przy
-        restarcie procesu (nowy proces, ten sam plik .db)."""
         db_path = tmp_path / "config.db"
         secret1 = ConfigStore(db_path).get_or_create_session_secret()
         secret2 = ConfigStore(db_path).get_or_create_session_secret()
@@ -394,10 +345,6 @@ class TestSessionSecret:
         assert secret1 != secret2
 
     def test_secret_not_included_in_yaml_export_bundle(self, tmp_path):
-        """Sekret żyje w OSOBNEJ tabeli SQL (auth_secret), nie w tabeli
-        `documents` - CELOWO nie trafia do eksportu/importu ZIP configu
-        (patrz KNOWN_DOCUMENTS), żeby kopia zapasowa nie roznosiła klucza
-        podpisującego sesje."""
         store = ConfigStore(tmp_path / "config.db")
         secret = store.get_or_create_session_secret()
         store.set("config", {"satel": {"host": "1.2.3.4"}})
@@ -423,10 +370,6 @@ ebus:
 
 
 class TestImportYamlBundleValidated:
-    """ConfigStore.import_yaml_bundle_validated() - używane przez import z
-    archiwum .zip (dashboard/app.py: /api/config/import-zip). Podwójne
-    sprawdzenie PRZED zapisem: (1) składnia YAML, (2) realny start procesu
-    (BridgeConfig.load) na tymczasowej kopii bazy + jawne pola satela."""
 
     def test_valid_bundle_imports_successfully(self, tmp_path):
         store = ConfigStore(tmp_path / "config.db")
@@ -457,23 +400,17 @@ class TestImportYamlBundleValidated:
         broken = "tuya:\n  devices: {}\nreguły_ruchu: []\nebus:\n  mqtt_host: x\n"
         with pytest.raises(ValueError, match="nie przejdzie startu procesu"):
             store.import_yaml_bundle_validated({"config.yaml": broken})
-        assert store.get("config") == {"marker": "pre-existing"}  # nietknięte
+        assert store.get("config") == {"marker": "pre-existing"}
 
     def test_satel_missing_required_fields_raises_and_writes_nothing(self, tmp_path):
         store = ConfigStore(tmp_path / "config.db")
         store.set("config", {"marker": "pre-existing"})
-        # "satel" jest obecne (przechodzi _validate), ale brakuje host/port/
-        # integration_key - to jest dokładnie luka, której _validate() nie
-        # łapie, a którą RulesEngine.__init__ i tak wywali KeyError-em.
         broken = "satel: {}\ntuya:\n  devices: {}\nreguły_ruchu: []\nebus:\n  mqtt_host: x\n"
         with pytest.raises(ValueError, match="satel.host"):
             store.import_yaml_bundle_validated({"config.yaml": broken})
         assert store.get("config") == {"marker": "pre-existing"}
 
     def test_missing_integration_key_does_not_raise(self, tmp_path):
-        """integration_key jest CELOWO opcjonalny (panel działa tylko do
-        odczytu bez niego, patrz bridge/satel_client.py) - w odróżnieniu od
-        host/port wyżej, jego brak NIE powinien blokować importu."""
         store = ConfigStore(tmp_path / "config.db")
         no_key = (
             "satel:\n  host: \"1.2.3.4\"\n  port: 7094\n"
@@ -483,16 +420,13 @@ class TestImportYamlBundleValidated:
         assert imported == ["config"]
 
     def test_partial_import_merges_with_existing_valid_config(self, tmp_path):
-        """Import samego sensors.yaml (bez config.yaml w archiwum) musi
-        zwalidować się WZGLĘDEM już zapisanej, poprawnej reszty configu -
-        nie powinien wymagać przesyłania WSZYSTKICH dokumentów naraz."""
         store = ConfigStore(tmp_path / "config.db")
         store.set("config", yaml.safe_load(VALID_CONFIG_YAML))
         sensors_yaml = "sensors:\n  - name: kociol_temp\n    label: Temp\n    mqtt_topic: x\n"
         imported = store.import_yaml_bundle_validated({"sensors.yaml": sensors_yaml})
         assert imported == ["sensors"]
         assert store.get("sensors")["sensors"][0]["name"] == "kociol_temp"
-        assert store.get("config")["satel"]["host"] == "1.2.3.4"  # nietknięte
+        assert store.get("config")["satel"]["host"] == "1.2.3.4"
 
     def test_unknown_filenames_are_ignored(self, tmp_path):
         store = ConfigStore(tmp_path / "config.db")
@@ -503,10 +437,6 @@ class TestImportYamlBundleValidated:
         assert imported == ["config"]
 
     def test_local_key_with_special_characters_survives_migration_roundtrip(self, tmp_path):
-        """Powód migracji na bazę: local_key Tuya (i inne sekrety) to
-        dowolne znaki - JSON w SQLite nie ma niejawnego typowania YAML-a,
-        na które podatna jest ręczna edycja pliku. Regresja dla tego
-        konkretnego niepokoju."""
         import yaml
 
         tricky_key = 'aB3+/==xY7"quote\'s\\back\ttab'
@@ -517,6 +447,5 @@ class TestImportYamlBundleValidated:
         (tmp_path / "config.yaml").write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
         config = BridgeConfig.load(tmp_path / "config.yaml")
         assert config.raw["tuya"]["devices"]["x"]["local_key"] == tricky_key
-        # Ponowne wczytanie z już zmigrowanej bazy - to samo zachowanie.
         config2 = BridgeConfig.load(tmp_path / "config.db")
         assert config2.raw["tuya"]["devices"]["x"]["local_key"] == tricky_key

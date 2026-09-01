@@ -279,7 +279,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 refreshAuthNav();
@@ -291,10 +291,7 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// ------------------------------------------------------------------
-// Ustawienia wtyczki (włącznik + poziom logowania) - ten sam wzorzec
-// GET/POST /api/plugins/<id>/settings co reszta stron wtyczek.
-// ------------------------------------------------------------------
+
 const PLUGIN_ID = 'satel';
 
 async function loadPluginSettings() {
@@ -326,17 +323,10 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
   }
 });
 
-// ------------------------------------------------------------------
-// Połączenie (host/port/klucze/tryb wejść IP)
-// ------------------------------------------------------------------
+
 let connectionSnapshot = null;
-// Tryb FAKTYCZNIE zapisany na serwerze (z ostatniego wczytania) - TEST
-// niżej zawsze używa tego, co jest w bazie, NIE tego, co jest właśnie
-// wybrane w rozwijanej liście, dopóki nie klikniesz "Zapisz połączenie"
-// (patrz dashboard/app.py: api_satel_test_output, czyta
-// satel.virtual_inputs.mode z configu). Bez tego rozróżnienia zmiana trybu
-// w formularzu bez zapisu dawała mylący błąd z TESTU dla NIEWŁAŚCIWEGO
-// trybu (np. "Podaj numer wyjścia" mimo wybranego trybu HTTP z portem).
+
+
 let savedVirtualInputMode = 'library';
 
 async function loadConnection(auto) {
@@ -345,10 +335,8 @@ async function loadConnection(auto) {
     const resp = await authorizedFetch('/api/plugins/satel/connection');
     const data = await resp.json();
     if (!resp.ok) {
-      // Auto-wczytanie przy starcie strony milczy o błędzie (strona i tak
-      // wymaga zalogowania, więc 401 tu nie powinno się zdarzyć w
-      // normalnym użyciu) - nie chcemy straszyć czerwonym komunikatem
-      // zanim użytkownik cokolwiek kliknął.
+      
+      
       if (!auto) status.textContent = '❌ ' + (data.error || 'Błąd wczytywania');
       return;
     }
@@ -376,16 +364,8 @@ async function loadConnection(auto) {
   }
 }
 document.getElementById('loadConnectionBtn').addEventListener('click', () => loadConnection(false));
-// Wczytujemy TEŻ automatycznie przy starcie strony (nie dopiero po
-// kliknięciu przycisku) - strona i tak wymaga zalogowania (globalna
-// bramka w dashboard/app.py), więc nie ma tu nic do ukrywania przed
-// niezalogowanym widzem. BEZ tego savedVirtualInputMode zostawał na
-// domyślnym 'library', dopóki ktoś nie kliknął "Wczytaj bieżące
-// ustawienia" - zmiana trybu na "http" i od razu kliknięcie TEST (bez
-// wcześniejszego wczytania) omijało wtedy całą blokadę niżej i wysyłało
-// żądanie z trybem, którego serwer wcale nie ma zapisanego, dając mylący
-// błąd z niewłaściwej gałęzi (zgłoszony błąd: "Podaj numer wyjścia" mimo
-// wybranego trybu HTTP z portem).
+
+
 loadConnection(true);
 
 document.getElementById('saveConnectionBtn').addEventListener('click', async () => {
@@ -435,13 +415,7 @@ function syncVirtualInputModeUI() {
   document.getElementById('testHttpRow').hidden = !isHttp;
   if (isHttp) loadVirtualInputNamesForTest();
 
-  // Ostrzeżenie + blokada TESTU, dopóki wybrany tryb różni się od
-  // faktycznie zapisanego (patrz komentarz przy savedVirtualInputMode) -
-  // inaczej TEST używałby po cichu innego trybu niż widoczny w formularzu.
-  // Celowo BEZ warunku "tylko po wczytaniu" - savedVirtualInputMode ma
-  // sensowną domyślną wartość ('library') od razu, a loadConnection(true)
-  // i tak dogania ją automatycznie w tle zaraz po starcie strony (patrz
-  // niżej), więc to porównanie jest poprawne od pierwszej klatki.
+  
   const mismatch = selectedMode !== savedVirtualInputMode;
   const testOutputBtn = document.getElementById('testOutputBtn');
   const testHttpBtn = document.getElementById('testHttpBtn');
@@ -523,9 +497,7 @@ document.getElementById('testHttpBtn').addEventListener('click', async () => {
   }
 });
 
-// ------------------------------------------------------------------
-// Strefy/wejścia/wyjścia/wirtualne wejścia IP
-// ------------------------------------------------------------------
+
 function addNameNumberRow(containerId, initial) {
   const container = document.getElementById(containerId);
   const row = document.createElement('div');
@@ -549,9 +521,7 @@ function collectNameNumberRows(containerId) {
     .filter(r => r.name && r.number);
 }
 
-// Rodzaje wejść (czujek)/wyjść - czysto opisowe (ikona/etykieta w panelu
-// głównym), patrz SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES w dashboard/setup.py
-// (te same klucze - musi się zgadzać, inaczej zapis po cichu pominie typ).
+
 const SATEL_ZONE_TYPES = {
   drzwi: 'Drzwi', okno: 'Okno', ruch: 'Czujka ruchu (PIR)', dym: 'Czujka dymu',
   zalanie: 'Czujka zalania', wibracja: 'Czujka wibracji/stłuczenia', sabotaz: 'Sabotaż/24h', inne: 'Inne',
@@ -596,10 +566,7 @@ function collectZoneOrOutputRows(containerId) {
     .filter(r => r.name && r.number);
 }
 
-// Wirtualne wejście to nazwa+numer, NIEZALEŻNIE od trybu wyzwalania
-// (satel.virtual_inputs.mode, ustawianego w sekcji 🔌 Połączenie wyżej) -
-// tryb "http" to zwykły, NIEUWIERZYTELNIONY GET (host:port/nazwa), BEZ
-// żadnego klucza/kodu DLOADX, numer jest w nim po prostu nieużywany.
+
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');
   const row = document.createElement('div');

@@ -132,7 +132,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 refreshAuthNav();
@@ -144,10 +144,7 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// ------------------------------------------------------------------
-// Ustawienia wtyczki (włącznik + poziom logowania) - ten sam wzorzec
-// GET/POST /api/plugins/<id>/settings co reszta stron wtyczek.
-// ------------------------------------------------------------------
+
 const PLUGIN_ID = 'notifications';
 
 async function loadPluginSettings() {
@@ -179,9 +176,7 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
   }
 });
 
-// ------------------------------------------------------------------
-// Adres tematu ntfy
-// ------------------------------------------------------------------
+
 async function loadTopic() {
   const data = await (await fetch('/api/plugins/notifications/topic')).json();
   document.getElementById('ntfyTopicUrlInput').value = data.ntfy_topic_url || '';

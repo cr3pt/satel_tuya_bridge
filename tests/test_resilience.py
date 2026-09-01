@@ -1,5 +1,3 @@
-"""Testy dla bridge/resilience.py - reconnect z backoff, powiadomienia
-o utracie/przywróceniu połączenia z okresem karencji."""
 import asyncio
 
 from bridge.resilience import HealthReporter, Supervisor
@@ -21,15 +19,12 @@ class TestHealthReporterStatus:
         assert "timeout" in statuses[0]["value"]
 
     def test_no_duplicate_events_on_repeated_same_state(self, history):
-        """Powtarzające się zgłoszenia TEGO SAMEGO stanu (np. wiele
-        nieudanych prób z różną treścią błędu) nie mogą zaśmiecać dziennika
-        zdarzeń - liczy się tylko faktyczna zmiana stanu."""
         reporter = HealthReporter("test_component", history=history)
         reporter.report(False, "błąd 1")
         reporter.report(False, "błąd 2")
         reporter.report(False, "błąd 3")
         events = history.get_events("system", 0, 9999999999)
-        assert len(events) == 1  # tylko pierwsze przejście do "rozłączono"
+        assert len(events) == 1
 
     def test_transition_logs_event(self, history):
         reporter = HealthReporter("test_component", history=history)
@@ -37,7 +32,7 @@ class TestHealthReporterStatus:
         reporter.report(False, "padło")
         reporter.report(True)
         events = history.get_events("system", 0, 9999999999)
-        assert len(events) == 3  # połączono, rozłączono, połączono
+        assert len(events) == 3
 
 
 class TestHealthReporterNotifications:
@@ -52,7 +47,7 @@ class TestHealthReporterNotifications:
         reporter = HealthReporter("test", history=history, notify_cfg={"ntfy_topic_url": "https://x"}, grace_seconds=1.0)
         reporter.report(False, "padło")
         await asyncio.sleep(0.1)
-        reporter.report(True)  # wraca zanim minie okres karencji
+        reporter.report(True)
         await asyncio.sleep(0.05)
         assert sent == []
 
@@ -67,7 +62,7 @@ class TestHealthReporterNotifications:
 
         reporter = HealthReporter("test", history=history, notify_cfg={"ntfy_topic_url": "https://x"}, grace_seconds=0.2)
         reporter.report(False, "padło na dłużej")
-        await asyncio.sleep(0.35)  # dłużej niż grace_seconds
+        await asyncio.sleep(0.35)
         assert len(sent) == 1
         assert "offline" in sent[0][0]
 
@@ -87,7 +82,7 @@ class TestSupervisor:
             if attempt_count < 3:
                 raise ConnectionError(f"awaria #{attempt_count}")
             await on_connected()
-            await asyncio.sleep(10)  # symuluj długo trwające połączenie
+            await asyncio.sleep(10)
 
         supervisor = Supervisor("test", history=history, base_delay=0.05, max_delay=0.1)
         task = asyncio.create_task(supervisor.run(connect_and_run))
@@ -103,16 +98,12 @@ class TestSupervisor:
         assert statuses[0]["value"] == "połączono"
 
     async def test_normal_return_treated_as_disconnect(self, history):
-        """Jeśli funkcja monitorująca po prostu się zwróci (bez wyjątku),
-        supervisor musi to potraktować jak utratę połączenia i spróbować
-        ponownie, a nie ciszej zakończyć pętlę."""
         call_count = 0
 
         async def connect_and_run(on_connected):
             nonlocal call_count
             call_count += 1
             await on_connected()
-            # normalny powrót, bez wyjątku i bez nieskończonego sleep
 
         supervisor = Supervisor("test", history=history, base_delay=0.02, max_delay=0.05)
         task = asyncio.create_task(supervisor.run(connect_and_run))
@@ -123,4 +114,4 @@ class TestSupervisor:
         except asyncio.CancelledError:
             pass
 
-        assert call_count > 1  # połączenie było próbowane wielokrotnie, nie raz
+        assert call_count > 1

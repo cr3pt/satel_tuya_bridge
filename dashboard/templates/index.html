@@ -232,12 +232,7 @@
 <script>
 let chart = null;
 
-// --- Autoryzacja (tylko dla akcji zmieniających stan: zapis configu,
-// uzbrojenie/rozbrojenie) - sesja przez /login (ciasteczko HttpOnly,
-// ustawiane przez serwer) - patrz dashboard/auth.py. Strona NIGDY sama nie
-// widzi ani nie trzyma hasła - jeśli akcja wymaga logowania i nie ma
-// ważnej sesji, przekierowujemy na /login zamiast pytać o hasło w prompt()
-// (który wyświetlał wpisywany tekst JAWNIE, bez maskowania).
+
 async function authorizedFetch(url, options = {}) {
   const resp = await fetch(url, options);
   if (resp.status === 401) {
@@ -247,7 +242,7 @@ async function authorizedFetch(url, options = {}) {
   return resp;
 }
 
-let isLoggedIn = false;  // patrz loadPartitionControls() - sterowanie alarmem wymaga zalogowania
+let isLoggedIn = false;  
 
 async function refreshAuthNav() {
   const link = document.getElementById('authNavLink');
@@ -268,7 +263,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 
@@ -276,26 +271,19 @@ function fmtTime(ts) {
   return new Date(ts * 1000).toLocaleString('pl-PL');
 }
 
-// --- Wybór czujników do wykresu (wielokrotny, pogrupowany wg obwodu) ---
-// Grupowanie po drugim segmencie tematu MQTT (ten sam mechanizm co w
-// /plugins/ebus przy wykrywaniu czujników) - np. "ebusd/bm/FlowTemp" i
-// "ebusd/fha/FlowTemp" trafiają do osobnych grup "bm"/"fha".
+
 function topicCircuit(topic) {
   const parts = (topic || '').split('/').filter(Boolean);
   return parts.length >= 2 ? parts[1] : 'inne';
 }
 
-let sensorNames = [];       // wszystkie nazwy z historycznymi danymi (/api/sensors)
-let sensorMeta = {};        // nazwa -> {label, mqtt_topic} (z /api/config/sensors, jeśli skonfigurowany)
+let sensorNames = [];       
+let sensorMeta = {};        
 let selectedSensors = new Set();
 
 async function loadSensors() {
-  // /api/config/sensors to "ustawienia" (etykiety/tematy MQTT czujników,
-  // publiczny odczyt - zapis przeniesiony do /api/plugins/ebus/sensors,
-  // patrz dashboard/app.py: api_config_sensors_get), w odróżnieniu od
-  // /api/sensors (same nazwy czujników z historycznymi danymi - część
-  // publicznego podglądu). `r.ok ? ... : []` to tylko zabezpieczenie na
-  // wypadek chwilowej niedostępności serwera, nie logowania.
+  
+  
   const [names, configured] = await Promise.all([
     fetch('/api/sensors').then(r => r.json()),
     fetch('/api/config/sensors').then(r => r.ok ? r.json() : []),
@@ -307,9 +295,8 @@ async function loadSensors() {
     const cfg = byName[name];
     sensorMeta[name] = { label: (cfg && cfg.label) || name, mqtt_topic: cfg ? cfg.mqtt_topic : '' };
   });
-  // Domyślnie zaznacz pierwszy czujnik, żeby wykres nie startował pusty -
-  // ale tylko przy pierwszym wczytaniu (nie nadpisuj wyboru użytkownika
-  // przy kolejnych automatycznych odświeżeniach co 30s).
+  
+  
   if (names.length && selectedSensors.size === 0) selectedSensors.add(names[0]);
   renderSensorChecklist();
   updateSensorToggleLabel();
@@ -405,7 +392,7 @@ async function loadActiveAlerts() {
   ).join('');
 }
 
-// Paleta cykliczna dla wielu czujników naraz na jednym wykresie.
+
 const SENSOR_CHART_COLORS = ['#4d8dfd', '#3dd68c', '#e5484d', '#f2b93d', '#c792ea', '#5ecbe0', '#ff9f68', '#8b93a1'];
 
 async function loadHistory() {
@@ -416,11 +403,7 @@ async function loadHistory() {
     return;
   }
 
-  // Każdy czujnik publikuje niezależnie (różne znaczniki czasu) - dlatego
-  // punkty to {x, y} na osi liczbowej (unix timestamp), NIE wspólna oś
-  // kategoryczna "labels" (ta zakładałaby, że wszystkie czujniki mają
-  // DOKŁADNIE te same znaczniki czasu, co nieprawda przy więcej niż
-  // jednym czujniku naraz).
+  
   const datasets = await Promise.all(names.map(async (name, i) => {
     const data = await (await fetch(`/api/history?sensor=${encodeURIComponent(name)}&hours=${hours}`)).json();
     const color = SENSOR_CHART_COLORS[i % SENSOR_CHART_COLORS.length];
@@ -479,51 +462,39 @@ async function loadAlertsHistory() {
     </tr>`).join('');
 }
 
-// Rodzaje czujek/wyjść Satela - ikony/etykiety CZYSTO kosmetyczne (patrz
-// SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES w dashboard/setup.py i
-// plugins/satel/templates/satel/index.html, gdzie się je przypisuje
-// nazwie wejścia/wyjścia). Zielone OK/czerwone
-// naruszone zostaje jak dotychczas (statusCardClass) - typ dokłada tylko
-// ikonę i etykietę rodzaju, żeby dało się od razu odróżnić np. czujkę dymu
-// od czujki ruchu na liście wejść.
+
 const SATEL_ZONE_TYPE_ICONS = { drzwi: '🚪', okno: '🪟', ruch: '🚶', dym: '🔥', zalanie: '💧', wibracja: '📳', sabotaz: '🚨', inne: '❔' };
 const SATEL_ZONE_TYPE_LABELS = { drzwi: 'Drzwi', okno: 'Okno', ruch: 'Ruch (PIR)', dym: 'Dym', zalanie: 'Zalanie', wibracja: 'Wibracja', sabotaz: 'Sabotaż/24h', inne: 'Inne' };
 const SATEL_OUTPUT_TYPE_ICONS = { syrena: '🔔', przekaznik: '🔌', oswietlenie: '💡', brama: '🚧', ogrzewanie: '♨️', inne: '❔' };
 const SATEL_OUTPUT_TYPE_LABELS = { syrena: 'Syrena', przekaznik: 'Przekaźnik', oswietlenie: 'Oświetlenie', brama: 'Brama/rolety', ogrzewanie: 'Ogrzewanie', inne: 'Inne' };
 
-let satelZoneTypes = {};   // nazwa wejścia -> slug rodzaju (np. "drzwi")
-let satelOutputTypes = {}; // nazwa wyjścia -> slug rodzaju (np. "syrena")
+let satelZoneTypes = {};   
+let satelOutputTypes = {}; 
 
 async function loadSatelFieldTypes() {
-  // /api/plugins/satel/fields (pełne ustawienia, w tym klucz wirtualnych
-  // wejść) wymaga zalogowania - /api/satel/zone-types to jego publiczny
-  // podzbiór (same mapy nazwa -> rodzaj, bez niczego wrażliwego),
-  // wystarczający dla samych ikon/etykiet na stronie głównej.
+  
+  
   try {
     const data = await (await fetch('/api/satel/zone-types')).json();
     satelZoneTypes = data.zone_types || {};
     satelOutputTypes = data.output_types || {};
   } catch (e) {
-    // brak połączenia z serwerem - panel działa dalej, po prostu bez ikon rodzaju
+    
   }
 }
 
 function statusCardClass(category, value) {
   const v = (value || '').toString().toLowerCase();
-  // "brak danych (wtyczka wyłączona)" - satel.enabled=false w 🧩 Wtyczki,
-  // nigdy nie doszło do żadnego prawdziwego odczytu (patrz
-  // RulesEngine._seed_satel_status_labels) - celowo BEZ koloru, tak samo
-  // jak "wyłączono (wtyczka)" w system_health niżej, żeby się nie mylić
-  // z prawdziwym "OK"/"wyłączone" (co sugerowałoby żywą komunikację).
+  
+  
   if (v.startsWith('brak danych (wtyczka wyłączona)')) return '';
   if (category === 'satel_input') return v === 'naruszone' ? 'violated' : 'ok';
   if (category === 'tuya' && v === 'niedostępne') return 'violated';
   if (category === 'satel_output' || category === 'tuya') return v.startsWith('włącz') ? 'on' : 'off';
   if (category === 'system_health') {
     if (v.startsWith('połączono')) return 'ok';
-    // "wyłączono (wtyczka)" - świadomie wyłączona integracja, nie awaria -
-    // celowo BEZ koloru (ani czerwonego "violated", ani zielonego "ok"),
-    // żeby się wizualnie nie mylić z prawdziwym rozłączeniem.
+    
+    
     if (v.startsWith('wyłączono (wtyczka)')) return '';
     return 'violated';
   }
@@ -543,12 +514,7 @@ function statusCardTypeInfo(category, label) {
   return { icon: '', typeLabel: '' };
 }
 
-// Doładowuje karty statusów zamiast przeładowywać cały kontener co 2s
-// (setInterval(loadStatuses, ...) niżej) - podmienia tylko tekst/klasę
-// istniejących węzłów DOM po kluczu (etykieta), więc karty, które się nie
-// zmieniły, w ogóle nie są dotykane. Wcześniej pełny innerHTML co 2s
-// niszczył i tworzył wszystkie karty na nowo - stąd widoczne "mruganie"
-// całej siatki nawet gdy zmieniała się jedna wartość.
+
 function renderStatusGrid(elementId, items) {
   const el = document.getElementById(elementId);
   if (items.length === 0) {
@@ -586,9 +552,7 @@ function renderStatusGrid(elementId, items) {
     const tsEl = card.querySelector('.ts');
     if (tsEl.textContent !== tsText) tsEl.textContent = tsText;
 
-    // Ustaw kartę na właściwej pozycji tylko jeśli faktycznie nie tam jest
-    // (insertBefore z tym samym miejscem docelowym to no-op w DOM, ale
-    // porównanie z góry pozwala uniknąć zbędnego wywołania przy każdym ticku).
+    
     if (el.children[idx] !== card) {
       el.insertBefore(card, el.children[idx] || null);
     }
@@ -616,14 +580,7 @@ async function loadStatuses() {
   renderStatusGrid('statusHomewhiz', homewhiz);
 }
 
-// --- Sterowanie alarmem (uzbrojenie/rozbrojenie) - dostępne TYLKO po
-// zalogowaniu (patrz isLoggedIn/refreshAuthNav wyżej i
-// dashboard/app.py: _require_login_for_settings_and_control) - zarówno
-// sama sekcja kontrolek (checkboxy stref + przyciski), jak i faktyczne
-// wysłanie komendy. /api/satel/partitions wymaga teraz zalogowania, więc
-// dla niezalogowanego widza w ogóle go nie odpytujemy - stan uzbrojenia
-// nadal widać wyżej na liście statusów (kategoria satel_partition, część
-// publicznego podglądu), tylko bez możliwości zmiany.
+
 async function loadPartitionControls() {
   const el = document.getElementById('partitionControls');
   if (!isLoggedIn) {
@@ -714,12 +671,7 @@ function showArmMessage(kind, text) {
   el.textContent = text;
 }
 
-// --- Wirtualne wejścia IP (ETHM-1 Plus) - jednorazowa aktywacja z panelu
-// głównego, ten sam mechanizm co akcja "Aktywuj wejście IP Satela" w
-// edytorze reguł ruchu (RulesEngine._fire_motion_rule) i akcja sceny
-// satel_virtual_input, tylko wywołana ręcznie na żądanie. Bez pojęcia
-// "stanu" (to jednorazowe wywołanie HTTP, nie coś do odczytania) - stąd
-// sama lista przycisków, nie status-card jak dla wejść/wyjść wyżej.
+
 async function loadVirtualInputs() {
   const el = document.getElementById('virtualInputsSection');
   const data = await (await fetch('/api/satel/virtual-inputs')).json();
@@ -789,9 +741,7 @@ function showVirtualInputMessage(kind, text) {
   el.textContent = text;
 }
 
-// Dziennik zdarzeń domyślnie UKRYTY (zbędny ruch/zapytania, dopóki nikt na
-// niego nie patrzy) - pokazuje się dopiero po kliknięciu przycisku
-// "DZIENNIK ZDARZEŃ" i dociąga dane dopiero wtedy.
+
 let eventsVisible = false;
 
 document.getElementById('toggleEventsBtn').addEventListener('click', async () => {
@@ -802,7 +752,7 @@ document.getElementById('toggleEventsBtn').addEventListener('click', async () =>
 });
 
 async function refreshAll() {
-  await refreshAuthNav();  // stan zalogowania może się zmienić w innej karcie - odśwież przed sekcją alarmu
+  await refreshAuthNav();  
   await loadStatuses();
   await loadPartitionControls();
   await loadVirtualInputs();
@@ -820,14 +770,9 @@ document.getElementById('eventTypeSelect').addEventListener('change', () => { if
   await loadSensors();
   await loadSatelFieldTypes();
   await refreshAll();
-  setInterval(refreshAll, 30000);  // odświeżanie w tle co 30s (wykres/zdarzenia/alarmy) - bez przeładowania strony
-  // Stany wejść/wyjść Satela i Tuya odświeżają się częściej - "na żywo".
-  // 1s - projekt nie jest już ograniczony do RPi Zero W (Docker to jedyne
-  // wspierane wdrożenie, patrz README "Status tego kodu"), a to i tak
-  // dokłada minimalny narzut do faktycznego opóźnienia: backend zapisuje
-  // status w HistoryStore NATYCHMIAST po zdarzeniu z centrali (broadcast,
-  // patrz RulesEngine._on_zone_change/_on_output_change), więc to
-  // pollowanie tylko odbiera już zapisaną wartość, nie czeka na nią.
+  setInterval(refreshAll, 30000);  
+  
+  
   setInterval(loadStatuses, 1000);
 })();
 </script>

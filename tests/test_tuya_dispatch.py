@@ -1,6 +1,3 @@
-"""Testy dla bridge/tuya_dispatch.py - rozdziela sterowanie między
-TuyaLocalController i TuyaCloudController po nazwie urządzenia, z
-pierwszeństwem dla lokalnego."""
 import pytest
 
 from bridge.tuya_dispatch import TuyaController
@@ -66,10 +63,7 @@ async def test_unknown_device_raises_key_error(dispatch):
 
 
 def test_local_takes_precedence_when_device_configured_in_both(local, cloud):
-    """Dokładnie scenariusz ze zgłoszenia: urządzenie zaczyna jako
-    chmurowe (brak local_key), a potem użytkownik konfiguruje je lokalnie
-    pod TĄ SAMĄ nazwą - lokalne musi wygrać."""
-    cloud.devices_cfg["gniazdko_local"] = {"id": "c2"}  # ta sama nazwa co w local
+    cloud.devices_cfg["gniazdko_local"] = {"id": "c2"}
     dispatch = TuyaController(local, cloud)
     assert dispatch._resolve("gniazdko_local") is local
 
@@ -82,7 +76,7 @@ async def test_get_all_statuses_merges_both_controllers(dispatch):
 def test_devices_cfg_merges_both_with_local_precedence(local, cloud):
     cloud.devices_cfg["gniazdko_local"] = {"id": "stale_cloud_entry"}
     dispatch = TuyaController(local, cloud)
-    assert dispatch.devices_cfg["gniazdko_local"] == {"id": "l1"}  # lokalne nadpisuje
+    assert dispatch.devices_cfg["gniazdko_local"] == {"id": "l1"}
     assert "lampa_cloud" in dispatch.devices_cfg
 
 

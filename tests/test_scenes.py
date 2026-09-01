@@ -1,4 +1,3 @@
-"""Testy dla bridge/scenes.py - grupy akcji na wielu urządzeniach naraz."""
 import asyncio
 
 import pytest
@@ -65,18 +64,14 @@ async def test_scene_executes_actions_in_order(runner, fake_tuya, fake_satel):
 
 async def test_unknown_action_is_skipped_not_fatal(runner, fake_tuya):
     await runner.run("z_nieznana_akcja")
-    # akcja 'cos_nieznanego' pominięta, ale kolejna akcja w scenie i tak się wykonała
     assert fake_tuya.calls == [("off", "gniazdko_salon")]
 
 
 async def test_unknown_scene_does_not_raise(runner):
-    await runner.run("nieistniejaca_scena")  # nie powinno rzucić wyjątku
+    await runner.run("nieistniejaca_scena")
 
 
 async def test_disabled_scene_does_not_run(runner, fake_tuya, history):
-    """Przełącznik "Włączona" (enabled: false) w edytorze - scena jest
-    pomijana z KAŻDEGO miejsca, które ją wywołuje (reguła ruchu, eskalacja,
-    kamera, kocioł...), bo run() to jedyny punkt jej wykonania."""
     await runner.run("scena_wylaczona")
     assert fake_tuya.calls == []
     assert history.get_status_value("automation:scena_wylaczona") is None
@@ -88,21 +83,13 @@ async def test_arm_disarm_actions(runner, fake_satel):
 
 
 async def test_scene_sets_running_status_during_execution_then_idle(runner, history):
-    """Status "automation:<nazwa>" (kategoria "automation") pozwala innej
-    regule/scenie sprawdzić w warunku (state), czy TA scena jest właśnie w
-    trakcie wykonywania - patrz README: warunek "inna automatyzacja jest
-    uruchomiona". Po zakończeniu (nawet z błędem akcji) status musi wrócić
-    na "bezczynna", inaczej warunek zostałby trwale zablokowany."""
     await runner.run("wykryto_intruza")
     assert history.get_status_value("automation:wykryto_intruza") == "bezczynna"
 
 
 async def test_scene_status_is_running_while_delay_action_pending(runner, history):
-    """Scena "wykryto_intruza" ma akcję {type: delay, seconds: 0.01} w
-    środku listy - w trakcie tego opóźnienia status powinien być
-    "uruchomiona", nie tylko na chwilę na samym początku."""
     task = asyncio.create_task(runner.run("wykryto_intruza"))
-    await asyncio.sleep(0)  # oddaj sterowanie - scena zdąży dojść do delay
+    await asyncio.sleep(0)
     assert history.get_status_value("automation:wykryto_intruza") == "uruchomiona"
     await task
     assert history.get_status_value("automation:wykryto_intruza") == "bezczynna"
@@ -119,19 +106,12 @@ async def test_unknown_scene_does_not_write_any_automation_status(runner, histor
 
 
 async def test_scene_without_history_does_not_crash(fake_tuya, fake_satel):
-    """SceneRunner(history=None) - np. wywołania z testów/kontekstów, które
-    nie potrzebują historii - nie może wywalić się na próbie zapisu statusu."""
     fake_satel.virtual_inputs = {"motion_hall_camera": 17}
     runner_no_history = SceneRunner(SCENES_CFG, fake_tuya, fake_satel, history=None)
-    await runner_no_history.run("wykryto_intruza")  # nie powinno rzucić wyjątku
+    await runner_no_history.run("wykryto_intruza")
 
 
 async def test_arm_disarm_passes_explicit_partitions(runner, fake_satel):
-    """Regresja: sceny wcześniej NIGDY nie przekazywały `partitions` do
-    arm()/disarm(), więc zawsze dotykały tylko domyślnej (jedynej) strefy
-    (SatelIntegraClient.partition) - nawet gdy instalacja miała kilka
-    nazwanych stref skonfigurowanych. Patrz też komentarz w
-    bridge/scenes.py."""
     await runner.run("arm_disarm_specific_partitions")
     assert fake_satel.calls == [("arm", 0, [1, 2]), ("disarm", [2])]
 
@@ -144,17 +124,12 @@ async def test_scene_logs_event_to_history(runner, history):
 
 
 async def test_unknown_virtual_input_is_skipped_not_fatal(runner, fake_satel, history):
-    """Nazwa spoza satel.virtual_inputs.inputs (np. usunięta/literówka) -
-    ostrzeżenie w logach, ale reszta sceny (i sama scena) nie ma się wywalić."""
     fake_satel.virtual_inputs = {}
     await runner.run("wykryto_intruza")
-    # satel_output (nr 1) wykonał się, satel_virtual_input pominięty (nieznana nazwa)
     assert fake_satel.calls == [("output", 1, True)]
 
 
 async def test_failing_action_does_not_abort_scene(fake_satel, history):
-    """Jedna nieudana akcja (np. martwe urządzenie Tuya) nie może przerwać
-    wykonywania reszty sceny."""
     failing_tuya_cfg = [
         {
             "name": "test_scena",
@@ -171,5 +146,4 @@ async def test_failing_action_does_not_abort_scene(fake_satel, history):
 
     runner = SceneRunner(failing_tuya_cfg, FailingTuya(), fake_satel, history=history)
     await runner.run("test_scena")
-    # mimo błędu w pierwszej akcji, druga (satel_output) powinna się wykonać
     assert fake_satel.calls == [("output", 2, True)]

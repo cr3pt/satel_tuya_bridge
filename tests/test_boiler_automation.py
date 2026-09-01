@@ -1,4 +1,3 @@
-"""Testy dla bridge/boiler_automation.py - automatyka wyzwalana danymi z kotła."""
 import asyncio
 
 import pytest
@@ -66,10 +65,10 @@ async def test_text_value_is_safely_ignored(automation, scene_runner):
 
 async def test_cooldown_suppresses_repeated_triggers(automation, scene_runner):
     await automation.on_value("temp_zewnetrzna", -10)
-    await automation.on_value("temp_zewnetrzna", -12)  # w oknie karencji - powinno być pominięte
+    await automation.on_value("temp_zewnetrzna", -12)
     assert scene_runner.calls == ["ochrona_mroz"]
 
-    await asyncio.sleep(0.25)  # po upływie cooldown_seconds=0.2
+    await asyncio.sleep(0.25)
     await automation.on_value("temp_zewnetrzna", -8)
     assert scene_runner.calls == ["ochrona_mroz", "ochrona_mroz"]
 

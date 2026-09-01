@@ -1,11 +1,3 @@
-"""Integracja z Home Assistant przez MQTT Discovery.
-
-Publikuje encje (patrz ha_discovery.py) i ich stan, oraz przyjmuje komendy
-sterujące dla Tuya (switch) i wyjść Satela (switch) - NIE dla stref
-(świadomie, patrz ha_discovery.py). Osobny klient paho-mqtt od
-EbusMqttListener/MqttBoilerPublisher - inna odpowiedzialność (sterowanie +
-discovery, nie tylko odczyt danych z kotła), prościej trzymać oddzielnie.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -26,10 +18,6 @@ class HomeAssistantMqttBridge:
         self.cfg = cfg
         self.entities = entities
         self._command_handlers: dict[str, Callable[[str], Awaitable[None]]] = {}
-        # Zapisujemy pętlę TERAZ (konstruktor wywoływany w kontekście
-        # asyncio) - _on_message działa w wątku paho, gdzie
-        # asyncio.get_event_loop() by się wywaliło (ten sam problem, który
-        # testy złapały wcześniej w resilience.py).
         self._loop = asyncio.get_event_loop()
         self._health = HealthReporter(
             "home_assistant_mqtt", history=history, notify_cfg=notify_cfg,
@@ -42,7 +30,6 @@ class HomeAssistantMqttBridge:
         self._client.reconnect_delay_set(min_delay=1, max_delay=120)
 
     def register_command_handler(self, topic: str, handler: Callable[[str], Awaitable[None]]) -> None:
-        """`handler` to korutyna przyjmująca treść wiadomości (str, np. 'ON'/'OFF')."""
         self._command_handlers[topic] = handler
 
     def start(self) -> None:
@@ -64,12 +51,10 @@ class HomeAssistantMqttBridge:
             return
         self._health.report(True)
 
-        # Publikacja discovery (retained) - HA odbiera i tworzy encje
         for entity in self.entities:
             client.publish(entity["discovery_topic"], payload=json.dumps(entity["payload"]), retain=True)
         logger.info("Opublikowano %d encji Home Assistant Discovery", len(self.entities))
 
-        # Subskrypcja tematów komend (Tuya switch, wyjścia Satela)
         for topic in self._command_handlers:
             client.subscribe(topic)
             logger.info("Subskrybuję temat komend HA: %s", topic)
@@ -83,8 +68,4 @@ class HomeAssistantMqttBridge:
             return
         payload = msg.payload.decode().strip()
         logger.info("Komenda z Home Assistant: %s = %s", msg.topic, payload)
-        # Callback paho działa w OSOBNYM wątku - bezpieczne przekazanie do
-        # pętli asyncio przez run_coroutine_threadsafe (ten sam wzorzec co
-        # w ebus_client.py/tuya_cloud_events.py). Używamy zapisanej pętli,
-        # NIE asyncio.get_event_loop() (to by się wywaliło w tym wątku).
         asyncio.run_coroutine_threadsafe(handler(payload), self._loop)

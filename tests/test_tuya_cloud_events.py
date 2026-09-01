@@ -1,13 +1,3 @@
-"""Testy dla bridge/tuya_cloud_events.py - głównie wykrywanie trwałego błędu
-401 (Unauthorized) na websocket Pulsar, który biblioteka tuya-connector-python
-sama ponawia w nieskończoność i NIGDY nie zgłasza na zewnątrz (ani wyjątkiem,
-ani innym callbackiem) - bez naszej podmiany handlera błędów Supervisor
-raportowałby "połączono" mimo trwałej awarii autoryzacji, dokładnie tak jak
-zgłosił użytkownik z prawdziwego wdrożenia.
-
-Testy async (nie zwykłe `def`) celowo - TuyaCameraMotionListener.__init__
-wywołuje asyncio.get_event_loop(), co poza działającą pętlą asyncio rzuca
-RuntimeError w Pythonie 3.11+ (patrz komentarz w __init__)."""
 from bridge.tuya_cloud_events import TuyaCameraMotionListener
 
 

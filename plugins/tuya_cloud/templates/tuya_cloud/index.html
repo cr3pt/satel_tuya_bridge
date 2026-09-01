@@ -200,7 +200,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 refreshAuthNav();
@@ -212,10 +212,7 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// ------------------------------------------------------------------
-// Ustawienia wtyczki (włącznik + poziom logowania) - ten sam wzorzec
-// GET/POST /api/plugins/<id>/settings co reszta stron wtyczek.
-// ------------------------------------------------------------------
+
 const PLUGIN_ID = 'tuya_cloud';
 
 async function loadPluginSettings() {
@@ -247,9 +244,7 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
   }
 });
 
-// ------------------------------------------------------------------
-// Poświadczenia API
-// ------------------------------------------------------------------
+
 async function loadCredentials() {
   const data = await (await fetch('/api/plugins/tuya_cloud/credentials')).json();
   document.getElementById('accessIdInput').value = data.access_id || '';
@@ -287,9 +282,7 @@ document.getElementById('saveCredentialsBtn').addEventListener('click', async ()
   }
 });
 
-// ------------------------------------------------------------------
-// Urządzenia sterowane przez chmurę
-// ------------------------------------------------------------------
+
 function addCloudDeviceRow(initial) {
   const container = document.getElementById('cloudDevicesRows');
   const row = document.createElement('div');
@@ -349,9 +342,7 @@ document.getElementById('saveCloudDevicesBtn').addEventListener('click', async (
   }
 });
 
-// ------------------------------------------------------------------
-// Import z Tuya Cloud (poświadczenia JUŻ ZAPISANE wyżej)
-// ------------------------------------------------------------------
+
 document.getElementById('cloudImportBtn').addEventListener('click', async () => {
   const btn = document.getElementById('cloudImportBtn');
   const status = document.getElementById('cloudImportStatus');
@@ -368,10 +359,8 @@ document.getElementById('cloudImportBtn').addEventListener('click', async () => 
     let addedLocal = 0, addedCloud = 0;
     (data.devices || []).forEach(dev => {
       if (dev.ip && dev.local_key) {
-        // Kompletne dane (IP + local_key) - lokalne sterowanie jest
-        // szybsze i nie zależy od internetu, więc TYLKO podpowiadamy, gdzie
-        // je skonfigurować, zamiast dodawać tutaj (ta strona zarządza
-        // wyłącznie "cloud_devices" - patrz plugins/tuya_cloud/routes.py).
+        
+        
         addedLocal++;
         return;
       }

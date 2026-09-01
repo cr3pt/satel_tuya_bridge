@@ -1,7 +1,3 @@
-"""Wtyczka kamer UniFi Protect - własna strona konfiguracji (host/login/
-hasło kontrolera), wcześniej ustawiana WYŁĄCZNIE w kreatorze /setup bez
-możliwości późniejszej zmiany z panelu. Patrz plugins/satel/routes.py po
-ten sam wzorzec wstrzykiwania zależności."""
 from __future__ import annotations
 
 from flask import Flask, jsonify, render_template, request
@@ -19,10 +15,6 @@ META = PluginMeta(
 
 def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
-    """Rejestruje routing wtyczki UniFi Protect. `_ignored` połyka
-    zależności przeznaczone dla INNYCH wtyczek - register_all() w
-    plugins/__init__.py woła każdą wtyczkę z tym samym, wspólnym zestawem
-    `deps`."""
 
     def _get_unifi_section() -> dict:
         return get_config_store().get("config").get("unifi_protect") or {}
@@ -58,9 +50,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
             return jsonify({"error": "Adres kontrolera UniFi Protect jest wymagany"}), 400
 
         existing = _get_unifi_section()
-        # Pole-sekret (hasło): pusta wartość w formularzu = ZACHOWAJ
-        # dotychczasowe (przeglądarka nigdy nie dostaje prawdziwego hasła z
-        # powrotem - patrz GET wyżej, tylko flaga password_set).
         section = dict(existing)
         section.update({
             "host": host,

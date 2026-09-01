@@ -1,55 +1,3 @@
-"""Zmywarki (i inne AGD) BEQ/Arcelik sterowane przez chmurę HomeWhiz.
-
-Bridge łączy się BEZPOŚREDNIO z chmurą HomeWhiz (Arcelik IoT, AWS) - nie ma
-tu żadnego pośredniczącego lokalnego brokera MQTT (w odróżnieniu od eBUS).
-Kształt API rozpoznany na podstawie integracji Home Assistant
-(https://github.com/home-assistant-HomeWhiz/home-assistant-HomeWhiz,
-licencja MIT) - to repo NIE jest zależnością tego projektu, tylko
-źródłem wiedzy o kształcie żądań/odpowiedzi.
-
-KAŻDA odpowiedź API (login i zwykłe zapytania podpisane SigV4) jest
-opakowana w `{"success": bool, "data": ...}` - potwierdzone WPROST w
-źródle integracji Home Assistant (`custom_components/homewhiz/api.py`),
-nie zgadywane z dokumentacji. Prawdziwa awaria (złe hasło, brak dostępu)
-potrafi wrócić z kodem HTTP 200 i `"success": false` zamiast kodu błędu -
-patrz `_unwrap_envelope`.
-
-Cztery kroki:
-
-1. Logowanie (`login`) - POST username/password ->
-   `data.credentials.{accessKey,secretKey,sessionToken,expiration}`
-   (tymczasowe poświadczenia AWS), używane do podpisywania (SigV4) każdego
-   kolejnego żądania do AWS.
-2. Lista urządzeń (`list_appliances`) - podpisane żądania GET do
-   smarthome.arcelikiot.com. `applianceId` z tej listy to JEST już nazwa
-   "rzeczy" (thing) w AWS IoT Core - osobna wymiana identyfikatora
-   (`idexchange.arcelikiot.com`) używana przez integrację HA dotyczy
-   TYLKO parowania Bluetooth, którego celowo nie obsługujemy (patrz niżej).
-3. Deskryptor konfiguracji (`fetch_config_descriptor`) - podpisane GET po
-   listę wersji konfiguracji, potem zwykłe (bez podpisu) GET do S3 po
-   surowy JSON z listą możliwych stanów urządzenia i offsetem w tablicy
-   bajtów stanu ("wifi array").
-4. Żywy stan (`HomeWhizClient`) - trwałe połączenie MQTT-over-WebSocket do
-   AWS IoT Core, autoryzowane URL-em podpisanym SigV4 (parametry zapytania,
-   nie nagłówek - to jedyny sposób na WebSocket). Odbiera "shadow" (cień
-   urządzenia w AWS IoT) i dekoduje go do pojedynczej, czytelnej nazwy
-   stanu (np. "running"/"finished"/"idle").
-
-CELOWO bez `awsiotsdk`/`awscrt` (używanych przez integrację HA) - to
-skompilowana biblioteka C/Rust bez gotowego koła dla części architektur, a
-mamy już `paho-mqtt` (transport="websockets") + `aiohttp` jako zależności
-dla innych integracji. SigV4 dla WebSocketa to zwykłe podpisywanie przez
-parametry zapytania (ten sam mechanizm co presigned URL do S3), z jedną
-udokumentowaną przez AWS osobliwością dla tymczasowych poświadczeń:
-`X-Amz-Security-Token` dokłada się do URL-a DOPIERO PO policzeniu podpisu
-(nie bierze udziału w podpisywanym zapytaniu kanonicznym).
-
-Podstawowe funkcje podpisujące (`_sigv4_headers`/`_canonical_query_string`/
-`_signing_key`) są zweryfikowane względem oficjalnego zestawu testowego AWS
-Signature Version 4 (https://docs.aws.amazon.com/general/latest/gr/
-signature-v4-test-suite.html, przypadki "get-vanilla"/
-"get-vanilla-query-order-key") - patrz tests/test_homewhiz_client.py.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -72,24 +20,12 @@ SMARTHOME_HOST = "smarthome.arcelikiot.com"
 IOT_ENDPOINT = "ajf7v9dcoe69w-ats.iot.eu-west-1.amazonaws.com"
 DEFAULT_REGION = "eu-west-1"
 _APPLIANCE_TYPE_DISHWASHER = 3
-# Urządzenia sparowane WYŁĄCZNIE przez Bluetooth (bez połączenia z chmurą) -
-# integracja HA używa dla nich osobnej wymiany identyfikatora
-# (idexchange.arcelikiot.com), której celowo nie obsługujemy - taki
-# sprzęt i tak nie da się odpytać zdalnie przez bridge (musiałby stać w
-# zasięgu BT tego samego urządzenia co telefon, co jest bezcelowe dla
-# serwera działającego w Dockerze).
 _BLUETOOTH_ONLY_CONNECTIVITY = {"BT", "BASICBT"}
 
 
 class HomeWhizError(Exception):
-    """Błąd czytelny dla użytkownika (logowanie/odkrywanie urządzeń) -
-    odróżniany od nieoczekiwanych wyjątków w routingu panelu (patrz
-    plugins/homewhiz/routes.py), tak jak ConnectionError w bridge/tuya_local.py."""
+    pass
 
-
-# --- SigV4 - podstawowe prymitywy, zweryfikowane względem oficjalnego
-# zestawu testowego AWS (patrz docstring modułu wyżej i
-# tests/test_homewhiz_client.py) -----------------------------------------
 
 def _amz_dates(now: datetime.datetime | None = None) -> tuple[str, str]:
     now = now or datetime.datetime.now(datetime.timezone.utc)
@@ -104,10 +40,6 @@ def _signing_key(secret_key: str, date_stamp: str, region: str, service: str) ->
 
 
 def _canonical_query_string(query: str) -> str:
-    """Sortuje parametry zapytania (najpierw po kluczu, potem po wartości -
-    dokładnie jak w przypadku testowym AWS "get-vanilla-query-order-key",
-    gdzie dwa parametry o TEJ SAMEJ nazwie porządkuje się po wartości) i
-    re-enkoduje je zgodnie z regułami SigV4 (RFC 3986, `~` bez enkodowania)."""
     pairs = urllib.parse.parse_qsl(query, keep_blank_values=True)
     pairs.sort()
     return "&".join(
@@ -121,10 +53,6 @@ def _sigv4_headers(
     access_key: str, secret_key: str, session_token: str | None,
     payload: bytes = b"", extra_signed_headers: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Podpisuje żądanie REST przez nagłówek `Authorization` (używane dla
-    zwykłych GET-ów do smarthome.arcelikiot.com/api.arcelikiot.com) - zwraca
-    KOMPLET nagłówków do wysłania (Authorization + X-Amz-Date +
-    X-Amz-Security-Token, jeśli poświadczenia tymczasowe)."""
     amz_date, date_stamp = _amz_dates()
     headers = {"host": host, "x-amz-date": amz_date}
     if session_token:
@@ -151,7 +79,7 @@ def _sigv4_headers(
     ).hexdigest()
 
     result = dict(headers)
-    del result["host"]  # aiohttp dokłada Host sam - jawny nagłówek by go zdublował
+    del result["host"]
     result["Authorization"] = (
         f"AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, "
         f"SignedHeaders={signed_headers}, Signature={signature}"
@@ -166,14 +94,6 @@ def presign_iot_websocket_url(
     *, endpoint: str, region: str, access_key: str, secret_key: str,
     session_token: str, expires_seconds: int = 3600,
 ) -> str:
-    """Buduje podpisany (SigV4, parametry zapytania) adres `wss://` do
-    AWS IoT Core - jedyny sposób autoryzacji WebSocketa przez SigV4 (nie ma
-    tu miejsca na nagłówek `Authorization`, przeglądarka/klient WebSocket
-    go nie ustawia). Ten sam mechanizm co presigned URL do S3, ze WSPÓLNĄ
-    osobliwością dla poświadczeń TYMCZASOWYCH (z sesją) - `X-Amz-Security-
-    Token` dokłada się do URL-a DOPIERO PO policzeniu podpisu, nie bierze
-    udziału w samym podpisywanym zapytaniu (udokumentowane przez AWS jako
-    wyjątek od zwykłej reguły 'wszystko w query string jest podpisywane')."""
     amz_date, date_stamp = _amz_dates()
     service = "iotdevicegateway"
     credential_scope = f"{date_stamp}/{region}/{service}/aws4_request"
@@ -210,8 +130,6 @@ def presign_iot_websocket_url(
     return f"wss://{endpoint}:443{canonical_uri}?{final_query}"
 
 
-# --- Logowanie + odkrywanie urządzeń (REST, aiohttp) ---------------------
-
 @dataclass
 class HomeWhizSession:
     access_key: str
@@ -221,16 +139,6 @@ class HomeWhizSession:
 
 
 def _unwrap_envelope(contents: object, *, context: str) -> object:
-    """Każda odpowiedź API HomeWhiz (login i zwykłe zapytania podpisane
-    SigV4) jest opakowana w `{"success": bool, "data": ...}` - `data` bywa
-    listą (`/my-homes`) albo słownikiem (`/my-homes/{id}`, logowanie,
-    deskryptor konfiguracji), zależnie od endpointu. Co WAŻNE,
-    prawdziwa awaria (złe hasło, brak dostępu) potrafi wrócić z kodem HTTP
-    200 i `"success": false` zamiast kodu błędu - potwierdzone bezpośrednio
-    w źródle integracji Home Assistant (custom_components/homewhiz/api.py:
-    `if "success" in contents and not contents["success"]: raise LoginError`).
-    Bez tej sprawdzianki taka odpowiedź wyglądałaby na sukces aż do
-    (mylącego) KeyError przy próbie odczytania nieistniejących pól niżej."""
     if not isinstance(contents, dict):
         raise HomeWhizError(f"Nieoczekiwana odpowiedź HomeWhiz ({context}): {contents!r}")
     if "success" in contents and not contents["success"]:
@@ -241,12 +149,6 @@ def _unwrap_envelope(contents: object, *, context: str) -> object:
 
 
 async def login(username: str, password: str) -> HomeWhizSession:
-    """Loguje się do chmury HomeWhiz - zwraca tymczasowe poświadczenia AWS
-    (ważne zwykle ok. godziny, patrz `expiration_ms`), używane do
-    podpisywania (SigV4) każdego kolejnego żądania REST i połączenia MQTT.
-    Poświadczenia siedzą pod `data.credentials`, NIE bezpośrednio pod
-    `data` (potwierdzone w źródle integracji Home Assistant, patrz
-    `_unwrap_envelope` wyżej)."""
     try:
         async with aiohttp.ClientSession() as http:
             async with http.post(
@@ -291,13 +193,6 @@ async def _signed_get_json(session: HomeWhizSession, url: str, region: str = DEF
 
 
 async def list_appliances(session: HomeWhizSession, region: str = DEFAULT_REGION) -> list[dict]:
-    """Zwraca listę urządzeń przypisanych do konta, WYŁĄCZAJĄC urządzenia
-    sparowane tylko przez Bluetooth (patrz docstring modułu) - każdy wpis
-    to `{id, applianceId, brand, model, applianceType, connectivity, name}`.
-    Kształt odpowiedzi (`{"data": [{"id": ...}, ...]}` dla `/my-homes`,
-    `{"data": {"appliances": [...]}}` dla `/my-homes/{id}`) potwierdzony
-    w źródle integracji Home Assistant (`MyHomesResponse`/`HomeResponseData`
-    w custom_components/homewhiz/api.py)."""
     homes = await _signed_get_json(session, f"https://{SMARTHOME_HOST}/my-homes", region, context="lista domów")
     appliances: list[dict] = []
     for home in homes if isinstance(homes, list) else []:
@@ -323,12 +218,6 @@ def is_dishwasher(appliance: dict) -> bool:
 async def fetch_config_descriptor(
     session: HomeWhizSession, appliance_id: str, language: str = "en", region: str = DEFAULT_REGION,
 ) -> dict:
-    """Deskryptor konfiguracji urządzenia - lista możliwych stanów
-    (`deviceStates.states`, każdy `{strKey, wifiArrayValue}`) i offset
-    (`deviceStates.wifiArrayReadIndex`), pod którym w tablicy bajtów stanu
-    ("wifi array") szukać bieżącej wartości - patrz `decode_state` niżej.
-    Lista wersji konfiguracji siedzi pod `data.results`, NIE bezpośrednio
-    pod `data` (`ContentsIndexResponse` w źródle integracji Home Assistant)."""
     contents_url = (
         f"https://{AUTH_HOST}/procam/contents"
         f"?applianceId={urllib.parse.quote(appliance_id)}&ctype=CONFIGURATION"
@@ -343,9 +232,6 @@ async def fetch_config_descriptor(
     if not cid or not ver:
         raise HomeWhizError(f"Niekompletny deskryptor konfiguracji dla urządzenia {appliance_id}")
 
-    # Sam plik JSON leży na S3 płasko (nie wymaga podpisu SigV4 - to
-    # publiczny bucket z zawartością statyczną, tak samo traktuje go
-    # integracja Home Assistant).
     s3_url = f"https://s3-eu-west-1.amazonaws.com/procam-contents/CONFIGURATIONS/{cid}/v{ver}/{cid}.{lang}.json"
     async with aiohttp.ClientSession() as http:
         async with http.get(s3_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
@@ -354,12 +240,7 @@ async def fetch_config_descriptor(
             return await resp.json(content_type=None)
 
 
-# --- Dekodowanie stanu ("wifi array") -------------------------------------
-
 def clamp_byte(value: int) -> int:
-    """Wartości >= 128 w tablicy bajtów HomeWhiz kodują 'to samo pole, ale
-    zmienione od ostatniego odczytu' - dla samego ODCZYTU stanu liczy się
-    tylko dolne 128 wartości (patrz `to_friendly_name`/integracja HA)."""
     return value if value < 128 else value - 128
 
 
@@ -370,21 +251,10 @@ def safe_get(data: bytearray | list[int], index: int) -> int:
 
 
 def decode_wifi_array(offset: int, wfa: list[int]) -> bytearray:
-    """Odtwarza pełną tablicę bajtów stanu z payloadu MQTT (`wfa` +
-    `wfaStartOffset`, patrz docstring modułu) - pola PRZED offsetem nie są
-    obecne w `wfa` (offset to indeks pierwszego bajtu, jaki urządzenie
-    faktycznie wysyła), stąd wypełnienie zerami z przodu."""
     return bytearray([0] * offset + list(wfa))
 
 
 def to_friendly_name(str_key: str) -> str:
-    """Sanityzuje klucz stanu (np. 'Dishwasher_State_Running') do krótkiego,
-    czytelnego tokenu w stylu innych statusów w tym projekcie (patrz np.
-    boiler_output - stan kotła to też krótki tekstowy token). Celowo NIE
-    odpytujemy własnego API lokalizacji HomeWhiz o "ładną" nazwę - sam
-    klucz (obniżony do małych liter, bez typowych prefiksów) wystarcza jako
-    wartość statusu maszynowo czytelna, tak jak dla innych integracji w tym
-    projekcie."""
     name = str_key.strip()
     for prefix in ("Dishwasher_State_", "Dishwasher_", "State_"):
         if name.startswith(prefix):
@@ -394,10 +264,6 @@ def to_friendly_name(str_key: str) -> str:
 
 
 def decode_state(config_descriptor: dict, offset: int, wfa: list[int]) -> str | None:
-    """Zwraca aktualną (czytelną) nazwę stanu urządzenia na podstawie
-    deskryptora konfiguracji (`fetch_config_descriptor`) i bieżącej
-    tablicy bajtów stanu z MQTT - `None`, jeśli deskryptor nie ma
-    wystarczających danych (np. nieoczekiwany kształt JSON)."""
     device_states = (config_descriptor or {}).get("deviceStates") or {}
     states = device_states.get("states") or []
     read_index = device_states.get("wifiArrayReadIndex")
@@ -412,15 +278,6 @@ def decode_state(config_descriptor: dict, offset: int, wfa: list[int]) -> str | 
 
 
 def list_possible_states(config_descriptor: dict) -> list[str]:
-    """Lista WSZYSTKICH możliwych (czytelnych) nazw stanów tego
-    KONKRETNEGO modelu urządzenia - z tego samego deskryptora konfiguracji,
-    który `decode_state()` wyżej używa do dekodowania bieżącej wartości.
-    Używane przez edytor reguł ruchu (patrz plugins/homewhiz/routes.py),
-    żeby pole "Wyzwalacz - wartość statusu" dla źródła `homewhiz_state`
-    było listą wyboru zamiast wolnego tekstu - w odróżnieniu od Tuya
-    (STATE_VALUE_OPTIONS w automations.html), HomeWhiz nie ma jednego
-    stałego zbioru wartości wspólnego dla wszystkich modeli, więc listę
-    trzeba pobrać z chmury osobno dla KAŻDEGO urządzenia."""
     device_states = (config_descriptor or {}).get("deviceStates") or {}
     states = device_states.get("states") or []
     names: list[str] = []
@@ -431,24 +288,14 @@ def list_possible_states(config_descriptor: dict) -> list[str]:
     return names
 
 
-# --- Żywe połączenie (MQTT-over-WebSocket, AWS IoT Core) ------------------
-
 @dataclass
 class ApplianceWatch:
-    """Jedno monitorowane urządzenie - nazwa (klucz statusu w panelu) +
-    id + deskryptor konfiguracji (zapamiętany PO pierwszym pobraniu, żeby
-    nie odpytywać S3 przy każdej wiadomości MQTT)."""
     name: str
     appliance_id: str
     config_descriptor: dict | None = field(default=None, repr=False)
 
 
 class HomeWhizClient:
-    """Utrzymuje JEDNO połączenie MQTT-over-WebSocket do AWS IoT Core,
-    monitorujące WSZYSTKIE skonfigurowane urządzenia HomeWhiz naraz (jedna
-    para poświadczeń/sesja obsługuje dowolną liczbę rzeczy - subskrypcje są
-    per `applianceId`, więc nie trzeba osobnego połączenia na urządzenie).
-    """
 
     def __init__(
         self, cfg: dict, on_state: Callable[[str, str], Awaitable[None]],
@@ -497,16 +344,11 @@ class HomeWhizClient:
 
         def _fail(exc: Exception) -> None:
             def _do() -> None:
-                connected_event.set()  # odblokuj ewentualne oczekiwanie na połączenie
+                connected_event.set()
                 if not disconnected_future.done():
                     disconnected_future.set_exception(exc)
             self._loop.call_soon_threadsafe(_do)
 
-        # reconnect_on_failure=False - paho ma WŁASNY wbudowany auto-reconnect,
-        # ale użyłby TEGO SAMEGO (już nieważnego po rozłączeniu) podpisanego
-        # URL-a WebSocketa. Reconnect musi przejść przez Supervisor.run()
-        # wyżej, żeby dostać ŚWIEŻY presigned URL (i - jeśli trzeba - nową
-        # sesję logowania).
         client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             transport="websockets", reconnect_on_failure=False,
@@ -531,9 +373,6 @@ class HomeWhizClient:
         client.on_message = _on_message
         self._client = client
 
-        # connect_async (nie connect()) - nie blokuje pętli asyncio na
-        # czasie handshake'u TCP/TLS/WebSocket, patrz ten sam wzorzec w
-        # bridge/ebus_client.py.
         client.connect_async(parsed.hostname, 443, keepalive=60)
         client.loop_start()
         try:

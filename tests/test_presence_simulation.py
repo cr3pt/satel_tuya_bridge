@@ -1,4 +1,3 @@
-"""Testy dla bridge/presence_simulation.py."""
 import asyncio
 
 from bridge.presence_simulation import PresenceSimulation
@@ -6,7 +5,7 @@ from bridge.presence_simulation import PresenceSimulation
 
 async def test_disabled_simulation_makes_no_calls(fake_tuya):
     sim = PresenceSimulation({"enabled": False}, fake_tuya)
-    await sim.run_forever()  # powinno wrócić natychmiast, bez pętli
+    await sim.run_forever()
     assert fake_tuya.calls == []
 
 
@@ -20,7 +19,7 @@ async def test_toggles_devices_within_window(fake_tuya):
     cfg = {
         "enabled": True,
         "devices": ["swiatlo_korytarz", "gniazdko_salon"],
-        "window": None,  # brak ograniczenia czasowego - zawsze aktywne
+        "window": None,
         "min_interval_minutes": 0.001,
         "max_interval_minutes": 0.002,
     }
@@ -42,7 +41,7 @@ async def test_respects_time_window(fake_tuya):
     cfg = {
         "enabled": True,
         "devices": ["gniazdko_salon"],
-        "window": {"start": "08:00", "end": "08:01"},  # bardzo wąskie okno, prawie na pewno "teraz" poza nim
+        "window": {"start": "08:00", "end": "08:01"},
         "min_interval_minutes": 0.001,
         "max_interval_minutes": 0.001,
     }
@@ -54,9 +53,6 @@ async def test_respects_time_window(fake_tuya):
         await task
     except asyncio.CancelledError:
         pass
-    # Nie sprawdzamy zero wywołań na sztywno (test mógłby przypadkowo
-    # wykonać się dokładnie w oknie 08:00-08:01) - sprawdzamy, że kod się
-    # nie wywala i respektuje okno w normalnych warunkach
     assert isinstance(fake_tuya.calls, list)
 
 

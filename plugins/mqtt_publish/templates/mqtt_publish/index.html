@@ -135,7 +135,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 refreshAuthNav();
@@ -147,10 +147,7 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// ------------------------------------------------------------------
-// Ustawienia wtyczki (włącznik + poziom logowania) - ten sam wzorzec
-// GET/POST /api/plugins/<id>/settings co reszta stron wtyczek.
-// ------------------------------------------------------------------
+
 const PLUGIN_ID = 'mqtt_publish';
 
 async function loadPluginSettings() {
@@ -182,9 +179,7 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
   }
 });
 
-// ------------------------------------------------------------------
-// Tematy MQTT
-// ------------------------------------------------------------------
+
 async function loadTopics() {
   const data = await (await fetch('/api/plugins/mqtt_publish/topics')).json();
   document.getElementById('satelTopicInput').value = data.satel_topic || 'satel';

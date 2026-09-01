@@ -1,16 +1,3 @@
-"""Wczytywanie i walidacja konfiguracji.
-
-Konfiguracja żyje w bazie SQLite (bridge/config_store.py: ConfigStore) jako
-kilka nazwanych "dokumentów" (config/satel_fields/tuya_devices/automations/
-sensors) - dokładnie ten sam podział, co wcześniej osobne pliki .yaml, tylko
-inny nośnik (patrz docstring config_store.py po uzasadnienie: sekrety typu
-Tuya `local_key` to dowolne bajty, JSON w SQLite nie ma niejawnego rzutowania
-typów, na które podatny jest ręcznie edytowany YAML).
-
-Stare instalacje (config.yaml + siostrzane pliki) są migrowane AUTOMATYCZNIE
-i JEDNORAZOWO przy pierwszym `BridgeConfig.load()` wskazującym na jeszcze
-nieistniejącą bazę - patrz `migrate_legacy_yaml_dir`.
-"""
 from __future__ import annotations
 
 import pathlib
@@ -30,10 +17,6 @@ _AUTOMATIONS_DEFAULTS = {
 @dataclass
 class BridgeConfig:
     raw: dict[str, Any]
-    # Żywy uchwyt do bazy konfiguracji - dashboard/app.py zapisuje przez
-    # niego zmiany z panelu (store.set("satel_fields", ...) itd.), zamiast
-    # bezpośrednio pisać pliki. RulesEngine.reload_config() (bridge/
-    # rules_engine.py) używa `db_path` do ponownego wczytania.
     store: ConfigStore
     db_path: pathlib.Path
 
@@ -51,15 +34,10 @@ class BridgeConfig:
         store = ConfigStore(db_path)
         if not store.has("config"):
             migrate_legacy_yaml_dir(store, legacy_yaml_path)
-        # Jednorazowa migracja pojedynczego konta (dashboard.auth.*) do
-        # tabeli users - no-op, jeśli jakiekolwiek konto już istnieje.
         store.migrate_single_admin_to_users()
 
         data = store.get("config")
 
-        # "reguły_ruchu" jest wymagane jako klucz najwyższego poziomu - w
-        # nowo generowanych configach (kreator) mieszka w dokumencie
-        # "automations" razem ze scenami i symulacją obecności.
         automations = store.get("automations")
         for key, default in _AUTOMATIONS_DEFAULTS.items():
             if key in automations:
@@ -69,44 +47,14 @@ class BridgeConfig:
 
         cls._validate(data)
 
-        # Pola Satela (strefy/wyjścia/wejścia IP/partycje) - dokument
-        # "satel_fields" NADPISUJE wartości wpisane wprost w "config", jeśli
-        # faktycznie coś zawiera (tak samo jak automations wyżej). "satel"
-        # jest już zwalidowane wyżej jako wymagany słownik.
         satel_fields = store.get("satel_fields")
         for key in ("monitored_zones", "monitored_outputs", "partitions"):
             if key in satel_fields:
                 data["satel"][key] = satel_fields[key]
             else:
                 data["satel"].setdefault(key, {})
-        # Rodzaje wejść/wyjść (nazwa -> np. "drzwi"/"ruch"/"syrena") - CZYSTO
-        # kosmetyczne, do ikon/etykiet w panelu (patrz dashboard/templates/
-        # index.html i statusCardClass()). Osobne mapy (nie pole wewnątrz
-        # monitored_zones/monitored_outputs), żeby NIE zmieniać kształtu
-        # "nazwa -> numer" (int), na którym polega satel_client.py
-        # (AsyncSatel(monitored_zones=list(...values()))) i rules_engine.py
-        # (odwrotne mapowanie numer -> nazwa).
         for key in ("zone_types", "output_types"):
             data["satel"][key] = satel_fields.get(key, {})
-        # "Wirtualne wejścia IP" - dwa tryby wyzwalania (satel.virtual_inputs.mode,
-        # patrz obszerny docstring bridge/satel_client.py):
-        # "library" (domyślny) - zwykłe wyjście Satela, set_output(), nazwa ->
-        #   numer (int). "http" - funkcja "Wejścia IP" ETHM-1, osobne
-        #   połączenie HTTP, ZWYKŁY nieuwierzytelniony GET (BEZ żadnego
-        #   klucza/kodu DLOADX - potwierdzone na prawdziwym sprzęcie, dwie
-        #   wcześniejsze wersje tego modułu błędnie zakładały klucz per
-        #   wejście, potem błędnie wspólny klucz całego modułu) - nazwa ->
-        #   numer (int, TEN SAM kształt co w trybie "library", numer po
-        #   prostu nieużywany w http - URL niesie samą nazwę). "port" ma
-        #   wartość domyślną (potrzebną tylko w trybie "http") - inaczej
-        #   config bez jawnie zapisanej sekcji zostawiłby je nieobecne, co
-        #   wywala silnik reguł (RulesEngine.__init__ zawsze tworzy
-        #   SatelVirtualInputTrigger) KeyErrorem przy starcie/przeładowaniu.
-        #   "url_template" CELOWO nie jest tu ustawiany/przechowywany -
-        #   SatelVirtualInputTrigger używa stałej DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE
-        #   wprost (zgłoszony błąd: przechowana wartość zamrażała STARY
-        #   format URL sprzed poprawki protokołu i psuła realne wyzwalanie
-        #   z KeyErrorem, mimo poprawionego kodu).
         data["satel"].setdefault("virtual_inputs", {})
         data["satel"]["virtual_inputs"].setdefault("mode", "library")
         data["satel"]["virtual_inputs"].setdefault("port", 8888)
@@ -115,28 +63,15 @@ class BridgeConfig:
         else:
             data["satel"]["virtual_inputs"].setdefault("inputs", {})
 
-        # Urządzenia Tuya - analogicznie, dokument "tuya_devices" nadpisuje
-        # tuya.devices wpisane wprost w "config", jeśli istnieje.
         tuya_devices_data = store.get("tuya_devices")
         if "devices" in tuya_devices_data:
             data["tuya"]["devices"] = tuya_devices_data["devices"]
         else:
             data["tuya"].setdefault("devices", {})
-        # Bramki Zigbee (Tuya) - urządzenia w tuya.devices mogą wskazywać na
-        # nie przez pole "gateway" (patrz TuyaLocalController), zamiast
-        # własnego ip/local_key. Osobna mapa (nie zagnieżdżona w devices),
-        # analogicznie do zone_types/output_types wyżej.
         if "zigbee_gateways" in tuya_devices_data:
             data["tuya"]["zigbee_gateways"] = tuya_devices_data["zigbee_gateways"]
         else:
             data["tuya"].setdefault("zigbee_gateways", {})
-        # Urządzenia sterowane WYŁĄCZNIE przez Tuya Cloud (REST) - typowo
-        # zaimportowane z Tuya Cloud bez local_key/IP (np. urządzenia bez
-        # dostępu do tej samej sieci LAN) - patrz TuyaCloudController i
-        # RulesEngine._build_tuya_controller. Osobna mapa od "devices"
-        # (lokalnych) - to samo urządzenie (po nazwie) w obu mapach naraz
-        # oznacza "sterowane lokalnie, chmura jako fallback niedostępny,
-        # bo lokalne ma pierwszeństwo" (patrz komentarz w rules_engine.py).
         if "cloud_devices" in tuya_devices_data:
             data["tuya"]["cloud_devices"] = tuya_devices_data["cloud_devices"]
         else:
@@ -154,7 +89,6 @@ class BridgeConfig:
         if missing:
             raise ValueError(f"Brak wymaganych sekcji w konfiguracji: {missing}")
 
-    # Wygodne skróty
     @property
     def satel(self) -> dict:
         return self.raw["satel"]

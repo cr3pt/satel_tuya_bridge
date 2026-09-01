@@ -1,9 +1,3 @@
-"""Testy dla bridge/ebus_client.py - discover_topics() (podpowiedź
-dostępnych pól eBUS w panelu /config), EbusMqttListener.update_sensors()
-(przeładowanie listy czujników bez zrywania połączenia MQTT, patrz
-RulesEngine.reload_config w bridge/rules_engine.py) oraz
-BackgroundTopicDiscovery (nasłuch w tle przez kilka minut, patrz
-dashboard/app.py: /api/discover/ebus/start), bez prawdziwego brokera MQTT."""
 import time
 from types import SimpleNamespace
 
@@ -13,10 +7,6 @@ from bridge.ebus_client import discover_topics, EbusMqttListener, BackgroundTopi
 
 
 class FakeMqttClient:
-    """Symuluje paho.mqtt.client.Client na tyle, ile potrzebuje
-    discover_topics() - connect/subscribe/loop_start/loop_stop/disconnect,
-    plus "dostarczenie" skonfigurowanych wiadomości synchronicznie w
-    loop_start() (żeby test nie musiał czekać na prawdziwy wątek sieciowy)."""
 
     def __init__(self, topics_to_deliver=()):
         self.on_message = None
@@ -45,8 +35,6 @@ class FakeMqttClient:
 
 @pytest.fixture(autouse=True)
 def _no_real_sleep(monkeypatch):
-    # discover_topics() śpi timeout_seconds - w testach nie ma po co czekać,
-    # wiadomości i tak "dostarcza" FakeMqttClient.loop_start() synchronicznie.
     monkeypatch.setattr("bridge.ebus_client.time.sleep", lambda seconds: None)
 
 
@@ -106,10 +94,6 @@ def test_discover_topics_raises_clear_error_on_connection_failure(monkeypatch):
 
 
 class FakeMqttClientForListener:
-    """Symuluje paho.mqtt.client.Client na tyle, ile potrzebuje
-    EbusMqttListener - connect_async/loop_start/loop_stop/disconnect/
-    subscribe, plus rejestrowanie WYWOŁAŃ subscribe() (żeby sprawdzić, co
-    dokładnie zasubskrybowano po update_sensors())."""
 
     def __init__(self):
         self.on_connect = None
@@ -138,9 +122,6 @@ class FakeMqttClientForListener:
 
 
 class TestEbusMqttListenerUpdateSensors:
-    """update_sensors() - przeładowanie listy czujników w locie (patrz
-    RulesEngine.reload_config), bez tworzenia nowego klienta MQTT ani
-    zrywania istniejącego połączenia."""
 
     async def test_update_sensors_replaces_topic_map(self, monkeypatch):
         fake = FakeMqttClientForListener()
@@ -158,7 +139,7 @@ class TestEbusMqttListenerUpdateSensors:
         monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
         cfg = {"mqtt_host": "127.0.0.1", "sensors": [{"name": "a", "mqtt_topic": "ebusd/a"}]}
         listener = EbusMqttListener(cfg, lambda *a: None)
-        fake.subscribed.clear()  # __init__ samo nie subskrybuje - to dzieje się w _on_connect
+        fake.subscribed.clear()
 
         new_cfg = {"mqtt_host": "127.0.0.1", "sensors": [
             {"name": "a", "mqtt_topic": "ebusd/a"}, {"name": "b", "mqtt_topic": "ebusd/b"},
@@ -180,11 +161,6 @@ class TestEbusMqttListenerUpdateSensors:
 
 
 class TestEbusMqttListenerParsePayload:
-    """_on_message()/_parse_payload() - obsługa DWÓCH formatów wiadomości
-    ebusd: domyślnego (czysty tekst, jedno pole na temat) i --mqttjson
-    (obiekt JSON, ewentualnie z kilkoma polami na temat obwodu). Zgłoszony
-    błąd: wartości z trybu --mqttjson wyświetlały się jako nieczytelny
-    surowy JSON, bo _on_message próbował tylko float()/zostawiał tekst."""
 
     def _make_listener(self, monkeypatch, sensors):
         fake = FakeMqttClientForListener()
@@ -197,7 +173,6 @@ class TestEbusMqttListenerParsePayload:
     def _deliver(self, listener, topic, payload):
         listener._on_message(None, None, SimpleNamespace(topic=topic, payload=payload.encode()))
 
-    # --- Format domyślny ebusd (czysty tekst) - zachowanie sprzed zmiany ---
 
     async def test_plain_numeric_text_becomes_float(self, monkeypatch):
         listener, received = self._make_listener(monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/a"}])
@@ -209,7 +184,6 @@ class TestEbusMqttListenerParsePayload:
         self._deliver(listener, "ebusd/a", "heating")
         assert received == [("a", "heating")]
 
-    # --- Tryb --mqttjson: pojedyncze pole na temat ---
 
     async def test_single_field_json_with_value_wrapper_is_unwrapped(self, monkeypatch):
         listener, received = self._make_listener(monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/bai/FlowTemp"}])
@@ -221,7 +195,6 @@ class TestEbusMqttListenerParsePayload:
         self._deliver(listener, "ebusd/bai/FlowTemp", '{"FlowTemp": 22.5}')
         assert received == [("a", 22.5)]
 
-    # --- Tryb --mqttjson: kilka pól na temat obwodu (composite) ---
 
     async def test_multi_field_json_with_mqtt_field_picks_configured_key(self, monkeypatch):
         listener, received = self._make_listener(
@@ -249,11 +222,6 @@ class TestEbusMqttListenerParsePayload:
 
 
 class FakeMqttClientBg:
-    """Symuluje paho.mqtt.client.Client na tyle, ile potrzebuje
-    BackgroundTopicDiscovery - connect (synchroniczne, nie connect_async)/
-    subscribe/loop_start/loop_stop/disconnect, plus ręczne 'dostarczanie'
-    wiadomości przez wywołanie on_message (żeby test nie musiał czekać na
-    prawdziwy wątek sieciowy paho)."""
 
     def __init__(self):
         self.on_message = None
@@ -280,8 +248,6 @@ class FakeMqttClientBg:
 
 
 class TestBackgroundTopicDiscovery:
-    """Nasłuch tematów MQTT ebusd W TLE (do kilku minut) - patrz
-    dashboard/app.py: /api/discover/ebus/start|status|stop."""
 
     def test_start_connects_and_subscribes(self, monkeypatch):
         fake = FakeMqttClientBg()
@@ -317,7 +283,7 @@ class TestBackgroundTopicDiscovery:
 
         fake.on_message(fake, None, SimpleNamespace(topic="ebusd/bm/FlowTemp"))
         fake.on_message(fake, None, SimpleNamespace(topic="ebusd/fha/FlowTemp"))
-        fake.on_message(fake, None, SimpleNamespace(topic="ebusd/bm/FlowTemp"))  # duplikat
+        fake.on_message(fake, None, SimpleNamespace(topic="ebusd/bm/FlowTemp"))
 
         status = discovery.status()
         assert status["topics"] == ["ebusd/bm/FlowTemp", "ebusd/fha/FlowTemp"]
@@ -354,7 +320,6 @@ class TestBackgroundTopicDiscovery:
         discovery = BackgroundTopicDiscovery()
         with pytest.raises(ConnectionError, match="127.0.0.1"):
             discovery.start("127.0.0.1", 1883, duration_seconds=10)
-        # nie powinno zostać zablokowane w stanie "running" po nieudanym connect
         assert discovery.status()["running"] is False
 
     def test_auto_stops_after_duration_elapses(self, monkeypatch):
@@ -364,10 +329,6 @@ class TestBackgroundTopicDiscovery:
         discovery.start("127.0.0.1", 1883, duration_seconds=0.05)
         assert discovery.status()["running"] is True
 
-        # Duży margines celowo (nie testujemy precyzji timingu, tylko że
-        # AUTOMATYCZNIE się zatrzymuje) - żeby nie było migotliwe pod
-        # obciążeniem (wiele testów w tym pliku tworzy własne wątki tuż
-        # wcześniej).
         deadline = time.time() + 5.0
         while time.time() < deadline and discovery.status()["running"]:
             time.sleep(0.05)

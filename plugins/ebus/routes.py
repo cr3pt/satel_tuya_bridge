@@ -1,8 +1,3 @@
-"""Wtyczka eBUS (dane z kotła) - własna strona konfiguracji (lista
-czujników) i wykrywanie tematów MQTT ebusd (krótkie oraz w tle), wydzielone
-z dashboard/app.py (patrz zakładka 🧩 Wtyczki -> "⚙ Konfiguruj"). Logika
-zapisu/walidacji zostaje w dashboard/setup.py, ten moduł tylko routuje i
-wywołuje - patrz plugins/satel/routes.py po ten sam wzorzec."""
 from __future__ import annotations
 
 from flask import Flask, jsonify, render_template, request
@@ -22,19 +17,11 @@ META = PluginMeta(
     config_url="/plugins/ebus",
 )
 
-# Jedna instancja procesu-wide, tak jak w dashboard/app.py - jeden nasłuch w
-# tle naraz wystarcza dla panelu administrowanego przez jedną osobę (patrz
-# bridge/ebus_client.py: BackgroundTopicDiscovery). Osobna instancja od tej
-# w dashboard/app.py - nasłuch uruchomiony z /config i z /plugins/ebus nie
-# dzieli stanu, ale to nieszkodliwe (i tak jeden użytkownik na raz).
 _background_discovery = BackgroundTopicDiscovery()
 
 
 def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
-    """Rejestruje routing wtyczki eBUS. `_ignored` połyka zależności
-    przeznaczone dla INNYCH wtyczek - register_all() w plugins/__init__.py
-    woła każdą wtyczkę z tym samym, wspólnym zestawem `deps`."""
 
     @app.route("/plugins/ebus")
     def ebus_plugin_page():
@@ -63,9 +50,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
 
     @app.route("/api/plugins/ebus/discover", methods=["POST"])
     def api_plugin_ebus_discover():
-        """Krótkie (kilka sekund) nasłuchiwanie MQTT ebusd - publiczny,
-        tylko podgląd sieci. Host/port domyślnie z JUŻ ZAPISANEJ
-        konfiguracji (jak /api/discover/ebus w starej zakładce /config)."""
         payload = request.get_json(silent=True) or {}
         ebus_cfg = get_config_raw().get("ebus", {})
         mqtt_host = payload.get("mqtt_host") or ebus_cfg.get("mqtt_host")
@@ -114,25 +98,12 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
 
     @app.route("/api/plugins/ebus/connection", methods=["GET"])
     def api_plugin_ebus_connection_get():
-        """Adres/port brokera MQTT i temat stanu eBUS - dawniej zakładka
-        🔌 Połączenia (/config), przeniesione tutaj razem z resztą
-        konfiguracji eBUS (patrz zgłoszenie: rozdzielić Połączenia na
-        właściwe wtyczki). Jak reszta stron wtyczek, chronione globalnie
-        przez _require_login_for_settings_and_control w dashboard/app.py
-        (allowlist publicznych ścieżek) - bez sekretów, więc bez dodatkowego
-        @require_auth() wprost (w odróżnieniu od /api/plugins/satel/connection,
-        gdzie kod użytkownika uzasadnia jawne podkreślenie tego wymogu)."""
         current = get_config_store().get("config")
         return jsonify(ebus_connection_to_form(current.get("ebus", {}), current.get("boiler_output", {})))
 
     @app.route("/api/plugins/ebus/connection", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
     def api_plugin_ebus_connection_post():
-        """Zapisuje TYLKO adres/port brokera/temat stanu - zmiany zaczną
-        działać dopiero po pełnym restarcie procesu bridge'a (żywe
-        połączenie MQTT nie jest odtwarzane w locie), w odróżnieniu od
-        /api/plugins/ebus/sensors (lista czujników), które bridge
-        przeładowuje sam, bez restartu."""
         form = request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
@@ -151,10 +122,6 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         })
 
     def _get_ebus_section() -> dict:
-        # STORED sekcja z dokumentu "config" - lista czujników żyje osobno
-        # w dokumencie "sensors" (patrz get_config_raw()["ebus"]["sensors"]
-        # wyżej, scalane dopiero przez BridgeConfig.load - to samo
-        # zastrzeżenie co w plugins/satel/routes.py).
         return get_config_store().get("config").get("ebus", {})
 
     def _save_ebus_section(section: dict) -> None:

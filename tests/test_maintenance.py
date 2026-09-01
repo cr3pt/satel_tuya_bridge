@@ -1,4 +1,3 @@
-"""Testy dla bridge/maintenance.py - czyszczenie starych danych + backup."""
 import sqlite3
 import time
 
@@ -10,8 +9,8 @@ from bridge.maintenance import backup_database, purge_old_data
 class TestPurgeOldData:
     def test_old_readings_are_deleted(self, history, tmp_path):
         now = time.time()
-        history.write_reading("s", 1.0, ts=now - 200 * 86400)  # 200 dni temu
-        history.write_reading("s", 2.0, ts=now)  # dziś
+        history.write_reading("s", 1.0, ts=now - 200 * 86400)
+        history.write_reading("s", 2.0, ts=now)
         purge_old_data(history.db_path, retention_days=90)
 
         remaining = history.get_history("s", 0, now + 1)
@@ -31,7 +30,6 @@ class TestPurgeOldData:
     def test_active_alerts_never_deleted_regardless_of_age(self, history):
         now = time.time()
         alert_id = history.open_alert("Stary aktywny alarm", "s", {})
-        # ręcznie cofamy datę startu w bazie, żeby symulować bardzo stary alarm
         conn = sqlite3.connect(history.db_path)
         conn.execute("UPDATE alerts SET started_ts = ? WHERE id = ?", (now - 500 * 86400, alert_id))
         conn.commit()
@@ -39,7 +37,7 @@ class TestPurgeOldData:
 
         purge_old_data(history.db_path, retention_days=90)
         active = history.get_active_alerts()
-        assert len(active) == 1  # NIE usunięty mimo wieku - wciąż aktywny
+        assert len(active) == 1
 
     def test_resolved_old_alerts_are_deleted(self, history):
         now = time.time()
@@ -91,7 +89,6 @@ class TestPurgeOldData:
         import pathlib
 
         now = time.time()
-        # Wstaw sporo danych, żeby VACUUM miał co zwolnić
         for i in range(500):
             history.write_reading(f"sensor_{i % 5}", float(i), ts=now - 200 * 86400)
 
@@ -99,7 +96,7 @@ class TestPurgeOldData:
         purge_old_data(history.db_path, retention_days=90)
         size_after = pathlib.Path(history.db_path).stat().st_size
 
-        assert size_after <= size_before  # VACUUM nie może powiększyć pliku
+        assert size_after <= size_before
 
 
 class TestBackupDatabase:
@@ -124,9 +121,6 @@ class TestBackupDatabase:
 
     def test_old_backups_pruned_to_keep_count(self, history, tmp_path, mocker):
         backup_dir = tmp_path / "backups"
-        # Podmieniamy strftime, żeby każdy backup miał unikalną, rosnącą
-        # nazwę pliku bez konieczności realnego czekania (rozdzielczość
-        # nazwy to sekundy - bez tego test trwałby kilka sekund).
         counter = iter(range(10))
         mocker.patch("bridge.maintenance.time.strftime", side_effect=lambda fmt: f"{next(counter):04d}")
 
@@ -134,7 +128,6 @@ class TestBackupDatabase:
 
         remaining = list(backup_dir.glob("*.db"))
         assert len(remaining) == 3
-        # zostały te NAJNOWSZE (najwyższe numery w nazwie)
         assert set(p.name for p in remaining) == {p.name for p in created[-3:]}
 
     def test_backup_dir_created_if_missing(self, history, tmp_path):
@@ -144,9 +137,6 @@ class TestBackupDatabase:
 
 
 class TestLockRetry:
-    """Weryfikuje, że chwilowa blokada bazy (typowo: bridge akurat coś
-    zapisuje w tej samej milisekundzie) nie wywala rotacji/backupu, tylko
-    powoduje ponowienie próby."""
 
     def test_purge_retries_on_locked_database(self, history, mocker):
         import sqlite3 as sqlite3_module
@@ -161,11 +151,11 @@ class TestLockRetry:
             return real_connect(*args, **kwargs)
 
         mocker.patch("bridge.maintenance.sqlite3.connect", side_effect=flaky_connect)
-        mocker.patch("bridge.maintenance.time.sleep")  # nie czekaj naprawdę w teście
+        mocker.patch("bridge.maintenance.time.sleep")
 
         history.write_reading("s", 1.0, ts=time.time() - 200 * 86400)
         result = purge_old_data(history.db_path, retention_days=90)
-        assert call_count["n"] == 2  # 1 nieudana próba + 1 udana
+        assert call_count["n"] == 2
         assert result["readings"] == 1
 
     def test_purge_gives_up_after_max_attempts(self, history, mocker):

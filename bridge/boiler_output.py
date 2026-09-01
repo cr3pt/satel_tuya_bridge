@@ -1,30 +1,3 @@
-"""Wystawianie danych z kotła Wolf dalej.
-
-O tym, CO trafia dokąd, decyduje teraz konfiguracja `targets` PRZY KAŻDYM
-CZUJNIKU w config.yaml (ebus.sensors) - nie ma już globalnego "trybu" tu.
-Ten moduł tylko implementuje same kanały wyjściowe:
-
-  MQTT (ZALECANE) - publikuje wartości na lokalny broker MQTT jako
-  proste sensory. Stamtąd bardzo łatwo podłączyć Home Assistant (auto-
-  discovery), Node-RED, dashboard, itd. Stabilne, lokalne, bez zależności
-  od chmury Tuya.
-
-  Wirtualne urządzenie Tuya - próba wystawienia danych jako prawdziwe
-  urządzenie w ekosystemie/aplikacji Tuya. WAŻNE ograniczenia, o których
-  warto wiedzieć zanim się na to zdecydujesz:
-    - Tuya nie oferuje żadnego "prostego" sposobu na zarejestrowanie
-      dowolnego urządzenia jako w pełni działającego bez certyfikacji
-      sprzętu. Funkcja "Virtual Device" na Tuya IoT Platform jest
-      pomyślana jako narzędzie deweloperskie do TESTOWANIA integracji,
-      nie jako trwałe rozwiązanie produkcyjne dla smart home.
-    - Musisz ręcznie utworzyć takie urządzenie w panelu Tuya IoT Platform
-      i połączyć je ze swoim projektem/kontem zanim ten kod zacznie
-      działać - to nie da się w pełni zautomatyzować z zewnątrz.
-    - Może przestać działać przy zmianach polityki Tuya względem kont
-      deweloperskich/limitów.
-  Kod poniżej AKTUALIZUJE stan takiego już istniejącego urządzenia
-  (device shadow) przez Tuya Cloud API - nie tworzy go od zera.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -64,17 +37,9 @@ class MqttBoilerPublisher:
 
 
 class TuyaVirtualDevicePublisher:
-    """Aktualizuje DP-y istniejącego, ręcznie utworzonego wirtualnego
-    urządzenia Tuya. Wymaga konta developera Tuya - patrz docstring modułu.
-
-    W przeciwieństwie do wcześniejszej wersji, kod DP NIE jest już
-    wyszukiwany po nazwie czujnika w wewnętrznej mapie - jest przekazywany
-    wprost przy każdym wywołaniu (patrz `sensor.targets.tuya_dp` w
-    config.yaml), bo to samo pole eBUS teoretycznie mogłoby trafiać do
-    różnych DP w różnych kontekstach."""
 
     def __init__(self, cloud_cfg: dict, virtual_device_cfg: dict):
-        from tuya_connector import TuyaOpenAPI  # type: ignore
+        from tuya_connector import TuyaOpenAPI
 
         self.device_id = virtual_device_cfg["device_id"]
         self.api = TuyaOpenAPI(
@@ -91,18 +56,10 @@ class TuyaVirtualDevicePublisher:
             else:
                 logger.debug("Zaktualizowano DP %s = %s na wirtualnym urządzeniu Tuya", dp_code, value)
         except Exception:
-            # Chmura Tuya bywa niedostępna chwilowo - nie chcemy przez to
-            # tracić lokalnej publikacji MQTT, więc tylko logujemy, nie
-            # przerywamy działania bridge'a.
             logger.exception("Wyjątek przy aktualizacji wirtualnego urządzenia Tuya")
 
 
 def build_boiler_publishers(config, history=None) -> dict:
-    """Buduje publishery na podstawie tego, czego FAKTYCZNIE potrzebują
-    czujniki w ebus.sensors (nie ma już globalnego przełącznika trybu) -
-    MQTT buduje się, jeśli przynajmniej jeden czujnik ma
-    targets.mqtt_publish=true, analogicznie dla Tuya. Zwraca słownik
-    {"mqtt": ..., "tuya": ...} - brakujący klucz = kanał nieużywany."""
     notify_cfg = config.raw.get("notifications")
     sensors = config.ebus.get("sensors", [])
     needs_mqtt = any(s.get("targets", {}).get("mqtt_publish") for s in sensors)
@@ -118,12 +75,6 @@ def build_boiler_publishers(config, history=None) -> dict:
         try:
             publishers["tuya"] = TuyaVirtualDevicePublisher(config.tuya["cloud"], boiler_cfg["tuya_virtual_device"])
         except Exception:
-            # TuyaOpenAPI.connect() łączy się z chmurą Tuya OD RAZU przy
-            # konstrukcji - błędne/placeholder poświadczenia albo brak
-            # internetu w tym momencie NIE MOGĄ wywalić całego bridge'a
-            # (Satel i Tuya lokalnie nie mają z wirtualnym urządzeniem nic
-            # wspólnego i powinny normalnie wystartować). Ten kanał po
-            # prostu zostaje wyłączony - reszta systemu działa dalej.
             logger.exception(
                 "Nie udało się zainicjować wirtualnego urządzenia Tuya - ten kanał będzie "
                 "wyłączony, ale reszta bridge'a wystartuje normalnie. Sprawdź poświadczenia "

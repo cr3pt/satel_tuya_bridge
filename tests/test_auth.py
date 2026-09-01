@@ -1,6 +1,3 @@
-"""Testy dla dashboard/auth.py - logowanie sesyjne (/login) + HTTP Basic Auth
-(fallback dla skryptów) + ochrona przed brute-force + wiele kont
-administratorskich (patrz bridge/config_store.py: tabela users)."""
 import time
 from unittest.mock import MagicMock, patch
 
@@ -28,7 +25,6 @@ def _fake_request(password: str | None, ip: str = "127.0.0.1", session_token: st
 
 @pytest.fixture
 def store(tmp_path):
-    """ConfigStore z jednym kontem: admin/sekret123."""
     s = ConfigStore(tmp_path / "config.db")
     s.add_user("admin", generate_password_hash("sekret123"))
     return s
@@ -36,7 +32,6 @@ def store(tmp_path):
 
 @pytest.fixture
 def empty_store(tmp_path):
-    """ConfigStore BEZ żadnego konta - stan "nieskonfigurowany"."""
     return ConfigStore(tmp_path / "empty.db")
 
 
@@ -69,8 +64,6 @@ class TestAuthGuardBasics:
 
 
 class TestMultipleAccounts:
-    """Wiele kont administratorskich - płaski model uprawnień, każde
-    zalogowane konto ma pełny dostęp do zapisu."""
 
     def test_second_account_can_log_in_independently(self, store):
         store.add_user("drugi", generate_password_hash("inne_haslo"))
@@ -83,7 +76,7 @@ class TestMultipleAccounts:
         store.add_user("drugi", generate_password_hash("inne_haslo"))
         guard = AuthGuard(store, None)
         with patch("dashboard.auth.request", _fake_request(None, ip="127.0.0.1")):
-            ok, msg = guard.check_password("drugi", "sekret123")  # hasło NALEŻY do "admin"
+            ok, msg = guard.check_password("drugi", "sekret123")
         assert ok is False
         assert "Nieprawidłow" in msg
 
@@ -116,7 +109,6 @@ class TestBruteForceProtection:
                 ok, _ = guard.check()
                 assert ok is False
 
-        # 4. próba, TERAZ Z POPRAWNYM hasłem - powinna być zablokowana mimo to
         with patch("dashboard.auth.request", _fake_request("sekret123")):
             ok, msg = guard.check()
         assert ok is False
@@ -131,13 +123,12 @@ class TestBruteForceProtection:
             ok, _ = guard.check()
         assert ok is True
 
-        # licznik nieudanych prób powinien być wyzerowany po sukcesie
         for _ in range(2):
             with patch("dashboard.auth.request", _fake_request("złe")):
                 guard.check()
         with patch("dashboard.auth.request", _fake_request("sekret123")):
             ok, _ = guard.check()
-        assert ok is True  # wciąż OK, bo nie osiągnęliśmy 3 kolejnych błędów po resecie
+        assert ok is True
 
     def test_lockout_is_per_ip(self, store):
         guard = AuthGuard(store, {"max_failed_attempts": 2, "lockout_seconds": 300})
@@ -146,15 +137,12 @@ class TestBruteForceProtection:
             with patch("dashboard.auth.request", _fake_request("złe", ip="10.0.0.1")):
                 guard.check()
 
-        # inny adres IP nie powinien być objęty blokadą
         with patch("dashboard.auth.request", _fake_request("sekret123", ip="10.0.0.2")):
             ok, _ = guard.check()
         assert ok is True
 
 
 class TestBasicAuthToggle:
-    """allow_basic_auth=False - "tryb logowania" wymuszający wyłącznie
-    sesję (⚙ Ustawienia ogólne)."""
 
     def test_basic_auth_disabled_rejects_even_correct_credentials(self, store):
         guard = AuthGuard(store, {"allow_basic_auth": False})
@@ -178,10 +166,6 @@ class TestBasicAuthToggle:
 
 
 class TestSessionLogin:
-    """Logowanie sesyjne (/login, /api/login, /api/logout) - zastępuje
-    prompt()-owy Basic Auth w panelu webowym: hasło wpisywane RAZ w
-    zamaskowanym polu formularza, dalsze żądania idą przez losowy token w
-    ciasteczku HttpOnly, nie przez ponowne wysyłanie hasła."""
 
     def test_check_password_succeeds_with_correct_password(self, store):
         guard = AuthGuard(store, None)
@@ -213,11 +197,6 @@ class TestSessionLogin:
         assert "konta administratora" in msg
 
     def test_create_session_tokens_are_valid_and_carry_username(self, store):
-        """Token to podpisany payload (itsdangerous), NIE losowy identyfikator
-        odsyłający do stanu serwera - dla tego samego konta w tej samej
-        sekundzie wywołanie da więc DETERMINISTYCZNIE ten sam token (to
-        oczekiwana cecha stateless podpisu, nie błąd). Sprawdzamy więc
-        ważność i poprawną nazwę użytkownika, nie "unikalność"."""
         guard = AuthGuard(store, None)
         token = guard.create_session("admin")
         assert guard.check_session(token) is True
@@ -244,7 +223,7 @@ class TestSessionLogin:
 
     def test_destroy_session_on_unknown_token_is_noop(self, store):
         guard = AuthGuard(store, None)
-        guard.destroy_session("nieznany-token")  # nie powinno rzucić wyjątku
+        guard.destroy_session("nieznany-token")
 
     def test_expired_session_is_rejected(self, store):
         from dashboard.auth import SESSION_TTL_SECONDS
@@ -252,30 +231,16 @@ class TestSessionLogin:
         guard = AuthGuard(store, None)
         token = guard.create_session("admin")
         assert guard.check_session(token) is True
-        # Token sam niesie znacznik czasu (podpisany przez itsdangerous,
-        # patrz AuthGuard._serializer) - symulujemy wygaśnięcie przesuwając
-        # zegar, który sprawdza faktyczny upływ czasu przy weryfikacji
-        # podpisu (time.time() - to samo wywołanie, którego itsdangerous
-        # używa wewnętrznie, patrz itsdangerous.timed.TimestampSigner).
         with patch("time.time", return_value=time.time() + SESSION_TTL_SECONDS + 1):
             assert guard.check_session(token) is False
 
     def test_session_survives_new_authguard_with_same_store(self, store):
-        """Sedno odporności na restart procesu: token podpisany przez JEDEN
-        obiekt AuthGuard musi zostać zaakceptowany przez ZUPEŁNIE NOWY
-        obiekt AuthGuard wskazujący na TĘ SAMĄ bazę (dokładnie to się dzieje
-        przy restarcie panelu/bridge'a - nowy proces, ta sama baza SQLite) -
-        w odróżnieniu od poprzedniego modelu (sesje wyłącznie w pamięci
-        procesu), gdzie restart zawsze wylogowywał wszystkich."""
         token = AuthGuard(store, None).create_session("admin")
-        fresh_guard = AuthGuard(store, None)  # symuluje nowy proces po restarcie
+        fresh_guard = AuthGuard(store, None)
         assert fresh_guard.check_session(token) is True
         assert fresh_guard.session_username(token) == "admin"
 
     def test_session_invalidated_when_password_changes(self, store):
-        """Zmiana hasła (albo usunięcie konta) unieważnia WSZYSTKIE sesje
-        tego konta, mimo że serwer nie trzyma ich listy - patrz
-        _password_fingerprint w tokenie."""
         guard = AuthGuard(store, None)
         token = guard.create_session("admin")
         assert guard.check_session(token) is True
@@ -285,8 +250,6 @@ class TestSessionLogin:
         assert guard.check_session(token) is False
 
     def test_check_accepts_valid_session_cookie_without_password(self, store):
-        """Kluczowe zachowanie: PO zalogowaniu żądania NIE muszą już wysyłać
-        hasła w ogóle - sam ważny token w ciasteczku wystarcza."""
         guard = AuthGuard(store, None)
         token = guard.create_session("admin")
         with patch("dashboard.auth.request", _fake_request(None, session_token=token)):
@@ -307,8 +270,6 @@ class TestSessionLogin:
 
 
 class TestUpdateConfig:
-    """AuthGuard.update_config() - odświeżenie po create_app() BEZ utraty
-    aktywnych sesji/liczników prób (patrz dashboard/app.py: create_app)."""
 
     def test_preserves_active_sessions(self, store):
         guard = AuthGuard(store, None)
