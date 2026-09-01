@@ -202,14 +202,29 @@
     <div class="field-row">
       <div class="field"><label>Klucz integracji</label><input type="text" id="satel_integration_key" placeholder="ustawiony w DLOADX"></div>
     </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Klucz szyfrowania (opcjonalnie)</label>
+        <input type="text" id="satel_encryption_key" placeholder="tylko jeśli centrala ma włączone szyfrowanie">
+      </div>
+    </div>
+    <div class="step-hint" style="margin: -6px 0 14px;">
+      To NIE jest klucz integracji wyżej - to osobny klucz szyfrowania
+      transmisji (AES), ustawiany w DLOADX TYLKO jeśli centrala ma
+      jawnie włączoną szyfrowaną komunikację integracji. Zostaw puste,
+      jeśli nie wiesz, o co chodzi - większość instalacji tego nie używa,
+      transmisja idzie wtedy czystym tekstem po sieci LAN (patrz sekcja
+      "Bezpieczeństwo" w README).
+    </div>
 
     <div class="discover-row">
       <button type="button" class="secondary" id="testSatelConnectionBtn">🔌 Testuj połączenie</button>
       <span class="discover-status" id="satelConnectionStatus"></span>
     </div>
     <div class="step-hint" style="margin: -6px 0 14px;">
-      Sprawdza tylko, czy pod tym adresem/portem coś odpowiada (TCP) - protokół
-      integracji Satela nie pozwala zweryfikować samego klucza bez wykonania
+      Sprawdza, czy centrala odpowiada i nie jest zajęta przez inny
+      klient integracji (DLOADX/GUARDX) - NIE zweryfikuje samego klucza
+      integracji (protokół nie pozwala tego sprawdzić bez wykonania
       polecenia zmieniającego stan (uzbrojenie/wyjście), więc test świadomie
       tego nie robi. Błędny klucz ujawni się dopiero przy pierwszym
       uzbrojeniu/rozbrojeniu.
@@ -715,10 +730,11 @@ document.getElementById('testSatelConnectionBtn').addEventListener('click', asyn
   btn.disabled = true;
   status.textContent = 'Łączę...';
   try {
+    const encryptionKey = document.getElementById('satel_encryption_key').value.trim();
     const resp = await debugFetch('Testuj połączenie (Satel)', '/api/setup/test-satel-connection', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host, port }),
+      body: JSON.stringify({ host, port, encryption_key: encryptionKey || undefined }),
     });
     const data = await resp.json();
     status.textContent = (resp.ok ? '✅ ' : '❌ ') + (data.message || data.error);
@@ -1274,6 +1290,7 @@ function collectFormData() {
       host: document.getElementById('satel_host').value.trim(),
       port: document.getElementById('satel_port').value,
       integration_key: document.getElementById('satel_integration_key').value.trim(),
+      encryption_key: document.getElementById('satel_encryption_key').value.trim(),
       virtual_inputs_mode: document.getElementById('satel_virtual_inputs_mode').value,
       virtual_inputs_port: document.getElementById('satel_virtual_inputs_port').value,
     },
@@ -1326,6 +1343,7 @@ function populateForm(data) {
   const satel = data.satel || {};
   set('satel_host', satel.host); set('satel_port', satel.port);
   set('satel_integration_key', satel.integration_key);
+  set('satel_encryption_key', satel.encryption_key);
   set('satel_virtual_inputs_mode', satel.virtual_inputs_mode || 'library');
   set('satel_virtual_inputs_port', satel.virtual_inputs_port);
   document.getElementById('satel_vi_port_field').hidden = document.getElementById('satel_virtual_inputs_mode').value !== 'http';

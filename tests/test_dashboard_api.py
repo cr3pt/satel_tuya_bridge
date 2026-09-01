@@ -1399,7 +1399,7 @@ class TestBackgroundEbusDiscoveryEndpoints:
 
 class TestSatelConnectionTestEndpoint:
     def test_no_auth_required(self, client, monkeypatch):
-        async def fake_test_connection(host, port):
+        async def fake_test_connection(host, port, **_kwargs):
             return None
 
         monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
@@ -1411,7 +1411,7 @@ class TestSatelConnectionTestEndpoint:
         assert resp.status_code == 400
 
     def test_connection_error_returns_502_with_message(self, client, monkeypatch):
-        async def fake_test_connection(host, port):
+        async def fake_test_connection(host, port, **_kwargs):
             raise ConnectionError(f"Nie udało się połączyć z {host}:{port}")
 
         monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
@@ -1422,7 +1422,7 @@ class TestSatelConnectionTestEndpoint:
     def test_default_port_used_when_omitted(self, client, monkeypatch):
         captured = {}
 
-        async def fake_test_connection(host, port):
+        async def fake_test_connection(host, port, **_kwargs):
             captured["port"] = port
 
         monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
@@ -1436,7 +1436,7 @@ class TestSatelDiscoveryEndpoint:
     discover_active_zones_and_outputs)."""
 
     def test_no_auth_required(self, client, monkeypatch):
-        async def fake_discover(host, port, timeout_seconds=30.0):
+        async def fake_discover(host, port, timeout_seconds=30.0, **_kwargs):
             return {"zones": [12], "outputs": [3]}
 
         monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
@@ -1461,7 +1461,7 @@ class TestSatelDiscoveryEndpoint:
         ich nie poda (tak samo jak api_discover_ebus robi to dla mqtt_host)."""
         captured = {}
 
-        async def fake_discover(host, port, timeout_seconds=30.0):
+        async def fake_discover(host, port, timeout_seconds=30.0, **_kwargs):
             captured["host"] = host
             captured["port"] = port
             return {"zones": [], "outputs": []}
@@ -1474,7 +1474,7 @@ class TestSatelDiscoveryEndpoint:
     def test_explicit_host_in_body_overrides_configured(self, client, monkeypatch):
         captured = {}
 
-        async def fake_discover(host, port, timeout_seconds=30.0):
+        async def fake_discover(host, port, timeout_seconds=30.0, **_kwargs):
             captured["host"] = host
             return {"zones": [], "outputs": []}
 
@@ -1483,7 +1483,7 @@ class TestSatelDiscoveryEndpoint:
         assert captured["host"] == "10.0.0.9"
 
     def test_connection_error_returns_502(self, client, monkeypatch):
-        async def fake_discover(host, port, timeout_seconds=30.0):
+        async def fake_discover(host, port, timeout_seconds=30.0, **_kwargs):
             raise ConnectionError(f"Nie udało się połączyć z {host}:{port}")
 
         monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
@@ -1494,7 +1494,7 @@ class TestSatelDiscoveryEndpoint:
     def test_timeout_seconds_is_capped(self, client, monkeypatch):
         captured = {}
 
-        async def fake_discover(host, port, timeout_seconds=30.0):
+        async def fake_discover(host, port, timeout_seconds=30.0, **_kwargs):
             captured["timeout_seconds"] = timeout_seconds
             return {"zones": [], "outputs": []}
 
@@ -1505,7 +1505,7 @@ class TestSatelDiscoveryEndpoint:
     def test_default_timeout_used_when_omitted(self, client, monkeypatch):
         captured = {}
 
-        async def fake_discover(host, port, timeout_seconds=30.0):
+        async def fake_discover(host, port, timeout_seconds=30.0, **_kwargs):
             captured["timeout_seconds"] = timeout_seconds
             return {"zones": [], "outputs": []}
 

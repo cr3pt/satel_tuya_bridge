@@ -34,6 +34,12 @@ satel:
   host: "192.168.1.10"
   port: 7094
   integration_key: "TWOJ_KLUCZ_INTEGRACJI"   # ustawiony w DLOADX
+  # Klucz szyfrowania AES transmisji TCP ("Encrypted connections" w DLOADX)
+  # - CAŁKIEM INNY klucz niż integration_key wyżej (to hasło protokołu, nie
+  # klucz szyfrowania). Zostaw null/puste, jeśli centrala/moduł ETHM nie ma
+  # włączonego szyfrowania - patrz sekcja "A komunikacja z centralą Satel -
+  # czy jest szyfrowana kluczem?" w README.
+  encryption_key: null
   partition: 1                                # numer strefy, zwykle 1
 
   # "Wirtualne wejścia IP" - do WYSYŁANIA naruszeń (np. gdy Tuya wykryje

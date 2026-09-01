@@ -4,7 +4,9 @@
 # (config.db, bridge_history.db, backupy) to zamontowany wolumen /config -
 # dokładnie tak samo jak przy uruchomieniu bez Dockera (main.py i
 # dashboard/app.py trzymają ścieżki względne wobec katalogu roboczego).
-FROM python:3.11-slim AS base
+# python:3.12+ WYMAGANE przez satel-integra>=1.0.0 (requires-python >=3.12,
+# patrz requirements.txt i obszerny docstring bridge/satel_client.py).
+FROM python:3.12-slim AS base
 
 # gcc/libffi-dev potrzebne do zbudowania kilku zależności (np. bcrypt
 # używany przez werkzeug.security) na architekturach bez gotowych wheeli
