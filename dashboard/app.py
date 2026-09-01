@@ -388,7 +388,12 @@ def api_setup_test_satel_connection():
     # kreatora (PRZED zapisem configu, stąd nie ma go jeszcze skąd wziąć z
     # zapisanej konfiguracji). Test i tak jest publiczny (host/port też
     # przychodzą wprost w ciele żądania), więc to nie zwiększa ryzyka.
+    # Przełącznik "encryption_enabled" gate'uje klucz - patrz analogiczny
+    # komentarz w bridge/rules_engine.py, dlaczego sam fakt podania klucza
+    # nie wystarcza.
     encryption_key = (payload.get("encryption_key") or "").strip() or None
+    if not payload.get("encryption_enabled"):
+        encryption_key = None
 
     try:
         asyncio.run(test_satel_connection(host, port, encryption_key=encryption_key))
@@ -465,7 +470,7 @@ def api_satel_test_output():
     try:
         asyncio.run(test_satel_output(
             host, int(port), integration_key, output_number, state,
-            encryption_key=satel_cfg.get("encryption_key"),
+            encryption_key=satel_cfg.get("encryption_key") if satel_cfg.get("encryption_enabled") else None,
         ))
     except ImportError:
         return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
@@ -510,7 +515,16 @@ def api_discover_satel():
         timeout_seconds = min(float(payload.get("timeout_seconds") or 30), 120)
     except (TypeError, ValueError):
         timeout_seconds = 30.0
-    encryption_key = (payload.get("encryption_key") or satel_cfg.get("encryption_key") or None)
+    # "encryption_enabled" z ciała żądania (kreator, PRZED zapisem configu)
+    # ma pierwszeństwo, jeśli podane - w przeciwnym razie liczy się już
+    # zapisany przełącznik (patrz analogiczny komentarz w
+    # bridge/rules_engine.py, dlaczego sam fakt istnienia klucza nie
+    # wystarcza).
+    encryption_enabled = (
+        payload["encryption_enabled"] if "encryption_enabled" in payload
+        else satel_cfg.get("encryption_enabled")
+    )
+    encryption_key = (payload.get("encryption_key") or satel_cfg.get("encryption_key") or None) if encryption_enabled else None
 
     try:
         result = asyncio.run(discover_active_zones_and_outputs(

@@ -1471,6 +1471,39 @@ class TestSatelDiscoveryEndpoint:
         assert resp.status_code == 200
         assert captured == {"host": "127.0.0.1", "port": 7094}  # z CONFIG_TEMPLATE
 
+    def test_encryption_key_not_used_when_encryption_disabled(self, client, monkeypatch):
+        """Regresja: satel.encryption_enabled musi GATE'OWAĆ encryption_key
+        - sam zapisany klucz bez włączonego przełącznika nie może trafić do
+        biblioteki (patrz analogiczny komentarz w bridge/rules_engine.py)."""
+        captured = {}
+
+        async def fake_discover(host, port, timeout_seconds=30.0, **kwargs):
+            captured.update(kwargs)
+            return {"zones": [], "outputs": []}
+
+        monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "satel": {"host": "127.0.0.1", "port": 7094, "encryption_key": "AESKEY", "encryption_enabled": False},
+        })
+        resp = client.post("/api/discover/satel", json={})
+        assert resp.status_code == 200
+        assert captured["encryption_key"] is None
+
+    def test_encryption_key_used_when_encryption_enabled(self, client, monkeypatch):
+        captured = {}
+
+        async def fake_discover(host, port, timeout_seconds=30.0, **kwargs):
+            captured.update(kwargs)
+            return {"zones": [], "outputs": []}
+
+        monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "satel": {"host": "127.0.0.1", "port": 7094, "encryption_key": "AESKEY", "encryption_enabled": True},
+        })
+        resp = client.post("/api/discover/satel", json={})
+        assert resp.status_code == 200
+        assert captured["encryption_key"] == "AESKEY"
+
     def test_explicit_host_in_body_overrides_configured(self, client, monkeypatch):
         captured = {}
 

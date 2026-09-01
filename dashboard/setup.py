@@ -787,6 +787,12 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
         config["satel"]["encryption_key"] = None
     else:
         config["satel"].setdefault("encryption_key", None)
+    # Jawny przełącznik włącz/wyłącz - CELOWO osobny od samego faktu
+    # zapisania klucza wyżej (zgłoszony błąd projektowy: "szyfrowanie musi
+    # być włącz/wyłącz, a nie włączone-ale-bez-klucza"). Zwykły checkbox w
+    # formularzu (nie sekret) - zawsze nadpisywany wprost stanem z
+    # formularza, bez wzorca "puste = zostaw bez zmian".
+    config["satel"]["encryption_enabled"] = bool(satel_form.get("encryption_enabled"))
     config["satel"].setdefault("virtual_inputs", {})
     # Tryb wirtualnych wejść IP (patrz obszerny docstring
     # bridge/satel_client.py) - "library" (set_output, przez połączenie
@@ -924,6 +930,7 @@ def connections_to_form(existing: dict) -> dict:
             "virtual_inputs_port": satel.get("virtual_inputs", {}).get("port", 8888),
             "integration_key_set": bool(satel.get("integration_key")),
             "encryption_key_set": bool(satel.get("encryption_key")),
+            "encryption_enabled": bool(satel.get("encryption_enabled")),
             "status_poll_interval_seconds": satel.get("status_poll_interval_seconds", 3),
         },
         "tuya_local": {
@@ -1287,6 +1294,11 @@ def build_config_dict(form: dict) -> dict:
             # obszerny docstring bridge/satel_client.py, NIE mylić z
             # kluczem integracji wyżej. Puste/brak = brak szyfrowania.
             "encryption_key": (satel_form.get("encryption_key") or "").strip() or None,
+            # Jawny przełącznik włącz/wyłącz - CELOWO osobny od samego
+            # faktu podania klucza wyżej (patrz analogiczny komentarz w
+            # build_connections_patch) - domyślnie wyłączone, nawet jeśli
+            # klucz akurat wpisano.
+            "encryption_enabled": bool(satel_form.get("encryption_enabled")),
             "partition": int(satel_form.get("partition", 1)),
             "virtual_inputs": {
                 "mode": satel_form.get("virtual_inputs_mode") or "library",

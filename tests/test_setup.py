@@ -1,5 +1,6 @@
 """Testy dla dashboard/setup.py i tras kreatora (/setup, /api/setup/save,
 /api/setup/draft)."""
+import copy
 import pathlib
 
 import pytest
@@ -75,6 +76,18 @@ class TestBuildConfigDict:
         assert config["satel"]["host"] == "192.168.1.10"
         assert config["satel"]["port"] == 7094
         assert config["satel"]["integration_key"] == "klucz123"
+
+    def test_encryption_enabled_defaults_to_false(self):
+        """Domyślnie wyłączone przy pierwszym zapisie kreatora, nawet jeśli
+        VALID_FORM nie zawiera pola w ogóle."""
+        config = build_config_dict(VALID_FORM)
+        assert config["satel"]["encryption_enabled"] is False
+
+    def test_encryption_enabled_true_when_form_sets_it(self):
+        form = {**VALID_FORM, "satel": {**VALID_FORM["satel"], "encryption_enabled": True, "encryption_key": "AESKEY"}}
+        config = build_config_dict(form)
+        assert config["satel"]["encryption_enabled"] is True
+        assert config["satel"]["encryption_key"] == "AESKEY"
 
     def test_satel_config_has_fields_file_marker_not_inline_fields(self):
         config = build_config_dict(VALID_FORM)
@@ -478,6 +491,34 @@ class TestConnectionsBuilder:
         patched = build_connections_patch(form, self.EXISTING)
         assert patched["satel"]["integration_key"] == "nowy_klucz"
 
+    def test_encryption_enabled_defaults_to_false_when_absent_from_form(self):
+        """Zwykły checkbox (nie sekret) - zawsze nadpisywany wprost stanem
+        formularza, w odróżnieniu od kluczy wyżej (puste = zostaw bez
+        zmian) - regresja dla "szyfrowanie musi być włącz/wyłącz, a nie
+        włączone-ale-bez-klucza"."""
+        form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["satel"]["encryption_enabled"] is False
+
+    def test_encryption_enabled_true_persists(self):
+        form = {
+            "satel": {"host": "192.168.1.10", "encryption_enabled": True},
+            "ebus": {"mqtt_host": "127.0.0.1"},
+        }
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["satel"]["encryption_enabled"] is True
+
+    def test_encryption_enabled_can_be_turned_back_off(self):
+        """W odróżnieniu od kluczy-sekretów, "brak w formularzu" dla tego
+        pola NIE oznacza "zostaw bez zmian" - checkbox niezaznaczony po
+        prostu nie jest wysyłany przez przeglądarkę, więc musi to znaczyć
+        "wyłączone", nawet jeśli wcześniej było włączone."""
+        existing = copy.deepcopy(self.EXISTING)
+        existing["satel"]["encryption_enabled"] = True
+        form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        patched = build_connections_patch(form, existing)
+        assert patched["satel"]["encryption_enabled"] is False
+
     def test_ebus_topic_prefix_updates_boiler_output_mqtt(self):
         form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1", "topic_prefix": "ebusd_state"}}
         patched = build_connections_patch(form, self.EXISTING)
@@ -710,6 +751,24 @@ class TestConnectionsToForm:
         form = connections_to_form(existing)
         assert form["satel"]["integration_key_set"] is False
         assert form["tuya_cloud"]["enabled"] is False
+
+    def test_exposes_encryption_enabled_flag(self):
+        """encryption_enabled NIE jest sekretem (zwykły bool, nie klucz) -
+        w odróżnieniu od encryption_key_set (który tylko mówi, CZY klucz
+        jest zapisany), to pole musi nieść jego RZECZYWISTĄ wartość, żeby
+        formularz mógł poprawnie ustawić stan checkboxa przy wczytaniu."""
+        existing = {
+            "satel": {"host": "1.2.3.4", "encryption_key": "AESKEY", "encryption_enabled": True},
+            "ebus": {"mqtt_host": "127.0.0.1"},
+        }
+        form = connections_to_form(existing)
+        assert form["satel"]["encryption_enabled"] is True
+        assert form["satel"]["encryption_key_set"] is True
+
+    def test_encryption_enabled_defaults_to_false(self):
+        existing = {"satel": {"host": "1.2.3.4"}, "ebus": {"mqtt_host": "127.0.0.1"}}
+        form = connections_to_form(existing)
+        assert form["satel"]["encryption_enabled"] is False
 
     def test_roundtrip_with_build_connections_patch(self):
         """connections_to_form(existing) -> uzupełnij formularz w

@@ -1052,20 +1052,28 @@ zupełnie różne klucze, celowo osobne pola w konfiguracji - nie mylić ich:
   oraz krok 1 kreatora) - opcjonalny **klucz szyfrowania AES** transmisji
   TCP, jeśli centrala/moduł ETHM ma włączoną funkcję "Encrypted connections"
   (ustawianą osobno w DLOADX, jako całkiem inne pole niż hasło integracji).
-  Gdy ustawiony, `bridge/satel_client.py` łączy się przez
-  `SatelEncryptedTransport` biblioteki `satel_integra` zamiast domyślnego
-  `SatelPlainTransport`. Gdy puste (domyślnie) - komunikacja z centralą
-  (port 7094) i wywołania wirtualnych wejść IP (port z sekcji
-  `virtual_inputs`) idą czystym tekstem po sieci LAN, jak dotychczas.
+- **`satel.encryption_enabled`** - JAWNY przełącznik włącz/wyłącz, CELOWO
+  osobny od samego faktu zapisania klucza wyżej. Sam zapisany klucz NIE
+  wystarczy, żeby szyfrowanie było używane - dopiero gdy ten przełącznik
+  jest włączony (checkbox "Centrala ma włączone szyfrowanie transmisji"),
+  `bridge/satel_client.py` łączy się przez `SatelEncryptedTransport`
+  biblioteki `satel_integra` zamiast domyślnego `SatelPlainTransport`,
+  przekazując jej `satel.encryption_key`. Dzięki temu można zachować klucz
+  w konfiguracji (np. na wypadek późniejszego włączenia szyfrowania na
+  centrali) bez ryzyka, że sam jego zapis przypadkiem przełączy transmisję
+  na szyfrowaną. Domyślnie wyłączone - komunikacja z centralą (port 7094)
+  i wywołania wirtualnych wejść IP (port z sekcji `virtual_inputs`) idą
+  wtedy czystym tekstem po sieci LAN, jak dotychczas.
 
 Jeśli Twoja centrala nie ma włączonego szyfrowania w DLOADX, zostaw
-`satel.encryption_key` puste - ustawienie błędnego/niepasującego klucza
-uniemożliwi połączenie. W praktyce, nawet bez szyfrowania, w zaufanej,
-odizolowanej sieci domowej czyste połączenie to zwykle akceptowalne ryzyko
-(dokładnie ta sama klasa kompromisu co Basic Auth panelu wyżej). Jeśli
-jednak centrala/RPi są w sieci współdzielonej z niezaufanymi urządzeniami,
-albo zależy Ci na dodatkowej warstwie ochrony:
-- włącz szyfrowanie w DLOADX i wpisz ten sam klucz w `satel.encryption_key`,
+`satel.encryption_enabled` wyłączone - włączenie go z błędnym/
+niepasującym kluczem uniemożliwi połączenie. W praktyce, nawet bez
+szyfrowania, w zaufanej, odizolowanej sieci domowej czyste połączenie to
+zwykle akceptowalne ryzyko (dokładnie ta sama klasa kompromisu co Basic
+Auth panelu wyżej). Jeśli jednak centrala/RPi są w sieci współdzielonej z
+niezaufanymi urządzeniami, albo zależy Ci na dodatkowej warstwie ochrony:
+- włącz szyfrowanie w DLOADX, wpisz ten sam klucz w `satel.encryption_key`
+  i zaznacz `satel.encryption_enabled`,
 - odizoluj VLAN-em urządzenia automatyki domowej od reszty sieci,
 - **nie** wystawiaj portu centrali (7094) ani portu wejść IP na świat -
   jeśli potrzebujesz zdalnego dostępu, użyj VPN (WireGuard/Tailscale) do

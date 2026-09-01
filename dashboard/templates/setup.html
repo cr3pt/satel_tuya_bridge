@@ -203,18 +203,25 @@
       <div class="field"><label>Klucz integracji</label><input type="text" id="satel_integration_key" placeholder="ustawiony w DLOADX"></div>
     </div>
     <div class="field-row">
+      <div class="field" style="flex: none;">
+        <label><input type="checkbox" id="satel_encryption_enabled" style="width: auto; margin-right: 6px;">Centrala ma włączone szyfrowanie transmisji</label>
+      </div>
+    </div>
+    <div class="field-row">
       <div class="field">
-        <label>Klucz szyfrowania (opcjonalnie)</label>
-        <input type="text" id="satel_encryption_key" placeholder="tylko jeśli centrala ma włączone szyfrowanie">
+        <label>Klucz szyfrowania</label>
+        <input type="text" id="satel_encryption_key" placeholder="klucz szyfrowania z DLOADX" disabled>
       </div>
     </div>
     <div class="step-hint" style="margin: -6px 0 14px;">
       To NIE jest klucz integracji wyżej - to osobny klucz szyfrowania
       transmisji (AES), ustawiany w DLOADX TYLKO jeśli centrala ma
-      jawnie włączoną szyfrowaną komunikację integracji. Zostaw puste,
-      jeśli nie wiesz, o co chodzi - większość instalacji tego nie używa,
-      transmisja idzie wtedy czystym tekstem po sieci LAN (patrz sekcja
-      "Bezpieczeństwo" w README).
+      jawnie włączoną szyfrowaną komunikację integracji. Zostaw checkbox
+      wyłączony, jeśli nie wiesz, o co chodzi - większość instalacji tego
+      nie używa, transmisja idzie wtedy czystym tekstem po sieci LAN
+      (patrz sekcja "Bezpieczeństwo" w README). Sam wpisany klucz NIE
+      wystarczy - szyfrowanie jest używane TYLKO gdy checkbox jest
+      zaznaczony.
     </div>
 
     <div class="discover-row">
@@ -718,6 +725,10 @@ document.getElementById('satel_virtual_inputs_mode').addEventListener('change', 
   document.querySelectorAll('#virtualInputsRows .vi-key').forEach(el => { el.hidden = !isHttp; });
 });
 
+document.getElementById('satel_encryption_enabled').addEventListener('change', () => {
+  document.getElementById('satel_encryption_key').disabled = !document.getElementById('satel_encryption_enabled').checked;
+});
+
 document.getElementById('testSatelConnectionBtn').addEventListener('click', async () => {
   const btn = document.getElementById('testSatelConnectionBtn');
   const status = document.getElementById('satelConnectionStatus');
@@ -730,11 +741,15 @@ document.getElementById('testSatelConnectionBtn').addEventListener('click', asyn
   btn.disabled = true;
   status.textContent = 'Łączę...';
   try {
+    const encryptionEnabled = document.getElementById('satel_encryption_enabled').checked;
     const encryptionKey = document.getElementById('satel_encryption_key').value.trim();
     const resp = await debugFetch('Testuj połączenie (Satel)', '/api/setup/test-satel-connection', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host, port, encryption_key: encryptionKey || undefined }),
+      body: JSON.stringify({
+        host, port, encryption_enabled: encryptionEnabled,
+        encryption_key: encryptionEnabled ? (encryptionKey || undefined) : undefined,
+      }),
     });
     const data = await resp.json();
     status.textContent = (resp.ok ? '✅ ' : '❌ ') + (data.message || data.error);
@@ -1290,6 +1305,7 @@ function collectFormData() {
       host: document.getElementById('satel_host').value.trim(),
       port: document.getElementById('satel_port').value,
       integration_key: document.getElementById('satel_integration_key').value.trim(),
+      encryption_enabled: document.getElementById('satel_encryption_enabled').checked,
       encryption_key: document.getElementById('satel_encryption_key').value.trim(),
       virtual_inputs_mode: document.getElementById('satel_virtual_inputs_mode').value,
       virtual_inputs_port: document.getElementById('satel_virtual_inputs_port').value,
@@ -1343,6 +1359,8 @@ function populateForm(data) {
   const satel = data.satel || {};
   set('satel_host', satel.host); set('satel_port', satel.port);
   set('satel_integration_key', satel.integration_key);
+  document.getElementById('satel_encryption_enabled').checked = !!satel.encryption_enabled;
+  document.getElementById('satel_encryption_key').disabled = !satel.encryption_enabled;
   set('satel_encryption_key', satel.encryption_key);
   set('satel_virtual_inputs_mode', satel.virtual_inputs_mode || 'library');
   set('satel_virtual_inputs_port', satel.virtual_inputs_port);

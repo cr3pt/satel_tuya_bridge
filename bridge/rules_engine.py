@@ -83,7 +83,15 @@ class RulesEngine:
             monitored_zones=config.satel.get("monitored_zones"),
             monitored_outputs=config.satel.get("monitored_outputs"),
             virtual_inputs=config.satel.get("virtual_inputs", {}).get("inputs"),
-            encryption_key=config.satel.get("encryption_key"),
+            # Jawny przełącznik satel.encryption_enabled decyduje, czy klucz
+            # w ogóle jest użyty - sam FAKT zapisania klucza NIE oznacza
+            # "szyfrowanie włączone" (zgłoszony błąd projektowy: dało się
+            # mieć zapisany klucz bez świadomej decyzji o włączeniu
+            # szyfrowania). Wyłączony przełącznik = zawsze czysty tekst,
+            # niezależnie od tego, czy klucz jest zapisany w configu.
+            encryption_key=(
+                config.satel.get("encryption_key") if config.satel.get("encryption_enabled") else None
+            ),
             history=self.history,
             notify_cfg=notify_cfg,
             grace_seconds=grace_seconds,

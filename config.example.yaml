@@ -40,6 +40,10 @@ satel:
   # włączonego szyfrowania - patrz sekcja "A komunikacja z centralą Satel -
   # czy jest szyfrowana kluczem?" w README.
   encryption_key: null
+  # JAWNY przełącznik włącz/wyłącz - CELOWO osobny od samego faktu podania
+  # klucza wyżej. Sam zapisany klucz NIE wystarczy - szyfrowanie jest
+  # używane TYLKO gdy to pole jest true.
+  encryption_enabled: false
   partition: 1                                # numer strefy, zwykle 1
 
   # "Wirtualne wejścia IP" - do WYSYŁANIA naruszeń (np. gdy Tuya wykryje
