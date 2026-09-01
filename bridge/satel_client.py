@@ -79,6 +79,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 from typing import Callable, Awaitable
 
 import aiohttp
@@ -267,6 +269,82 @@ async def discover_active_zones_and_outputs(host: str, port: int, timeout_second
             pass
 
     return {"zones": sorted(seen_zones), "outputs": sorted(seen_outputs)}
+
+
+class BackgroundZoneOutputScan:
+    """Nasłuch aktywnych stref/wyjść (discover_active_zones_and_outputs()
+    wyżej) W TLE, w OSOBNYM WĄTKU - zgłoszony problem: wywołanie
+    `asyncio.run(discover_active_zones_and_outputs(...))` WPROST w
+    widoku Flask blokuje wątek waitressa (domyślnie 8, patrz
+    dashboard/app.py) na cały czas nasłuchu (do 120s, patrz `timeout_seconds`
+    w /api/plugins/satel/scan/start). Ten sam wzorzec "start/status" co
+    `BackgroundTopicDiscovery` (bridge/ebus_client.py) dla nasłuchu MQTT
+    eBUS - tu jednak trzeba samemu odpalić WŁASNĄ pętlę asyncio w wątku
+    (`asyncio.run()` w `_run()` niżej), bo w odróżnieniu od paho-mqtt
+    (wbudowana obsługa wątkowa) satel_integra/AsyncSatel jest czystym
+    asyncio bez własnego wątku.
+
+    W odróżnieniu od BackgroundTopicDiscovery: connect() NIE jest
+    walidowany synchronicznie w start() (discover_active_zones_and_outputs
+    robi connect+nasłuch+close jako JEDNĄ korutynę, więc rozdzielenie
+    wymagałoby przebudowy tamtej funkcji) - błędy połączenia (zły host/
+    port, centrala zajęta, brak biblioteki) trafiają więc do pola `error`
+    dopiero w status(), NIE od razu w odpowiedzi start(). Jedna instancja
+    obsługuje JEDEN nasłuch naraz - kolejny start() w trakcie trwającego
+    nasłuchu rzuca RuntimeError."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._running = False
+        self._started_at: float | None = None
+        self._duration_seconds: float = 0.0
+        self._result: dict | None = None
+        self._error: str | None = None
+
+    def start(self, host: str, port: int, timeout_seconds: float = 30.0,
+              encryption_key: str | None = None) -> None:
+        with self._lock:
+            if self._running:
+                raise RuntimeError("Nasłuch już trwa - poczekaj na koniec i spróbuj ponownie")
+            self._running = True
+            self._started_at = time.time()
+            self._duration_seconds = timeout_seconds
+            self._result = None
+            self._error = None
+
+        def _run() -> None:
+            try:
+                result = asyncio.run(discover_active_zones_and_outputs(
+                    host, port, timeout_seconds=timeout_seconds, encryption_key=encryption_key,
+                ))
+            except ImportError:
+                error = "Biblioteka satel_integra nie jest zainstalowana na serwerze"
+                result = None
+            except ConnectionError as exc:
+                error = str(exc)
+                result = None
+            except Exception as exc:
+                error = f"Błąd wykrywania: {exc}"
+                result = None
+            else:
+                error = None
+            with self._lock:
+                self._result = result
+                self._error = error
+                self._running = False
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def status(self) -> dict:
+        with self._lock:
+            elapsed = (time.time() - self._started_at) if self._started_at is not None else 0.0
+            return {
+                "running": self._running,
+                "elapsed_seconds": round(elapsed, 1),
+                "duration_seconds": self._duration_seconds,
+                "result": self._result,
+                "error": self._error,
+            }
 
 
 async def test_output(host: str, port: int, integration_key: str, output_number: int,

@@ -7,12 +7,13 @@ wersji (register_callbacks()/start()/close()/stopped/_send_data/
 _send_data_and_wait), nie starsze, prywatne API 0.3.x."""
 import asyncio
 import contextlib
+import time
 
 import pytest
 
 from bridge.satel_client import (
     SatelIntegraClient, SatelVirtualInputTrigger, _wait_for_command_result,
-    discover_active_zones_and_outputs,
+    discover_active_zones_and_outputs, BackgroundZoneOutputScan,
 )
 from bridge.satel_client import test_connection as satel_test_connection
 from bridge.satel_client import test_output as satel_test_output
@@ -339,6 +340,86 @@ class TestDiscoverActiveZonesAndOutputs:
         fakes = _patch_async_satel(monkeypatch, factory=FakeAsyncSatelDiscovery)
         await discover_active_zones_and_outputs("127.0.0.1", 7094, timeout_seconds=0.02, encryption_key="AESKEY")
         assert fakes[0].encryption_key == "AESKEY"
+
+
+def _wait_until_finished(scan: BackgroundZoneOutputScan, timeout: float = 5.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = scan.status()
+        if not status["running"]:
+            return status
+        time.sleep(0.02)
+    raise AssertionError("skan w tle nie zakończył się w oczekiwanym czasie")
+
+
+class TestBackgroundZoneOutputScan:
+    """Nasłuch aktywnych stref/wyjść W TLE - patrz plugins/satel/routes.py:
+    /api/plugins/satel/scan/start|status. `asyncio.run()` w widoku Flask
+    blokowałby wątek waitressa do 120s (zgłoszony problem) - start()
+    odpala go w osobnym wątku."""
+
+    def test_status_reports_running_immediately_after_start(self, monkeypatch):
+        _patch_async_satel(monkeypatch, factory=FakeAsyncSatelDiscovery)
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.3)
+        try:
+            status = scan.status()
+            assert status["running"] is True
+            assert status["duration_seconds"] == 0.3
+        finally:
+            _wait_until_finished(scan)
+
+    def test_status_reports_result_after_completion(self, monkeypatch):
+        class Fake(FakeAsyncSatelDiscovery):
+            _events = [([12], [3])]
+
+        _patch_async_satel(monkeypatch, factory=Fake)
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.05)
+        status = _wait_until_finished(scan)
+        assert status["result"] == {"zones": [12], "outputs": [3]}
+        assert status["error"] is None
+
+    def test_connection_error_surfaces_in_status(self, monkeypatch):
+        from satel_integra.exceptions import SatelConnectFailedError
+        _patch_async_satel(
+            monkeypatch, factory=FakeAsyncSatelDiscovery, connect_exception=SatelConnectFailedError("boom"),
+        )
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.05)
+        status = _wait_until_finished(scan)
+        assert status["result"] is None
+        assert "127.0.0.1" in status["error"]
+
+    def test_import_error_produces_friendly_message(self, monkeypatch):
+        async def fake_discover(*args, **kwargs):
+            raise ImportError("no module named satel_integra")
+
+        monkeypatch.setattr("bridge.satel_client.discover_active_zones_and_outputs", fake_discover)
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.05)
+        status = _wait_until_finished(scan)
+        assert status["error"] == "Biblioteka satel_integra nie jest zainstalowana na serwerze"
+
+    def test_generic_exception_wrapped_with_prefix(self, monkeypatch):
+        async def fake_discover(*args, **kwargs):
+            raise RuntimeError("coś nieoczekiwanego")
+
+        monkeypatch.setattr("bridge.satel_client.discover_active_zones_and_outputs", fake_discover)
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.05)
+        status = _wait_until_finished(scan)
+        assert status["error"] == "Błąd wykrywania: coś nieoczekiwanego"
+
+    def test_starting_twice_while_running_raises(self, monkeypatch):
+        _patch_async_satel(monkeypatch, factory=FakeAsyncSatelDiscovery)
+        scan = BackgroundZoneOutputScan()
+        scan.start("127.0.0.1", 7094, timeout_seconds=0.5)
+        try:
+            with pytest.raises(RuntimeError):
+                scan.start("127.0.0.1", 7094, timeout_seconds=0.5)
+        finally:
+            _wait_until_finished(scan)
 
 
 class TestRunForever:

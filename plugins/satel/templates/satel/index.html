@@ -633,42 +633,68 @@ async function loadSatelFields() {
 }
 loadSatelFields();
 
+let satelScanPollTimer = null;
+
+function applySatelScanResult(data) {
+  const status = document.getElementById('satelDiscoverStatus');
+  const existingZones = new Set(collectZoneOrOutputRows('zonesRows').map(z => String(z.number)));
+  const existingOutputs = new Set(collectZoneOrOutputRows('outputsRows').map(o => String(o.number)));
+  let added = 0;
+  (data.zones || []).forEach(number => {
+    if (existingZones.has(String(number))) return;
+    addZoneOrOutputRow('zonesRows', { name: `Wejście ${number}`, number }, SATEL_ZONE_TYPES);
+    added++;
+  });
+  (data.outputs || []).forEach(number => {
+    if (existingOutputs.has(String(number))) return;
+    addZoneOrOutputRow('outputsRows', { name: `Wyjście ${number}`, number }, SATEL_OUTPUT_TYPES);
+    added++;
+  });
+  status.textContent = added
+    ? `Wykryto aktywność na ${added} numerach - dodano jako nowe wiersze niżej, nadaj im właściwe nazwy/rodzaj i zapisz.`
+    : 'Nie wykryto żadnej aktywności - żadna czujka/wyjście nie zmieniły stanu podczas nasłuchu. Spróbuj ponownie i fizycznie wyzwól interesujące Cię strefy w tym oknie.';
+}
+
+async function pollSatelScanStatus() {
+  const btn = document.getElementById('discoverSatelBtn');
+  const status = document.getElementById('satelDiscoverStatus');
+  const resp = await fetch('/api/plugins/satel/scan/status');
+  const data = await resp.json();
+  if (data.running) {
+    status.textContent = `Nasłuchuję... (${Math.round(data.elapsed_seconds || 0)}s / ${Math.round(data.duration_seconds || 0)}s) - przejdź teraz przez pilnowane pomieszczenia (otwórz/zamknij drzwi i okna, wywołaj czujki ruchu).`;
+    return;
+  }
+  if (satelScanPollTimer) { clearInterval(satelScanPollTimer); satelScanPollTimer = null; }
+  btn.disabled = false;
+  if (data.error) {
+    status.textContent = '❌ ' + data.error;
+  } else if (data.result) {
+    applySatelScanResult(data.result);
+  }
+}
+
 document.getElementById('discoverSatelBtn').addEventListener('click', async () => {
   const btn = document.getElementById('discoverSatelBtn');
   const status = document.getElementById('satelDiscoverStatus');
   const timeoutSeconds = Math.min(120, Math.max(5, parseInt(document.getElementById('discoverSatelTimeout').value, 10) || 30));
   btn.disabled = true;
-  status.textContent = `Nasłuchuję ${timeoutSeconds}s - przejdź teraz przez pilnowane pomieszczenia (otwórz/zamknij drzwi i okna, wywołaj czujki ruchu)...`;
+  status.textContent = `Nasłuchuję ${timeoutSeconds}s...`;
   try {
-    const resp = await fetch('/api/plugins/satel/scan', {
+    const resp = await fetch('/api/plugins/satel/scan/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ timeout_seconds: timeoutSeconds }),
     });
     const data = await resp.json();
     if (!resp.ok) {
-      status.textContent = '❌ ' + (data.error || 'Błąd wykrywania');
+      status.textContent = '❌ ' + (data.error || 'Błąd uruchamiania nasłuchu');
+      btn.disabled = false;
       return;
     }
-    const existingZones = new Set(collectZoneOrOutputRows('zonesRows').map(z => String(z.number)));
-    const existingOutputs = new Set(collectZoneOrOutputRows('outputsRows').map(o => String(o.number)));
-    let added = 0;
-    (data.zones || []).forEach(number => {
-      if (existingZones.has(String(number))) return;
-      addZoneOrOutputRow('zonesRows', { name: `Wejście ${number}`, number }, SATEL_ZONE_TYPES);
-      added++;
-    });
-    (data.outputs || []).forEach(number => {
-      if (existingOutputs.has(String(number))) return;
-      addZoneOrOutputRow('outputsRows', { name: `Wyjście ${number}`, number }, SATEL_OUTPUT_TYPES);
-      added++;
-    });
-    status.textContent = added
-      ? `Wykryto aktywność na ${added} numerach - dodano jako nowe wiersze niżej, nadaj im właściwe nazwy/rodzaj i zapisz.`
-      : (data.warning || 'Nie wykryto żadnej aktywności - żadna czujka/wyjście nie zmieniły stanu podczas nasłuchu. Spróbuj ponownie i fizycznie wyzwól interesujące Cię strefy w tym oknie.');
+    if (satelScanPollTimer) clearInterval(satelScanPollTimer);
+    satelScanPollTimer = setInterval(pollSatelScanStatus, 2000);
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
-  } finally {
     btn.disabled = false;
   }
 });

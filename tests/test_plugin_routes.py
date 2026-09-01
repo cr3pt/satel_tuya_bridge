@@ -108,13 +108,56 @@ class TestSatelPluginPage:
         pending = app_module.history.get_pending_commands()
         assert any(c["command"] == "reload_config" for c in pending)
 
-    def test_scan_requires_auth_and_handles_connection_error(self, client):
-        assert client.post("/api/plugins/satel/scan", json={"host": "127.0.0.1", "timeout_seconds": 0.1}).status_code == 401
+    def test_scan_start_requires_auth(self, client):
+        assert client.post("/api/plugins/satel/scan/start", json={"host": "127.0.0.1"}).status_code == 401
+
+    def test_scan_status_requires_auth(self, client):
+        assert client.get("/api/plugins/satel/scan/status").status_code == 401
+
+    def test_scan_start_missing_host_returns_400(self, client, monkeypatch):
+        import dashboard.app as app_module
+
+        raw = app_module.config_store.get("config")
+        raw["satel"] = {}
+        app_module.config_store.set("config", raw)
+        app_module.create_app(BridgeConfig.load(app_module.config_path))
+
         resp = client.post(
-            "/api/plugins/satel/scan", json={"host": "127.0.0.1", "timeout_seconds": 0.1},
+            "/api/plugins/satel/scan/start", json={}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    def test_scan_start_status_runs_in_background(self, client, monkeypatch):
+        import plugins.satel.routes as satel_routes
+
+        monkeypatch.setattr(satel_routes._background_scan, "start", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            satel_routes._background_scan, "status",
+            lambda: {"running": True, "elapsed_seconds": 0, "duration_seconds": 30, "result": None, "error": None},
+        )
+        resp = client.post(
+            "/api/plugins/satel/scan/start", json={"host": "127.0.0.1", "timeout_seconds": 30},
             headers=_basic_auth_header("test_haslo_123"),
         )
-        assert resp.status_code == 502
+        assert resp.status_code == 200
+        assert resp.get_json()["running"] is True
+
+        resp = client.get("/api/plugins/satel/scan/status", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json()["running"] is True
+
+    def test_scan_start_already_running_returns_409(self, client, monkeypatch):
+        import plugins.satel.routes as satel_routes
+
+        def _raise(*a, **kw):
+            raise RuntimeError("Nasłuch już trwa - poczekaj na koniec i spróbuj ponownie")
+
+        monkeypatch.setattr(satel_routes._background_scan, "start", _raise)
+        resp = client.post(
+            "/api/plugins/satel/scan/start", json={"host": "127.0.0.1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 409
 
     def test_settings_get_requires_auth(self, client):
         assert client.get("/api/plugins/satel/settings").status_code == 401
