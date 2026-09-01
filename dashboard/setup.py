@@ -79,7 +79,7 @@ def validate(form: dict) -> list[str]:
     if len(password) < 8:
         errors.append("Hasło panelu: minimum 8 znaków")
 
-    errors.extend(validate_satel_fields(form))
+    errors.extend(validate_satel_fields(form, satel.get("virtual_inputs_mode") or "library"))
     errors.extend(validate_tuya_devices(form))
     errors.extend(validate_cloud_devices(form))
     errors.extend(validate_automations(form))
@@ -87,17 +87,30 @@ def validate(form: dict) -> list[str]:
     return errors
 
 
-def validate_satel_fields(form: dict) -> list[str]:
+def validate_satel_fields(form: dict, virtual_input_mode: str = "library") -> list[str]:
     """Waliduje TYLKO "pola" Satela (wirtualne wejścia IP - jedyne z nich
     wymagające kompletu danych, żeby scenom/regułom było do czego się
     odwołać). Strefy/wyjścia/partycje nie mają twardej walidacji - niepełny
     wiersz (brakująca nazwa albo numer) jest po prostu pomijany przy
     zapisie (patrz _build_monitored_zones/_build_monitored_outputs/
-    _build_partitions). Współdzielone przez kreator i panel /config."""
+    _build_partitions). Współdzielone przez kreator i panel /config.
+
+    Wymagane pola zależą od trybu (satel.virtual_inputs.mode, patrz
+    obszerny docstring bridge/satel_client.py) - `virtual_input_mode`
+    zawsze pochodzi z JUŻ ZAPISANEGO configu (autorytatywne źródło, patrz
+    dashboard/app.py:api_config_satel_fields_post), nigdy z przesłanego
+    formularza:
+    - "library" (domyślny): zwykłe wyjście Satela - wystarczy nazwa+numer,
+      BEZ osobnego klucza (uwierzytelnienie idzie przez wspólny
+      satel.integration_key).
+    - "http": funkcja "Wejścia IP" ETHM-1 Plus - potrzebny też klucz PER
+      WEJŚCIE (z DLOADX)."""
     errors = []
     for i, vi in enumerate(form.get("virtual_inputs", [])):
-        if not vi.get("name") or not vi.get("number") or not vi.get("key"):
-            errors.append(f"Wirtualne wejście #{i + 1}: nazwa, numer i klucz z DLOADX są wymagane")
+        if not vi.get("name") or not vi.get("number"):
+            errors.append(f"Wirtualne wejście #{i + 1}: nazwa i numer wejścia są wymagane")
+        elif virtual_input_mode == "http" and not vi.get("key"):
+            errors.append(f"Wirtualne wejście #{i + 1}: klucz z DLOADX jest wymagany w trybie 'http'")
     return errors
 
 
@@ -615,11 +628,23 @@ def _build_output_types(form: dict) -> dict:
     }
 
 
-def _build_virtual_inputs(form: dict) -> dict:
+def _build_virtual_inputs(form: dict, virtual_input_mode: str = "library") -> dict:
+    """Kształt zależy od trybu (satel.virtual_inputs.mode, patrz docstring
+    bridge/satel_client.py):
+    - "library" (domyślny): nazwa -> numer wyjścia (int) - bez osobnego
+      klucza, uwierzytelnienie idzie przez wspólny satel.integration_key.
+    - "http": nazwa -> {number, key} - funkcja "Wejścia IP" ETHM-1 Plus
+      wymaga klucza PER WEJŚCIE (z DLOADX)."""
+    if virtual_input_mode == "http":
+        return {
+            vi["name"]: {"number": int(vi["number"]), "key": vi["key"]}
+            for vi in form.get("virtual_inputs", [])
+            if vi.get("name") and vi.get("number") and vi.get("key")
+        }
     return {
-        vi["name"]: {"number": int(vi["number"]), "key": vi["key"]}
+        vi["name"]: int(vi["number"])
         for vi in form.get("virtual_inputs", [])
-        if vi.get("name")
+        if vi.get("name") and vi.get("number")
     }
 
 
@@ -747,12 +772,22 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     else:
         config["satel"].setdefault("integration_key", "")
     config["satel"].setdefault("virtual_inputs", {})
+    # Tryb wirtualnych wejść IP (patrz obszerny docstring
+    # bridge/satel_client.py) - "library" (set_output, przez połączenie
+    # integracji) albo "http" (funkcja "Wejścia IP" ETHM-1 Plus, osobne
+    # połączenie, niezależne od kolejki poleceń integracji). UWAGA: zmiana
+    # trybu NIE przekształca automatycznie już zapisanych wierszy "inputs"
+    # (kształt int vs {number,key}) - trzeba je ręcznie uzupełnić/zapisać
+    # ponownie w zakładce Satel po zmianie trybu.
+    vi_mode = satel_form.get("virtual_inputs_mode") or config["satel"]["virtual_inputs"].get("mode") or "library"
+    config["satel"]["virtual_inputs"]["mode"] = vi_mode
     config["satel"]["virtual_inputs"]["port"] = int(
         satel_form.get("virtual_inputs_port") or config["satel"]["virtual_inputs"].get("port") or 8888
     )
     config["satel"]["virtual_inputs"].setdefault(
         "url_template", "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
     )
+    config["satel"]["virtual_inputs"].setdefault("inputs", {})
     config["satel"].setdefault("outputs", {})
     config["satel"].setdefault("fields_file", "satel_fields.yaml")
     config["satel"]["status_poll_interval_seconds"] = int(
@@ -869,6 +904,7 @@ def connections_to_form(existing: dict) -> dict:
             "host": satel.get("host", ""),
             "port": satel.get("port", 7094),
             "partition": satel.get("partition", 1),
+            "virtual_inputs_mode": satel.get("virtual_inputs", {}).get("mode", "library"),
             "virtual_inputs_port": satel.get("virtual_inputs", {}).get("port", 8888),
             "integration_key_set": bool(satel.get("integration_key")),
             "status_poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
@@ -1096,7 +1132,17 @@ def zones_to_rows(numbers: dict, types: dict) -> list[dict]:
 
 
 def virtual_inputs_to_rows(inputs: dict) -> list[dict]:
-    return [{"name": name, "number": v.get("number"), "key": v.get("key")} for name, v in inputs.items()]
+    """Kształt wartości zależy od trybu, w jakim `inputs` zostało zapisane
+    (satel.virtual_inputs.mode - patrz _build_virtual_inputs): "library" to
+    zwykły int (numer wyjścia), "http" to {number, key} - obsługujemy OBA,
+    żeby konwersja działała niezależnie od aktualnie wybranego trybu."""
+    rows = []
+    for name, value in inputs.items():
+        if isinstance(value, dict):
+            rows.append({"name": name, "number": value.get("number"), "key": value.get("key", "")})
+        else:
+            rows.append({"name": name, "number": value})
+    return rows
 
 
 def tuya_devices_to_rows(devices: dict) -> list[dict]:
@@ -1133,15 +1179,17 @@ def cloud_devices_to_rows(devices: dict) -> list[dict]:
     ]
 
 
-def build_satel_fields_dict(form: dict) -> dict:
+def build_satel_fields_dict(form: dict, virtual_input_mode: str = "library") -> dict:
     """Buduje zawartość satel_fields.yaml (strefy/wyjścia/wejścia IP/
     partycje) - używane zarówno przez kreator (razem z build_config_dict),
-    jak i samodzielnie przez panel /config przy każdym zapisie."""
+    jak i samodzielnie przez panel /config przy każdym zapisie.
+    `virtual_input_mode` (satel.virtual_inputs.mode) - patrz
+    _build_virtual_inputs - decyduje o kształcie "virtual_inputs" niżej."""
     return {
         "monitored_zones": _build_monitored_zones(form),
         "monitored_outputs": _build_monitored_outputs(form),
         "partitions": _build_partitions(form),
-        "virtual_inputs": _build_virtual_inputs(form),
+        "virtual_inputs": _build_virtual_inputs(form, virtual_input_mode),
         "zone_types": _build_zone_types(form),
         "output_types": _build_output_types(form),
     }
@@ -1220,8 +1268,10 @@ def build_config_dict(form: dict) -> dict:
             "integration_key": satel_form["integration_key"],
             "partition": int(satel_form.get("partition", 1)),
             "virtual_inputs": {
-                "port": int(satel_form.get("virtual_inputs_port", 8888)),
+                "mode": satel_form.get("virtual_inputs_mode") or "library",
+                "port": int(satel_form.get("virtual_inputs_port") or 8888),
                 "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}",
+                "inputs": {},
             },
             "outputs": {},
             # Strefy/wyjścia/wejścia IP/partycje NIE są tutaj - trafiają do

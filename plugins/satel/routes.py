@@ -42,6 +42,11 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
             "monitored_zones": zones_to_rows(satel.get("monitored_zones", {}), satel.get("zone_types", {})),
             "monitored_outputs": zones_to_rows(satel.get("monitored_outputs", {}), satel.get("output_types", {})),
             "virtual_inputs": virtual_inputs_to_rows(satel.get("virtual_inputs", {}).get("inputs", {})),
+            # Tryb wirtualnych wejść IP (satel.virtual_inputs.mode, patrz
+            # docstring bridge/satel_client.py) - CZYTELNY tu (edytowalny w
+            # zakładce ⚙ Ustawienia -> Połączenia, nie tutaj), żeby ten
+            # formularz wiedział, czy pokazać pole klucza per wiersz.
+            "virtual_inputs_mode": satel.get("virtual_inputs", {}).get("mode", "library"),
             "zone_types": satel.get("zone_types", {}),
             "output_types": satel.get("output_types", {}),
         })
@@ -53,11 +58,14 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
 
-        errors = validate_satel_fields(form)
+        # Autorytatywny tryb z JUŻ ZAPISANEGO config.yaml - patrz analogiczny
+        # komentarz w dashboard/app.py:api_config_satel_fields_post.
+        vi_mode = get_config_raw().get("satel", {}).get("virtual_inputs", {}).get("mode", "library")
+        errors = validate_satel_fields(form, vi_mode)
         if errors:
             return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
-        satel_fields_dict = build_satel_fields_dict(form)
+        satel_fields_dict = build_satel_fields_dict(form, vi_mode)
         get_config_store().set("satel_fields", satel_fields_dict)
 
         reload_bridge_config()

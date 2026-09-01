@@ -36,11 +36,26 @@ satel:
   integration_key: "TWOJ_KLUCZ_INTEGRACJI"   # ustawiony w DLOADX
   partition: 1                                # numer strefy, zwykle 1
 
-  # "Wejścia IP" (wirtualne wejścia) ETHM-1 Plus - do WYSYŁANIA naruszeń
-  # (np. gdy Tuya wykryje ruch albo światło się zapala).
-  # Skonfigurowane w DLOADX -> zakładka "Wejścia IP".
-  # UWAGA: ETHM-1 Plus NIE zwraca standardowego kodu HTTP 200 dla tych
-  # zapytań - klient musi to tolerować (patrz satel_client.py).
+  # "Wirtualne wejścia IP" - do WYSYŁANIA naruszeń (np. gdy Tuya wykryje
+  # ruch albo światło się zapala). DWA niezależne tryby wyzwalania (mode
+  # niżej, patrz obszerny docstring bridge/satel_client.py):
+  #
+  # "library" (domyślny, zalecany) - to NIE jest osobna funkcja sprzętowa
+  #   ETHM-1 Plus - to zwykłe WYJŚCIE (numer 1-256, ten sam zakres co
+  #   "outputs"/monitored_outputs), które instalator zaprogramował w
+  #   DLOADX tak, żeby jego załączenie symulowało wewnątrz centrali
+  #   naruszenie wejścia/czujki. Wyzwala się je DOKŁADNIE tym samym
+  #   poleceniem co zwykłe wyjście (SatelIntegraClient.set_output,
+  #   uwierzytelnione wspólnym "integration_key" wyżej) - PRZEZ TO SAMO
+  #   połączenie integracji co reszta poleceń (uzbrojenie, sterowanie
+  #   innymi wyjściami), które je SERIALIZUJE (centrala obsługuje tylko
+  #   jednego klienta integracji naraz).
+  #
+  # "http" - funkcja "Wejścia IP" ETHM-1 Plus: osobne żądanie HTTP GET na
+  #   port/URL poniżej, z kluczem PER WEJŚCIE (z DLOADX, zakładka "Wejścia
+  #   IP") - NIEZALEŻNE od kolejki poleceń protokołu integracji, kosztem
+  #   dodatkowej konfiguracji i zależności od wersji firmware.
+  #
   # UWAGA: "inputs" niżej, "monitored_zones"/"monitored_outputs"/"partitions"
   # poniżej i "tuya.devices" kilka linii dalej w PRAWDZIWYM config.yaml
   # wygenerowanym przez kreator/panel NIE SĄ tutaj - trafiają do osobnych
@@ -50,17 +65,16 @@ satel:
   # zapisu). Wpisanie ich TUTAJ, bezpośrednio w config.yaml, wciąż działa
   # (wsteczna zgodność) - patrz bridge/config.py.
   virtual_inputs:
-    port: 8888              # port TCP/IP ustawiony w DLOADX dla wejść IP
-    # Dokładny format URL/parametrów (klucz, numer wejścia) skopiuj z
-    # DLOADX po skonfigurowaniu konkretnego wejścia IP - różni się
-    # zależnie od wersji firmware. Wzór poniżej to placeholder do
-    # podmiany na realny z Twojej konfiguracji DLOADX.
-    url_template: "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
+    mode: library    # "library" (zalecane) albo "http"
+    port: 8888                  # tylko dla mode: http (port TCP/IP ETHM-1 Plus)
+    url_template: "http://{host}:{port}/input.cgi?key={key}&input={input_no}"  # tylko mode: http
     inputs:
-      # nazwa logiczna -> (numer wejścia w systemie, klucz z DLOADX)
-      motion_hall_camera:      {number: 17, key: "KLUCZ_WE17"}
-      motion_tuya_pir_garage:  {number: 18, key: "KLUCZ_WE18"}
-      light_on_living_room:    {number: 19, key: "KLUCZ_WE19"}
+      # mode: library -> nazwa logiczna -> numer wyjścia (zaprogramowanego w DLOADX)
+      motion_hall_camera:      17
+      motion_tuya_pir_garage:  18
+      light_on_living_room:    19
+      # mode: http -> nazwa logiczna -> {number, key}, np.:
+      # motion_hall_camera: {number: 17, key: "KLUCZ_WE17"}
 
   # Wyjścia centrali sterowane programowo (np. przekaźnik, sygnalizacja)
   outputs:

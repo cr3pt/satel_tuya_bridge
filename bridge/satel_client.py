@@ -1,23 +1,36 @@
 """Integracja z centralą Satel Integra przez moduł ETHM-1 Plus.
 
-Dwa niezależne kanały:
+Główny kanał: protokół integracji Satela (biblioteka `satel_integra`, ta
+sama używana przez Home Assistant, port zwykle 7094). Pozwala ODCZYTYWAĆ
+stan wejść/wyjść/stref oraz STEROWAĆ wyjściami i (roz)uzbrajaniem,
+uwierzytelniony jednym `integration_key` (hasło DLOADX/GUARDX).
 
-1. `SatelIntegraClient` - protokół integracji Satela (biblioteka
-   `satel_integra`, ta sama używana przez Home Assistant). Pozwala
-   ODCZYTYWAĆ stan wejść/wyjść/stref oraz STEROWAĆ wyjściami i
-   (roz)uzbrajaniem. Nie pozwala zapisywać stanu wejść.
+"Wirtualne wejście IP" (nazwa w panelu na wywoływanie naruszenia z
+automatyzacji, np. z Tuya) ma DWA niezależne sposoby wyzwolenia
+(satel.virtual_inputs.mode w configu):
 
-2. `SatelVirtualInputTrigger` - osobny, prostszy kanał: funkcja
-   "Wejścia IP" modułu ETHM-1 Plus (od firmware z INTEGRA 1.22+).
-   Wysyłając żądanie HTTP GET na skonfigurowany w DLOADX port z
-   właściwym kluczem, wywołujemy NARUSZENIE konkretnego wejścia -
-   dokładnie to, czego potrzebujemy dla zdarzeń z Tuya.
+1. "library" (domyślny) - to zwykłe WYJŚCIE (numerowane 1-256, ten sam
+   zakres co `monitored_outputs`), które instalator zaprogramował w
+   DLOADX tak, żeby jego załączenie symulowało wewnątrz centrali
+   naruszenie wejścia/czujki. Wyzwala się je DOKŁADNIE tym samym
+   poleceniem co zwykłe wyjście - `SatelIntegraClient.set_output()` -
+   przez TO SAMO połączenie integracji co reszta poleceń.
 
-   WAŻNE: moduł nie zwraca standardowego kodu HTTP 200 dla tych
-   zapytań (potwierdzone przez Satela - nie planują tego poprawiać).
-   Klient poniżej celowo ignoruje kod odpowiedzi i traktuje sam brak
-   wyjątku sieciowego jako sukces.
-"""
+2. "http" (`SatelVirtualInputTrigger` niżej) - funkcja "Wejścia IP"
+   modułu ETHM-1 Plus: osobne żądanie HTTP GET na skonfigurowany w
+   DLOADX port, z kluczem PER WEJŚCIE. WAŻNE, dlaczego to osobny tryb:
+   centrala Satel Integra obsługuje TYLKO JEDNEGO klienta protokołu
+   integracji naraz (port 7094) i serializuje na nim wszystkie polecenia
+   zapisu (patrz _command_poll_loop w bridge/rules_engine.py) - w trybie
+   "library" wyzwolenie wirtualnego wejścia w trakcie naruszenia CZEKA w
+   tej samej kolejce co inne polecenia (uzbrojenie, sterowanie innymi
+   wyjściami). Tryb "http" idzie przez OSOBNE połączenie, niezależne od
+   tej kolejki - kosztem osobnego klucza per wejście i portu HTTP modułu
+   ETHM-1 Plus (dostępność samej funkcji zależy od wersji firmware).
+   Moduł NIE zwraca standardowego kodu HTTP 200 dla tych zapytań
+   (potwierdzone przez Satela - nie planują tego poprawiać) - klient
+   poniżej celowo ignoruje kod odpowiedzi i traktuje sam brak wyjątku
+   sieciowego jako sukces."""
 from __future__ import annotations
 
 import asyncio
@@ -29,6 +42,9 @@ import aiohttp
 from .resilience import Supervisor
 
 logger = logging.getLogger("bridge.satel")
+
+DEFAULT_VIRTUAL_INPUT_HTTP_PORT = 8888
+DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE = "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
 
 
 async def test_connection(host: str, port: int, timeout_seconds: float = 5.0) -> None:
@@ -161,18 +177,47 @@ async def discover_active_zones_and_outputs(host: str, port: int, timeout_second
     return result
 
 
+async def _send_write_command(client, action: str, send_coro, timeout: float = 5.0) -> None:
+    """Wysyła polecenie zapisu (arm/disarm/set_output/clear_alarm) na SUROWYM
+    kliencie biblioteki (`AsyncSatel`) i CZEKA na potwierdzenie z centrali
+    (ramka 0xEF "command result"), zamiast uznawać samo wysłanie bajtów po
+    sieci za sukces - patrz obszerny komentarz w
+    `SatelIntegraClient._send_and_confirm` (poniżej), który jest cienkim
+    wrapperem na tę funkcję dla połączenia długożyjącego. Wydzielone jako
+    osobna funkcja modułowa, żeby ten sam mechanizm potwierdzania dało się
+    użyć też w jednorazowym połączeniu testowym (`test_output()` niżej),
+    bez tworzenia pełnego `SatelIntegraClient` (i jego zadania w tle
+    `_periodic_status_sync`)."""
+    event = client._command_status_event
+    event.clear()
+    await send_coro
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise ConnectionError(
+            f"Centrala nie potwierdziła komendy ({action}) w ciągu {timeout:.0f}s - "
+            f"sprawdź połączenie z centralą"
+        )
+    result = client._command_status
+    error = result.get("error") if isinstance(result, dict) else None
+    if error not in ("OK", None):
+        raise RuntimeError(f"Centrala odrzuciła komendę ({action}): {error}")
+
+
 class SatelVirtualInputTrigger:
-    """Wywołuje naruszenie wirtualnego wejścia IP w ETHM-1 Plus."""
+    """Tryb "http" wirtualnych wejść IP (patrz docstring modułu, punkt 2) -
+    funkcja "Wejścia IP" ETHM-1 Plus, OSOBNE połączenie HTTP, niezależne od
+    kolejki poleceń protokołu integracji (SatelIntegraClient)."""
 
     def __init__(self, host: str, cfg: dict):
         self.host = host
-        self.port = cfg["port"]
-        self.url_template = cfg["url_template"]
-        self.inputs = cfg["inputs"]  # nazwa -> {number, key}
+        self.port = cfg.get("port", DEFAULT_VIRTUAL_INPUT_HTTP_PORT)
+        self.url_template = cfg.get("url_template", DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE)
+        self.inputs = cfg.get("inputs", {})  # nazwa -> {number, key}
 
     async def trigger(self, input_name: str, retries: int = 1) -> None:
         if input_name not in self.inputs:
-            logger.error("Nieznane wirtualne wejście: %s", input_name)
+            logger.error("Nieznane wirtualne wejście IP (tryb http): %s", input_name)
             return
         entry = self.inputs[input_name]
         url = self.url_template.format(
@@ -190,7 +235,7 @@ class SatelVirtualInputTrigger:
                         # przy wysyłce = uznajemy za wysłane.
                         await resp.read()
                 logger.info(
-                    "Wysłano naruszenie wirtualnego wejścia '%s' (nr %s)",
+                    "Wysłano naruszenie wirtualnego wejścia '%s' (nr %s, tryb http)",
                     input_name, entry["number"],
                 )
                 return
@@ -215,6 +260,62 @@ class SatelVirtualInputTrigger:
                     )
 
 
+async def test_virtual_input_http(host: str, port: int, url_template: str, key: str, input_number: int,
+                                   timeout_seconds: float = 5.0) -> None:
+    """Jednorazowy test trybu "http" wirtualnych wejść IP - do przycisku
+    "TEST" w panelu, gdy satel.virtual_inputs.mode == "http". W odróżnieniu
+    od test_output() niżej (tryb "library") NIE czeka na żadne
+    potwierdzenie z centrali - ETHM-1 Plus go nie zwraca (patrz docstring
+    modułu) - sam brak wyjątku sieciowego = sukces. Rzuca ConnectionError
+    przy niepowodzeniu."""
+    url = url_template.format(host=host, port=port, key=key, input_no=input_number)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout_seconds)) as resp:
+                await resp.read()
+    except asyncio.TimeoutError:
+        raise ConnectionError(f"Przekroczono czas oczekiwania ({timeout_seconds:.0f}s) na {host}:{port}")
+    except aiohttp.ClientError as exc:
+        raise ConnectionError(f"Błąd sieci przy wywołaniu wejścia IP: {exc}")
+
+
+async def test_output(host: str, port: int, integration_key: str, output_number: int,
+                       state: bool = True, timeout_seconds: float = 5.0) -> None:
+    """Jednorazowy test wyjścia (m.in. "wirtualnego wejścia IP", które na tej
+    instalacji jest zwykłym wyjściem zaprogramowanym w DLOADX do symulacji
+    naruszenia - patrz docstring modułu) - do przycisku "TEST" obok pola
+    klucza integracji w panelu (⚙ Ustawienia -> Połączenia). Łączy się,
+    wysyła `set_output` i CZEKA na potwierdzenie z centrali (jak
+    `SatelIntegraClient.set_output`), po czym się rozłącza - nie zostawia
+    żadnego trwałego połączenia/zadania w tle (w odróżnieniu od pełnego
+    `SatelIntegraClient.connect()`, patrz tamtejszy komentarz o
+    `_periodic_status_sync`). Rzuca ConnectionError/RuntimeError przy
+    niepowodzeniu (brak połączenia / centrala odrzuciła komendę - np. zły
+    klucz integracji)."""
+    from satel_integra.satel_integra import AsyncSatel  # type: ignore
+
+    client = AsyncSatel(host, port, asyncio.get_event_loop())
+    try:
+        connected = await asyncio.wait_for(client.connect(), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        raise ConnectionError(
+            f"Przekroczono czas oczekiwania ({timeout_seconds:.0f}s) na połączenie z {host}:{port}"
+        )
+    if not connected:
+        raise ConnectionError(f"Nie udało się połączyć z {host}:{port} - sprawdź adres IP i port")
+    try:
+        await _send_write_command(
+            client,
+            f"test wyjścia {output_number} -> {state}",
+            client.set_output(integration_key, output_number, state),
+            timeout=timeout_seconds,
+        )
+        logger.info("Test wyjścia %s -> %s zakończony sukcesem", output_number, state)
+    finally:
+        if client._writer is not None:
+            client._writer.close()
+
+
 class SatelIntegraClient:
     """Cienki wrapper na bibliotekę `satel_integra` (odczyt stanu, sterowanie
     wyjściami, uzbrajanie/rozbrajanie). Instalacja: pip install satel-integra
@@ -229,6 +330,7 @@ class SatelIntegraClient:
 
     def __init__(self, host: str, port: int, integration_key: str, partition: int = 1,
                  monitored_zones: dict | None = None, monitored_outputs: dict | None = None,
+                 virtual_inputs: dict | None = None,
                  history=None, notify_cfg: dict | None = None, grace_seconds: float = 120,
                  status_poll_interval_seconds: float = 15.0):
         self.host = host
@@ -238,6 +340,10 @@ class SatelIntegraClient:
         # nazwa -> numer, do etykietowania w panelu (np. {"Hol": 12, "Garaż": 13})
         self.monitored_zones = monitored_zones or {}
         self.monitored_outputs = monitored_outputs or {}
+        # nazwa -> numer wyjścia, dla "wirtualnych wejść IP" (patrz docstring
+        # modułu) - osobna mapa od monitored_outputs, bo te wyjścia zwykle
+        # NIE są jednocześnie monitorowane/wyświetlane jako zwykłe wyjścia.
+        self.virtual_inputs = virtual_inputs or {}
         self._client = None  # utworzony leniwie, patrz connect()
         self._zone_cb = None
         self._output_cb = None
@@ -366,20 +472,7 @@ class SatelIntegraClient:
         zapisu wysłane NAPRAWDĘ równocześnie (np. scena i panel w tej samej
         chwili) mogłyby pomylić wyniki. Akceptowalne ryzyko - komendy z
         panelu i tak idą sekwencyjnie przez _command_poll_loop()."""
-        event = self._client._command_status_event
-        event.clear()
-        await send_coro
-        try:
-            await asyncio.wait_for(event.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            raise ConnectionError(
-                f"Centrala nie potwierdziła komendy ({action}) w ciągu {timeout:.0f}s - "
-                f"sprawdź połączenie z centralą"
-            )
-        result = self._client._command_status
-        error = result.get("error") if isinstance(result, dict) else None
-        if error not in ("OK", None):
-            raise RuntimeError(f"Centrala odrzuciła komendę ({action}): {error}")
+        await _send_write_command(self._client, action, send_coro, timeout=timeout)
 
     async def set_output(self, output_number: int, state: bool) -> None:
         if self._client is None:

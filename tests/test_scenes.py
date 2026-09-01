@@ -49,18 +49,18 @@ SCENES_CFG = [
 
 
 @pytest.fixture
-def runner(fake_tuya, fake_satel, fake_virtual_inputs, history):
-    return SceneRunner(SCENES_CFG, fake_tuya, fake_satel, fake_virtual_inputs, history=history)
+def runner(fake_tuya, fake_satel, history):
+    fake_satel.virtual_inputs = {"motion_hall_camera": 17}
+    return SceneRunner(SCENES_CFG, fake_tuya, fake_satel, history=history)
 
 
-async def test_scene_executes_actions_in_order(runner, fake_tuya, fake_satel, fake_virtual_inputs):
+async def test_scene_executes_actions_in_order(runner, fake_tuya, fake_satel):
     await runner.run("wykryto_intruza")
     assert fake_tuya.calls == [
         ("on", "gniazdko_salon", None),
         ("on", "swiatlo_korytarz", 100),
     ]
-    assert fake_satel.calls == [("output", 1, True)]
-    assert fake_virtual_inputs.calls == [("trigger", "motion_hall_camera")]
+    assert fake_satel.calls == [("output", 1, True), ("output", 17, True)]
 
 
 async def test_unknown_action_is_skipped_not_fatal(runner, fake_tuya):
@@ -118,10 +118,11 @@ async def test_unknown_scene_does_not_write_any_automation_status(runner, histor
     assert history.get_status_value("automation:nieistniejaca_scena") is None
 
 
-async def test_scene_without_history_does_not_crash(fake_tuya, fake_satel, fake_virtual_inputs):
+async def test_scene_without_history_does_not_crash(fake_tuya, fake_satel):
     """SceneRunner(history=None) - np. wywołania z testów/kontekstów, które
     nie potrzebują historii - nie może wywalić się na próbie zapisu statusu."""
-    runner_no_history = SceneRunner(SCENES_CFG, fake_tuya, fake_satel, fake_virtual_inputs, history=None)
+    fake_satel.virtual_inputs = {"motion_hall_camera": 17}
+    runner_no_history = SceneRunner(SCENES_CFG, fake_tuya, fake_satel, history=None)
     await runner_no_history.run("wykryto_intruza")  # nie powinno rzucić wyjątku
 
 
@@ -142,7 +143,16 @@ async def test_scene_logs_event_to_history(runner, history):
     assert events[0]["source"] == "wykryto_intruza"
 
 
-async def test_failing_action_does_not_abort_scene(fake_satel, fake_virtual_inputs, history):
+async def test_unknown_virtual_input_is_skipped_not_fatal(runner, fake_satel, history):
+    """Nazwa spoza satel.virtual_inputs.inputs (np. usunięta/literówka) -
+    ostrzeżenie w logach, ale reszta sceny (i sama scena) nie ma się wywalić."""
+    fake_satel.virtual_inputs = {}
+    await runner.run("wykryto_intruza")
+    # satel_output (nr 1) wykonał się, satel_virtual_input pominięty (nieznana nazwa)
+    assert fake_satel.calls == [("output", 1, True)]
+
+
+async def test_failing_action_does_not_abort_scene(fake_satel, history):
     """Jedna nieudana akcja (np. martwe urządzenie Tuya) nie może przerwać
     wykonywania reszty sceny."""
     failing_tuya_cfg = [
@@ -159,7 +169,7 @@ async def test_failing_action_does_not_abort_scene(fake_satel, fake_virtual_inpu
         async def turn_on(self, device, dimmer_level_percent=None):
             raise ConnectionError("symulowana awaria")
 
-    runner = SceneRunner(failing_tuya_cfg, FailingTuya(), fake_satel, fake_virtual_inputs, history=history)
+    runner = SceneRunner(failing_tuya_cfg, FailingTuya(), fake_satel, history=history)
     await runner.run("test_scena")
     # mimo błędu w pierwszej akcji, druga (satel_output) powinna się wykonać
     assert fake_satel.calls == [("output", 2, True)]

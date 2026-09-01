@@ -16,10 +16,8 @@ satel:
   port: 7094
   integration_key: "x"
   virtual_inputs:
-    port: 8888
-    url_template: "http://{{host}}:{{port}}/x"
     inputs:
-      test_input: {{number: 1, key: "k"}}
+      test_input: 1
   partitions:
     Dom: 1
     Garaz: 2
@@ -134,7 +132,7 @@ sensors:
 
 
 @pytest.fixture
-async def engine(tmp_path, fake_tuya, fake_satel, fake_virtual_inputs):
+async def engine(tmp_path, fake_tuya, fake_satel):
     (tmp_path / "sensors.yaml").write_text(SENSORS_YAML, encoding="utf-8")
     (tmp_path / "config.yaml").write_text(
         CONFIG_TEMPLATE.format(db_path=str(tmp_path / "history.db")), encoding="utf-8",
@@ -142,13 +140,14 @@ async def engine(tmp_path, fake_tuya, fake_satel, fake_virtual_inputs):
     config = BridgeConfig.load(tmp_path / "config.yaml")
     rules_engine = RulesEngine(config)
     # Podmieniamy prawdziwych klientów na fałszywki - testujemy LOGIKĘ
-    # routingu/warunków, nie faktyczną komunikację sieciową.
+    # routingu/warunków, nie faktyczną komunikację sieciową. Tryb wirtualnych
+    # wejść IP w CONFIG_TEMPLATE to domyślne "library" (patrz obszerny
+    # docstring bridge/satel_client.py) - satel_virtual_inputs (klient HTTP
+    # trybu "http") zostaje PRAWDZIWY, ale niedotknięty w tym trybie.
     rules_engine.tuya = fake_tuya
     rules_engine.satel = fake_satel
-    rules_engine.satel_virtual_inputs = fake_virtual_inputs
     rules_engine.scenes.tuya = fake_tuya
     rules_engine.scenes.satel = fake_satel
-    rules_engine.scenes.satel_virtual_inputs = fake_virtual_inputs
     return rules_engine
 
 
@@ -157,7 +156,9 @@ def _repatch_fakes(engine, fake_tuya=None, fake_satel=None, fake_virtual_inputs=
     kontrolerów (patrz RulesEngine.reload_config) - testy, które wywołują
     reload_config() i PO NIM sprawdzają wywołania na fałszywkach (fake_tuya
     itd.), muszą je podłączyć na nowo, dokładnie jak robi to fixture
-    `engine` wyżej zaraz po konstrukcji."""
+    `engine` wyżej zaraz po konstrukcji. `fake_virtual_inputs` - fałszywy
+    klient HTTP trybu "http" (patrz TestVirtualInputHttpMode), tylko dla
+    testów, które same ustawiają engine._vi_mode = "http"."""
     if fake_tuya is not None:
         engine.tuya = fake_tuya
         engine.scenes.tuya = fake_tuya
@@ -311,14 +312,110 @@ class TestMotionRules:
 class TestVirtualInputMotionRuleAction:
     """Akcja "Aktywuj wejście IP Satela" w edytorze reguł ruchu (pole
     `virtual_input` zamiast target_device/scene, patrz dashboard/setup.py:
-    _build_motion_rules) - RulesEngine._fire_motion_rule, gałąź
-    "virtual_input" in rule. "Czas włączenia" (duration_seconds) działa
-    analogicznie do włączenia urządzenia: puste/0 = "aż do ustania
-    naruszenia/wyłączenia wyzwalacza" (reguła reaguje na OBA wyzwolenia -
-    trigger() wywołany raz na "violated", drugi raz na "restored", bo
-    SatelVirtualInputTrigger nie ma osobnego wywołania "przywróć"),
-    dodatnia wartość = jednorazowe wywołanie teraz + drugie po czasie
-    (RulesEngine._run_virtual_input_for_duration)."""
+    _build_motion_rules) - RulesEngine._fire_motion_rule normalizuje
+    device/target_system="satel_virtual_input" i leci WSPÓLNĄ ścieżką z
+    akcją "wyjście Satela"/urządzenie Tuya (ten sam _set_target_state/
+    _run_on_for_duration). W domyślnym trybie "library" (patrz obszerny
+    docstring bridge/satel_client.py) to REALNE wł/wył przez
+    self.satel.set_output() - "Czas włączenia" działa DOKŁADNIE jak dla
+    urządzenia: puste/0 = "aż do ustania naruszenia/wyłączenia wyzwalacza"
+    (włącz na "violated", wyłącz na "restored"), dodatnia wartość =
+    włączenie teraz + automatyczne wyłączenie po czasie."""
+
+    async def _reload_with_rule(self, engine, fake_tuya, fake_satel, rule):
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [rule],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya, fake_satel=fake_satel)
+        fake_satel.virtual_inputs = {"motion_hall_camera": 17}
+
+    async def test_no_duration_fires_on_violated(self, engine, fake_tuya, fake_satel):
+        await self._reload_with_rule(engine, fake_tuya, fake_satel, {
+            "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
+        })
+        await engine.handle_motion("satel_zone", 12, trigger="violated")
+        assert fake_satel.calls == [("output", 17, True)]
+        assert fake_tuya.calls == []
+
+    async def test_no_duration_toggles_off_on_restored(self, engine, fake_tuya, fake_satel):
+        """Brak duration_seconds = "do ustania naruszenia/wyłączenia
+        wyzwalacza" (dokładnie jak dla urządzenia) - _rule_matches_trigger
+        widzi OBA wyzwolenia niezależnie od trigger_on, więc wyjście
+        wyłącza się REALNIE (set_output(..., False)) przy ustaniu
+        naruszenia, nie drugim jednorazowym impulsem."""
+        await self._reload_with_rule(engine, fake_tuya, fake_satel, {
+            "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
+        })
+        await engine.handle_motion("satel_zone", 12, trigger="violated")
+        await engine.handle_motion("satel_zone", 12, trigger="restored")
+        assert fake_satel.calls == [("output", 17, True), ("output", 17, False)]
+
+    async def test_duration_zero_behaves_like_blank(self, engine, fake_tuya, fake_satel):
+        await self._reload_with_rule(engine, fake_tuya, fake_satel, {
+            "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
+            "duration_seconds": 0,
+        })
+        await engine.handle_motion("satel_zone", 12, trigger="violated")
+        await engine.handle_motion("satel_zone", 12, trigger="restored")
+        assert fake_satel.calls == [("output", 17, True), ("output", 17, False)]
+
+    async def test_explicit_duration_turns_on_then_off_after_timeout(self, engine, fake_tuya, fake_satel):
+        """Z jawnym dodatnim czasem reguła NIE jest już w trybie "do
+        ustania" - trigger_on (domyślnie "violated") znów wybiera DOKŁADNIE
+        jedno wyzwolenie (jak zwykłe "włącz urządzenie na czas"), a
+        automatyczne wyłączenie przychodzi po `duration_seconds`, nie od
+        drugiego wyzwolenia źródła."""
+        await self._reload_with_rule(engine, fake_tuya, fake_satel, {
+            "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
+            "duration_seconds": 0.02,
+        })
+        await engine.handle_motion("satel_zone", 12, trigger="restored")
+        await asyncio.sleep(0)
+        assert fake_satel.calls == []  # trigger_on domyślnie "violated" - restored nie pasuje
+
+        await engine.handle_motion("satel_zone", 12, trigger="violated")
+        await asyncio.sleep(0)  # handle_motion planuje _run_on_for_duration jako Task w tle
+        assert fake_satel.calls == [("output", 17, True)]  # włączenie natychmiast
+        await asyncio.sleep(0.05)
+        assert fake_satel.calls == [("output", 17, True), ("output", 17, False)]  # wyłączenie po upływie czasu
+
+    async def test_works_for_device_state_source(self, engine, fake_tuya, fake_satel):
+        """Wejście reguły też może być dowolnym stanem urządzenia (Tuya/
+        HomeWhiz), nie tylko strefą Satela - patrz RulesEngine.handle_device_state."""
+        await self._reload_with_rule(engine, fake_tuya, fake_satel, {
+            "source": "tuya_state", "source_device": "gniazdko_salon", "trigger_value": "włączone",
+            "virtual_input": "motion_hall_camera",
+        })
+        await engine.handle_device_state("tuya_state", "gniazdko_salon", "włączone")
+        assert ("output", 17, True) in fake_satel.calls
+
+    async def test_unknown_virtual_input_name_is_skipped_without_crash(self, engine, fake_tuya, fake_satel):
+        """satel.virtual_inputs nie zna nazwy (np. usunięta/przemianowana w
+        ⚙ Ustawienia po zapisaniu reguły) - reguła nie powinna wywalić
+        wyjątku, tylko zalogować ostrzeżenie i nic nie zrobić."""
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [{
+                "source": "satel_zone", "zone_number": 12, "virtual_input": "nieznane_wejscie",
+            }],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya, fake_satel=fake_satel)
+        fake_satel.virtual_inputs = {}
+        await engine.handle_motion("satel_zone", 12, trigger="violated")  # nie powinno rzucić wyjątku
+        assert fake_satel.calls == []
+
+
+class TestVirtualInputHttpMode:
+    """Tryb "http" wirtualnych wejść IP (satel.virtual_inputs.mode, patrz
+    obszerny docstring bridge/satel_client.py) - funkcja "Wejścia IP"
+    ETHM-1 Plus, osobne połączenie HTTP, JEDNORAZOWY impuls (brak
+    odpowiednika "przywróć") - w odróżnieniu od trybu domyślnego
+    ("library", patrz TestVirtualInputMotionRuleAction wyżej) `on`/`off`
+    są nierozróżnialne, oba wywołują ten sam trigger() - jak dwukrotne
+    naciśnięcie tego samego przycisku."""
 
     async def _reload_with_rule(self, engine, fake_tuya, fake_satel, fake_virtual_inputs, rule):
         engine.config.store.set("automations", {
@@ -327,21 +424,9 @@ class TestVirtualInputMotionRuleAction:
         })
         await engine.reload_config()
         _repatch_fakes(engine, fake_tuya=fake_tuya, fake_satel=fake_satel, fake_virtual_inputs=fake_virtual_inputs)
+        engine._vi_mode = "http"
 
-    async def test_no_duration_fires_on_violated(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
-        await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
-            "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
-        })
-        await engine.handle_motion("satel_zone", 12, trigger="violated")
-        assert fake_virtual_inputs.calls == [("trigger", "motion_hall_camera")]
-        assert fake_tuya.calls == []
-
-    async def test_no_duration_also_fires_again_on_restored(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
-        """Brak duration_seconds = "do ustania naruszenia/wyłączenia
-        wyzwalacza" (dokładnie jak dla urządzenia) - _rule_matches_trigger
-        widzi OBA wyzwolenia niezależnie od trigger_on, więc trigger()
-        wywoła się DRUGI RAZ przy ustaniu naruszenia - to jedyny sposób
-        "dezaktywacji", bo protokół nie ma osobnego wywołania restore."""
+    async def test_no_duration_fires_trigger_twice(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
         await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
             "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
         })
@@ -350,51 +435,22 @@ class TestVirtualInputMotionRuleAction:
         assert fake_virtual_inputs.calls == [
             ("trigger", "motion_hall_camera"), ("trigger", "motion_hall_camera"),
         ]
-
-    async def test_duration_zero_behaves_like_blank(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
-        await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
-            "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
-            "duration_seconds": 0,
-        })
-        await engine.handle_motion("satel_zone", 12, trigger="violated")
-        await engine.handle_motion("satel_zone", 12, trigger="restored")
-        assert fake_virtual_inputs.calls == [
-            ("trigger", "motion_hall_camera"), ("trigger", "motion_hall_camera"),
-        ]
+        assert fake_satel.calls == []  # w trybie http NIE idzie przez set_output
 
     async def test_explicit_duration_fires_once_now_and_once_after_timeout(
         self, engine, fake_tuya, fake_satel, fake_virtual_inputs,
     ):
-        """Z jawnym dodatnim czasem reguła NIE jest już w trybie "do
-        ustania" - trigger_on (domyślnie "violated") znów wybiera DOKŁADNIE
-        jedno wyzwolenie (jak zwykłe "włącz urządzenie na czas"), a drugie
-        wywołanie trigger() przychodzi automatycznie po `duration_seconds`,
-        nie od drugiego wyzwolenia źródła."""
         await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
             "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
             "duration_seconds": 0.02,
         })
-        await engine.handle_motion("satel_zone", 12, trigger="restored")
-        await asyncio.sleep(0)
-        assert fake_virtual_inputs.calls == []  # trigger_on domyślnie "violated" - restored nie pasuje
-
         await engine.handle_motion("satel_zone", 12, trigger="violated")
-        await asyncio.sleep(0)  # handle_motion planuje _run_virtual_input_for_duration jako Task w tle
-        assert fake_virtual_inputs.calls == [("trigger", "motion_hall_camera")]  # aktywacja natychmiast
+        await asyncio.sleep(0)
+        assert fake_virtual_inputs.calls == [("trigger", "motion_hall_camera")]
         await asyncio.sleep(0.05)
         assert fake_virtual_inputs.calls == [
             ("trigger", "motion_hall_camera"), ("trigger", "motion_hall_camera"),
-        ]  # dezaktywacja po upływie czasu
-
-    async def test_works_for_device_state_source(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
-        """Wejście reguły też może być dowolnym stanem urządzenia (Tuya/
-        HomeWhiz), nie tylko strefą Satela - patrz RulesEngine.handle_device_state."""
-        await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
-            "source": "tuya_state", "source_device": "gniazdko_salon", "trigger_value": "włączone",
-            "virtual_input": "motion_hall_camera",
-        })
-        await engine.handle_device_state("tuya_state", "gniazdko_salon", "włączone")
-        assert ("trigger", "motion_hall_camera") in fake_virtual_inputs.calls
+        ]
 
 
 class TestSatelOutputTarget:
@@ -820,33 +876,43 @@ class TestSatelZoneOutputCallbackShape:
 
 
 class TestLightToSatelRule:
-    async def test_light_on_triggers_virtual_input(self, engine, fake_virtual_inputs):
-        await engine.handle_light_state_change("gniazdko_salon", True)
-        assert ("trigger", "test_input") in fake_virtual_inputs.calls
+    """CONFIG_TEMPLATE (reguły_swiatlo_do_satela) wskazuje wirtualne
+    wejście "test_input" - w domyślnym trybie "library" (patrz obszerny
+    docstring bridge/satel_client.py) to wyjście nr 1 (satel.virtual_inputs.
+    inputs.test_input: 1), wyzwalane przez fake_satel.set_output()."""
 
-    async def test_light_off_does_not_trigger(self, engine, fake_virtual_inputs):
+    async def test_light_on_triggers_virtual_input(self, engine, fake_satel):
+        fake_satel.virtual_inputs = {"test_input": 1}
+        await engine.handle_light_state_change("gniazdko_salon", True)
+        assert ("output", 1, True) in fake_satel.calls
+
+    async def test_light_off_does_not_trigger(self, engine, fake_satel):
+        fake_satel.virtual_inputs = {"test_input": 1}
         await engine.handle_light_state_change("gniazdko_salon", False)
-        assert fake_virtual_inputs.calls == []
+        assert fake_satel.calls == []
 
 
 class TestCameraRules:
-    async def test_camera_motion_triggers_action(self, engine, fake_virtual_inputs):
+    async def test_camera_motion_triggers_action(self, engine, fake_satel):
+        fake_satel.virtual_inputs = {"test_input": 1}
         await engine.handle_camera_motion("unifi_protect", "cam1")
-        assert ("trigger", "test_input") in fake_virtual_inputs.calls
+        assert ("output", 1, True) in fake_satel.calls
 
-    async def test_camera_cooldown_suppresses_repeat(self, engine, fake_virtual_inputs):
+    async def test_camera_cooldown_suppresses_repeat(self, engine, fake_satel):
+        fake_satel.virtual_inputs = {"test_input": 1}
         await engine.handle_camera_motion("unifi_protect", "cam1")
-        fake_virtual_inputs.calls.clear()
+        fake_satel.calls.clear()
         await engine.handle_camera_motion("unifi_protect", "cam1")  # w oknie karencji
-        assert fake_virtual_inputs.calls == []
+        assert fake_satel.calls == []
 
     async def test_camera_scene_action(self, engine, fake_tuya):
         await engine.handle_camera_motion("unifi_protect", "cam2")
         assert ("on", "gniazdko_salon", None) in fake_tuya.calls
 
-    async def test_unmatched_camera_does_nothing(self, engine, fake_virtual_inputs, fake_tuya):
+    async def test_unmatched_camera_does_nothing(self, engine, fake_satel, fake_tuya):
+        fake_satel.virtual_inputs = {"test_input": 1}
         await engine.handle_camera_motion("unifi_protect", "nieznana_kamera")
-        assert fake_virtual_inputs.calls == []
+        assert fake_satel.calls == []
         assert fake_tuya.calls == []
 
 

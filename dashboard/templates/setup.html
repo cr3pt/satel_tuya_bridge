@@ -49,6 +49,10 @@
   .step-hint { color: var(--muted); font-size: 13px; margin: -6px 0 14px 36px; line-height: 1.5; }
   .field-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
   .field { flex: 1; min-width: 140px; }
+  /* [hidden] mogłoby przegrać z regułą "display" o równej specyficzności
+     (np. .discover-row) w zależności od kolejności w arkuszu - wymuszamy,
+     żeby "hidden" zawsze wygrywało. */
+  [hidden] { display: none !important; }
   .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
   input[type=text], input[type=password], input[type=number] {
     background: #262a32; color: var(--text); border: 1px solid var(--border);
@@ -197,7 +201,6 @@
     </div>
     <div class="field-row">
       <div class="field"><label>Klucz integracji</label><input type="text" id="satel_integration_key" placeholder="ustawiony w DLOADX"></div>
-      <div class="field"><label>Port wejść IP (wirtualne wejścia)</label><input type="number" id="satel_virtual_inputs_port" value="8888"></div>
     </div>
 
     <div class="discover-row">
@@ -257,10 +260,31 @@
     <button type="button" class="add-row-btn" id="addOutputBtn">+ Dodaj wyjście</button>
 
     <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">
-      Wirtualne wejścia IP (do wysyłania naruszeń z Tuya/scen) - skonfigurowane
-      w DLOADX, zakładka "Wejścia IP"; nazwy stąd wykorzystasz w krokach
-      "Sceny" i "Reguły ruchu"
+      Wirtualne wejścia IP (do wysyłania naruszeń z Tuya/scen) - nazwy stąd
+      wykorzystasz w krokach "Sceny" i "Reguły ruchu"
     </label>
+    <div class="step-hint" style="margin: 0 0 10px;">
+      <b>Biblioteka satel_integra</b> (zalecane) - zwykłe wyjście Satela
+      (numer 1-256), wyzwalane przez to samo połączenie integracji co
+      reszta poleceń - te polecenia CZEKAJĄ w jednej kolejce, bo centrala
+      obsługuje tylko jednego klienta integracji naraz. <b>HTTP (Wejścia IP
+      ETHM-1 Plus)</b> - osobne połączenie, niezależne od tej kolejki,
+      skonfigurowane w DLOADX (zakładka "Wejścia IP"), kosztem osobnego
+      portu i klucza PER WEJŚCIE.
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Tryb</label>
+        <select id="satel_virtual_inputs_mode">
+          <option value="library">Biblioteka satel_integra (zalecane)</option>
+          <option value="http">HTTP (Wejścia IP ETHM-1 Plus)</option>
+        </select>
+      </div>
+      <div class="field" id="satel_vi_port_field" hidden>
+        <label>Port HTTP (ETHM-1 Plus)</label>
+        <input type="number" id="satel_virtual_inputs_port" value="8888">
+      </div>
+    </div>
     <div id="virtualInputsRows"></div>
     <button type="button" class="add-row-btn" id="addVirtualInputBtn">+ Dodaj wirtualne wejście</button>
   </div>
@@ -638,16 +662,21 @@ function collectNameNumberRows(containerId) {
 }
 
 // ------------------------------------------------------------------
-// Wirtualne wejścia IP (nazwa + numer + klucz DLOADX)
+// Wirtualne wejścia IP - dwa tryby (patrz obszerny docstring
+// bridge/satel_client.py): "library" (nazwa + numer wyjścia,
+// uwierzytelnione wspólnym kluczem integracji z kroku wyżej) albo "http"
+// (nazwa + numer + klucz PER WEJŚCIE z DLOADX). Pole klucza jest zawsze w
+// DOM (upraszcza collectVirtualInputs), tylko ukryte w trybie "library".
 // ------------------------------------------------------------------
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');
+  const isHttp = document.getElementById('satel_virtual_inputs_mode').value === 'http';
   const row = document.createElement('div');
   row.className = 'repeatable-row';
   row.innerHTML = `
     <input type="text" placeholder="nazwa (np. motion_hall_camera)" class="vi-name">
     <input type="number" placeholder="numer wejścia" class="vi-number" style="max-width: 120px;">
-    <input type="text" placeholder="klucz z DLOADX" class="vi-key">
+    <input type="text" placeholder="klucz z DLOADX" class="vi-key" ${isHttp ? '' : 'hidden'}>
     <button type="button" class="row-remove">✕</button>`;
   if (initial) {
     row.querySelector('.vi-name').value = initial.name || '';
@@ -667,6 +696,12 @@ function collectVirtualInputs() {
     key: row.querySelector('.vi-key').value.trim(),
   })).filter(v => v.name || v.number || v.key);
 }
+
+document.getElementById('satel_virtual_inputs_mode').addEventListener('change', () => {
+  const isHttp = document.getElementById('satel_virtual_inputs_mode').value === 'http';
+  document.getElementById('satel_vi_port_field').hidden = !isHttp;
+  document.querySelectorAll('#virtualInputsRows .vi-key').forEach(el => { el.hidden = !isHttp; });
+});
 
 document.getElementById('testSatelConnectionBtn').addEventListener('click', async () => {
   const btn = document.getElementById('testSatelConnectionBtn');
@@ -1239,6 +1274,7 @@ function collectFormData() {
       host: document.getElementById('satel_host').value.trim(),
       port: document.getElementById('satel_port').value,
       integration_key: document.getElementById('satel_integration_key').value.trim(),
+      virtual_inputs_mode: document.getElementById('satel_virtual_inputs_mode').value,
       virtual_inputs_port: document.getElementById('satel_virtual_inputs_port').value,
     },
     partitions: collectNameNumberRows('partitionsRows'),
@@ -1289,7 +1325,10 @@ function populateForm(data) {
 
   const satel = data.satel || {};
   set('satel_host', satel.host); set('satel_port', satel.port);
-  set('satel_integration_key', satel.integration_key); set('satel_virtual_inputs_port', satel.virtual_inputs_port);
+  set('satel_integration_key', satel.integration_key);
+  set('satel_virtual_inputs_mode', satel.virtual_inputs_mode || 'library');
+  set('satel_virtual_inputs_port', satel.virtual_inputs_port);
+  document.getElementById('satel_vi_port_field').hidden = document.getElementById('satel_virtual_inputs_mode').value !== 'http';
 
   (data.partitions || []).forEach(p => addNameNumberRow('partitionsRows', p));
   (data.monitored_zones || []).forEach(z => addNameNumberRow('zonesRows', z));
