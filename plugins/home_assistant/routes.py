@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Flask, jsonify, render_template, request
+from quart import Quart, jsonify, render_template, request
 
 from plugins import PluginMeta, register_settings_route
 
@@ -13,7 +13,7 @@ META = PluginMeta(
 )
 
 
-def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
+def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
 
     def _get_ha_section() -> dict:
@@ -25,11 +25,11 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         get_config_store().set("config", current)
 
     @app.route("/plugins/home_assistant")
-    def home_assistant_plugin_page():
-        return render_template("home_assistant/index.html")
+    async def home_assistant_plugin_page():
+        return await render_template("home_assistant/index.html")
 
     @app.route("/api/plugins/home_assistant/broker", methods=["GET"])
-    def api_plugin_home_assistant_broker_get():
+    async def api_plugin_home_assistant_broker_get():
         ha = _get_ha_section()
         ebus_mqtt_host = get_config_raw().get("ebus", {}).get("mqtt_host", "")
         return jsonify({
@@ -43,8 +43,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
 
     @app.route("/api/plugins/home_assistant/broker", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_home_assistant_broker_post():
-        form = request.get_json(silent=True)
+    async def api_plugin_home_assistant_broker_post():
+        form = await request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane"}), 400
 

@@ -12,7 +12,7 @@ import time
 import zipfile
 
 import yaml
-from flask import Flask, jsonify, redirect, render_template, request, send_file, url_for
+from quart import Quart, jsonify, redirect, render_template, request, send_file, url_for
 from werkzeug.exceptions import HTTPException, InternalServerError
 from werkzeug.security import generate_password_hash
 
@@ -36,7 +36,7 @@ from dashboard.setup import (
     draft_path_for, load_draft, save_draft, delete_draft,
 )
 
-app = Flask(__name__)
+app = Quart(__name__)
 logger = logging.getLogger("bridge.dashboard")
 history: HistoryStore | None = None
 config_store: ConfigStore | None = None
@@ -47,7 +47,7 @@ config_path: pathlib.Path | None = None
 
 
 @app.errorhandler(Exception)
-def handle_unexpected_error(exc: Exception):
+async def handle_unexpected_error(exc: Exception):
     if not request.path.startswith("/api/"):
         if isinstance(exc, HTTPException):
             return exc.get_response()
@@ -85,7 +85,7 @@ def is_configured() -> bool:
     return db_path.exists() or legacy_yaml_path.exists()
 
 
-def create_app(config: BridgeConfig) -> Flask:
+def create_app(config: BridgeConfig) -> Quart:
     global history, config_store, auth_guard, satel_partitions_cfg, config_raw
     db_path = config.raw.get("dashboard", {}).get("db_path", "bridge_history.db")
     history = HistoryStore(db_path)
@@ -136,7 +136,7 @@ app.jinja_loader = ChoiceLoader([
 
 
 @app.before_request
-def _redirect_to_setup_if_unconfigured():
+async def _redirect_to_setup_if_unconfigured():
     if request.endpoint in _SETUP_EXEMPT_ENDPOINTS:
         return
     if not is_configured():
@@ -157,7 +157,7 @@ def _is_public_path(path: str) -> bool:
 
 
 @app.before_request
-def _require_login_for_settings_and_control():
+async def _require_login_for_settings_and_control():
     if request.endpoint is None:
         return
     if _is_public_path(request.path):
@@ -186,18 +186,18 @@ def _parse_range() -> tuple[float, float]:
 
 
 @app.route("/")
-def index():
-    return render_template("index.html")
+async def index():
+    return await render_template("index.html")
 
 
 @app.route("/login")
-def login_page():
-    return render_template("login.html")
+async def login_page():
+    return await render_template("login.html")
 
 
 @app.route("/api/login", methods=["POST"])
-def api_login():
-    payload = request.get_json(silent=True) or {}
+async def api_login():
+    payload = await request.get_json(silent=True) or {}
     username = payload.get("username", "")
     password = payload.get("password", "")
     ok, message = auth_guard.check_password(username, password)
@@ -211,7 +211,7 @@ def api_login():
 
 
 @app.route("/api/logout", methods=["POST"])
-def api_logout():
+async def api_logout():
     auth_guard.destroy_session(request.cookies.get(SESSION_COOKIE_NAME))
     resp = jsonify({"message": "Wylogowano"})
     resp.delete_cookie(SESSION_COOKIE_NAME)
@@ -219,7 +219,7 @@ def api_logout():
 
 
 @app.route("/api/auth/status")
-def api_auth_status():
+async def api_auth_status():
     token = request.cookies.get(SESSION_COOKIE_NAME)
     logged_in = auth_guard.check_session(token)
     return jsonify({
@@ -230,21 +230,21 @@ def api_auth_status():
 
 
 @app.route("/setup")
-def setup_page():
+async def setup_page():
     if is_configured():
         return redirect(url_for("index"))
-    return render_template("setup.html")
+    return await render_template("setup.html")
 
 
 @app.route("/api/setup/draft", methods=["GET", "POST"])
-def api_setup_draft():
+async def api_setup_draft():
     if is_configured():
         return jsonify({"error": "Konfiguracja już istnieje."}), 409
 
     if request.method == "GET":
         return jsonify(load_draft(draft_path_for(config_path)))
 
-    data = request.get_json(silent=True)
+    data = await request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "Nieprawidłowe dane"}), 400
     save_draft(draft_path_for(config_path), data)
@@ -252,8 +252,8 @@ def api_setup_draft():
 
 
 @app.route("/api/setup/test-satel-connection", methods=["POST"])
-def api_setup_test_satel_connection():
-    payload = request.get_json(silent=True) or {}
+async def api_setup_test_satel_connection():
+    payload = await request.get_json(silent=True) or {}
     host = (payload.get("host") or "").strip()
     if not host:
         return jsonify({"error": "Brak adresu IP centrali"}), 400
@@ -266,7 +266,7 @@ def api_setup_test_satel_connection():
         encryption_key = None
 
     try:
-        asyncio.run(test_satel_connection(host, port, encryption_key=encryption_key))
+        await test_satel_connection(host, port, encryption_key=encryption_key)
     except ImportError:
         return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
     except ConnectionError as exc:
@@ -282,7 +282,7 @@ def api_setup_test_satel_connection():
 
 @app.route("/api/satel/test-output", methods=["POST"])
 @require_auth()
-def api_satel_test_output():
+async def api_satel_test_output():
     satel_cfg = config_store.get("config").get("satel", {})
     host = (satel_cfg.get("host") or "").strip()
     port = satel_cfg.get("port")
@@ -291,7 +291,7 @@ def api_satel_test_output():
 
     vi_cfg = satel_cfg.get("virtual_inputs", {})
     mode = vi_cfg.get("mode", "library")
-    payload = request.get_json(silent=True) or {}
+    payload = await request.get_json(silent=True) or {}
     state = bool(payload.get("state", True))
 
     if mode == "http":
@@ -302,7 +302,7 @@ def api_satel_test_output():
             return jsonify({"error": "Wybierz skonfigurowane wirtualne wejście"}), 400
         vi_port = vi_cfg.get("port", DEFAULT_VIRTUAL_INPUT_HTTP_PORT)
         try:
-            asyncio.run(test_satel_virtual_input_http(host, int(vi_port), DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE, name))
+            await test_satel_virtual_input_http(host, int(vi_port), DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE, name)
         except ConnectionError as exc:
             return jsonify({"error": str(exc)}), 502
         except Exception as exc:
@@ -323,10 +323,10 @@ def api_satel_test_output():
         return jsonify({"error": "Numer wyjścia musi być w zakresie 1-256"}), 400
 
     try:
-        asyncio.run(test_satel_output(
+        await test_satel_output(
             host, int(port), integration_key, output_number, state,
             encryption_key=satel_cfg.get("encryption_key") if satel_cfg.get("encryption_enabled") else None,
-        ))
+        )
     except ImportError:
         return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
     except (ConnectionError, RuntimeError) as exc:
@@ -341,8 +341,8 @@ def api_satel_test_output():
 
 
 @app.route("/api/discover/satel", methods=["POST"])
-def api_discover_satel():
-    payload = request.get_json(silent=True) or {}
+async def api_discover_satel():
+    payload = await request.get_json(silent=True) or {}
     satel_cfg = config_raw.get("satel", {})
     host = (payload.get("host") or satel_cfg.get("host") or "").strip()
     if not host:
@@ -362,9 +362,9 @@ def api_discover_satel():
     encryption_key = (payload.get("encryption_key") or satel_cfg.get("encryption_key") or None) if encryption_enabled else None
 
     try:
-        result = asyncio.run(discover_active_zones_and_outputs(
+        result = await discover_active_zones_and_outputs(
             host, port, timeout_seconds=timeout_seconds, encryption_key=encryption_key,
-        ))
+        )
     except ImportError:
         return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
     except ConnectionError as exc:
@@ -376,11 +376,11 @@ def api_discover_satel():
 
 
 @app.route("/api/setup/save", methods=["POST"])
-def api_setup_save():
+async def api_setup_save():
     if is_configured():
         return jsonify({"error": "Konfiguracja już istnieje. Usuń config.yaml ręcznie, żeby uruchomić kreator ponownie."}), 409
 
-    form = request.get_json(silent=True)
+    form = await request.get_json(silent=True)
     if not isinstance(form, dict):
         return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
 
@@ -431,12 +431,12 @@ def api_setup_save():
 
 
 @app.route("/api/config/sensors", methods=["GET"])
-def api_config_sensors_get():
+async def api_config_sensors_get():
     return jsonify(config_store.get("sensors").get("sensors", []))
 
 
 @app.route("/api/discover/tuya", methods=["POST"])
-def api_discover_tuya():
+async def api_discover_tuya():
     try:
         devices = scan_tuya_network()
     except Exception as exc:
@@ -445,8 +445,8 @@ def api_discover_tuya():
 
 
 @app.route("/api/discover/tuya-cloud", methods=["POST"])
-def api_discover_tuya_cloud():
-    payload = request.get_json(silent=True) or {}
+async def api_discover_tuya_cloud():
+    payload = await request.get_json(silent=True) or {}
     api_region = (payload.get("api_region") or "").strip()
     access_id = (payload.get("access_id") or "").strip()
     access_key = (payload.get("access_key") or "").strip()
@@ -464,14 +464,14 @@ def api_discover_tuya_cloud():
 
 @app.route("/api/config/location", methods=["GET"])
 @require_auth()
-def api_config_location_get():
+async def api_config_location_get():
     return jsonify(config_raw.get("location") or {})
 
 
 @app.route("/api/config/location", methods=["POST"])
 @require_auth()
-def api_config_location_post():
-    form = request.get_json(silent=True)
+async def api_config_location_post():
+    form = await request.get_json(silent=True)
     if not isinstance(form, dict):
         return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
 
@@ -492,14 +492,14 @@ def api_config_location_post():
 
 @app.route("/api/config/export-yaml", methods=["GET"])
 @require_auth()
-def api_config_export_yaml():
+async def api_config_export_yaml():
     return jsonify(config_store.export_yaml_bundle())
 
 
 @app.route("/api/config/import-yaml", methods=["POST"])
 @require_auth()
-def api_config_import_yaml():
-    payload = request.get_json(silent=True)
+async def api_config_import_yaml():
+    payload = await request.get_json(silent=True)
     if not isinstance(payload, dict) or not payload:
         return jsonify({"error": "Oczekiwano {'nazwa_pliku.yaml': 'tekst_yaml', ...}"}), 400
     try:
@@ -520,7 +520,7 @@ def api_config_import_yaml():
 
 @app.route("/api/config/export-zip", methods=["GET"])
 @require_auth()
-def api_config_export_zip():
+async def api_config_export_zip():
     bundle = config_store.export_yaml_bundle()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -528,13 +528,13 @@ def api_config_export_zip():
             zf.writestr(filename, content)
     buf.seek(0)
     download_name = f"satel-tuya-bridge-config-{time.strftime('%Y%m%d-%H%M%S')}.zip"
-    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name=download_name)
+    return await send_file(buf, mimetype="application/zip", as_attachment=True, attachment_filename=download_name)
 
 
 @app.route("/api/config/import-zip", methods=["POST"])
 @require_auth()
-def api_config_import_zip():
-    uploaded = request.files.get("file")
+async def api_config_import_zip():
+    uploaded = (await request.files).get("file")
     if uploaded is None or not uploaded.filename:
         return jsonify({"error": "Nie przesłano pliku .zip"}), 400
 
@@ -578,19 +578,19 @@ _TOGGLE_ONLY_CONFIG_KEY = {
 
 
 @app.route("/plugins")
-def plugins_page():
-    return render_template("plugins.html")
+async def plugins_page():
+    return await render_template("plugins.html")
 
 
 @app.route("/api/plugins", methods=["GET"])
-def api_plugins_get():
+async def api_plugins_get():
     return jsonify(list_plugins(config_raw))
 
 
 @app.route("/api/plugins", methods=["POST"])
 @require_auth()
-def api_plugins_post():
-    body = request.get_json(silent=True)
+async def api_plugins_post():
+    body = await request.get_json(silent=True)
     if not isinstance(body, dict):
         return jsonify({"error": "Nieprawidłowe dane"}), 400
 
@@ -676,12 +676,12 @@ def api_plugins_post():
 
 
 @app.route("/automations")
-def automations_page():
-    return render_template("automations.html")
+async def automations_page():
+    return await render_template("automations.html")
 
 
 @app.route("/api/config/automation-context", methods=["GET"])
-def api_config_automation_context():
+async def api_config_automation_context():
     tuya = config_raw.get("tuya", {})
     tuya_devices = sorted(set(tuya.get("devices", {})) | set(tuya.get("cloud_devices", {})))
     virtual_inputs = list(config_raw.get("satel", {}).get("virtual_inputs", {}).get("inputs", {}).keys())
@@ -712,7 +712,7 @@ def api_config_automation_context():
 
 
 @app.route("/api/config/automations", methods=["GET"])
-def api_config_automations_get():
+async def api_config_automations_get():
     return jsonify({
         "scenes": config_raw.get("scenes", []),
         "motion_rules": config_raw.get("reguły_ruchu", []),
@@ -722,8 +722,8 @@ def api_config_automations_get():
 
 @app.route("/api/config/automations", methods=["POST"])
 @require_auth()
-def api_config_automations_post():
-    form = request.get_json(silent=True)
+async def api_config_automations_post():
+    form = await request.get_json(silent=True)
     if not isinstance(form, dict):
         return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
 
@@ -752,12 +752,12 @@ def api_config_automations_post():
 
 
 @app.route("/api/sensors")
-def api_sensors():
+async def api_sensors():
     return jsonify(history.get_sensors())
 
 
 @app.route("/api/history")
-def api_history():
+async def api_history():
     sensor = request.args.get("sensor")
     if not sensor:
         return jsonify({"error": "brak parametru 'sensor'"}), 400
@@ -766,7 +766,7 @@ def api_history():
 
 
 @app.route("/api/events")
-def api_events():
+async def api_events():
     event_type = request.args.get("type") or None
     ts_from, ts_to = _parse_range()
     limit = int(request.args.get("limit", 500))
@@ -774,25 +774,25 @@ def api_events():
 
 
 @app.route("/api/alerts/active")
-def api_alerts_active():
+async def api_alerts_active():
     return jsonify(history.get_active_alerts())
 
 
 @app.route("/api/alerts/history")
-def api_alerts_history():
+async def api_alerts_history():
     ts_from, ts_to = _parse_range()
     limit = int(request.args.get("limit", 200))
     return jsonify(history.get_alerts_history(ts_from, ts_to, limit))
 
 
 @app.route("/api/status")
-def api_status():
+async def api_status():
     category = request.args.get("category") or None
     return jsonify(history.get_status(category))
 
 
 @app.route("/api/satel/zone-types", methods=["GET"])
-def api_satel_zone_types():
+async def api_satel_zone_types():
     satel = config_raw.get("satel", {})
     return jsonify({
         "zone_types": satel.get("zone_types", {}),
@@ -801,20 +801,20 @@ def api_satel_zone_types():
 
 
 @app.route("/api/satel/virtual-inputs", methods=["GET"])
-def api_satel_virtual_inputs():
+async def api_satel_virtual_inputs():
     inputs = config_raw.get("satel", {}).get("virtual_inputs", {}).get("inputs", {})
     return jsonify({"virtual_inputs": sorted(inputs.keys())})
 
 
 @app.route("/api/satel/partitions")
-def api_satel_partitions():
+async def api_satel_partitions():
     return jsonify(satel_partitions_cfg)
 
 
 @app.route("/api/satel/arm", methods=["POST"])
 @require_auth()
-def api_satel_arm():
-    payload = request.get_json(silent=True) or {}
+async def api_satel_arm():
+    payload = await request.get_json(silent=True) or {}
     partitions = payload.get("partitions") or list(satel_partitions_cfg.values())
     mode = payload.get("mode", 0)
     command_id = history.enqueue_command("satel_arm", {"partitions": partitions, "mode": mode})
@@ -824,8 +824,8 @@ def api_satel_arm():
 
 @app.route("/api/satel/disarm", methods=["POST"])
 @require_auth()
-def api_satel_disarm():
-    payload = request.get_json(silent=True) or {}
+async def api_satel_disarm():
+    payload = await request.get_json(silent=True) or {}
     partitions = payload.get("partitions") or list(satel_partitions_cfg.values())
     command_id = history.enqueue_command("satel_disarm", {"partitions": partitions})
     history.write_event("system", source="dashboard", detail={"message": f"Zlecono rozbrojenie stref {partitions}"})
@@ -834,7 +834,7 @@ def api_satel_disarm():
 
 @app.route("/api/satel/virtual-inputs/<name>/trigger", methods=["POST"])
 @require_auth()
-def api_satel_virtual_input_trigger(name):
+async def api_satel_virtual_input_trigger(name):
     inputs = config_raw.get("satel", {}).get("virtual_inputs", {}).get("inputs", {})
     if name not in inputs:
         return jsonify({"error": f"Nieznane wirtualne wejście '{name}'"}), 404
@@ -846,7 +846,7 @@ def api_satel_virtual_input_trigger(name):
 
 
 @app.route("/api/commands/<int:command_id>")
-def api_command_status(command_id: int):
+async def api_command_status(command_id: int):
     cmd = history.get_command(command_id)
     if cmd is None:
         return jsonify({"error": "Nie znaleziono komendy"}), 404
@@ -855,7 +855,7 @@ def api_command_status(command_id: int):
 
 @app.route("/api/system/restart", methods=["POST"])
 @require_auth()
-def api_system_restart():
+async def api_system_restart():
     command_id = history.enqueue_command("restart_process", {})
     history.write_event("system", source="dashboard", detail={"message": "Zlecono pełny restart bridge'a (panel + bridge)"})
 
@@ -873,20 +873,20 @@ def api_system_restart():
 
 
 @app.route("/system")
-def system_page():
-    return render_template("system.html")
+async def system_page():
+    return await render_template("system.html")
 
 
 @app.route("/api/system/users", methods=["GET"])
 @require_auth()
-def api_system_users_get():
+async def api_system_users_get():
     return jsonify(config_store.list_users())
 
 
 @app.route("/api/system/users", methods=["POST"])
 @require_auth()
-def api_system_users_post():
-    payload = request.get_json(silent=True) or {}
+async def api_system_users_post():
+    payload = await request.get_json(silent=True) or {}
     username = (payload.get("username") or "").strip()
     password = payload.get("password") or ""
     if not username:
@@ -904,8 +904,8 @@ def api_system_users_post():
 
 @app.route("/api/system/users/<int:user_id>/password", methods=["POST"])
 @require_auth()
-def api_system_user_password_post(user_id: int):
-    payload = request.get_json(silent=True) or {}
+async def api_system_user_password_post(user_id: int):
+    payload = await request.get_json(silent=True) or {}
     password = payload.get("password") or ""
     if len(password) < 8:
         return jsonify({"error": "Hasło: minimum 8 znaków"}), 400
@@ -915,7 +915,7 @@ def api_system_user_password_post(user_id: int):
 
 @app.route("/api/system/users/<int:user_id>", methods=["DELETE"])
 @require_auth()
-def api_system_user_delete(user_id: int):
+async def api_system_user_delete(user_id: int):
     if config_store.user_count() <= 1:
         return jsonify({"error": "Nie można usunąć ostatniego konta - panel zostałby bez żadnego dostępu"}), 400
     config_store.delete_user(user_id)
@@ -924,7 +924,7 @@ def api_system_user_delete(user_id: int):
 
 @app.route("/api/system/settings", methods=["GET"])
 @require_auth()
-def api_system_settings_get():
+async def api_system_settings_get():
     auth_cfg = config_raw.get("dashboard", {}).get("auth", {})
     return jsonify({
         "max_failed_attempts": auth_cfg.get("max_failed_attempts", 5),
@@ -940,8 +940,8 @@ def api_system_settings_get():
 
 @app.route("/api/system/settings", methods=["POST"])
 @require_auth()
-def api_system_settings_post():
-    payload = request.get_json(silent=True) or {}
+async def api_system_settings_post():
+    payload = await request.get_json(silent=True) or {}
     errors = []
     try:
         max_attempts = int(payload.get("max_failed_attempts", 5))
@@ -976,14 +976,14 @@ def api_system_settings_post():
 
 @app.route("/api/system/logs/loggers", methods=["GET"])
 @require_auth()
-def api_system_logs_loggers_get():
+async def api_system_logs_loggers_get():
     component = request.args.get("component") or None
     return jsonify(history.get_log_loggers(component))
 
 
 @app.route("/api/system/logs", methods=["GET"])
 @require_auth()
-def api_system_logs_get():
+async def api_system_logs_get():
     component = request.args.get("component") or None
     logger_name = request.args.get("logger") or None
     level = request.args.get("level") or None
@@ -994,7 +994,7 @@ def api_system_logs_get():
 
 
 @app.route("/healthz")
-def healthz():
+async def healthz():
     health_statuses = history.get_status("system_health")
     disconnected = [s for s in health_statuses if not s["value"].startswith("połączono")]
     body = {
@@ -1014,8 +1014,6 @@ def main() -> None:
     global config_path
     config_path, _ = resolve_db_and_legacy_paths(args.config)
 
-    from waitress import serve
-
     if is_configured():
         create_app(BridgeConfig.load(config_path))
         print(f"Panel dostępny pod http://{args.host}:{args.port}")
@@ -1025,7 +1023,12 @@ def main() -> None:
             f"Otwórz http://{args.host if args.host != '0.0.0.0' else '<adres-rpi>'}:{args.port}/setup w przeglądarce."
         )
 
-    serve(app, host=args.host, port=args.port, threads=8)
+    from hypercorn.asyncio import serve
+    from hypercorn.config import Config as HypercornConfig
+
+    hconfig = HypercornConfig()
+    hconfig.bind = [f"{args.host}:{args.port}"]
+    asyncio.run(serve(app, hconfig))
 
 
 if __name__ == "__main__":

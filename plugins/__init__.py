@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from flask import Flask, jsonify, request
+from quart import Quart, jsonify, request
 
 from bridge.logging_config import VALID_LEVELS
 
@@ -18,7 +18,7 @@ class PluginMeta:
 
 
 def register_settings_route(
-    app: Flask, plugin_id: str, *, require_auth: Callable, get_auth_guard: Callable,
+    app: Quart, plugin_id: str, *, require_auth: Callable, get_auth_guard: Callable,
     get_section: Callable[[], dict], save_section: Callable[[dict], None],
     reload_bridge_config: Callable, enqueue_bridge_reload: Callable,
     supports_enabled: bool = True,
@@ -27,7 +27,7 @@ def register_settings_route(
 
     @app.route(f"/api/plugins/{plugin_id}/settings", methods=["GET"],
                endpoint=f"plugin_{plugin_id}_settings_get")
-    def _settings_get():
+    async def _settings_get():
         section = get_section() or {}
         result = {"log_level": section.get("log_level") or ""}
         if supports_enabled:
@@ -37,8 +37,8 @@ def register_settings_route(
     @app.route(f"/api/plugins/{plugin_id}/settings", methods=["POST"],
                endpoint=f"plugin_{plugin_id}_settings_post")
     @require_auth(get_guard=get_auth_guard)
-    def _settings_post():
-        body = request.get_json(silent=True)
+    async def _settings_post():
+        body = await request.get_json(silent=True)
         if not isinstance(body, dict):
             return jsonify({"error": "Nieprawidłowe dane"}), 400
 
@@ -73,7 +73,7 @@ def register_settings_route(
         return jsonify({"message": message})
 
 
-def register_all(app: Flask, **deps) -> list[PluginMeta]:
+def register_all(app: Quart, **deps) -> list[PluginMeta]:
     from plugins.satel import routes as satel_routes
     from plugins.tuya_local import routes as tuya_routes
     from plugins.ebus import routes as ebus_routes

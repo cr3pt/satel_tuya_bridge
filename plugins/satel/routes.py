@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Flask, jsonify, render_template, request
+from quart import Quart, jsonify, render_template, request
 
 from bridge.satel_client import BackgroundZoneOutputScan
 from dashboard.setup import (
@@ -21,15 +21,15 @@ META = PluginMeta(
 _background_scan = BackgroundZoneOutputScan()
 
 
-def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
+def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              get_config_path, reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
 
     @app.route("/plugins/satel")
-    def satel_plugin_page():
-        return render_template("satel/index.html")
+    async def satel_plugin_page():
+        return await render_template("satel/index.html")
 
     @app.route("/api/plugins/satel/fields", methods=["GET"])
-    def api_plugin_satel_fields_get():
+    async def api_plugin_satel_fields_get():
         satel = get_config_raw().get("satel", {})
         return jsonify({
             "partitions": dict_to_name_number_rows(satel.get("partitions", {})),
@@ -43,8 +43,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
 
     @app.route("/api/plugins/satel/fields", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_satel_fields_post():
-        form = request.get_json(silent=True)
+    async def api_plugin_satel_fields_post():
+        form = await request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
 
@@ -64,8 +64,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         })
 
     @app.route("/api/plugins/satel/scan/start", methods=["POST"])
-    def api_plugin_satel_scan_start():
-        payload = request.get_json(silent=True) or {}
+    async def api_plugin_satel_scan_start():
+        payload = await request.get_json(silent=True) or {}
         satel_cfg = get_config_raw().get("satel", {})
         host = (payload.get("host") or satel_cfg.get("host") or "").strip()
         if not host:
@@ -92,7 +92,7 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         return jsonify(_background_scan.status())
 
     @app.route("/api/plugins/satel/scan/status")
-    def api_plugin_satel_scan_status():
+    async def api_plugin_satel_scan_status():
         return jsonify(_background_scan.status())
 
     def _get_satel_section() -> dict:
@@ -105,13 +105,13 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
 
     @app.route("/api/plugins/satel/connection", methods=["GET"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_satel_connection_get():
+    async def api_plugin_satel_connection_get():
         return jsonify(satel_connection_to_form(_get_satel_section()))
 
     @app.route("/api/plugins/satel/connection", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_satel_connection_post():
-        form = request.get_json(silent=True)
+    async def api_plugin_satel_connection_post():
+        form = await request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
 
