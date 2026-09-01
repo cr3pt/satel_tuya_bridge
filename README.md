@@ -1537,29 +1537,30 @@ trybie CZEKA w tej samej kolejce co inne polecenia.
 
 **Tryb "http"** - funkcja "Wejścia IP" modułu ETHM-1 Plus: osobne żądanie
 HTTP GET na skonfigurowany w DLOADX port (`satel.virtual_inputs.port`), z
-kluczem PER WEJŚCIE (`satel.virtual_inputs.inputs.<nazwa>.key`) - patrz
-`SatelVirtualInputTrigger` w `bridge/satel_client.py`. Idzie przez OSOBNE
-połączenie, NIEZALEŻNE od kolejki poleceń protokołu integracji - użyj tego
-trybu, jeśli wyzwalanie wirtualnych wejść ma działać bez czekania za innymi
-poleceniami (np. w trakcie intensywnej automatyki). Koszt: dodatkowa
-konfiguracja (port + klucz per wejście) i zależność od wersji firmware
-ETHM-1 Plus (moduł NIE zwraca standardowego kodu HTTP 200 dla tych zapytań -
-klient celowo ignoruje kod odpowiedzi i traktuje sam brak wyjątku sieciowego
-jako sukces). W tym trybie aktywacja jest z definicji JEDNORAZOWYM impulsem
-- protokół nie ma odpowiednika "przywróć".
+hasłem CAŁEGO modułu (`satel.virtual_inputs.key`) - WSPÓLNYM dla wszystkich
+wejść, ustawianym RAZ w DLOADX (zakładka "Wejścia IP"), NIE per wejście -
+patrz `SatelVirtualInputTrigger` w `bridge/satel_client.py`. Idzie przez
+OSOBNE połączenie, NIEZALEŻNE od kolejki poleceń protokołu integracji - użyj
+tego trybu, jeśli wyzwalanie wirtualnych wejść ma działać bez czekania za
+innymi poleceniami (np. w trakcie intensywnej automatyki). Koszt: dodatkowa
+konfiguracja (port + wspólne hasło) i zależność od wersji firmware ETHM-1
+Plus (moduł NIE zwraca standardowego kodu HTTP 200 dla tych zapytań - klient
+celowo ignoruje kod odpowiedzi i traktuje sam brak wyjątku sieciowego jako
+sukces). W tym trybie aktywacja jest z definicji JEDNORAZOWYM impulsem -
+protokół nie ma odpowiednika "przywróć".
 
-Tryb wybiera się na stronie `/plugins/satel`, sekcja "🔌 Połączenie"
-("Wirtualne wejścia IP - tryb wyzwalania"), oddzielnie od samej listy
-nazwanych wejść. **Zmiana trybu nie przekształca automatycznie już
-zapisanych wierszy** - trzeba je ręcznie uzupełnić (numer albo
-numer+klucz, zależnie od trybu) i zapisać ponownie w sekcji "Strefy,
-wyjścia, wejścia IP, partycje" tej samej strony po zmianie trybu.
+Tryb i wspólne hasło HTTP wybiera się na stronie `/plugins/satel`, sekcja
+"🔌 Połączenie" ("Wirtualne wejścia IP - tryb wyzwalania"), oddzielnie od
+samej listy nazwanych wejść (nazwa + numer, TEN SAM kształt niezależnie od
+trybu) w sekcji "Strefy, wyjścia, wejścia IP, partycje" tej samej strony.
 
-**Przycisk "TEST"** obok pola klucza integracji (sekcja "🔌 Połączenie" na
-stronie `/plugins/satel`) pozwala jednorazowo sprawdzić działanie na żywo: w trybie "library" podaje
-się numer wyjścia (używa już zapisanego klucza integracji, bez duplikowania
-go), w trybie "http" wybiera się z listy już skonfigurowanych wejść (bo ten
-tryb wymaga klucza per wejście, którego nie da się podać ad-hoc).
+**Przycisk "TEST"** w sekcji "🧪 Test wyjścia / wejścia wirtualnego IP" (pod
+sekcją "🔌 Połączenie" na stronie `/plugins/satel`) pozwala jednorazowo
+sprawdzić działanie na żywo: w trybie "library" podaje się numer wyjścia
+(używa już zapisanego klucza integracji, bez duplikowania go), w trybie
+"http" wybiera się z listy już skonfigurowanych wejść (numer) i używa
+wspólnego, już zapisanego hasła HTTP z sekcji "🔌 Połączenie" wyżej - działa
+od razu po zapisaniu połączenia, bez restartu procesu bridge'a.
 
 ### Wyjście reguły ruchu: aktywacja wirtualnego wejścia IP Satela
 

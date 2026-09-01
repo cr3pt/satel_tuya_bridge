@@ -421,8 +421,10 @@ def api_satel_test_output():
     Tryb "library" (domyślny): body {output_number, state} - set_output
     przez połączenie integracji, wymaga zapisanego klucza integracji.
     Tryb "http": body {name, state} - `name` to nazwa JUŻ SKONFIGUROWANEGO
-    wirtualnego wejścia (satel.virtual_inputs.inputs), bo ten tryb wymaga
-    klucza PER WEJŚCIE, którego nie da się podać ad-hoc z tego formularza.
+    wirtualnego wejścia (satel.virtual_inputs.inputs), uwierzytelnione
+    WSPÓLNYM hasłem CAŁEGO modułu ETHM (satel.virtual_inputs.key, ustawiane
+    RAZ w DLOADX dla całej funkcji "Wejścia IP", NIE per wejście - patrz
+    obszerny docstring bridge/satel_client.py).
 
     UWAGA: czytamy sekcję "satel" ŚWIEŻO z config_store, NIE z config_raw
     (to migawka configu sprzed startu procesu, aktualizowana tylko przy
@@ -444,13 +446,22 @@ def api_satel_test_output():
     if mode == "http":
         name = (payload.get("name") or "").strip()
         entry = vi_cfg.get("inputs", {}).get(name)
-        if not isinstance(entry, dict) or not entry.get("number") or not entry.get("key"):
-            return jsonify({"error": "Wybierz skonfigurowane wirtualne wejście (z kluczem z DLOADX)"}), 400
+        # Tolerujemy jeszcze stary kształt {number, key} (sprzed usunięcia
+        # klucza per wejście) - liczy się tylko numer, klucz stamtąd jest
+        # już ignorowany na rzecz wspólnego vi_cfg["key"] niżej.
+        input_number = entry.get("number") if isinstance(entry, dict) else entry
+        if not input_number:
+            return jsonify({"error": "Wybierz skonfigurowane wirtualne wejście"}), 400
+        http_key = vi_cfg.get("key") or ""
+        if not http_key:
+            return jsonify({
+                "error": "Najpierw zapisz hasło HTTP wejść IP z DLOADX (sekcja 🔌 Połączenie, /plugins/satel)",
+            }), 400
         vi_port = vi_cfg.get("port", DEFAULT_VIRTUAL_INPUT_HTTP_PORT)
         url_template = vi_cfg.get("url_template", DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE)
         try:
             asyncio.run(test_satel_virtual_input_http(
-                host, int(vi_port), url_template, entry["key"], int(entry["number"]),
+                host, int(vi_port), url_template, http_key, int(input_number),
             ))
         except ConnectionError as exc:
             return jsonify({"error": str(exc)}), 502
@@ -572,7 +583,7 @@ def api_setup_save():
     try:
         config_dict = build_config_dict(form)
         automations_dict = build_automations_dict(form)
-        satel_fields_dict = build_satel_fields_dict(form, form.get("satel", {}).get("virtual_inputs_mode") or "library")
+        satel_fields_dict = build_satel_fields_dict(form)
         tuya_devices_dict = build_tuya_devices_dict(form)
     except (ValueError, TypeError) as exc:
         logger.warning("Błąd budowania configu z formularza kreatora: %s", exc)

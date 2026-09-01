@@ -858,16 +858,19 @@ class TestVirtualInputHttpTrigger:
         import aiohttp
         monkeypatch.setattr(aiohttp, "ClientSession", lambda: _FakeHttpSession(urls, exc))
 
-    async def test_trigger_sends_get_with_key_and_input_number(self, monkeypatch):
+    async def test_trigger_sends_get_with_shared_key_and_input_number(self, monkeypatch):
+        """Klucz jest teraz WSPÓLNY dla całego modułu (cfg["key"]), NIE per
+        wejście - patrz docstring bridge/satel_client.py."""
         urls = []
         self._patch_aiohttp(monkeypatch, urls)
         vi = SatelVirtualInputTrigger("192.168.1.50", {
             "port": 8888,
             "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}",
-            "inputs": {"motion_hall_camera": {"number": 17, "key": "KLUCZWE17"}},
+            "key": "KLUCZWSPOLNY",
+            "inputs": {"motion_hall_camera": 17},
         })
         await vi.trigger("motion_hall_camera")
-        assert urls == ["http://192.168.1.50:8888/input.cgi?key=KLUCZWE17&input=17"]
+        assert urls == ["http://192.168.1.50:8888/input.cgi?key=KLUCZWSPOLNY&input=17"]
 
     async def test_trigger_unknown_name_logs_and_does_not_raise(self, monkeypatch):
         urls = []
@@ -883,7 +886,8 @@ class TestVirtualInputHttpTrigger:
         urls = []
         self._patch_aiohttp(monkeypatch, urls)
         vi = SatelVirtualInputTrigger("192.168.1.50", {
-            "inputs": {"x": {"number": 1, "key": "k"}},
+            "key": "k",
+            "inputs": {"x": 1},
         })
         await vi.trigger("x")
         assert urls == ["http://192.168.1.50:8888/input.cgi?key=k&input=1"]

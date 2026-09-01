@@ -277,14 +277,16 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
             "output_types": {"Syrena": "syrena"},
         }
 
-    def test_build_satel_fields_shape_http_mode(self):
-        """Tryb "http" (funkcja "Wejścia IP" ETHM-1 Plus) - wirtualne
-        wejście potrzebuje też klucza PER WEJŚCIE (z DLOADX)."""
+    def test_build_satel_fields_shape_same_regardless_of_mode(self):
+        """Kształt "virtual_inputs" (nazwa -> numer) jest TEN SAM w obu
+        trybach - tryb "http" uwierzytelnia się WSPÓLNYM hasłem całego
+        modułu (satel.virtual_inputs.key, sekcja 🔌 Połączenie), nie
+        osobnym kluczem per wejście (patrz docstring bridge/satel_client.py)."""
         form = {
-            "virtual_inputs": [{"name": "motion_hall_camera", "number": "17", "key": "KLUCZ17"}],
+            "virtual_inputs": [{"name": "motion_hall_camera", "number": "17"}],
         }
-        fields = build_satel_fields_dict(form, virtual_input_mode="http")
-        assert fields["virtual_inputs"] == {"motion_hall_camera": {"number": 17, "key": "KLUCZ17"}}
+        fields = build_satel_fields_dict(form)
+        assert fields["virtual_inputs"] == {"motion_hall_camera": 17}
 
     def test_build_satel_fields_type_ignored_when_unknown_slug(self):
         """Nieznany slug rodzaju (np. literówka albo stary zapis sprzed tej
@@ -310,11 +312,11 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         }
 
     def test_validate_satel_fields_no_errors_when_complete(self):
-        form = {"virtual_inputs": [{"name": "x", "number": "1", "key": "k"}]}
+        form = {"virtual_inputs": [{"name": "x", "number": "1"}]}
         assert validate_satel_fields(form) == []
 
     def test_validate_satel_fields_incomplete_virtual_input_is_error(self):
-        form = {"virtual_inputs": [{"name": "x", "number": "", "key": "k"}]}
+        form = {"virtual_inputs": [{"name": "x", "number": ""}]}
         errors = validate_satel_fields(form)
         assert any("Wirtualne wejście" in e for e in errors)
 
@@ -400,7 +402,7 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
     def test_satel_fields_and_tuya_devices_are_yaml_serializable(self):
         form = {
             "partitions": [{"name": "Dom", "number": "1"}],
-            "virtual_inputs": [{"name": "x", "number": "1", "key": "k"}],
+            "virtual_inputs": [{"name": "x", "number": "1"}],
             "tuya_devices": [{"name": "d", "id": "i", "ip": "1.2.3.4", "local_key": "k"}],
         }
         dumped_satel = yaml.safe_dump(build_satel_fields_dict(form), allow_unicode=True, sort_keys=False)
@@ -909,6 +911,29 @@ class TestSatelConnectionForm:
         )
         assert patched["encryption_key"] is None
 
+    def test_to_form_reports_virtual_inputs_key_set(self):
+        """Hasło CAŁEGO modułu do funkcji "Wejścia IP" (tryb "http") -
+        WSPÓLNE, nie per wejście (zgłoszony błąd projektowy naprawiony -
+        patrz docstring bridge/satel_client.py). Nigdy nie wraca w jawnej
+        postaci, tylko flaga `_set`, ten sam wzorzec co integration_key."""
+        section = {"host": "1.2.3.4", "virtual_inputs": {"key": "sekret_http"}}
+        form = satel_connection_to_form(section)
+        assert "sekret_http" not in str(form)
+        assert form["virtual_inputs_key_set"] is True
+        assert satel_connection_to_form({"host": "1.2.3.4"})["virtual_inputs_key_set"] is False
+
+    def test_patch_blank_virtual_inputs_key_preserves_existing(self):
+        existing = {"host": "1.2.3.4", "virtual_inputs": {"key": "stary_http_klucz"}}
+        patched = build_satel_connection_patch({"host": "1.2.3.4", "virtual_inputs_key": ""}, existing)
+        assert patched["virtual_inputs"]["key"] == "stary_http_klucz"
+
+    def test_patch_non_blank_virtual_inputs_key_overwrites(self):
+        existing = {"host": "1.2.3.4", "virtual_inputs": {"key": "stary"}}
+        patched = build_satel_connection_patch(
+            {"host": "1.2.3.4", "virtual_inputs_key": "nowy_http_klucz"}, existing,
+        )
+        assert patched["virtual_inputs"]["key"] == "nowy_http_klucz"
+
     def test_patch_preserves_fields_not_in_this_form(self):
         """monitored_zones/partitions/zone_types itd. żyją w OSOBNYM
         dokumencie satel_fields (nadpisują to, co w configu, patrz
@@ -1167,7 +1192,7 @@ class TestSetupSave:
 
 FORM_WITH_ADVANCED = {
     **VALID_FORM,
-    "virtual_inputs": [{"name": "motion_hall_camera", "number": "17", "key": "KLUCZ17"}],
+    "virtual_inputs": [{"name": "motion_hall_camera", "number": "17"}],
     "scenes": [
         {
             "name": "wykryto_intruza",
@@ -1777,16 +1802,9 @@ class TestBuildConfigDictAdvanced:
         assert build_automations_dict(form)["reguły_ruchu"] == []
 
     def test_virtual_inputs_built_into_satel_fields(self):
-        """Tryb "http" jawnie podany - FORM_WITH_ADVANCED niesie klucz per
-        wejście, tylko potrzebny w tym trybie (patrz obszerny docstring
+        """Kształt jest teraz TEN SAM niezależnie od trybu - tryb "http" nie
+        ma już osobnego klucza per wejście (patrz obszerny docstring
         bridge/satel_client.py)."""
-        satel_fields = build_satel_fields_dict(FORM_WITH_ADVANCED, virtual_input_mode="http")
-        assert satel_fields["virtual_inputs"] == {
-            "motion_hall_camera": {"number": 17, "key": "KLUCZ17"},
-        }
-
-    def test_virtual_inputs_built_into_satel_fields_library_mode(self):
-        """Tryb domyślny "library" - bez klucza, bez utraty numeru."""
         satel_fields = build_satel_fields_dict(FORM_WITH_ADVANCED)
         assert satel_fields["virtual_inputs"] == {"motion_hall_camera": 17}
 

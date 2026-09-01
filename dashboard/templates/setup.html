@@ -298,7 +298,8 @@
       obsługuje tylko jednego klienta integracji naraz. <b>HTTP (Wejścia IP
       ETHM-1 Plus)</b> - osobne połączenie, niezależne od tej kolejki,
       skonfigurowane w DLOADX (zakładka "Wejścia IP"), kosztem osobnego
-      portu i klucza PER WEJŚCIE.
+      portu i WSPÓLNEGO hasła CAŁEGO modułu do tej funkcji (ustawianego RAZ
+      w DLOADX, NIE per wejście).
     </div>
     <div class="field-row">
       <div class="field">
@@ -311,6 +312,10 @@
       <div class="field" id="satel_vi_port_field" hidden>
         <label>Port HTTP (ETHM-1 Plus)</label>
         <input type="number" id="satel_virtual_inputs_port" value="8888">
+      </div>
+      <div class="field" id="satel_vi_key_field" hidden>
+        <label>Hasło HTTP wejść IP (z DLOADX)</label>
+        <input type="text" id="satel_virtual_inputs_key" placeholder="hasło z DLOADX">
       </div>
     </div>
     <div id="virtualInputsRows"></div>
@@ -690,26 +695,22 @@ function collectNameNumberRows(containerId) {
 }
 
 // ------------------------------------------------------------------
-// Wirtualne wejścia IP - dwa tryby (patrz obszerny docstring
-// bridge/satel_client.py): "library" (nazwa + numer wyjścia,
-// uwierzytelnione wspólnym kluczem integracji z kroku wyżej) albo "http"
-// (nazwa + numer + klucz PER WEJŚCIE z DLOADX). Pole klucza jest zawsze w
-// DOM (upraszcza collectVirtualInputs), tylko ukryte w trybie "library".
+// Wirtualne wejścia IP - nazwa + numer, TEN SAM kształt niezależnie od
+// trybu (patrz obszerny docstring bridge/satel_client.py): tryb "http"
+// uwierzytelnia się WSPÓLNYM hasłem CAŁEGO modułu (pole
+// "satel_virtual_inputs_key" wyżej), NIE osobnym kluczem per wejście.
 // ------------------------------------------------------------------
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');
-  const isHttp = document.getElementById('satel_virtual_inputs_mode').value === 'http';
   const row = document.createElement('div');
   row.className = 'repeatable-row';
   row.innerHTML = `
     <input type="text" placeholder="nazwa (np. motion_hall_camera)" class="vi-name">
     <input type="number" placeholder="numer wejścia" class="vi-number" style="max-width: 120px;">
-    <input type="text" placeholder="klucz z DLOADX" class="vi-key" ${isHttp ? '' : 'hidden'}>
     <button type="button" class="row-remove">✕</button>`;
   if (initial) {
     row.querySelector('.vi-name').value = initial.name || '';
     row.querySelector('.vi-number').value = initial.number || '';
-    row.querySelector('.vi-key').value = initial.key || '';
   }
   row.querySelector('.row-remove').addEventListener('click', () => row.remove());
   row.querySelector('.vi-name').addEventListener('input', refreshVirtualInputsDatalist);
@@ -721,14 +722,13 @@ function collectVirtualInputs() {
   return Array.from(document.querySelectorAll('#virtualInputsRows .repeatable-row')).map(row => ({
     name: row.querySelector('.vi-name').value.trim(),
     number: row.querySelector('.vi-number').value,
-    key: row.querySelector('.vi-key').value.trim(),
-  })).filter(v => v.name || v.number || v.key);
+  })).filter(v => v.name || v.number);
 }
 
 document.getElementById('satel_virtual_inputs_mode').addEventListener('change', () => {
   const isHttp = document.getElementById('satel_virtual_inputs_mode').value === 'http';
   document.getElementById('satel_vi_port_field').hidden = !isHttp;
-  document.querySelectorAll('#virtualInputsRows .vi-key').forEach(el => { el.hidden = !isHttp; });
+  document.getElementById('satel_vi_key_field').hidden = !isHttp;
 });
 
 document.getElementById('satel_encryption_enabled').addEventListener('change', () => {
@@ -1315,6 +1315,7 @@ function collectFormData() {
       encryption_key: document.getElementById('satel_encryption_key').value.trim(),
       virtual_inputs_mode: document.getElementById('satel_virtual_inputs_mode').value,
       virtual_inputs_port: document.getElementById('satel_virtual_inputs_port').value,
+      virtual_inputs_key: document.getElementById('satel_virtual_inputs_key').value.trim(),
     },
     partitions: collectNameNumberRows('partitionsRows'),
     monitored_zones: collectNameNumberRows('zonesRows'),
@@ -1378,7 +1379,10 @@ function populateForm(data) {
   set('satel_encryption_key', satel.encryption_key);
   set('satel_virtual_inputs_mode', satel.virtual_inputs_mode || 'library');
   set('satel_virtual_inputs_port', satel.virtual_inputs_port);
-  document.getElementById('satel_vi_port_field').hidden = document.getElementById('satel_virtual_inputs_mode').value !== 'http';
+  set('satel_virtual_inputs_key', satel.virtual_inputs_key);
+  const satelViIsHttp = document.getElementById('satel_virtual_inputs_mode').value === 'http';
+  document.getElementById('satel_vi_port_field').hidden = !satelViIsHttp;
+  document.getElementById('satel_vi_key_field').hidden = !satelViIsHttp;
 
   (data.partitions || []).forEach(p => addNameNumberRow('partitionsRows', p));
   (data.monitored_zones || []).forEach(z => addNameNumberRow('zonesRows', z));
@@ -1442,7 +1446,7 @@ function validateStep(n, data) {
     // do odczytu (patrz krótki opis pod polem i README), więc brak walidacji
     // "wymagany" tutaj.
     data.virtual_inputs.forEach((v, i) => {
-      if (!(v.name && v.number && v.key)) errors.push(`Wirtualne wejście #${i + 1}: uzupełnij nazwę, numer i klucz (albo usuń wiersz)`);
+      if (!(v.name && v.number)) errors.push(`Wirtualne wejście #${i + 1}: uzupełnij nazwę i numer (albo usuń wiersz)`);
     });
   } else if (n === 2) {
     data.tuya_devices.forEach((d, i) => {
