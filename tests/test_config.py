@@ -363,6 +363,47 @@ class TestDatabaseMigration:
         assert config.raw["satel"]["host"] == "1.2.3.4"
 
 
+class TestSessionSecret:
+    """ConfigStore.get_or_create_session_secret() - sekret podpisujący
+    ciasteczka sesji panelu (dashboard/auth.py: AuthGuard), trwały w bazie
+    tak, żeby ciasteczka wystawione PRZED restartem procesu nadal działały
+    PO restarcie (patrz obszerny docstring dashboard/auth.py)."""
+
+    def test_generates_secret_on_first_call(self, tmp_path):
+        store = ConfigStore(tmp_path / "config.db")
+        secret = store.get_or_create_session_secret()
+        assert isinstance(secret, str) and len(secret) >= 32
+
+    def test_returns_same_secret_on_repeated_calls(self, tmp_path):
+        store = ConfigStore(tmp_path / "config.db")
+        assert store.get_or_create_session_secret() == store.get_or_create_session_secret()
+
+    def test_secret_survives_reopening_same_db_file(self, tmp_path):
+        """Kluczowa właściwość: NOWY obiekt ConfigStore wskazujący na TĘ
+        SAMĄ bazę musi zwrócić TEN SAM sekret - dokładnie to się dzieje przy
+        restarcie procesu (nowy proces, ten sam plik .db)."""
+        db_path = tmp_path / "config.db"
+        secret1 = ConfigStore(db_path).get_or_create_session_secret()
+        secret2 = ConfigStore(db_path).get_or_create_session_secret()
+        assert secret1 == secret2
+
+    def test_different_databases_get_different_secrets(self, tmp_path):
+        secret1 = ConfigStore(tmp_path / "a.db").get_or_create_session_secret()
+        secret2 = ConfigStore(tmp_path / "b.db").get_or_create_session_secret()
+        assert secret1 != secret2
+
+    def test_secret_not_included_in_yaml_export_bundle(self, tmp_path):
+        """Sekret żyje w OSOBNEJ tabeli SQL (auth_secret), nie w tabeli
+        `documents` - CELOWO nie trafia do eksportu/importu ZIP configu
+        (patrz KNOWN_DOCUMENTS), żeby kopia zapasowa nie roznosiła klucza
+        podpisującego sesje."""
+        store = ConfigStore(tmp_path / "config.db")
+        secret = store.get_or_create_session_secret()
+        store.set("config", {"satel": {"host": "1.2.3.4"}})
+        bundle = store.export_yaml_bundle()
+        assert secret not in str(bundle)
+
+
 VALID_CONFIG_YAML = """
 satel:
   host: "1.2.3.4"

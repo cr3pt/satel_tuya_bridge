@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import secrets
 import sqlite3
 import tempfile
 import threading
@@ -41,6 +42,18 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     created_ts REAL NOT NULL
+);
+
+-- Sekret do podpisywania ciasteczek sesji panelu (dashboard/auth.py) -
+-- WYGENEROWANY RAZ i trzymany trwale w tej samej bazie co reszta configu
+-- (przetrwa restart procesu, w odróżnieniu od dawnego trzymania sesji
+-- wyłącznie w pamięci procesu). Jeden wiersz (id=1), CELOWO OSOBNA tabela
+-- od `documents` - nie ma trafiać do eksportu/importu ZIP (patrz
+-- KNOWN_DOCUMENTS niżej), żeby kopia zapasowa configu nie roznosiła
+-- klucza podpisującego sesje.
+CREATE TABLE IF NOT EXISTS auth_secret (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    secret TEXT NOT NULL
 );
 """
 
@@ -171,6 +184,22 @@ class ConfigStore:
             return
         username = auth_cfg.get("username") or "admin"
         self.add_user(username, password_hash)
+
+    def get_or_create_session_secret(self) -> str:
+        """Zwraca trwały sekret do podpisywania ciasteczek sesji (patrz
+        dashboard/auth.py: AuthGuard) - generowany RAZ, przy pierwszym
+        użyciu, i trzymany w tej samej bazie SQLite co reszta configu. Dzięki
+        temu podpisane ciasteczka pozostają ważne PO restarcie procesu
+        (panel/bridge) - w odróżnieniu od poprzedniego modelu, gdzie sesje
+        żyły wyłącznie w pamięci procesu i restart wylogowywał każdego."""
+        with self._lock:
+            row = self._conn.execute("SELECT secret FROM auth_secret WHERE id = 1").fetchone()
+            if row is not None:
+                return row[0]
+            secret = secrets.token_hex(32)
+            self._conn.execute("INSERT INTO auth_secret (id, secret) VALUES (1, ?)", (secret,))
+            self._conn.commit()
+            return secret
 
     # -- eksport/import YAML - furtka bezpieczeństwa na wypadek, gdyby ktoś
     # chciał obejrzeć/edytować konfigurację poza panelem (backup, migracja,

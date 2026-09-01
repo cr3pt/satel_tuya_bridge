@@ -144,9 +144,12 @@ def create_app(config: BridgeConfig) -> Flask:
     config_store = config.store
     # NIE tworzymy nowego AuthGuard, jeśli już istnieje - create_app() jest
     # wołane ponownie po KAŻDYM zapisie configu z panelu (patrz wywołania
-    # niżej w tym module), a nowy obiekt zgubiłby aktywne sesje/liczniki
-    # nieudanych prób w pamięci procesu, wylogowując wszystkich (patrz
-    # docstring AuthGuard.update_config).
+    # niżej w tym module). Sesje przetrwałyby nawet nowy obiekt (token sam
+    # niesie wszystko, sekret podpisujący jest trwały w bazie - patrz
+    # obszerny docstring dashboard/auth.py), ale nowy obiekt zgubiłby
+    # liczniki nieudanych prób logowania/listę jawnie wylogowanych tokenów
+    # trzymane w pamięci procesu (patrz docstring AuthGuard.update_config) -
+    # stąd reużycie zamiast tworzenia od nowa.
     if auth_guard is None:
         auth_guard = AuthGuard(config_store, config.raw.get("dashboard", {}).get("auth"))
     else:
