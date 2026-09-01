@@ -1,6 +1,7 @@
 """Testy dla dashboard/auth.py - logowanie sesyjne (/login) + HTTP Basic Auth
 (fallback dla skryptów) + ochrona przed brute-force + wiele kont
 administratorskich (patrz bridge/config_store.py: tabela users)."""
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -211,13 +212,21 @@ class TestSessionLogin:
         assert ok is False
         assert "konta administratora" in msg
 
-    def test_create_session_returns_unique_tokens(self, store):
+    def test_create_session_tokens_are_valid_and_carry_username(self, store):
+        """Token to podpisany payload (itsdangerous), NIE losowy identyfikator
+        odsyłający do stanu serwera - dla tego samego konta w tej samej
+        sekundzie wywołanie da więc DETERMINISTYCZNIE ten sam token (to
+        oczekiwana cecha stateless podpisu, nie błąd). Sprawdzamy więc
+        ważność i poprawną nazwę użytkownika, nie "unikalność"."""
         guard = AuthGuard(store, None)
-        t1 = guard.create_session("admin")
-        t2 = guard.create_session("admin")
-        assert t1 != t2
-        assert guard.check_session(t1) is True
-        assert guard.check_session(t2) is True
+        token = guard.create_session("admin")
+        assert guard.check_session(token) is True
+        assert guard.session_username(token) == "admin"
+
+    def test_create_session_differs_per_username(self, store):
+        store.add_user("drugi", generate_password_hash("inne_haslo"))
+        guard = AuthGuard(store, None)
+        assert guard.create_session("admin") != guard.create_session("drugi")
 
     def test_check_session_rejects_unknown_token(self, store):
         guard = AuthGuard(store, None)
@@ -238,9 +247,41 @@ class TestSessionLogin:
         guard.destroy_session("nieznany-token")  # nie powinno rzucić wyjątku
 
     def test_expired_session_is_rejected(self, store):
+        from dashboard.auth import SESSION_TTL_SECONDS
+
         guard = AuthGuard(store, None)
         token = guard.create_session("admin")
-        guard._sessions[token]["expires"] = 0  # symulacja wygaśnięcia (timestamp w przeszłości)
+        assert guard.check_session(token) is True
+        # Token sam niesie znacznik czasu (podpisany przez itsdangerous,
+        # patrz AuthGuard._serializer) - symulujemy wygaśnięcie przesuwając
+        # zegar, który sprawdza faktyczny upływ czasu przy weryfikacji
+        # podpisu (time.time() - to samo wywołanie, którego itsdangerous
+        # używa wewnętrznie, patrz itsdangerous.timed.TimestampSigner).
+        with patch("time.time", return_value=time.time() + SESSION_TTL_SECONDS + 1):
+            assert guard.check_session(token) is False
+
+    def test_session_survives_new_authguard_with_same_store(self, store):
+        """Sedno odporności na restart procesu: token podpisany przez JEDEN
+        obiekt AuthGuard musi zostać zaakceptowany przez ZUPEŁNIE NOWY
+        obiekt AuthGuard wskazujący na TĘ SAMĄ bazę (dokładnie to się dzieje
+        przy restarcie panelu/bridge'a - nowy proces, ta sama baza SQLite) -
+        w odróżnieniu od poprzedniego modelu (sesje wyłącznie w pamięci
+        procesu), gdzie restart zawsze wylogowywał wszystkich."""
+        token = AuthGuard(store, None).create_session("admin")
+        fresh_guard = AuthGuard(store, None)  # symuluje nowy proces po restarcie
+        assert fresh_guard.check_session(token) is True
+        assert fresh_guard.session_username(token) == "admin"
+
+    def test_session_invalidated_when_password_changes(self, store):
+        """Zmiana hasła (albo usunięcie konta) unieważnia WSZYSTKIE sesje
+        tego konta, mimo że serwer nie trzyma ich listy - patrz
+        _password_fingerprint w tokenie."""
+        guard = AuthGuard(store, None)
+        token = guard.create_session("admin")
+        assert guard.check_session(token) is True
+
+        user = store.get_user_by_username("admin")
+        store.update_user(user["id"], password_hash=generate_password_hash("nowe_haslo"))
         assert guard.check_session(token) is False
 
     def test_check_accepts_valid_session_cookie_without_password(self, store):

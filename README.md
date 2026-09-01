@@ -1059,12 +1059,17 @@ dopóki blokada nie wygaśnie. Sprawdzone testem.
 Prawdziwe logowanie, nie okienko `prompt()`: strona `/login` ma pole nazwy
 użytkownika (podpowiedziane automatycznie - nie jest sekretem) i
 zamaskowane pole hasła (`<input type=password>`, jak wszędzie indziej w
-sieci) - wpisujesz dane logowania RAZ, serwer wystawia losowy token sesji w
-ciasteczku **`HttpOnly`** (niedostępnym dla JavaScriptu na stronie -
-ochrona przed odczytaniem go przez ewentualny złośliwy skrypt/XSS).
+sieci) - wpisujesz dane logowania RAZ, serwer wystawia w ciasteczku
+**`HttpOnly`** (niedostępnym dla JavaScriptu na stronie - ochrona przed
+odczytaniem go przez ewentualny złośliwy skrypt/XSS) PODPISANY token sesji.
 Dalsze żądania z panelu **nie wysyłają już hasła w ogóle** - tylko ten
 token, aż do wylogowania (link "🔓 Wyloguj" w nawigacji każdej strony,
-wywołuje `POST /api/logout`) albo wygaśnięcia sesji (12h).
+wywołuje `POST /api/logout`) albo wygaśnięcia sesji (12h). Token przetrwa
+**restart procesu panelu/bridge'a** (np. po zmianie ustawień połączenia,
+która wymaga restartu) - nie trzeba logować się ponownie po każdym takim
+restarcie, bo cała informacja o sesji siedzi w samym (podpisanym) tokenie,
+a klucz podpisujący jest trwale zapisany w tej samej bazie co reszta
+configu. Zmiana hasła konta od razu unieważnia wszystkie jego sesje.
 
 Próba akcji wymagającej logowania bez ważnej sesji (np. wejście prosto na
 `/plugins/satel` i kliknięcie "Zapisz") przekierowuje na `/login?next=...` -
