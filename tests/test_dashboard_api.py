@@ -398,6 +398,36 @@ class TestVirtualInputEndpoints:
         assert resp.status_code == 404
 
 
+class TestSystemLogsLoggersEndpoint:
+    """/api/system/logs/loggers - lista WYSTĘPUJĄCYCH nazw loggerów, do
+    rozwijanej listy filtra w panelu (⚙ Ogólne -> Logi), patrz
+    HistoryStore.get_log_loggers."""
+
+    def test_requires_auth(self, client):
+        resp = client.get("/api/system/logs/loggers")
+        assert resp.status_code == 401
+
+    def test_returns_distinct_logger_names(self, client):
+        import dashboard.app as app_module
+        app_module.history.write_log("bridge", "bridge.satel", "INFO", "a")
+        app_module.history.write_log("bridge", "bridge.satel", "WARNING", "b")
+        app_module.history.write_log("bridge", "bridge.tuya_local", "DEBUG", "c")
+
+        resp = client.get("/api/system/logs/loggers", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert resp.get_json() == ["bridge.satel", "bridge.tuya_local"]
+
+    def test_filters_by_component(self, client):
+        import dashboard.app as app_module
+        app_module.history.write_log("bridge", "bridge.satel", "INFO", "a")
+        app_module.history.write_log("dashboard", "dashboard.app", "INFO", "b")
+
+        resp = client.get(
+            "/api/system/logs/loggers?component=dashboard", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.get_json() == ["dashboard.app"]
+
+
 class TestSystemRestartEndpoint:
     """/api/system/restart - pełny restart obu kontenerów (bridge + panel),
     w odróżnieniu od reload_config() (patrz _enqueue_bridge_reload), który

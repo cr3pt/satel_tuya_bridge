@@ -1589,6 +1589,18 @@ def api_system_settings_post():
     return jsonify({"message": "Zapisano. Poziom logów zadziała na żywo w ciągu ok. 1-2s, bez restartu."})
 
 
+@app.route("/api/system/logs/loggers", methods=["GET"])
+@require_auth()
+def api_system_logs_loggers_get():
+    """Nazwy loggerów WYSTĘPUJĄCYCH w przechwyconych logach (np.
+    'bridge.satel') - do wypełnienia rozwijanej listy filtra w /system
+    (zamiast pola tekstowego, gdzie trzeba było znać dokładną nazwę).
+    Opcjonalny filtr component (bridge|dashboard) - te same nazwy co
+    /api/system/logs, więc wybór procesu zawęża też tę listę."""
+    component = request.args.get("component") or None
+    return jsonify(history.get_log_loggers(component))
+
+
 @app.route("/api/system/logs", methods=["GET"])
 @require_auth()
 def api_system_logs_get():

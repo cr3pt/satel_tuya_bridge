@@ -171,7 +171,9 @@
       <option value="WARNING">WARNING+</option>
       <option value="ERROR">ERROR+</option>
     </select>
-    <input type="text" id="logLogger" placeholder="logger, np. bridge.satel">
+    <select id="logLogger">
+      <option value="">wszystkie loggery</option>
+    </select>
     <button type="button" class="secondary" id="refreshLogsBtn">🔄 Odśwież</button>
     <label class="checkbox-row" style="margin:0;"><input type="checkbox" id="autoRefreshLogs" checked> Auto-odświeżanie (10s)</label>
   </div>
@@ -331,6 +333,24 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
 // ------------------------------------------------------------------
 let logsAutoTimer = null;
 
+async function loadLoggerOptions() {
+  // Lista loggerów zależy od filtra "Proces" (bridge/dashboard mają różne
+  // zestawy) - stąd wołane też przy zmianie logComponent, nie tylko raz
+  // przy starcie. Zachowuje bieżący wybór, jeśli dalej jest na liście
+  // (np. auto-odświeżanie w tle nie ma zresetować filtra użytkownikowi).
+  const select = document.getElementById('logLogger');
+  const current = select.value;
+  const component = document.getElementById('logComponent').value;
+  const params = new URLSearchParams();
+  if (component) params.set('component', component);
+
+  const resp = await authorizedFetch('/api/system/logs/loggers?' + params.toString());
+  const loggers = await resp.json();
+  select.innerHTML = '<option value="">wszystkie loggery</option>' +
+    loggers.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  if (loggers.includes(current)) select.value = current;
+}
+
 async function loadLogs() {
   const params = new URLSearchParams();
   const component = document.getElementById('logComponent').value;
@@ -354,8 +374,15 @@ async function loadLogs() {
     </tr>`).join('') || '<tr><td colspan="5" style="color:var(--muted);">Brak wpisów pasujących do filtrów.</td></tr>';
 }
 document.getElementById('refreshLogsBtn').addEventListener('click', loadLogs);
-document.getElementById('logComponent').addEventListener('change', loadLogs);
+document.getElementById('logComponent').addEventListener('change', () => {
+  // Lista loggerów zależy od procesu - odśwież ją PRZED wpisami, żeby
+  // filtr "Logger" nie proponował już np. loggerów panelu po przełączeniu
+  // na "bridge".
+  loadLoggerOptions();
+  loadLogs();
+});
 document.getElementById('logLevel').addEventListener('change', loadLogs);
+document.getElementById('logLogger').addEventListener('change', loadLogs);
 
 function setupAutoRefresh() {
   if (logsAutoTimer) clearInterval(logsAutoTimer);
@@ -365,6 +392,7 @@ function setupAutoRefresh() {
 }
 document.getElementById('autoRefreshLogs').addEventListener('change', setupAutoRefresh);
 setupAutoRefresh();
+loadLoggerOptions();
 loadLogs();
 </script>
 </body>
