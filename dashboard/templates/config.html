@@ -62,6 +62,10 @@
   .field-group:last-child { margin-bottom: 0; }
   .field-group > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
   .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  /* [hidden] przegrywałby z .discover-row/.field (oba ustawiają "display")
+     przy równej specyficzności selektora, w zależności od kolejności reguł
+     w arkuszu - wymuszamy, żeby "hidden" zawsze wygrywało. */
+  [hidden] { display: none !important; }
   .discover-status { font-size: 12.5px; color: var(--muted); }
   .candidate-badge { background: #2c2413; color: #e8d6ae; border: 1px solid var(--warn, #e6a23c); border-radius: 4px; padding: 1px 6px; font-size: 11px; margin-left: 6px; }
   .group-header td { color: var(--muted); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: #191c22; padding: 6px 6px; border-bottom: 1px solid var(--border); }
