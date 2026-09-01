@@ -200,13 +200,16 @@
       <div class="field"><label>Port (integration protocol)</label><input type="number" id="satel_port" value="7094"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Klucz integracji (opcjonalny)</label><input type="text" id="satel_integration_key" placeholder="ustawiony w DLOADX - zostaw puste dla trybu tylko do odczytu"></div>
+      <div class="field"><label>Kod użytkownika centrali (opcjonalny)</label><input type="text" id="satel_integration_key" placeholder="numeryczny PIN ustawiony w DLOADX/GUARDX - zostaw puste dla trybu tylko do odczytu"></div>
     </div>
     <div class="step-hint" style="margin: -6px 0 14px;">
-      Bez klucza panel będzie działał <b>tylko do odczytu</b> (podgląd stref/
-      wyjść/partycji) - (roz)uzbrajanie i sterowanie wyjściami będzie
-      zablokowane, dopóki nie dopiszesz klucza później w
-      ⚙ Ustawienia -> 🔌 Połączenia.
+      To NIE jest hasło/klucz modułu ETHM - to zwykły, numeryczny kod
+      użytkownika centrali (ten sam typ kodu, którym uzbraja/rozbraja się
+      z klawiatury), autoryzujący każdą komendę zapisu (uzbrojenie/
+      rozbrojenie/wyjścia). Bez niego panel będzie działał <b>tylko do
+      odczytu</b> (podgląd stref/wyjść/partycji) - (roz)uzbrajanie i
+      sterowanie wyjściami będzie zablokowane, dopóki nie dopiszesz kodu
+      później w ⚙ Ustawienia -> 🔌 Połączenia.
     </div>
     <div class="field-row">
       <div class="field" style="flex: none;">
@@ -220,7 +223,7 @@
       </div>
     </div>
     <div class="step-hint" style="margin: -6px 0 14px;">
-      To NIE jest klucz integracji wyżej - to osobny klucz szyfrowania
+      To NIE jest kod użytkownika wyżej - to osobny klucz szyfrowania
       transmisji (AES), ustawiany w DLOADX TYLKO jeśli centrala ma
       jawnie włączoną szyfrowaną komunikację integracji. Zostaw checkbox
       wyłączony, jeśli nie wiesz, o co chodzi - większość instalacji tego
@@ -1434,9 +1437,9 @@ function validateStep(n, data) {
   const errors = [];
   if (n === 1) {
     if (!data.satel.host) errors.push('Adres IP centrali/ETHM jest wymagany');
-    // Klucz integracji jest CELOWO opcjonalny - bez niego panel działa tylko
-    // do odczytu (patrz krótki opis pod polem i README), więc brak walidacji
-    // "wymagany" tutaj.
+    // Kod użytkownika centrali jest CELOWO opcjonalny - bez niego panel
+    // działa tylko do odczytu (patrz krótki opis pod polem i README), więc
+    // brak walidacji "wymagany" tutaj.
     data.virtual_inputs.forEach((v, i) => {
       if (!(v.name && v.number)) errors.push(`Wirtualne wejście #${i + 1}: uzupełnij nazwę i numer (albo usuń wiersz)`);
     });

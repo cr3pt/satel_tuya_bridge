@@ -33,11 +33,14 @@ satel:
   # (roz)uzbrajanie) - wymaga biblioteki `satel_integra` (port zwykle 7094)
   host: "192.168.1.10"
   port: 7094
-  # Opcjonalny - ustawiony w DLOADX. Bez niego panel działa TYLKO DO ODCZYTU
-  # (stany stref/wyjść widoczne, ale (roz)uzbrojenie i sterowanie wyjściami
-  # jest zablokowane z czytelnym komunikatem) - dopisz go później w sekcji
-  # "🔌 Połączenie" na stronie /plugins/satel, żeby odblokować sterowanie.
-  integration_key: "TWOJ_KLUCZ_INTEGRACJI"
+  # To NUMERYCZNY KOD UŻYTKOWNIKA centrali (ten sam typ kodu, którym
+  # uzbraja/rozbraja się z klawiatury) - ustawiony w DLOADX/GUARDX, NIE
+  # żaden osobny "klucz integracji". Opcjonalny - bez niego panel działa
+  # TYLKO DO ODCZYTU (stany stref/wyjść widoczne, ale (roz)uzbrojenie i
+  # sterowanie wyjściami jest zablokowane z czytelnym komunikatem) - dopisz
+  # go później w sekcji "🔌 Połączenie" na stronie /plugins/satel, żeby
+  # odblokować sterowanie.
+  integration_key: "TWOJ_KOD_UZYTKOWNIKA"
   # Klucz szyfrowania AES transmisji TCP ("Encrypted connections" w DLOADX)
   # - CAŁKIEM INNY klucz niż integration_key wyżej (to hasło protokołu, nie
   # klucz szyfrowania). Zostaw null/puste, jeśli centrala/moduł ETHM nie ma

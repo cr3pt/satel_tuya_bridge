@@ -121,7 +121,7 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         przez _require_login_for_settings_and_control w dashboard/app.py
         (allowlist publicznych ścieżek) - bez sekretów, więc bez dodatkowego
         @require_auth() wprost (w odróżnieniu od /api/plugins/satel/connection,
-        gdzie klucz integracji uzasadnia jawne podkreślenie tego wymogu)."""
+        gdzie kod użytkownika uzasadnia jawne podkreślenie tego wymogu)."""
         current = get_config_store().get("config")
         return jsonify(ebus_connection_to_form(current.get("ebus", {}), current.get("boiler_output", {})))
 

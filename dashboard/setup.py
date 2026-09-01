@@ -64,7 +64,7 @@ def validate(form: dict) -> list[str]:
     satel = form.get("satel", {})
     if not satel.get("host"):
         errors.append("Satel: adres IP centrali/modułu ETHM jest wymagany")
-    # Klucz integracji CELOWO opcjonalny - bez niego panel działa w trybie
+    # Kod użytkownika centrali CELOWO opcjonalny - bez niego panel działa w trybie
     # tylko do odczytu (stan wejść/wyjść/stref widoczny normalnie, protokół
     # integracji Satela nie wymaga klucza do samego czytania), ale
     # sterowanie (uzbrojenie/rozbrojenie/wyjścia) jest zablokowane z
@@ -753,7 +753,7 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     ręcznych zmian w config.yaml (stąd /setup zostaje zablokowany po
     pierwszym zapisie - patrz CONFIG_HEADER i api_setup_save).
 
-    Pola-sekrety (klucz integracji Satela, Tuya Cloud Access Secret): pusta
+    Pola-sekrety (kod użytkownika Satela, Tuya Cloud Access Secret): pusta
     wartość w formularzu = ZACHOWAJ dotychczasową (formularz w przeglądarce
     nigdy nie dostaje prawdziwego sekretu z powrotem - patrz
     connections_to_form - więc "nic nie wpisano" nie może oznaczać
@@ -915,12 +915,12 @@ def connections_to_form(existing: dict) -> dict:
     docstring validate_connections wyżej) - GET/POST /api/config/connections
     zostało usunięte, host/port/klucze edytuje się teraz na stronach
     poszczególnych wtyczek (satel_connection_to_form/ebus_connection_to_form
-    niżej). Sekretne pola (klucz integracji Satela, Tuya Cloud Access
+    niżej). Sekretne pola (kod użytkownika Satela, Tuya Cloud Access
     Secret) NIE są tu NIGDY zwracane w jawnej postaci - tylko flaga
     `*_set`, czy są w ogóle ustawione, żeby nie wyciekały przez GET do
     każdego w sieci LAN (w odróżnieniu od np. local_key urządzeń Tuya w
     /api/plugins/tuya/devices - tam ryzyko jest dużo mniejsze niż tu, bo
-    klucz integracji Satela pozwala rozbroić fizyczny system alarmowy)."""
+    kod użytkownika Satela pozwala rozbroić fizyczny system alarmowy)."""
     satel = existing.get("satel", {})
     tuya = existing.get("tuya", {})
     ebus = existing.get("ebus", {})
@@ -987,7 +987,7 @@ def satel_connection_to_form(satel_section: dict) -> dict:
     """Odwrotność build_satel_connection_patch - konwertuje SUROWĄ sekcję
     `satel` (dokument "config", patrz plugins/satel/routes.py:
     _get_satel_section) na kształt formularza GET /api/plugins/satel/connection.
-    Klucz integracji/klucz szyfrowania NIGDY nie wracają w jawnej postaci -
+    Kod użytkownika/klucz szyfrowania NIGDY nie wracają w jawnej postaci -
     tylko flaga `*_set`, ten sam wzorzec co connections_to_form(). Tryb
     "http" wejść IP nie ma żadnego klucza/hasła do maskowania (patrz
     obszerny docstring bridge/satel_client.py)."""
@@ -1210,10 +1210,11 @@ def list_plugins(config_raw: dict) -> list[dict]:
 
     state = {
         "satel": {
-            # Klucz integracji NIE jest wymagany do połączenia/odczytu (patrz
-            # obszerny komentarz w validate() wyżej) - tylko host decyduje o
-            # "skonfigurowaniu", "detail" niżej jawnie sygnalizuje brak klucza
-            # (sterowanie zablokowane, dopóki go nie dodasz w Połączeniach).
+            # Kod użytkownika centrali NIE jest wymagany do połączenia/odczytu
+            # (patrz obszerny komentarz w validate() wyżej) - tylko host
+            # decyduje o "skonfigurowaniu", "detail" niżej jawnie sygnalizuje
+            # brak kodu (sterowanie zablokowane, dopóki go nie dodasz w
+            # Połączeniach).
             "enabled": satel.get("enabled", True) and bool(satel.get("host")),
             "configured": bool(satel.get("host")),
             "detail": (
@@ -1624,7 +1625,7 @@ SATEL_FIELDS_HEADER = (
     "# Strefy / wyjścia / wejścia IP / partycje Satela - w pełni edytowalne\n"
     "# z panelu webowego (/config, wymaga hasła administratora do zapisu) -\n"
     "# każdy zapis stamtąd NADPISUJE cały ten plik. Połączenie z centralą\n"
-    "# (host/port/klucz integracji) zostaje w config.yaml.\n"
+    "# (host/port/kod użytkownika) zostaje w config.yaml.\n"
     "# Opis pól - patrz config.example.yaml (sekcja satel).\n\n"
 )
 

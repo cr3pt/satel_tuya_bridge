@@ -799,7 +799,7 @@ class RulesEngine:
 
         CELOWO NIE dotyka żywych połączeń sieciowych - gniazdo TCP do
         centrali Satel, klienci MQTT (eBUS/Home Assistant/publikacja
-        stanu), Tuya Cloud Pulsar. Host/port/klucz integracji Satela,
+        stanu), Tuya Cloud Pulsar. Host/port/kod użytkownika Satela,
         adresy brokerów MQTT i poświadczenia Tuya Cloud (zakładka
         🔌 Połączenia) WCIĄŻ wymagają pełnego restartu procesu - bezpieczne
         zamknięcie i odtworzenie żywych połączeń w trakcie działania byłoby
