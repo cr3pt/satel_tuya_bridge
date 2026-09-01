@@ -108,8 +108,10 @@ satel:
   # (niezależnie od tego, czy centrala sama zgłosi zmianę broadcastem -
   # zaobserwowano, że wyjścia nie zawsze to robią, w odróżnieniu od wejść).
   # Edytowalne też z panelu (zakładka 🧩 Wtyczki) BEZ restartu procesu -
-  # minimum 3s, żeby nie zalewać centrali zapytaniami.
-  status_poll_interval_seconds: 10
+  # zalecany zakres 2-5s, minimum 2s (kolejka komend biblioteki i tak
+  # sekwencjonuje zapytania względem innych poleceń, patrz obszerny
+  # docstring bridge/satel_client.py).
+  status_poll_interval_seconds: 3
 
 tuya:
   # Co ile sekund odpytywać lokalnie urządzenia Tuya (WiFi i podurządzenia

@@ -1788,7 +1788,7 @@ class TestListPlugins:
 
     def test_poll_interval_defaults(self):
         by_id = {p["id"]: p for p in list_plugins({})}
-        assert by_id["satel"]["poll_interval_seconds"] == 15
+        assert by_id["satel"]["poll_interval_seconds"] == 3
         assert by_id["tuya_local"]["poll_interval_seconds"] == 30
 
     def test_poll_interval_reflects_config(self):

@@ -722,13 +722,17 @@ def validate_connections(form: dict) -> list[str]:
     if ha.get("enabled") and not (ha.get("mqtt_host") or ebus.get("mqtt_host")):
         errors.append("Home Assistant: adres brokera MQTT jest wymagany, jeśli integracja włączona")
 
-    # Interwały odpytywania (zakładka 🧩 Wtyczki) - minimum 3s, żeby nie
-    # zalewać centrali/urządzeń zapytaniami przy pomyłce we wpisanej wartości.
+    # Interwały odpytywania (zakładka 🧩 Wtyczki) - minimum tak dobrane, żeby
+    # nie zalewać centrali/urządzeń zapytaniami przy pomyłce we wpisanej
+    # wartości. Satel: 2s (zalecany zakres 2-5s - kolejka komend biblioteki
+    # i tak sekwencjonuje zapytania względem innych poleceń, patrz obszerny
+    # docstring bridge/satel_client.py, więc krótszy interwał niż dawniej
+    # jest bezpieczny).
     satel_interval = satel.get("status_poll_interval_seconds")
     if satel_interval not in (None, ""):
         try:
-            if int(satel_interval) < 3:
-                errors.append("Satel: interwał odpytywania musi wynosić co najmniej 3 sekundy")
+            if int(satel_interval) < 2:
+                errors.append("Satel: interwał odpytywania musi wynosić co najmniej 2 sekundy")
         except (TypeError, ValueError):
             errors.append("Satel: interwał odpytywania musi być liczbą")
 
@@ -804,7 +808,7 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     config["satel"].setdefault("fields_file", "satel_fields.yaml")
     config["satel"]["status_poll_interval_seconds"] = int(
         satel_form.get("status_poll_interval_seconds")
-        or config["satel"].get("status_poll_interval_seconds") or 15
+        or config["satel"].get("status_poll_interval_seconds") or 3
     )
 
     config.setdefault("ebus", {})
@@ -920,7 +924,7 @@ def connections_to_form(existing: dict) -> dict:
             "virtual_inputs_port": satel.get("virtual_inputs", {}).get("port", 8888),
             "integration_key_set": bool(satel.get("integration_key")),
             "encryption_key_set": bool(satel.get("encryption_key")),
-            "status_poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
+            "status_poll_interval_seconds": satel.get("status_poll_interval_seconds", 3),
         },
         "tuya_local": {
             "status_poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
@@ -1007,10 +1011,10 @@ def build_location_patch(form: dict, existing: dict) -> dict:
 # Cloud Pulsar), a przełączanie integracji jest i tak rzadką operacją.
 PLUGIN_DEFS = [
     {"id": "satel", "name": "Centrala Satel Integra", "icon": "🔒", "toggleable": True, "restart_required": True,
-     "has_poll_interval": True, "has_log_level": True,
+     "has_poll_interval": True, "min_poll_interval_seconds": 2, "has_log_level": True,
      "description": "Odczyt wejść/wyjść/stref i sterowanie (uzbrajanie, wyjścia)."},
     {"id": "tuya_local", "name": "Tuya - urządzenia lokalne (WiFi)", "icon": "🔌", "toggleable": True, "restart_required": True,
-     "has_poll_interval": True, "has_log_level": True,
+     "has_poll_interval": True, "min_poll_interval_seconds": 3, "has_log_level": True,
      "description": "Sterowanie gniazdkami/przełącznikami/ściemniaczami Tuya bezpośrednio w LAN, bez chmury (tinytuya) - obejmuje też podurządzenia Zigbee."},
     {"id": "tuya_zigbee", "name": "Tuya - bramki Zigbee", "icon": "🐝", "toggleable": False, "restart_required": False,
      "has_log_level": True,
@@ -1067,7 +1071,7 @@ def list_plugins(config_raw: dict) -> list[dict]:
             "enabled": satel.get("enabled", True) and bool(satel.get("host") and satel.get("integration_key")),
             "configured": bool(satel.get("host") and satel.get("integration_key")),
             "detail": f"{satel.get('host', '?')}:{satel.get('port', '?')}" if satel.get("host") else "nieskonfigurowana",
-            "poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
+            "poll_interval_seconds": satel.get("status_poll_interval_seconds", 3),
         },
         "tuya_local": {
             "enabled": tuya.get("enabled", True) and len(tuya_devices) > len(zigbee_devices),

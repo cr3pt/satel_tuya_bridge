@@ -845,8 +845,9 @@ przy każdym przeładowaniu konfiguracji).
 **Interwał odpytywania (Satel i Tuya lokalnie).** Te dwie karty mają
 dodatkowo pole "Interwał odpytywania" - jak często bridge SAM dopytuje o
 bieżący stan wejść/wyjść (Satel: `satel.status_poll_interval_seconds`,
-domyślnie 10s) i urządzeń Tuya (`tuya.status_poll_interval_seconds`,
-domyślnie 15s, obejmuje też podurządzenia Zigbee - ta sama pętla). To
+domyślnie 3s, minimum 2s - zalecany zakres 2-5s) i urządzeń Tuya
+(`tuya.status_poll_interval_seconds`, domyślnie 15s, obejmuje też
+podurządzenia Zigbee - ta sama pętla). To
 osobny mechanizm od broadcastów samej centrali/urządzeń o zmianie stanu -
 zaobserwowano na realnej instalacji, że zmiana stanu WYJŚCIA nie zawsze
 dociera jako broadcast (w odróżnieniu od wejść), więc samo poleganie na

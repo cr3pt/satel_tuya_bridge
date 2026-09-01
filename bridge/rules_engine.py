@@ -87,7 +87,7 @@ class RulesEngine:
             history=self.history,
             notify_cfg=notify_cfg,
             grace_seconds=grace_seconds,
-            status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 10),
+            status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 3),
         )
         # Tryb "http" wirtualnych wejść IP (satel.virtual_inputs.mode) - osobne
         # połączenie HTTP, niezależne od kolejki poleceń protokołu integracji
@@ -835,7 +835,7 @@ class RulesEngine:
         # _periodic_status_sync) - W ODRÓŻNIENIU od host/portu/klucza,
         # DZIAŁA NA ŻYWO od razu, bez restartu procesu - pętla czyta ten
         # atrybut na bieżąco przy każdym obrocie, nie tylko raz na starcie.
-        self.satel.status_poll_interval_seconds = new_config.satel.get("status_poll_interval_seconds", 15)
+        self.satel.status_poll_interval_seconds = new_config.satel.get("status_poll_interval_seconds", 3)
 
         # Sceny/automatyka kotła/alarmy progowe - budowane na bieżąco z
         # configu przy każdym wywołaniu, bezpieczne do pełnej podmiany.

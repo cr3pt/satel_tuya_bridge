@@ -595,9 +595,9 @@ class TestPeriodicStatusSync:
         )
         assert client.status_poll_interval_seconds == 42.0
 
-    def test_status_poll_interval_seconds_defaults_to_10(self):
+    def test_status_poll_interval_seconds_defaults_to_3(self):
         client = SatelIntegraClient("127.0.0.1", 7094, "key")
-        assert client.status_poll_interval_seconds == 10.0
+        assert client.status_poll_interval_seconds == 3.0
 
 
 class TestArmedPartitionNumbers:
