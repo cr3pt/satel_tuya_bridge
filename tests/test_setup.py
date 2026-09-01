@@ -217,6 +217,25 @@ class TestBuildConfigDict:
         assert config["tuya"]["cloud"]["api_endpoint"] == "https://openapi.tuyaeu.com"
         assert config["tuya"]["cloud"]["mq_endpoint"] == "wss://mqe.tuyaeu.com:8285/"
 
+    def test_tuya_cloud_persists_api_region(self):
+        """Regresja: build_config_dict NIE zapisywał w ogóle api_region z
+        formularza kreatora (tylko api_endpoint/mq_endpoint, pochodne od
+        regionu, ale używane WYŁĄCZNIE do detekcji ruchu z kamer/Pulsar) -
+        TuyaCloudController (sterowanie urządzeniami przez chmurę, patrz
+        bridge/tuya_cloud.py) czyta apiRegion osobno i bez tego pola zawsze
+        dostawał pusty string, co Tuya OpenAPI odrzuca błędem "cross-region
+        access is not allowed" niezależnie od regionu wybranego w kreatorze."""
+        form = {**VALID_FORM, "tuya_cloud": {
+            "enabled": True, "access_id": "id1", "access_key": "key1", "api_region": "us",
+        }}
+        config = build_config_dict(form)
+        assert config["tuya"]["cloud"]["api_region"] == "us"
+
+    def test_tuya_cloud_missing_api_region_defaults_to_eu(self):
+        form = {**VALID_FORM, "tuya_cloud": {"enabled": True, "access_id": "id1", "access_key": "key1"}}
+        config = build_config_dict(form)
+        assert config["tuya"]["cloud"]["api_region"] == "eu"
+
     def test_result_is_yaml_serializable(self):
         """Krytyczne - jeśli to się nie da zserializować, zapis configu
         wywali się w runtime, więc test to wyłapuje na sucho."""
@@ -554,6 +573,34 @@ class TestConnectionsBuilder:
         assert patched["tuya"]["cloud"]["access_id"] == "id1"
         assert patched["tuya"]["cloud"]["access_key"] == "secret1"
 
+    def test_tuya_cloud_save_preserves_api_region_set_elsewhere(self):
+        """Regresja: ta funkcja przepisuje CAŁY słownik tuya.cloud od zera -
+        zakładka Połączenia (config.html) nie edytuje w ogóle regionu (to
+        robi osobna strona /plugins/tuya_cloud), więc każdy zapis TUTAJ bez
+        zachowania już ustawionego api_region kasowałby go, psując
+        sterowanie chmurowe (Tuya OpenAPI "cross-region access is not
+        allowed") przy następnym połączeniu, mimo że region był poprawnie
+        skonfigurowany gdzie indziej."""
+        existing = {**self.EXISTING, "tuya": {**self.EXISTING["tuya"], "cloud": {
+            "access_id": "id1", "access_key": "secret1", "api_region": "us",
+            "api_endpoint": "https://openapi.tuyaus.com", "mq_endpoint": "wss://mqe.tuyaus.com:8285/",
+            "camera_device_ids": ["cam1"],
+        }}}
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya_cloud": {"enabled": True, "access_id": "id1", "access_key": ""},
+        }
+        patched = build_connections_patch(form, existing)
+        assert patched["tuya"]["cloud"]["api_region"] == "us"
+
+    def test_tuya_cloud_new_config_without_region_defaults_to_eu(self):
+        form = {
+            "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya_cloud": {"enabled": True, "access_id": "id1", "access_key": "secret1"},
+        }
+        patched = build_connections_patch(form, self.EXISTING)
+        assert patched["tuya"]["cloud"]["api_region"] == "eu"
+
     def test_tuya_cloud_blank_secret_keeps_existing(self):
         existing = {**self.EXISTING, "tuya": {**self.EXISTING["tuya"], "cloud": {
             "access_id": "id1", "access_key": "old_secret", "api_endpoint": "https://openapi.tuyaeu.com",
@@ -751,6 +798,18 @@ class TestConnectionsToForm:
         form = connections_to_form(existing)
         assert form["satel"]["integration_key_set"] is False
         assert form["tuya_cloud"]["enabled"] is False
+
+    def test_exposes_tuya_cloud_api_region(self):
+        """Regresja: api_region (używany przez TuyaCloudController do
+        łączenia się z właściwym centrum danych Tuya) nie był tu wcale
+        eksponowany, mimo że api_endpoint/mq_endpoint (używane tylko do
+        detekcji kamer) już były."""
+        existing = {
+            "satel": {"host": "1.2.3.4"}, "ebus": {"mqtt_host": "127.0.0.1"},
+            "tuya": {"cloud": {"access_id": "id1", "api_region": "us"}},
+        }
+        form = connections_to_form(existing)
+        assert form["tuya_cloud"]["api_region"] == "us"
 
     def test_exposes_encryption_enabled_flag(self):
         """encryption_enabled NIE jest sekretem (zwykły bool, nie klucz) -

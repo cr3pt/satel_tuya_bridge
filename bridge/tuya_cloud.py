@@ -43,8 +43,15 @@ class TuyaCloudController:
         # _tuyaplatform w bibliotece), więc nie ma powodu tworzyć nowego
         # klienta przy każdej komendzie.
         if self._cloud is None:
+            # Domyślnie "eu" (nie ""), ten sam fallback co reszta configu
+            # (dashboard/setup.py, plugins/tuya_cloud/routes.py) - pusty
+            # region Tuya OpenAPI odrzuca błędem "cross-region access is
+            # not allowed" niezależnie od faktycznego regionu konta, więc
+            # brak tego pola w już zapisanym config.yaml (starsze instalacje
+            # sprzed naprawienia tego bugu w kreatorze) samo się naprawia
+            # po aktualizacji, bez wymuszania ręcznego zapisu w /plugins/tuya_cloud.
             self._cloud = tinytuya.Cloud(
-                apiRegion=self.credentials.get("api_region", ""),
+                apiRegion=self.credentials.get("api_region") or "eu",
                 apiKey=self.credentials.get("access_id", ""),
                 apiSecret=self.credentials.get("access_key", ""),
             )

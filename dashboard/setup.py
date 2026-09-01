@@ -862,6 +862,14 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
             "enabled": existing_cloud.get("enabled", True),
             "access_id": tuya_cloud_form["access_id"].strip(),
             "access_key": (tuya_cloud_form.get("access_key") or "").strip() or existing_cloud.get("access_key", ""),
+            # REGRESJA: ta sekcja przepisuje cały słownik "cloud" od zera -
+            # brak api_region tutaj wcześniej znaczyłby, że KAŻDY zapis
+            # zakładki Połączenia kasowałby region ustawiony osobno w
+            # /plugins/tuya_cloud, psując sterowanie chmurowe (Tuya OpenAPI
+            # "cross-region access is not allowed"). Formularz Połączeń NIE
+            # edytuje regionu (to robi /plugins/tuya_cloud) - więc zawsze
+            # zachowaj już zapisaną wartość.
+            "api_region": (tuya_cloud_form.get("api_region") or "").strip() or existing_cloud.get("api_region", "eu"),
             "api_endpoint": (tuya_cloud_form.get("api_endpoint") or "").strip()
                 or existing_cloud.get("api_endpoint", "https://openapi.tuyaeu.com"),
             "mq_endpoint": (tuya_cloud_form.get("mq_endpoint") or "").strip()
@@ -950,6 +958,7 @@ def connections_to_form(existing: dict) -> dict:
             "enabled": bool(tuya_cloud),
             "access_id": tuya_cloud.get("access_id", ""),
             "access_key_set": bool(tuya_cloud.get("access_key")),
+            "api_region": tuya_cloud.get("api_region", "eu"),
             "api_endpoint": tuya_cloud.get("api_endpoint", "https://openapi.tuyaeu.com"),
             "mq_endpoint": tuya_cloud.get("mq_endpoint", "wss://mqe.tuyaeu.com:8285/"),
         },
@@ -1389,6 +1398,13 @@ def build_config_dict(form: dict) -> dict:
         config["tuya"]["cloud"] = {
             "access_id": form["tuya_cloud"]["access_id"],
             "access_key": form["tuya_cloud"].get("access_key", ""),
+            # Kod regionu (np. "eu"/"us") - REGRESJA: brakowało go tu do tej
+            # pory, więc TuyaCloudController (sterowanie urządzeniami przez
+            # chmurę, patrz bridge/tuya_cloud.py) zawsze dostawał pusty
+            # apiRegion, co Tuya OpenAPI odrzuca błędem "cross-region access
+            # is not allowed" niezależnie od regionu wybranego w kreatorze.
+            # Domyślnie "eu" - ten sam fallback co plugins/tuya_cloud/routes.py.
+            "api_region": form["tuya_cloud"].get("api_region") or "eu",
             # `or` (nie .get(key, default)) celowo - kreator wysyła ""
             # (nie brak klucza) dla regionów, dla których nie zgadujemy
             # nieudokumentowanego adresu Pulsar (patrz setup.html:

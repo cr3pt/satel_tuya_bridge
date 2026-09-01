@@ -1341,8 +1341,16 @@ function collectFormData() {
         enabled: document.getElementById('tuya_cloud_enabled').checked,
         access_id: document.getElementById('tuya_cloud_enabled').checked ? document.getElementById('tuya_access_id').value.trim() : '',
         access_key: document.getElementById('tuya_access_key').value,
+        // Kod regionu (np. "eu"/"us") - UŻYWANY przez TuyaCloudController
+        // (sterowanie urządzeniami przez chmurę, patrz bridge/tuya_cloud.py)
+        // jako apiRegion dla tinytuya.Cloud. Bez tego pola sterowanie
+        // chmurowe łączyłoby się z niewłaściwym centrum danych (błąd Tuya
+        // "cross-region access is not allowed").
+        api_region: region,
         // Wyprowadzone z JEDYNEGO selektora regionu w kreatorze (krok 2) -
         // patrz TUYA_REGION_ENDPOINTS i tuyaCloudRegionWarning() wyżej.
+        // Używane TYLKO do detekcji ruchu z kamer (Pulsar), nie do
+        // sterowania - stąd osobne od api_region wyżej.
         api_endpoint: endpoints.api || '',
         mq_endpoint: endpoints.mq || '',
       };
@@ -1403,6 +1411,7 @@ function populateForm(data) {
   document.getElementById('tuya_cloud_enabled').checked = !!tc.enabled;
   document.getElementById('tuyaCloudContent').classList.toggle('show', !!tc.enabled);
   set('tuya_access_id', tc.access_id); set('tuya_access_key', tc.access_key);
+  if (tc.api_region) set('tuya_cloud_import_region', tc.api_region);
 
   (data.scenes || []).forEach(s => addSceneCard(s));
   (data.motion_rules || []).forEach(r => addMotionRuleCard(r));
