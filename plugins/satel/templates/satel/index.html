@@ -151,8 +151,9 @@
       (uzbrojenie, sterowanie wyjściami) - te polecenia CZEKAJĄ w jednej
       kolejce, bo centrala obsługuje tylko jednego klienta integracji naraz.
       <strong>HTTP (Wejścia IP ETHM-1 Plus)</strong> - osobne połączenie,
-      NIEZALEŻNE od tej kolejki, kosztem osobnego portu i klucza PER
-      WEJŚCIE (z DLOADX) - dostępność zależy od wersji firmware.
+      NIEZALEŻNE od tej kolejki, kosztem osobnego portu i WSPÓLNEGO hasła
+      CAŁEGO modułu do tej funkcji (ustawianego RAZ w DLOADX, NIE per
+      wejście) - dostępność zależy od wersji firmware.
     </div>
     <div class="conn-grid">
       <div class="field">
@@ -166,7 +167,12 @@
         <label>Port HTTP (ETHM-1 Plus)</label>
         <input type="number" id="conn_vi_port" placeholder="8888">
       </div>
+      <div class="field" id="conn_vi_key_field" hidden>
+        <label>Hasło HTTP wejść IP (z DLOADX)</label>
+        <input type="password" id="conn_vi_key" placeholder="(bez zmian)">
+      </div>
     </div>
+    <div class="secret-hint" id="conn_vi_key_hint" hidden></div>
   </div>
 
   <div class="actions-bar">
@@ -196,7 +202,7 @@
     <label for="testVirtualInputName" style="margin: 0;">Wirtualne wejście</label>
     <select id="testVirtualInputName" style="max-width: 220px;"></select>
     <button type="button" class="secondary" id="testHttpBtn">TEST</button>
-    <span class="discover-status" id="testHttpStatus">Wysyła żądanie HTTP dla wybranego, JUŻ SKONFIGUROWANEGO wejścia (z kluczem z DLOADX) - patrz sekcja niżej.</span>
+    <span class="discover-status" id="testHttpStatus">Wysyła żądanie HTTP dla wybranego, JUŻ SKONFIGUROWANEGO wejścia (numer z sekcji niżej), uwierzytelnione wspólnym hasłem z pola "Hasło HTTP wejść IP" wyżej.</span>
   </div>
 </div>
 
@@ -366,6 +372,9 @@ async function loadConnection(auto) {
     document.getElementById('conn_enc_key_clear').checked = false;
     document.getElementById('conn_vi_mode').value = data.virtual_inputs_mode || 'library';
     document.getElementById('conn_vi_port').value = data.virtual_inputs_port || '';
+    document.getElementById('conn_vi_key_hint').textContent = data.virtual_inputs_key_set
+      ? 'Hasło jest już ustawione - zostaw pole puste, żeby go nie zmieniać.'
+      : 'Hasło NIE jest jeszcze ustawione - test/wyzwalanie w trybie HTTP nie zadziała bez niego.';
     savedVirtualInputMode = data.virtual_inputs_mode || 'library';
     syncVirtualInputModeUI();
 
@@ -402,6 +411,7 @@ document.getElementById('saveConnectionBtn').addEventListener('click', async () 
     encryption_key_clear: document.getElementById('conn_enc_key_clear').checked,
     virtual_inputs_mode: document.getElementById('conn_vi_mode').value,
     virtual_inputs_port: document.getElementById('conn_vi_port').value,
+    virtual_inputs_key: document.getElementById('conn_vi_key').value,
   };
   try {
     const resp = await authorizedFetch('/api/plugins/satel/connection', {
@@ -417,6 +427,7 @@ document.getElementById('saveConnectionBtn').addEventListener('click', async () 
       document.getElementById('conn_key').value = '';
       document.getElementById('conn_enc_key').value = '';
       document.getElementById('conn_enc_key_clear').checked = false;
+      document.getElementById('conn_vi_key').value = '';
       savedVirtualInputMode = payload.virtual_inputs_mode;
       syncVirtualInputModeUI();
       showMsg('connectionMsg', true, data.message);
@@ -430,6 +441,8 @@ function syncVirtualInputModeUI() {
   const selectedMode = document.getElementById('conn_vi_mode').value;
   const isHttp = selectedMode === 'http';
   document.getElementById('conn_vi_port_field').hidden = !isHttp;
+  document.getElementById('conn_vi_key_field').hidden = !isHttp;
+  document.getElementById('conn_vi_key_hint').hidden = !isHttp;
   document.getElementById('testLibraryRow').hidden = isHttp;
   document.getElementById('testHttpRow').hidden = !isHttp;
   if (isHttp) loadVirtualInputNamesForTest();
@@ -595,11 +608,10 @@ function collectZoneOrOutputRows(containerId) {
     .filter(r => r.name && r.number);
 }
 
-// Tryb wirtualnych wejść IP - odczytany z sekcji Połączenie wyżej (pole
-// "virtual_inputs_mode"), NIE edytowalny tutaj - wpływa tylko na to, czy
-// pokazać pole klucza per wiersz (tryb "http") w wierszach niżej.
-let currentVirtualInputMode = 'library';
-
+// Wirtualne wejście to nazwa+numer, NIEZALEŻNIE od trybu wyzwalania
+// (satel.virtual_inputs.mode, ustawianego w sekcji 🔌 Połączenie wyżej) -
+// tryb "http" uwierzytelnia się WSPÓLNYM hasłem CAŁEGO modułu (pole "Hasło
+// HTTP wejść IP" tamże), NIE osobnym kluczem per wiersz jak dawniej.
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');
   const row = document.createElement('div');
@@ -607,12 +619,10 @@ function addVirtualInputRow(initial) {
   row.innerHTML = `
     <input type="text" placeholder="nazwa (np. motion_hall_camera)" class="vi-name">
     <input type="number" placeholder="numer wejścia" class="vi-number" style="max-width: 120px;">
-    <input type="text" placeholder="klucz z DLOADX" class="vi-key" ${currentVirtualInputMode === 'http' ? '' : 'hidden'}>
     <button type="button" class="row-remove">✕</button>`;
   if (initial) {
     row.querySelector('.vi-name').value = initial.name ?? '';
     row.querySelector('.vi-number').value = initial.number ?? '';
-    row.querySelector('.vi-key').value = initial.key ?? '';
   }
   row.querySelector('.row-remove').addEventListener('click', () => row.remove());
   container.appendChild(row);
@@ -623,13 +633,11 @@ function collectVirtualInputs() {
   return Array.from(document.querySelectorAll('#virtualInputsRows .repeatable-row')).map(row => ({
     name: row.querySelector('.vi-name').value.trim(),
     number: row.querySelector('.vi-number').value,
-    key: row.querySelector('.vi-key').value.trim(),
-  })).filter(v => v.name || v.number || v.key);
+  })).filter(v => v.name || v.number);
 }
 
 async function loadSatelFields() {
   const data = await (await fetch('/api/plugins/satel/fields')).json();
-  currentVirtualInputMode = data.virtual_inputs_mode || 'library';
   (data.partitions || []).forEach(p => addNameNumberRow('partitionsRows', p));
   (data.monitored_zones || []).forEach(z => addZoneOrOutputRow('zonesRows', z, SATEL_ZONE_TYPES));
   (data.monitored_outputs || []).forEach(o => addZoneOrOutputRow('outputsRows', o, SATEL_OUTPUT_TYPES));

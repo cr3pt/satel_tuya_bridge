@@ -59,14 +59,11 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
 
-        # Autorytatywny tryb z JUŻ ZAPISANEGO config.yaml - patrz analogiczny
-        # komentarz w dashboard/app.py:api_config_satel_fields_post.
-        vi_mode = get_config_raw().get("satel", {}).get("virtual_inputs", {}).get("mode", "library")
-        errors = validate_satel_fields(form, vi_mode)
+        errors = validate_satel_fields(form)
         if errors:
             return jsonify({"error": "Popraw błędy:", "details": errors}), 400
 
-        satel_fields_dict = build_satel_fields_dict(form, vi_mode)
+        satel_fields_dict = build_satel_fields_dict(form)
         get_config_store().set("satel_fields", satel_fields_dict)
 
         reload_bridge_config()

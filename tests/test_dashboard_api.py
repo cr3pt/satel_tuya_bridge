@@ -20,10 +20,9 @@ satel:
   virtual_inputs:
     port: 8888
     url_template: "http://{{host}}:{{port}}/x"
+    key: "wspolny_klucz_http"
     inputs:
-      motion_hall:
-        number: 1
-        key: "k"
+      motion_hall: 1
 tuya:
   devices:
     gniazdko:
@@ -401,6 +400,45 @@ class TestSatelTestOutputEndpoint:
         )
         assert resp.status_code == 400
         assert "wyjścia" not in resp.get_json()["error"]
+
+    def test_http_mode_uses_shared_key_not_per_input_key(self, client, monkeypatch):
+        """Zgłoszony błąd projektowy: hasło HTTP wejść IP jest WSPÓLNE dla
+        całego modułu ETHM (satel.virtual_inputs.key, ustawiane RAZ w
+        DLOADX), NIE osobne per wejście - patrz obszerny docstring
+        bridge/satel_client.py. CONFIG_TEMPLATE ma "motion_hall" jako sam
+        numer (bez własnego klucza) i wspólny virtual_inputs.key - TEST
+        musi zadziałać, używając TEGO klucza."""
+        import dashboard.app as app_module
+        current = app_module.config_store.get("config")
+        current["satel"]["virtual_inputs"]["mode"] = "http"
+        app_module.config_store.set("config", current)
+
+        captured = {}
+
+        async def fake_test_http(host, port, url_template, key, number, **_kwargs):
+            captured["key"] = key
+
+        monkeypatch.setattr("dashboard.app.test_satel_virtual_input_http", fake_test_http)
+        resp = client.post(
+            "/api/satel/test-output", json={"name": "motion_hall", "state": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert captured["key"] == "wspolny_klucz_http"
+
+    def test_http_mode_without_shared_key_gives_clear_error(self, client):
+        import dashboard.app as app_module
+        current = app_module.config_store.get("config")
+        current["satel"]["virtual_inputs"]["mode"] = "http"
+        current["satel"]["virtual_inputs"]["key"] = ""
+        app_module.config_store.set("config", current)
+
+        resp = client.post(
+            "/api/satel/test-output", json={"name": "motion_hall", "state": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+        assert "hasł" in resp.get_json()["error"].lower()
 
 
 class TestSystemLogsLoggersEndpoint:

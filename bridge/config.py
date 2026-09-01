@@ -92,8 +92,11 @@ class BridgeConfig:
         # patrz obszerny docstring bridge/satel_client.py):
         # "library" (domyślny) - zwykłe wyjście Satela, set_output(), nazwa ->
         #   numer (int). "http" - funkcja "Wejścia IP" ETHM-1 Plus, osobne
-        #   połączenie HTTP z portem/kluczem PER WEJŚCIE, nazwa ->
-        #   {number, key}. "port"/"url_template" mają wartości domyślne
+        #   połączenie HTTP - nazwa -> numer (int, TEN SAM kształt co w
+        #   trybie "library"). "key" to WSPÓLNE hasło CAŁEGO modułu ETHM do
+        #   tej funkcji (ustawiane RAZ w DLOADX, NIE per wejście - wcześniejsza
+        #   wersja błędnie wymagała osobnego klucza per wejście, zgłoszony
+        #   błąd). "port"/"url_template"/"key" mają wartości domyślne
         #   (potrzebne tylko w trybie "http") - inaczej config bez jawnie
         #   zapisanej sekcji zostawiłby je nieobecne, co wywala silnik reguł
         #   (RulesEngine.__init__ zawsze tworzy SatelVirtualInputTrigger)
@@ -101,6 +104,7 @@ class BridgeConfig:
         data["satel"].setdefault("virtual_inputs", {})
         data["satel"]["virtual_inputs"].setdefault("mode", "library")
         data["satel"]["virtual_inputs"].setdefault("port", 8888)
+        data["satel"]["virtual_inputs"].setdefault("key", "")
         data["satel"]["virtual_inputs"].setdefault(
             "url_template", "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
         )

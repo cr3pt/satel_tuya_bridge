@@ -59,7 +59,11 @@ automatyzacji, np. z Tuya) ma DWA niezależne sposoby wyzwolenia
 
 2. "http" (`SatelVirtualInputTrigger` niżej) - funkcja "Wejścia IP"
    modułu ETHM-1 Plus: osobne żądanie HTTP GET na skonfigurowany w
-   DLOADX port, z kluczem PER WEJŚCIE. WAŻNE, dlaczego to osobny tryb:
+   DLOADX port, z WSPÓLNYM hasłem CAŁEGO modułu (satel.virtual_inputs.key)
+   - to hasło ustawia się RAZ dla całej funkcji "Wejścia IP" w DLOADX, NIE
+   per wejście (wcześniejsza wersja tego modułu błędnie wymagała osobnego
+   klucza per wejście - zgłoszony błąd, poprawiony). WAŻNE, dlaczego to
+   osobny tryb:
    centrala Satel Integra obsługuje TYLKO JEDNEGO klienta protokołu
    integracji naraz (port 7094) i kolejkuje na nim wszystkie polecenia
    zapisu - w trybie "library" wyzwolenie wirtualnego wejścia w trakcie
@@ -328,18 +332,21 @@ class SatelVirtualInputTrigger:
         self.host = host
         self.port = cfg.get("port", DEFAULT_VIRTUAL_INPUT_HTTP_PORT)
         self.url_template = cfg.get("url_template", DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE)
-        self.inputs = cfg.get("inputs", {})  # nazwa -> {number, key}
+        # WSPÓLNE hasło CAŁEGO modułu ETHM do funkcji "Wejścia IP" (z DLOADX)
+        # - NIE per wejście, patrz docstring modułu wyżej.
+        self.key = cfg.get("key", "")
+        self.inputs = cfg.get("inputs", {})  # nazwa -> numer wejścia (int)
 
     async def trigger(self, input_name: str, retries: int = 1) -> None:
         if input_name not in self.inputs:
             logger.error("Nieznane wirtualne wejście IP (tryb http): %s", input_name)
             return
-        entry = self.inputs[input_name]
+        input_number = self.inputs[input_name]
         url = self.url_template.format(
             host=self.host,
             port=self.port,
-            key=entry["key"],
-            input_no=entry["number"],
+            key=self.key,
+            input_no=input_number,
         )
         for attempt in range(retries + 1):
             try:
@@ -351,7 +358,7 @@ class SatelVirtualInputTrigger:
                         await resp.read()
                 logger.info(
                     "Wysłano naruszenie wirtualnego wejścia '%s' (nr %s, tryb http)",
-                    input_name, entry["number"],
+                    input_name, input_number,
                 )
                 return
             except asyncio.TimeoutError:
