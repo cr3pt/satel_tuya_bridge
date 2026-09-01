@@ -95,9 +95,12 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
             timeout_seconds = min(float(payload.get("timeout_seconds") or 30), 120)
         except (TypeError, ValueError):
             timeout_seconds = 30.0
+        encryption_key = payload.get("encryption_key") or satel_cfg.get("encryption_key") or None
 
         try:
-            result = asyncio.run(discover_active_zones_and_outputs(host, port, timeout_seconds=timeout_seconds))
+            result = asyncio.run(discover_active_zones_and_outputs(
+                host, port, timeout_seconds=timeout_seconds, encryption_key=encryption_key,
+            ))
         except ImportError:
             return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
         except ConnectionError as exc:

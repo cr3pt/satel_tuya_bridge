@@ -383,9 +383,15 @@ def api_setup_test_satel_connection():
         port = int(payload.get("port") or 7094)
     except (TypeError, ValueError):
         return jsonify({"error": "Nieprawidłowy port"}), 400
+    # Opcjonalny klucz szyfrowania transmisji (AES, patrz obszerny
+    # docstring bridge/satel_client.py) - podany WPROST w formularzu
+    # kreatora (PRZED zapisem configu, stąd nie ma go jeszcze skąd wziąć z
+    # zapisanej konfiguracji). Test i tak jest publiczny (host/port też
+    # przychodzą wprost w ciele żądania), więc to nie zwiększa ryzyka.
+    encryption_key = (payload.get("encryption_key") or "").strip() or None
 
     try:
-        asyncio.run(test_satel_connection(host, port))
+        asyncio.run(test_satel_connection(host, port, encryption_key=encryption_key))
     except ImportError:
         return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
     except ConnectionError as exc:
@@ -457,7 +463,10 @@ def api_satel_test_output():
         return jsonify({"error": "Numer wyjścia musi być w zakresie 1-256"}), 400
 
     try:
-        asyncio.run(test_satel_output(host, int(port), integration_key, output_number, state))
+        asyncio.run(test_satel_output(
+            host, int(port), integration_key, output_number, state,
+            encryption_key=satel_cfg.get("encryption_key"),
+        ))
     except ImportError:
         return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
     except (ConnectionError, RuntimeError) as exc:
@@ -501,9 +510,12 @@ def api_discover_satel():
         timeout_seconds = min(float(payload.get("timeout_seconds") or 30), 120)
     except (TypeError, ValueError):
         timeout_seconds = 30.0
+    encryption_key = (payload.get("encryption_key") or satel_cfg.get("encryption_key") or None)
 
     try:
-        result = asyncio.run(discover_active_zones_and_outputs(host, port, timeout_seconds=timeout_seconds))
+        result = asyncio.run(discover_active_zones_and_outputs(
+            host, port, timeout_seconds=timeout_seconds, encryption_key=encryption_key,
+        ))
     except ImportError:
         return jsonify({"error": "Biblioteka satel_integra nie jest zainstalowana na serwerze"}), 500
     except ConnectionError as exc:

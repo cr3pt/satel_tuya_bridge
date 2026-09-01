@@ -44,18 +44,18 @@ class MqttBoilerPublisher:
             "mqtt_publish", history=history, notify_cfg=notify_cfg,
             grace_seconds=grace_seconds, loop=asyncio.get_event_loop(),
         )
-        self._client = mqtt.Client()
+        self._client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.reconnect_delay_set(min_delay=1, max_delay=120)
         self._client.connect_async(mqtt_cfg["host"], mqtt_cfg.get("port", 1883))
         self._client.loop_start()
 
-    def _on_connect(self, client, userdata, flags, rc) -> None:
-        self._health.report(rc == 0, f"kod {rc}" if rc != 0 else "")
+    def _on_connect(self, client, userdata, connect_flags, reason_code, properties) -> None:
+        self._health.report(reason_code == 0, f"kod {reason_code}" if reason_code != 0 else "")
 
-    def _on_disconnect(self, client, userdata, rc) -> None:
-        self._health.report(False, f"kod {rc}" if rc != 0 else "")
+    def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
+        self._health.report(False, f"kod {reason_code}" if reason_code != 0 else "")
 
     def publish(self, name: str, value) -> None:
         topic = f"{self.topic_prefix}/{name}"

@@ -771,7 +771,7 @@ class TestSetupRedirect:
         przekierowania na /setup (patrz _SETUP_EXEMPT_ENDPOINTS)."""
         client, _ = setup_client
 
-        async def fake_test_connection(host, port):
+        async def fake_test_connection(host, port, **_kwargs):
             return None
 
         monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)

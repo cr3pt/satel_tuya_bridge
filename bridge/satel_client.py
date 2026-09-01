@@ -1,9 +1,50 @@
 """Integracja z centralą Satel Integra przez moduł ETHM-1 Plus.
 
-Główny kanał: protokół integracji Satela (biblioteka `satel_integra`, ta
-sama używana przez Home Assistant, port zwykle 7094). Pozwala ODCZYTYWAĆ
-stan wejść/wyjść/stref oraz STEROWAĆ wyjściami i (roz)uzbrajaniem,
-uwierzytelniony jednym `integration_key` (hasło DLOADX/GUARDX).
+Biblioteka: `satel_integra` >=1.4.0 (wymaga Python >=3.12 - patrz
+Dockerfile/requirements.txt). Wcześniejsza wersja tego modułu była pisana
+pod STARE, prywatne API 0.3.x (AsyncSatel(host, port, loop, ...),
+monitor_status()/keep_alive() blokujące w pętli, `_command_status_event`/
+`_command_status` do ręcznego czekania na potwierdzenie komendy,
+`_writer`/`_reader` do zamykania połączenia) - satel_integra 1.0.0 to
+KOMPLETNIE PRZEPISANE API (patrz CHANGELOG biblioteki:
+github.com/c-soft/satel_integra/blob/master/CHANGELOG.md), z realnymi
+usprawnieniami, które ten moduł teraz wykorzystuje:
+
+- `register_callbacks(...)` + `await start(enable_monitoring=True)`
+  zamiast blokującego `monitor_status(...)` - `start()` sam uruchamia i
+  utrzymuje odczyt/keepalive/reconnect w tle (PUBLICZNE metody, nie
+  prywatne atrybuty jak wcześniej).
+- Wbudowany keep-alive (co 15s) i automatyczny reconnect z rozpoznawaniem
+  "centrala zajęta" (`SatelPanelBusyError`, rzucany wprost przy connect())
+  - usuwa potrzebę własnego watchdoga "sprawdzaj `connected` z zewnątrz co
+    5s", który wcześniej odróżniał to od zwykłej awarii sieci heurystyką.
+- Kolejka komend zapisu (`SatelMessageQueue`) - komendy przetwarzane są
+  sekwencyjnie i CZEKAJĄ na odpowiedź, jeśli się o to poprosi
+  (`_send_data_and_wait`) - PUBLICZNE metody komend (arm/disarm/
+  set_output/clear_alarm) nadal idą fire-and-forget (`_send_data`), więc
+  do potwierdzania komend nadal sięgamy do tej samej, technicznie
+  prywatnej metody `_send_data_and_wait` (patrz `_wait_for_command_result`
+  niżej) - ale kolejka i tak eliminuje ryzyko pomylenia odpowiedzi między
+  RÓWNOCZESNYMI komendami, które musieliśmy wcześniej akceptować jako
+  ryzyko przy `_command_status_event` współdzielonym na całym połączeniu.
+- Szyfrowana transmisja (AES) - patrz `SatelIntegraClient.encryption_key`
+  niżej, opcjonalne, wyłączone domyślnie (cleartext, jak dotychczas).
+
+WAŻNE rozróżnienie dwóch RÓŻNYCH kluczy (łatwe do pomylenia, bo biblioteka
+nazwała swój parametr konstruktora `integration_key`, tak samo jak nasze
+dawne pole configu):
+- `code`/`self.integration_key` w tym module - kod użytkownika ustawiony w
+  DLOADX/GUARDX (numeryczny PIN), wysyłany PER KOMENDA zapisu (arm/
+  disarm/set_output/clear_alarm) - to jest AUTORYZACJA komendy, dokładnie
+  to samo pole `satel.integration_key` co zawsze w configu tego projektu.
+- `AsyncSatel(..., integration_key=...)` w SAMEJ bibliotece - to KLUCZ
+  SZYFROWANIA transmisji TCP (AES), ustawiany w DLOADX osobno, TYLKO jeśli
+  centrala ma włączone szyfrowanie komunikacji integracji. NIEZWIĄZANY z
+  kodem użytkownika. W tym module odpowiada mu OSOBNE pole
+  `satel.encryption_key` (domyślnie brak = transmisja czystym tekstem,
+  jak dotychczas) - podanie tu przez pomyłkę kodu użytkownika zamiast
+  prawdziwego klucza szyfrowania ZERWIE połączenie (centrala bez włączonego
+  szyfrowania nie rozumie zaszyfrowanych ramek).
 
 "Wirtualne wejście IP" (nazwa w panelu na wywoływanie naruszenia z
 automatyzacji, np. z Tuya) ma DWA niezależne sposoby wyzwolenia
@@ -20,17 +61,16 @@ automatyzacji, np. z Tuya) ma DWA niezależne sposoby wyzwolenia
    modułu ETHM-1 Plus: osobne żądanie HTTP GET na skonfigurowany w
    DLOADX port, z kluczem PER WEJŚCIE. WAŻNE, dlaczego to osobny tryb:
    centrala Satel Integra obsługuje TYLKO JEDNEGO klienta protokołu
-   integracji naraz (port 7094) i serializuje na nim wszystkie polecenia
-   zapisu (patrz _command_poll_loop w bridge/rules_engine.py) - w trybie
-   "library" wyzwolenie wirtualnego wejścia w trakcie naruszenia CZEKA w
-   tej samej kolejce co inne polecenia (uzbrojenie, sterowanie innymi
-   wyjściami). Tryb "http" idzie przez OSOBNE połączenie, niezależne od
-   tej kolejki - kosztem osobnego klucza per wejście i portu HTTP modułu
-   ETHM-1 Plus (dostępność samej funkcji zależy od wersji firmware).
-   Moduł NIE zwraca standardowego kodu HTTP 200 dla tych zapytań
-   (potwierdzone przez Satela - nie planują tego poprawiać) - klient
-   poniżej celowo ignoruje kod odpowiedzi i traktuje sam brak wyjątku
-   sieciowego jako sukces."""
+   integracji naraz (port 7094) i kolejkuje na nim wszystkie polecenia
+   zapisu - w trybie "library" wyzwolenie wirtualnego wejścia w trakcie
+   naruszenia CZEKA w tej samej kolejce co inne polecenia (uzbrojenie,
+   sterowanie innymi wyjściami). Tryb "http" idzie przez OSOBNE
+   połączenie, niezależne od tej kolejki - kosztem osobnego klucza per
+   wejście i portu HTTP modułu ETHM-1 Plus (dostępność samej funkcji
+   zależy od wersji firmware). Moduł NIE zwraca standardowego kodu HTTP
+   200 dla tych zapytań (potwierdzone przez Satela - nie planują tego
+   poprawiać) - klient poniżej celowo ignoruje kod odpowiedzi i traktuje
+   sam brak wyjątku sieciowego jako sukces."""
 from __future__ import annotations
 
 import asyncio
@@ -46,43 +86,121 @@ logger = logging.getLogger("bridge.satel")
 DEFAULT_VIRTUAL_INPUT_HTTP_PORT = 8888
 DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE = "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
 
+# Kody błędu ramki odpowiedzi na komendę zapisu (RESULT, 0xEF) traktowane
+# jako sukces - 0x00 to oczywiste "OK", 0xFF wygląda myląco (protokół
+# Satela normalnie rezerwuje go na "inny błąd"), ALE zarówno satel_integra
+# 0.3.x jak i 1.x (`_command_result()` w obu wersjach biblioteki) od
+# zawsze traktują OBIE te wartości jako potwierdzenie - zachowujemy tę
+# samą, sprawdzoną na prawdziwych centralach interpretację.
+_RESULT_OK_CODES = (0x00, 0xFF)
+_RESULT_ERROR_NAMES = {0x01: "nieznany kod użytkownika"}
 
-async def test_connection(host: str, port: int, timeout_seconds: float = 5.0) -> None:
-    """Sprawdza, czy pod podanym adresem/portem w ogóle coś odpowiada po TCP
+
+def _describe_result_error(error_byte: int | None) -> str:
+    if error_byte is None:
+        return "brak danych w odpowiedzi"
+    return _RESULT_ERROR_NAMES.get(error_byte, f"kod błędu 0x{error_byte:02X}")
+
+
+async def _wait_for_command_result(client, action: str, msg, timeout: float = 5.0) -> None:
+    """Wysyła komendę zapisu (SatelWriteMessage - arm/disarm/set_output/
+    clear_alarm) przez wewnętrzną kolejkę biblioteki i CZEKA na odpowiedź
+    (ramka RESULT), zamiast - jak PUBLICZNE metody komend w bibliotece
+    (`arm()`/`disarm()`/`set_output()`/`clear_alarm()`) - uznawać samo
+    dodanie do kolejki za sukces (patrz obszerny docstring modułu: te
+    metody ZAWSZE idą przez `_send_data`, fire-and-forget). BEZ TEGO:
+    błędny kod użytkownika (satel.integration_key) albo odrzucenie
+    komendy przez centralę kończyło się CISZĄ porażką - w logach/panelu
+    komenda wyglądała na wykonaną, a fizycznie nic się nie działo
+    (zgłoszone z prawdziwej instalacji: "nie uzbraja stref, ale poprawnie
+    wyświetla ich stan" - to drugie działa, bo odczyt stanu w ogóle nie
+    przechodzi przez potwierdzanie).
+
+    UWAGA: `client._send_data_and_wait` jest technicznie prywatną metodą
+    biblioteki (podobnie jak `_command_status_event`/`_command_status` w
+    poprzedniej wersji 0.3.x, na którą był napisany poprzedni wariant tej
+    funkcji) - biblioteka NIE udostępnia PUBLICZNEGO sposobu potwierdzania
+    komend zapisu. To cienki wrapper na `client._queue.add_message(msg,
+    True)` (satel_integra/queue.py) - jeśli po aktualizacji pakietu
+    przestanie działać, sprawdź aktualne API tam."""
+    try:
+        result = await asyncio.wait_for(client._send_data_and_wait(msg), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise ConnectionError(
+            f"Centrala nie potwierdziła komendy ({action}) w ciągu {timeout:.0f}s - "
+            f"sprawdź połączenie z centralą"
+        )
+    if result is None:
+        # add_message() sama zwraca None też przy WEWNĘTRZNYM timeout/
+        # anulowaniu (patrz satel_integra/queue.py: MESSAGE_RESPONSE_TIMEOUT
+        # = 5s) - w normalnych warunkach nasz zewnętrzny timeout wyżej
+        # zdąży się wyzwolić pierwszy, ale traktujemy to tak samo na
+        # wszelki wypadek (np. gdyby ktoś skrócił `timeout` poniżej 5s).
+        raise ConnectionError(f"Centrala nie potwierdziła komendy ({action}) - brak odpowiedzi")
+    error_byte = result.msg_data[0] if result.msg_data else None
+    if error_byte not in _RESULT_OK_CODES:
+        raise RuntimeError(f"Centrala odrzuciła komendę ({action}): {_describe_result_error(error_byte)}")
+
+
+async def test_connection(host: str, port: int, timeout_seconds: float = 5.0,
+                           encryption_key: str | None = None) -> None:
+    """Sprawdza, czy centrala pod podanym adresem/portem w ogóle odpowiada
     (do kroku "Testuj połączenie" w kreatorze/panelu, ZANIM zapiszemy
     config.yaml) - nie zgłasza wyjątku przy sukcesie, rzuca ConnectionError
     z czytelnym komunikatem przy niepowodzeniu.
 
-    UCZCIWIE: to test SAMEJ OSIĄGALNOŚCI hosta/portu, NIE klucza integracji.
-    `AsyncSatel.connect()` tylko otwiera gniazdo TCP - klucz jest wysyłany
-    dopiero przy konkretnych poleceniach (set_output/arm/disarm), których
-    test świadomie nie wykonuje (nie chcemy niczego zmieniać w systemie
-    alarmowym w ramach "testu"). Błędny klucz integracji ujawni się dopiero
-    przy pierwszej próbie uzbrojenia/rozbrojenia/sterowania wyjściem."""
-    # Import odroczony - jak w SatelIntegraClient.connect() (patrz niżej) -
-    # żeby moduł dało się zaimportować nawet bez zainstalowanej biblioteki.
-    from satel_integra.satel_integra import AsyncSatel  # type: ignore
+    satel_integra >=1.0.0 sam wykonuje pełną weryfikację połączenia przy
+    connect() (sprawdza, czy centrala nie jest już zajęta przez inny
+    klient integracji, i odpowiada na sondę protokołu) - dokładniejszy
+    test niż poprzednia wersja (0.3.x, samo otwarcie gniazda TCP), WCIĄŻ
+    bez wysyłania kodu użytkownika (`satel.integration_key`, patrz
+    docstring modułu) - sonda protokołu to zapytanie tylko do odczytu
+    (RTC_AND_STATUS), nieautoryzowane. Błędny kod użytkownika ujawni się
+    dopiero przy pierwszej próbie uzbrojenia/rozbrojenia/sterowania
+    wyjściem.
 
-    client = AsyncSatel(host, port, asyncio.get_event_loop())
+    `encryption_key` - opcjonalny klucz szyfrowania transmisji (patrz
+    obszerny docstring modułu - to NIE jest kod użytkownika), tylko jeśli
+    centrala ma włączone szyfrowanie komunikacji integracji."""
+    from satel_integra import AsyncSatel  # type: ignore
+    from satel_integra.exceptions import (  # type: ignore
+        SatelConnectFailedError, SatelConnectionInitializationError, SatelPanelBusyError,
+    )
+
+    client = AsyncSatel(host, port, integration_key=encryption_key)
     try:
-        connected = await asyncio.wait_for(client.connect(), timeout=timeout_seconds)
+        await asyncio.wait_for(client.connect(raise_exceptions=True), timeout=timeout_seconds)
     except asyncio.TimeoutError:
         raise ConnectionError(
             f"Przekroczono czas oczekiwania ({timeout_seconds:.0f}s) na połączenie z {host}:{port}"
         )
+    except SatelPanelBusyError:
+        raise ConnectionError(
+            f"Centrala {host}:{port} zajęta - inny klient integracji (DLOADX/GUARDX albo "
+            "druga instancja bridge'a) jest już podłączony. Centrala Satel Integra obsługuje "
+            "TYLKO JEDNEGO klienta integracji naraz."
+        )
+    except (SatelConnectFailedError, SatelConnectionInitializationError) as exc:
+        raise ConnectionError(
+            f"Nie udało się połączyć z {host}:{port} - sprawdź adres IP i port "
+            f"(jeśli centrala ma włączone szyfrowanie, sprawdź też klucz szyfrowania): {exc}"
+        )
     finally:
-        if client._writer is not None:
-            client._writer.close()
+        try:
+            await client.close()
+        except Exception:
+            pass
 
-    if not connected:
-        raise ConnectionError(f"Nie udało się połączyć z {host}:{port} - sprawdź adres IP i port")
 
-
-async def discover_active_zones_and_outputs(host: str, port: int, timeout_seconds: float = 60.0) -> dict:
+async def discover_active_zones_and_outputs(host: str, port: int, timeout_seconds: float = 60.0,
+                                             encryption_key: str | None = None) -> dict:
     """Best-effort 'wykrywanie' stref (wejść) i wyjść Satela, do kroku 1
-    kreatora/panelu - PO PODANIU SAMEGO adresu IP/portu (klucz integracji
+    kreatora/panelu - PO PODANIU SAMEGO adresu IP/portu (kod użytkownika
     NIE jest potrzebny, tak jak w test_connection() wyżej - monitorowanie
-    statusu jest częścią protokołu integracji dostępną bez niego).
+    statusu jest częścią protokołu integracji dostępną bez niego; klucz
+    szyfrowania JEST potrzebny, jeśli centrala ma je włączone, bo bez
+    niego transmisja w ogóle się nie odszyfruje - stąd `encryption_key`
+    niżej).
 
     UCZCIWIE, zanim to użyjesz: protokół integracji Satela NIE udostępnia
     listy WSZYSTKICH skonfigurowanych stref/wyjść wraz z nazwami - to
@@ -100,10 +218,17 @@ async def discover_active_zones_and_outputs(host: str, port: int, timeout_second
     to jest świadome ograniczenie tej funkcji, nie błąd.
 
     Zwraca {"zones": [numery...], "outputs": [numery...]} posortowane
-    rosnąco. Rzuca ConnectionError przy niepowodzeniu połączenia."""
-    from satel_integra.satel_integra import AsyncSatel  # type: ignore
+    rosnąco. Rzuca ConnectionError przy niepowodzeniu połączenia (w tym
+    gdy centrala jest już zajęta - satel_integra >=1.0.0 rozpoznaje to
+    JEDNOZNACZNIE i natychmiast przy connect(), patrz SatelPanelBusyError
+    niżej - poprzednia wersja 0.3.x nie miała takiego wyjątku, więc trzeba
+    było zgadywać po serii rozłączeń podczas nasłuchu)."""
+    from satel_integra import AsyncSatel  # type: ignore
+    from satel_integra.exceptions import (  # type: ignore
+        SatelConnectFailedError, SatelConnectionInitializationError, SatelPanelBusyError,
+    )
 
-    client = AsyncSatel(host, port, asyncio.get_event_loop())
+    client = AsyncSatel(host, port, integration_key=encryption_key)
     seen_zones: set[int] = set()
     seen_outputs: set[int] = set()
 
@@ -113,101 +238,91 @@ async def discover_active_zones_and_outputs(host: str, port: int, timeout_second
     def _on_output(_status: dict) -> None:
         seen_outputs.update(client.violated_outputs)
 
+    client.register_callbacks(zone_changed_callback=_on_zone, output_changed_callback=_on_output)
+
     try:
-        connected = await asyncio.wait_for(client.connect(), timeout=5.0)
+        await asyncio.wait_for(client.connect(raise_exceptions=True), timeout=5.0)
     except asyncio.TimeoutError:
         raise ConnectionError(f"Przekroczono czas oczekiwania na połączenie z {host}:{port}")
-    if not connected:
-        raise ConnectionError(f"Nie udało się połączyć z {host}:{port} - sprawdź adres IP i port")
-
-    monitor_task = asyncio.ensure_future(
-        client.monitor_status(zone_changed_callback=_on_zone, output_changed_callback=_on_output)
-    )
-    # Zamiast pojedynczego wait_for() - odpytujemy `client.connected` co 2s
-    # (ten sam trik co watchdog w SatelClient._connect_and_monitor, patrz
-    # tamtejszy obszerny komentarz): centrala Satel Integra obsługuje TYLKO
-    # JEDNEGO klienta integracji naraz (port 7094) - jeśli w tle działa już
-    # bridge (albo DLOADX/GUARDX), NASZE połączenie zostanie przyjęte na
-    # poziomie TCP, ale zerwane zaraz po pierwszej komendzie, a biblioteka
-    # SAMA, WEWNĄTRZ monitor_status(), ponawia je w nieskończoność - funkcja
-    # bez tego zwróciłaby po prostu puste wyniki, nie do odróżnienia od
-    # "nikt fizycznie nie wyzwolił żadnej czujki" (patrz UCZCIWIE w
-    # docstringu). `connected` (właściwość biblioteki: `_writer and
-    # _reader`) wraca do False dokładnie w takim zerwaniu - stąd 2 kolejne
-    # "nie" pozwalają to odróżnić z zewnątrz.
-    busy_suspected = False
-    consecutive_disconnected = 0
-    elapsed = 0.0
-    # Skalowane do timeout_seconds (max 2s, min kilka ticków na całe okno)
-    # - żeby krótkie okna nasłuchu (np. w testach) nie czekały pełne 2s na
-    # pierwszy odczyt `connected`, a mimo to zdążyły złapać 2 kolejne "nie"
-    # potrzebne do wykrycia zajętej centrali (patrz komentarz wyżej).
-    poll_interval = max(0.01, min(2.0, timeout_seconds / 5))
-    try:
-        while elapsed < timeout_seconds:
-            if monitor_task.done():
-                break
-            await asyncio.sleep(poll_interval)
-            elapsed += poll_interval
-            if not getattr(client, "connected", False):
-                consecutive_disconnected += 1
-            else:
-                consecutive_disconnected = 0
-            if consecutive_disconnected >= 2:
-                busy_suspected = True
-    finally:
-        monitor_task.cancel()
-        try:
-            await monitor_task
-        except (asyncio.CancelledError, Exception):
-            pass
-        if client._writer is not None:
-            client._writer.close()
-
-    result = {"zones": sorted(seen_zones), "outputs": sorted(seen_outputs)}
-    if busy_suspected and not seen_zones and not seen_outputs:
-        result["warning"] = (
-            "Nie wykryto żadnej aktywności, a połączenie z centralą zrywało się "
-            "podczas nasłuchu - to zwykle oznacza, że centrala ma już otwarte inne "
-            "połączenie integracji (np. działający bridge, DLOADX/GUARDX). Centrala "
-            "Satel Integra obsługuje TYLKO JEDNEGO klienta integracji naraz. "
-            "Zatrzymaj na chwilę kontener/proces bridge'a (docker compose stop bridge) "
-            "i spróbuj ponownie."
+    except SatelPanelBusyError:
+        raise ConnectionError(
+            f"Centrala {host}:{port} zajęta - inny klient integracji już podłączony. Centrala "
+            "Satel Integra obsługuje TYLKO JEDNEGO klienta integracji naraz. Zatrzymaj na chwilę "
+            "kontener/proces bridge'a (docker compose stop bridge) i spróbuj ponownie."
         )
-    return result
+    except (SatelConnectFailedError, SatelConnectionInitializationError) as exc:
+        raise ConnectionError(f"Nie udało się połączyć z {host}:{port} - sprawdź adres IP i port: {exc}")
 
-
-async def _send_write_command(client, action: str, send_coro, timeout: float = 5.0) -> None:
-    """Wysyła polecenie zapisu (arm/disarm/set_output/clear_alarm) na SUROWYM
-    kliencie biblioteki (`AsyncSatel`) i CZEKA na potwierdzenie z centrali
-    (ramka 0xEF "command result"), zamiast uznawać samo wysłanie bajtów po
-    sieci za sukces - patrz obszerny komentarz w
-    `SatelIntegraClient._send_and_confirm` (poniżej), który jest cienkim
-    wrapperem na tę funkcję dla połączenia długożyjącego. Wydzielone jako
-    osobna funkcja modułowa, żeby ten sam mechanizm potwierdzania dało się
-    użyć też w jednorazowym połączeniu testowym (`test_output()` niżej),
-    bez tworzenia pełnego `SatelIntegraClient` (i jego zadania w tle
-    `_periodic_status_sync`)."""
-    event = client._command_status_event
-    event.clear()
-    await send_coro
     try:
-        await asyncio.wait_for(event.wait(), timeout=timeout)
+        await client.start(enable_monitoring=True)
+        await asyncio.sleep(timeout_seconds)
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
+
+    return {"zones": sorted(seen_zones), "outputs": sorted(seen_outputs)}
+
+
+async def test_output(host: str, port: int, integration_key: str, output_number: int,
+                       state: bool = True, timeout_seconds: float = 5.0,
+                       encryption_key: str | None = None) -> None:
+    """Jednorazowy test wyjścia (m.in. "wirtualnego wejścia IP", które na tej
+    instalacji jest zwykłym wyjściem zaprogramowanym w DLOADX do symulacji
+    naruszenia - patrz docstring modułu) - do przycisku "TEST" obok pola
+    klucza integracji w panelu (⚙ Ustawienia -> Połączenia). Łączy się,
+    wysyła set_output i CZEKA na potwierdzenie z centrali, po czym się
+    rozłącza - nie zostawia żadnego trwałego połączenia/zadania w tle (w
+    odróżnieniu od pełnego `SatelIntegraClient.connect()`, który dodatkowo
+    startuje monitorowanie/keepalive przez `client.start()`). Rzuca
+    ConnectionError/RuntimeError przy niepowodzeniu (brak połączenia /
+    centrala odrzuciła komendę - np. zły kod użytkownika)."""
+    from satel_integra import AsyncSatel  # type: ignore
+    from satel_integra.commands import SatelWriteCommand  # type: ignore
+    from satel_integra.exceptions import (  # type: ignore
+        SatelConnectFailedError, SatelConnectionInitializationError, SatelPanelBusyError,
+    )
+    from satel_integra.messages import SatelWriteMessage  # type: ignore
+
+    client = AsyncSatel(host, port, integration_key=encryption_key)
+    try:
+        await asyncio.wait_for(client.connect(raise_exceptions=True), timeout=timeout_seconds)
     except asyncio.TimeoutError:
         raise ConnectionError(
-            f"Centrala nie potwierdziła komendy ({action}) w ciągu {timeout:.0f}s - "
-            f"sprawdź połączenie z centralą"
+            f"Przekroczono czas oczekiwania ({timeout_seconds:.0f}s) na połączenie z {host}:{port}"
         )
-    result = client._command_status
-    error = result.get("error") if isinstance(result, dict) else None
-    if error not in ("OK", None):
-        raise RuntimeError(f"Centrala odrzuciła komendę ({action}): {error}")
+    except SatelPanelBusyError:
+        raise ConnectionError(
+            f"Centrala {host}:{port} zajęta - inny klient integracji już podłączony."
+        )
+    except (SatelConnectFailedError, SatelConnectionInitializationError) as exc:
+        raise ConnectionError(f"Nie udało się połączyć z {host}:{port} - sprawdź adres IP i port: {exc}")
+
+    try:
+        # Kolejka komend (patrz obszerny docstring modułu) startuje dopiero
+        # wewnątrz start() - bez tego _send_data_and_wait() w
+        # _wait_for_command_result() czekałby w nieskończoność, bo nic nie
+        # przetwarzałoby kolejki. `enable_monitoring=False` - jednorazowy
+        # test nie potrzebuje monitorowania stanu wejść/wyjść.
+        await client.start(enable_monitoring=False)
+        mode_command = SatelWriteCommand.OUTPUTS_ON if state else SatelWriteCommand.OUTPUTS_OFF
+        msg = SatelWriteMessage(mode_command, code=integration_key, zones_or_outputs=[output_number])
+        await _wait_for_command_result(client, f"test wyjścia {output_number} -> {state}", msg,
+                                        timeout=timeout_seconds)
+        logger.info("Test wyjścia %s -> %s zakończony sukcesem", output_number, state)
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
 
 
 class SatelVirtualInputTrigger:
     """Tryb "http" wirtualnych wejść IP (patrz docstring modułu, punkt 2) -
     funkcja "Wejścia IP" ETHM-1 Plus, OSOBNE połączenie HTTP, niezależne od
-    kolejki poleceń protokołu integracji (SatelIntegraClient)."""
+    kolejki poleceń protokołu integracji (SatelIntegraClient). Nie korzysta
+    z biblioteki `satel_integra` w ogóle - czysty aiohttp."""
 
     def __init__(self, host: str, cfg: dict):
         self.host = host
@@ -264,7 +379,7 @@ async def test_virtual_input_http(host: str, port: int, url_template: str, key: 
                                    timeout_seconds: float = 5.0) -> None:
     """Jednorazowy test trybu "http" wirtualnych wejść IP - do przycisku
     "TEST" w panelu, gdy satel.virtual_inputs.mode == "http". W odróżnieniu
-    od test_output() niżej (tryb "library") NIE czeka na żadne
+    od test_output() wyżej (tryb "library") NIE czeka na żadne
     potwierdzenie z centrali - ETHM-1 Plus go nie zwraca (patrz docstring
     modułu) - sam brak wyjątku sieciowego = sukces. Rzuca ConnectionError
     przy niepowodzeniu."""
@@ -279,63 +394,42 @@ async def test_virtual_input_http(host: str, port: int, url_template: str, key: 
         raise ConnectionError(f"Błąd sieci przy wywołaniu wejścia IP: {exc}")
 
 
-async def test_output(host: str, port: int, integration_key: str, output_number: int,
-                       state: bool = True, timeout_seconds: float = 5.0) -> None:
-    """Jednorazowy test wyjścia (m.in. "wirtualnego wejścia IP", które na tej
-    instalacji jest zwykłym wyjściem zaprogramowanym w DLOADX do symulacji
-    naruszenia - patrz docstring modułu) - do przycisku "TEST" obok pola
-    klucza integracji w panelu (⚙ Ustawienia -> Połączenia). Łączy się,
-    wysyła `set_output` i CZEKA na potwierdzenie z centrali (jak
-    `SatelIntegraClient.set_output`), po czym się rozłącza - nie zostawia
-    żadnego trwałego połączenia/zadania w tle (w odróżnieniu od pełnego
-    `SatelIntegraClient.connect()`, patrz tamtejszy komentarz o
-    `_periodic_status_sync`). Rzuca ConnectionError/RuntimeError przy
-    niepowodzeniu (brak połączenia / centrala odrzuciła komendę - np. zły
-    klucz integracji)."""
-    from satel_integra.satel_integra import AsyncSatel  # type: ignore
-
-    client = AsyncSatel(host, port, asyncio.get_event_loop())
-    try:
-        connected = await asyncio.wait_for(client.connect(), timeout=timeout_seconds)
-    except asyncio.TimeoutError:
-        raise ConnectionError(
-            f"Przekroczono czas oczekiwania ({timeout_seconds:.0f}s) na połączenie z {host}:{port}"
-        )
-    if not connected:
-        raise ConnectionError(f"Nie udało się połączyć z {host}:{port} - sprawdź adres IP i port")
-    try:
-        await _send_write_command(
-            client,
-            f"test wyjścia {output_number} -> {state}",
-            client.set_output(integration_key, output_number, state),
-            timeout=timeout_seconds,
-        )
-        logger.info("Test wyjścia %s -> %s zakończony sukcesem", output_number, state)
-    finally:
-        if client._writer is not None:
-            client._writer.close()
-
-
 class SatelIntegraClient:
-    """Cienki wrapper na bibliotekę `satel_integra` (odczyt stanu, sterowanie
-    wyjściami, uzbrajanie/rozbrajanie). Instalacja: pip install satel-integra
+    """Cienki wrapper na bibliotekę `satel_integra` >=1.0.0 (odczyt stanu,
+    sterowanie wyjściami, uzbrajanie/rozbrajanie). Instalacja: pip install
+    satel-integra>=1.4.0 (wymaga Python >=3.12).
 
-    Zweryfikowane wg źródeł biblioteki (github.com/c-soft/satel_integra):
-    - konstruktor: AsyncSatel(host, port, loop, monitored_zones=[], monitored_outputs=[], partitions=[])
-    - atrybuty stanu: `violated_zones` (lista naruszonych wejść), `violated_outputs`
-      (lista aktywnych wyjść), `partition_states` (stan stref)
+    Zweryfikowane wg źródeł biblioteki (github.com/c-soft/satel_integra,
+    tag 1.4.0):
+    - konstruktor: AsyncSatel(host, port, monitored_zones=[],
+      monitored_outputs=[], partitions=[], integration_key=None) - BEZ
+      `loop` (usunięty w 1.0.0). `integration_key` konstruktora to KLUCZ
+      SZYFROWANIA, nie kod użytkownika - patrz obszerny docstring modułu
+      i `self.encryption_key` niżej.
+    - atrybuty stanu: `violated_zones` (lista naruszonych wejść),
+      `violated_outputs` (lista aktywnych wyjść), `partition_states`
+      ({AlarmState: [numery_stref]}) - bez zmian względem 0.3.x.
     - terminologia Satela bywa myląca: to, co biblioteka nazywa "zone", to
       fizyczne WEJŚCIE (czujka) w systemie Integra, a "partition" to STREFA.
     """
 
     def __init__(self, host: str, port: int, integration_key: str, partition: int = 1,
                  monitored_zones: dict | None = None, monitored_outputs: dict | None = None,
-                 virtual_inputs: dict | None = None,
+                 virtual_inputs: dict | None = None, encryption_key: str | None = None,
                  history=None, notify_cfg: dict | None = None, grace_seconds: float = 120,
-                 status_poll_interval_seconds: float = 15.0):
+                 status_poll_interval_seconds: float = 10.0):
         self.host = host
         self.port = port
+        # Kod użytkownika (DLOADX/GUARDX) - wysyłany PER KOMENDA zapisu
+        # (arm/disarm/set_output/clear_alarm), autoryzuje sterowanie. NIE
+        # mylić z encryption_key niżej - patrz obszerny docstring modułu.
         self.integration_key = integration_key
+        # Opcjonalny klucz SZYFROWANIA transmisji TCP (AES) - domyślnie
+        # None = cleartext, jak dotychczas. Ustaw TYLKO jeśli centrala ma
+        # jawnie włączone szyfrowanie komunikacji integracji w DLOADX -
+        # podanie błędnego/niepasującego klucza (albo klucza, gdy centrala
+        # go nie oczekuje) zrywa połączenie, nie "po prostu nie działa".
+        self.encryption_key = encryption_key
         self.partition = partition
         # nazwa -> numer, do etykietowania w panelu (np. {"Hol": 12, "Garaż": 13})
         self.monitored_zones = monitored_zones or {}
@@ -354,155 +448,142 @@ class SatelIntegraClient:
         # celowo, żeby RulesEngine.reload_config() mogło go podmienić NA
         # ŻYWO (pętla w _periodic_status_sync() czyta go na bieżąco przy
         # każdym obrocie), bez restartu procesu - w odróżnieniu od host/
-        # portu/klucza integracji, których zmiana wciąż wymaga restartu
-        # (nowe połączenie TCP).
+        # portu/kluczy, których zmiana wciąż wymaga restartu (nowe
+        # połączenie TCP).
         self.status_poll_interval_seconds = status_poll_interval_seconds
         # Opóźnienie przed PIERWSZYM dopytaniem po (re)połączeniu - osobne
         # od odstępu między kolejnymi, i celowo NIE konfigurowalne z panelu
-        # (to tylko wewnętrzny bufor czasowy, żeby nie kolidować z odczytem
-        # potwierdzenia start_monitoring(), patrz connect() niżej).
+        # (to tylko krótki bufor, żeby monitorowanie zdążyło wystartować -
+        # w odróżnieniu od 0.3.x, kolejka komend biblioteki 1.x i tak
+        # sekwencjonuje poprawnie nawet bez tego, patrz docstring modułu).
         self._initial_status_delay_seconds = 1.0
 
     async def connect(self) -> None:
         # Import odroczony - żeby moduł dało się zaimportować nawet bez
         # zainstalowanej biblioteki, jeśli ktoś używa tylko wirtualnych wejść.
-        from satel_integra.satel_integra import AsyncSatel, AlarmState, generate_query  # type: ignore
+        from satel_integra import AsyncSatel, AlarmState  # type: ignore
+        from satel_integra.exceptions import (  # type: ignore
+            SatelConnectFailedError, SatelConnectionInitializationError, SatelPanelBusyError,
+        )
 
         self._AlarmState = AlarmState
         self._client = AsyncSatel(
             self.host,
             self.port,
-            asyncio.get_event_loop(),
             monitored_zones=list(self.monitored_zones.values()),
             monitored_outputs=list(self.monitored_outputs.values()),
+            integration_key=self.encryption_key,
         )
-        connected = await self._client.connect()
-        if not connected:
-            raise ConnectionError(f"Nie udało się połączyć z Satelem pod {self.host}:{self.port}")
-        # Callbacki trzeba ponownie podpiąć po każdym (re)połączeniu, bo
-        # tworzymy nowy obiekt AsyncSatel - stare przypisania giną razem z nim.
-        if self._zone_cb:
-            self._client._zone_changed_callback = self._zone_cb
-        if self._output_cb:
-            self._client._output_changed_callback = self._output_cb
-        if self._alarm_status_cb:
-            self._client._alarm_status_callback = self._alarm_status_cb
+        # Callbacki rejestrujemy PRZED connect()/start() (jak w oficjalnym
+        # przykładzie migracji biblioteki) - trzeba je podpiąć na nowo po
+        # KAŻDYM (re)połączeniu, bo tworzymy nowy obiekt AsyncSatel - stare
+        # przypisania giną razem z nim. register_callbacks() to PUBLICZNA
+        # metoda biblioteki 1.x (w 0.3.x trzeba było przypisywać prywatne
+        # atrybuty `_zone_changed_callback` itp. bezpośrednio).
+        self._client.register_callbacks(
+            alarm_status_callback=self._alarm_status_cb,
+            zone_changed_callback=self._zone_cb,
+            output_changed_callback=self._output_cb,
+        )
+        try:
+            await self._client.connect(raise_exceptions=True)
+        except SatelPanelBusyError as exc:
+            raise ConnectionError(
+                f"Centrala {self.host}:{self.port} zajęta - najprawdopodobniej inny klient "
+                "integracji (DLOADX/GUARDX albo druga instancja bridge'a) jest już podłączony. "
+                "Centrala Satel Integra obsługuje TYLKO JEDNEGO klienta integracji naraz."
+            ) from exc
+        except (SatelConnectFailedError, SatelConnectionInitializationError) as exc:
+            raise ConnectionError(
+                f"Nie udało się połączyć z Satelem pod {self.host}:{self.port} "
+                f"(jeśli centrala ma włączone szyfrowanie, sprawdź też klucz szyfrowania): {exc}"
+            ) from exc
         logger.info("Połączono z centralą Satel Integra (%s:%s)", self.host, self.port)
 
-        # Biblioteka satel_integra wywołuje zone_changed_callback/
-        # output_changed_callback TYLKO gdy centrala sama wyśle broadcast o
-        # zmianie (funkcje 0x00/0x17) - na spokojnym systemie, gdzie nic się
-        # nie narusza, może to nigdy nie nastąpić, więc panel/MQTT nie
-        # dostają ŻADNEGO stanu aż do pierwszej faktycznej zmiany. GORZEJ:
-        # zgłoszono z prawdziwej centrali, że zmiana stanu WYJŚCIA (0x17) w
-        # ogóle nie dociera jako broadcast (w odróżnieniu od wejść) - część
-        # central/wersji firmware ETHM-1 Plus nie wysyła go spontanicznie,
-        # tylko w odpowiedzi na zapytanie (znane ograniczenie tej samej
-        # biblioteki, używanej też przez integrację Home Assistant). Same
-        # broadcasty więc NIE WYSTARCZAJĄ do rzetelnie "ciągłej"
-        # synchronizacji panelu/MQTT ze stanem centrali.
-        #
-        # Funkcje 0x00 ("zones violation") i 0x17 ("outputs state") to
-        # jednak też zwykłe polecenia ODCZYTU w protokole integracji -
-        # centrala odpowiada tym samym typem wiadomości niezależnie, czy
-        # przyszła jako broadcast, czy jako odpowiedź na nasze zapytanie, a
-        # _zone_violated()/_output_changed() w bibliotece i tak zawsze
-        # wywołują callback z pełnym bieżącym stanem WSZYSTKICH monitorowanych
-        # wejść/wyjść. Dlatego dopytujemy CYKLICZNIE (nie tylko raz po
-        # połączeniu) - patrz _periodic_status_sync() - żeby panel/MQTT
-        # zawsze pokazywały aktualny stan, niezależnie od tego, czy broadcast
-        # od centrali w ogóle nadejdzie.
-        #
-        # UWAGA na kolejność PIERWSZEGO zapytania: wysyłamy je z OPÓŹNIENIEM
-        # (osobne zadanie w tle, nie tutaj synchronicznie) - zaraz po
-        # connect() biblioteka sama wysyła własne polecenie startu nasłuchu
-        # (monitor_status() -> start_monitoring()) i czyta DOKŁADNIE JEDNĄ
-        # odpowiedź na nie. Gdyby nasze zapytania trafiły do kolejki PRZED
-        # tamtym poleceniem, start_monitoring() błędnie potraktowałby naszą
-        # odpowiedź jako potwierdzenie własnego polecenia (i zalogował
-        # mylące "Monitoring not accepted."), a nasza odpowiedź przepadłaby
-        # nieobsłużona. Krótkie opóźnienie daje pewność, że
-        # start_monitoring() (pojedynczy odczyt, ~milisekundy w sieci
-        # lokalnej) zdąży się zakończyć pierwszy.
-        asyncio.ensure_future(self._periodic_status_sync(generate_query))
+        # start() URUCHAMIA i SAMA UTRZYMUJE odczyt/keepalive/reconnect w
+        # tle (patrz obszerny docstring modułu) - w odróżnieniu od 0.3.x,
+        # gdzie run_forever() (niżej) musiało to robić ręcznie (osobne
+        # zadanie keep_alive(), blokujący monitor_status() z własnym
+        # watchdogiem wykrywającym "cichy" wewnętrzny reconnect). Nie
+        # blokuje - wraca od razu po wystartowaniu zadań w tle.
+        await self._client.start(enable_monitoring=True)
+
+        # Biblioteka wywołuje zone_changed_callback/output_changed_callback
+        # TYLKO gdy centrala sama wyśle broadcast o zmianie (funkcje 0x00/
+        # 0x17) - na spokojnym systemie, gdzie nic się nie narusza, może to
+        # nigdy nie nastąpić, więc panel/MQTT nie dostają ŻADNEGO stanu aż
+        # do pierwszej faktycznej zmiany. GORZEJ: zgłoszono z prawdziwej
+        # centrali, że zmiana stanu WYJŚCIA (0x17) w ogóle nie dociera jako
+        # broadcast (w odróżnieniu od wejść) - część central/wersji
+        # firmware ETHM-1 Plus nie wysyła go spontanicznie, tylko w
+        # odpowiedzi na zapytanie. Same broadcasty więc NIE WYSTARCZAJĄ do
+        # rzetelnie "ciągłej" synchronizacji panelu/MQTT ze stanem centrali
+        # - dlatego dopytujemy CYKLICZNIE, patrz _periodic_status_sync().
+        asyncio.ensure_future(self._periodic_status_sync())
         return
 
-    async def _periodic_status_sync(self, generate_query) -> None:
+    async def _periodic_status_sync(self) -> None:
         """Aktywnie dopytuje o stan wejść/wyjść w regularnych odstępach
         (co self.status_poll_interval_seconds - odczytywane NA ŚWIEŻO przy
         każdym obrocie pętli, więc RulesEngine.reload_config() może
         podmienić tę wartość na żywo, bez restartu), NIE tylko raz zaraz po
-        połączeniu - patrz obszerny komentarz w connect() wyżej. Zadanie
-        samo się kończy, gdy to konkretne połączenie (`client`, przechwycone
-        na starcie) zostanie zastąpione nowym w wyniku (re)połączenia -
-        wtedy `self._client is client` przestaje być prawdą, a nowe
-        wywołanie connect() uruchamia już WŁASNE zadanie dla nowego
-        połączenia."""
+        połączeniu - patrz obszerny komentarz w connect() wyżej. Zapytania
+        idą przez tę samą kolejkę komend biblioteki co reszta poleceń
+        (fire-and-forget, `_send_data`) - w odróżnieniu od 0.3.x, kolejka
+        w 1.x sama sekwencjonuje je poprawnie względem innych poleceń w
+        locie (np. start_monitoring() przy połączeniu), więc nie trzeba
+        już ręcznie unikać kolizji odczytu potwierdzeń. Zadanie samo się
+        kończy, gdy to konkretne połączenie (`client`, przechwycone na
+        starcie) zostanie zastąpione nowym w wyniku (re)połączenia - wtedy
+        `self._client is client` przestaje być prawdą, a nowe wywołanie
+        connect() uruchamia już WŁASNE zadanie dla nowego połączenia."""
+        from satel_integra.commands import SatelReadCommand  # type: ignore
+        from satel_integra.messages import SatelWriteMessage  # type: ignore
+
         await asyncio.sleep(self._initial_status_delay_seconds)
         client = self._client
-        while client is not None and client is self._client and not getattr(client, "closed", True):
+        while client is not None and client is self._client and not getattr(client, "stopped", True):
             try:
                 if self.monitored_zones:
-                    await client._send_data(generate_query(b'\x00'))
+                    await client._send_data(SatelWriteMessage(SatelReadCommand.ZONES_VIOLATED))
                 if self.monitored_outputs:
-                    await client._send_data(generate_query(b'\x17'))
+                    await client._send_data(SatelWriteMessage(SatelReadCommand.OUTPUTS_STATE))
             except Exception:
                 logger.exception("Nie udało się dopytać o stan wejść/wyjść Satela")
                 return
             await asyncio.sleep(self.status_poll_interval_seconds)
 
-    async def _send_and_confirm(self, action: str, send_coro, timeout: float = 5.0) -> None:
-        """Wysyła polecenie zapisu (arm/disarm/set_output/clear_alarm) i
-        CZEKA na potwierdzenie z centrali (ramka 0xEF "command result"),
-        zamiast - jak wcześniej - uznawać samo wysłanie bajtów po sieci za
-        sukces. BEZ TEGO: błędny kod użytkownika (satel.integration_key)
-        albo odrzucenie komendy przez centralę kończyło się CISZĄ porażką -
-        w logach/panelu komenda wyglądała na wykonaną, a fizycznie nic się
-        nie działo (zgłoszone: "nie uzbraja stref, ale poprawnie wyświetla
-        ich stan" - to drugie działa, bo odczyt stanu w ogóle nie przechodzi
-        przez to potwierdzenie).
-
-        Biblioteka satel_integra ma gotowe `_command_status_event`/
-        `_command_status`, ustawiane w `_command_result()` po odebraniu
-        0xEF - tylko sama nigdzie na nie nie czeka
-        (`send_and_wait_for_answer()` w satel_integra.py jest ZAKOMENTOWANE
-        w źródle biblioteki). WAŻNE ograniczenie: to pole jest współdzielone
-        na CAŁYM połączeniu, nie per-komenda - protokół Satela nie
-        koreluje odpowiedzi z konkretnym poleceniem, więc dwie komendy
-        zapisu wysłane NAPRAWDĘ równocześnie (np. scena i panel w tej samej
-        chwili) mogłyby pomylić wyniki. Akceptowalne ryzyko - komendy z
-        panelu i tak idą sekwencyjnie przez _command_poll_loop()."""
-        await _send_write_command(self._client, action, send_coro, timeout=timeout)
-
     async def set_output(self, output_number: int, state: bool) -> None:
         if self._client is None:
             raise RuntimeError("Klient Satel nie jest połączony - wywołaj connect() najpierw")
-        await self._send_and_confirm(
-            f"wyjście {output_number} -> {state}",
-            self._client.set_output(self.integration_key, output_number, state),
-        )
+        from satel_integra.commands import SatelWriteCommand  # type: ignore
+        from satel_integra.messages import SatelWriteMessage  # type: ignore
+
+        mode_command = SatelWriteCommand.OUTPUTS_ON if state else SatelWriteCommand.OUTPUTS_OFF
+        msg = SatelWriteMessage(mode_command, code=self.integration_key, zones_or_outputs=[output_number])
+        await _wait_for_command_result(self._client, f"wyjście {output_number} -> {state}", msg)
         logger.info("Ustawiono wyjście %s na %s", output_number, state)
 
     async def arm(self, mode: int = 0, partitions: list[int] | None = None) -> None:
         """Uzbraja jedną lub kilka stref. `partitions` domyślnie = skonfigurowana
         strefa główna (`satel.partition`) - podaj listę, żeby uzbroić kilka
-        naraz, np. [1, 2]. UWAGA: dokładny format argumentu stref w bibliotece
-        satel_integra (lista vs. pojedynczy numer) może się różnić między
-        wersjami pakietu - zweryfikuj przy pierwszym użyciu z realną centralą."""
+        naraz, np. [1, 2]."""
         if self._client is None:
             raise RuntimeError("Klient Satel nie jest połączony")
+        from satel_integra.commands import SatelWriteCommand  # type: ignore
+        from satel_integra.messages import SatelWriteMessage  # type: ignore
+
         partitions = partitions or [self.partition]
-        await self._send_and_confirm(
-            f"uzbrojenie stref {partitions} (tryb {mode})",
-            self._client.arm(self.integration_key, partitions, mode),
-        )
+        mode_command = SatelWriteCommand(SatelWriteCommand.PARTITIONS_ARM_MODE_0 + mode)
+        msg = SatelWriteMessage(mode_command, code=self.integration_key, partitions=partitions)
+        await _wait_for_command_result(self._client, f"uzbrojenie stref {partitions} (tryb {mode})", msg)
         logger.info("Uzbrojono strefy %s (tryb %s)", partitions, mode)
 
     async def disarm(self, partitions: list[int] | None = None) -> None:
         """Rozbraja strefy. Jeśli którakolwiek z nich jest akurat w stanie
         TRIGGERED/TRIGGERED_FIRE (alarm), po rozbrojeniu wysyła też komendę
-        'wyczyść pamięć alarmu' (0x85) - tak samo jak integracja Home
-        Assistant (homeassistant/components/satel_integra/alarm_control_panel.py:
+        'wyczyść pamięć alarmu' - tak samo jak integracja Home Assistant
+        (homeassistant/components/satel_integra/alarm_control_panel.py:
         async_alarm_disarm() robi clear_alarm() z 1s opóźnieniem po disarm()).
         BEZ TEGO: centrala Satel trzyma "pamięć alarmu" jako OSOBNĄ flagę od
         stanu uzbrojenia strefy - zwykłe rozbrojenie jej NIE czyści, więc
@@ -510,19 +591,20 @@ class SatelIntegraClient:
         dalej pokazywać TRIGGERED mimo że strefa jest już rozbrojona."""
         if self._client is None:
             raise RuntimeError("Klient Satel nie jest połączony")
+        from satel_integra.commands import SatelWriteCommand  # type: ignore
+        from satel_integra.messages import SatelWriteMessage  # type: ignore
+
         partitions = partitions or [self.partition]
         clear_alarm_necessary = bool(self.triggered_partition_numbers & set(partitions))
-        await self._send_and_confirm(
-            f"rozbrojenie stref {partitions}",
-            self._client.disarm(self.integration_key, partitions),
-        )
+        msg = SatelWriteMessage(SatelWriteCommand.PARTITIONS_DISARM, code=self.integration_key, partitions=partitions)
+        await _wait_for_command_result(self._client, f"rozbrojenie stref {partitions}", msg)
         logger.info("Rozbrojono strefy %s", partitions)
         if clear_alarm_necessary:
             await asyncio.sleep(1)
-            await self._send_and_confirm(
-                f"czyszczenie pamięci alarmu stref {partitions}",
-                self._client.clear_alarm(self.integration_key, partitions),
+            msg2 = SatelWriteMessage(
+                SatelWriteCommand.PARTITIONS_CLEAR_ALARM, code=self.integration_key, partitions=partitions,
             )
+            await _wait_for_command_result(self._client, f"czyszczenie pamięci alarmu stref {partitions}", msg2)
             logger.info("Wyczyszczono pamięć alarmu dla stref %s", partitions)
 
     def _schedule(self, coro) -> None:
@@ -534,19 +616,16 @@ class SatelIntegraClient:
         WAŻNE, dlaczego to w ogóle istnieje: biblioteka satel_integra woła
         `_zone_changed_callback`/`_output_changed_callback`/
         `_alarm_status_callback` SYNCHRONICZNIE, jako zwykłe wywołanie
-        funkcji (`self._zone_changed_callback(status)`, patrz
-        satel_integra/satel_integra.py: _zone_violated()/_output_changed()/
-        _armed()) - nie czeka na żaden `await`. Nasze callbacki
-        (_on_zone_change/_on_output_change/_handle_alarm_status_change w
-        RulesEngine) są `async def`, bo robią I/O (zapis do historii,
-        publikacja MQTT). Wywołanie korutyny BEZ await tylko tworzy obiekt
-        korutyny i go odrzuca - CIAŁO FUNKCJI NIGDY SIĘ NIE WYKONUJE (żaden
-        wyjątek, tylko ciche "coroutine was never awaited" w logach) - stąd
-        rejestrujemy tu SYNCHRONICZNY trampolinowy wrapper, który sam
-        planuje korutynę przez asyncio.ensure_future(), zamiast przekazywać
-        korutynę bibliotece wprost. Integracja Home Assistant tego problemu
-        nie ma, bo jej callbacki (zones_update_callback/... w coordinator.py)
-        są zwykłymi synchronicznymi metodami (@callback), nie korutynami."""
+        funkcji - nie czeka na żaden `await` (bez zmian względem 0.3.x).
+        Nasze callbacki (_on_zone_change/_on_output_change/
+        _handle_alarm_status_change w RulesEngine) są `async def`, bo robią
+        I/O (zapis do historii, publikacja MQTT). Wywołanie korutyny BEZ
+        await tylko tworzy obiekt korutyny i go odrzuca - CIAŁO FUNKCJI
+        NIGDY SIĘ NIE WYKONUJE (żaden wyjątek, tylko ciche "coroutine was
+        never awaited" w logach) - stąd rejestrujemy tu SYNCHRONICZNY
+        trampolinowy wrapper, który sam planuje korutynę przez
+        asyncio.ensure_future(), zamiast przekazywać korutynę bibliotece
+        wprost."""
         task = asyncio.ensure_future(coro)
 
         def _log_exception(t: "asyncio.Task") -> None:
@@ -559,19 +638,20 @@ class SatelIntegraClient:
         """Rejestruje callback wywoływany przy zmianie stanu wejść (np. do
         reakcji 'ruch z Satela -> włącz gniazdko'). Zapisany na obiekcie
         klienta (nie tylko na chwilowym AsyncSatel), więc przetrwa
-        automatyczne rozłączenia i ponowne łączenie w run_forever().
+        automatyczne rozłączenia i ponowne łączenie.
 
-        UWAGA: nazwa atrybutu callbacku (`_zone_changed_callback`) jest
-        prywatna w bibliotece - jeśli po aktualizacji pakietu przestanie
-        działać, sprawdź aktualne API w satel_integra/satel_integra.py.
-        Patrz też komentarz w _schedule() - callback biblioteki jest
-        SYNCHRONICZNY, więc `callback` (korutyna) jest tu opakowana."""
+        UWAGA: `callback` dostaje BEZPOŚREDNIO `dict[int, int]` (numer ->
+        0/1) - satel_integra >=1.0.0 usunęła wcześniejszy wrapper
+        `{"zones": {...}}` z 0.3.x (patrz RulesEngine._on_zone_change,
+        gdzie to jest rozpakowywane). Patrz też komentarz w _schedule() -
+        callback biblioteki jest SYNCHRONICZNY, więc `callback` (korutyna)
+        jest tu opakowana."""
         def _sync_wrapper(status: dict) -> None:
             self._schedule(callback(status))
 
         self._zone_cb = _sync_wrapper
         if self._client is not None:
-            self._client._zone_changed_callback = _sync_wrapper
+            self._client.register_callbacks(zone_changed_callback=_sync_wrapper)
 
     def register_output_callback(self, callback: Callable[[dict], Awaitable[None]]) -> None:
         """Analogicznie do register_zone_callback, ale dla wyjść."""
@@ -580,27 +660,25 @@ class SatelIntegraClient:
 
         self._output_cb = _sync_wrapper
         if self._client is not None:
-            self._client._output_changed_callback = _sync_wrapper
+            self._client.register_callbacks(output_changed_callback=_sync_wrapper)
 
     def register_alarm_status_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Callback wywoływany przy zmianie stanu uzbrojenia stref (widoczny
-        w panelu jako 'Strefy Satel') - oraz przy rozłączeniu (biblioteka
-        używa go też jako powiadomienia "coś się zmieniło, sprawdź stan
-        połączenia", patrz _read_data()/_update_status() w satel_integra.py).
+        w panelu jako 'Strefy Satel') - oraz przy odebraniu dowolnej innej
+        ramki statusu (biblioteka używa go też jako powiadomienia "coś się
+        zmieniło, sprawdź stan połączenia").
 
         UWAGA: w odróżnieniu od register_zone_callback/register_output_callback
-        callback NIE dostaje żadnego argumentu - biblioteka woła go jako
-        `self._alarm_status_callback()` (patrz _armed()/_read_data()/
-        _update_status() w satel_integra.py), samo bieżące partition_states
-        trzeba odczytać z armed_partition_numbers niżej. Nazwa atrybutu jak
-        wyżej - prywatna w bibliotece, zweryfikuj przy aktualizacji pakietu.
-        Patrz też komentarz w _schedule() - synchroniczny wrapper jak wyżej."""
+        callback NIE dostaje żadnego argumentu - biblioteka woła go bez
+        parametrów, samo bieżące partition_states trzeba odczytać z
+        armed_partition_numbers niżej. Patrz też komentarz w _schedule() -
+        synchroniczny wrapper jak wyżej."""
         def _sync_wrapper() -> None:
             self._schedule(callback())
 
         self._alarm_status_cb = _sync_wrapper
         if self._client is not None:
-            self._client._alarm_status_callback = _sync_wrapper
+            self._client.register_callbacks(alarm_status_callback=_sync_wrapper)
 
     @property
     def violated_zones(self) -> list[int]:
@@ -616,9 +694,9 @@ class SatelIntegraClient:
         nocny/dzienny, z zawieszonymi czujkami, czas na wejście/wyjście,
         alarm - wszystkie to warianty "uzbrojona" z punktu widzenia panelu).
         AsyncSatel.partition_states to {AlarmState: [numery_stref]} -
-        nadpisywane na bieżąco przy każdym komunikacie 0x0A/0x2A/... (patrz
-        _armed() w satel_integra.py), więc suma po wszystkich trybach zawsze
-        odzwierciedla aktualny stan - callback rejestrowany przez
+        nadpisywane na bieżąco przy każdym komunikacie o zmianie stanu
+        stref, więc suma po wszystkich trybach zawsze odzwierciedla
+        aktualny stan - callback rejestrowany przez
         register_alarm_status_callback dostaje tylko powiadomienie "coś się
         zmieniło", nie sam stan."""
         if self._client is None:
@@ -638,7 +716,7 @@ class SatelIntegraClient:
         bezpośrednio w teście, bez przechodzenia przez connect()."""
         if self._client is None:
             return set()
-        from satel_integra.satel_integra import AlarmState  # type: ignore
+        from satel_integra import AlarmState  # type: ignore
         numbers: set[int] = set()
         for state in (AlarmState.TRIGGERED, AlarmState.TRIGGERED_FIRE):
             numbers.update(self._client.partition_states.get(state, []))
@@ -646,103 +724,33 @@ class SatelIntegraClient:
 
     @property
     def is_connected(self) -> bool:
-        return self._client is not None and not getattr(self._client, "closed", True)
+        return self._client is not None and not getattr(self._client, "stopped", True)
 
     async def run_forever(self) -> None:
         """Utrzymuje połączenie z centralą z automatycznym ponawianiem po
-        zerwaniu (exponential backoff, patrz bridge/resilience.py). Status
-        'zdrowia' połączenia trafia do panelu (kategoria system_health) i
-        do dziennika zdarzeń przy każdej zmianie stanu."""
+        NIEODWRACALNEJ awarii (Supervisor, exponential backoff, patrz
+        bridge/resilience.py). Status 'zdrowia' połączenia trafia do panelu
+        (kategoria system_health) i do dziennika zdarzeń przy każdej zmianie
+        stanu.
+
+        ISTOTNIE PROSTSZE niż w wersji dla satel_integra 0.3.x: biblioteka
+        1.x SAMA obsługuje keepalive/reconnect/wykrywanie "centrala zajęta"
+        wewnątrz `start()` (patrz obszerny docstring modułu) - nie trzeba
+        już własnego watchdoga "sprawdzaj `connected` z zewnątrz co 5s",
+        który wcześniej odróżniał to od zwykłej, przejściowej awarii sieci
+        heurystyką (kilka kolejnych "nie połączono"). Ten Supervisor.run()
+        obsługuje TYLKO scenariusz "połączenie wstępne się nie powiodło"
+        (connect() rzuca ConnectionError) ORAZ "połączenie zostało
+        TERMINALNIE zatrzymane" (`self._client.stopped` - ustawiane przez
+        bibliotekę tylko po jawnym close() albo nienaprawialnym błędzie
+        wewnętrznym, NIE przy zwykłych, przejściowych zerwaniach sieci,
+        które biblioteka naprawia sama w tle)."""
 
         async def _connect_and_monitor(on_connected) -> None:
             await self.connect()
             await on_connected()
-            # ETHM-1 Plus rozłącza połączenie integracji po ok. 25s
-            # bezczynności (znana cecha centrali, nie błąd biblioteki -
-            # patrz AsyncSatel.keep_alive() w satel_integra.py: "A
-            # workaround for Satel Integra disconnecting after 25s") - BEZ
-            # tego zadania w tle połączenie regularnie padało z komunikatem
-            # "0 bytes read... Most likely the other side has
-            # disconnected!" w logach, mimo że sama centrala/sieć działały
-            # poprawnie. keep_alive() wysyła nieszkodliwe zapytanie o
-            # status co ~20s, żeby centrala nie uznała połączenia za martwe.
-            keep_alive_task = asyncio.ensure_future(self._client.keep_alive())
-            # WAŻNE: monitor_status() w bibliotece PRZYPISUJE callbacki z
-            # własnych argumentów na starcie (self._zone_changed_callback =
-            # zone_changed_callback, ...) - wywołanie go BEZ argumentów (jak
-            # poprzednio) NADPISYWAŁO wartością None to, co connect() dopiero
-            # co ustawił przez register_*_callback() (patrz wyżej), więc
-            # _on_zone_change/_on_output_change/_on_alarm_status_change w
-            # RulesEngine NIGDY się nie wywoływały - stąd zgłoszony brak
-            # stanów Satela na MQTT i w panelu (poza wartościami zaszytymi na
-            # starcie). Trzeba przekazać je jawnie przy każdym wywołaniu.
-            monitor_task = asyncio.ensure_future(self._client.monitor_status(
-                alarm_status_callback=self._alarm_status_cb,
-                zone_changed_callback=self._zone_cb,
-                output_changed_callback=self._output_cb,
-            ))
-            # UWAGA, WAŻNE: monitor_status() blokuje dopóki połączenie żyje -
-            # ALE gdy start_monitoring() zaraz po connect() się nie powiedzie
-            # (centrala przyjmuje połączenie TCP, ale zrywa je natychmiast po
-            # PIERWSZEJ wysłanej komendzie - w logach: "Starting
-            # monitor_status loop" -> "Got exception: N bytes read... Most
-            # likely the other side has disconnected!" -> "Start monitoring
-            # failed, sleeping for 10s..."), biblioteka SAMA, WEWNĄTRZ
-            # monitor_status(), ponawia połączenie w nieskończoność - NIGDY
-            # nie zwraca sterowania i nie rzuca wyjątku. Efekt: Supervisor
-            # (a za nim status 'system_health' w panelu) nadal pokazuje
-            # "połączono" z PIERWSZEGO udanego uchwycenia gniazda TCP, mimo
-            # że funkcjonalnie nic nie działa (ani odczyt stanu, ani komendy
-            # zapisu) - flaga cicho łopocze bez końca wewnątrz biblioteki.
-            #
-            # NAJCZĘSTSZA PRZYCZYNA DOKŁADNIE TEGO WZORCA W LOGACH: centrala
-            # Satel Integra obsługuje TYLKO JEDNEGO klienta integracji naraz
-            # (port 7094) - jeśli DLOADX/GUARDX ma już otwarte połączenie do
-            # tego samego portu, albo działa więcej niż jedna instancja tego
-            # bridge'a jednocześnie (np. bare-metal I Docker naraz), centrala
-            # przyjmie NASZE połączenie TCP (stąd "Połączono..." w logach),
-            # ale zerwie je zaraz po pierwszej komendzie. Nowsza biblioteka
-            # satel_integra 1.x (używana przez integrację Home Assistant) ma
-            # na to dedykowany wyjątek SatelPanelBusyError - starsza (0.3.x,
-            # na której oparty jest ten kod - patrz wyjaśnienie w
-            # requirements.txt) nie rozróżnia tego od żadnej innej przyczyny
-            # rozłączenia, więc nie da się tego niezawodnie odróżnić od np.
-            # zwykłej awarii sieci - stąd watchdog niżej działa na zasadzie
-            # "sprawdź `connected` z ZEWNĄTRZ", nie na konkretnym wyjątku.
-            try:
-                consecutive_disconnected = 0
-                while True:
-                    await asyncio.sleep(5)
-                    if monitor_task.done():
-                        break
-                    if not getattr(self._client, "connected", False):
-                        consecutive_disconnected += 1
-                    else:
-                        consecutive_disconnected = 0
-                    # Dwa kolejne "nie" (~10s) zamiast jednego - żeby nie
-                    # reagować na chwilowe/normalne okno reconnectu.
-                    if consecutive_disconnected >= 2:
-                        logger.warning(
-                            "Satel: centrala zerwała połączenie zaraz po nawiązaniu, a "
-                            "biblioteka satel_integra próbuje ponawiać połączenie "
-                            "WEWNĘTRZNIE (nie widać tego jako rozłączenie w panelu) - "
-                            "wymuszam pełne ponowne połączenie. Najczęstsza przyczyna: "
-                            "centrala Satel Integra obsługuje TYLKO JEDNEGO klienta "
-                            "integracji naraz (port 7094) - sprawdź, czy nie jest już "
-                            "otwarte DLOADX/GUARDX, i czy nie działa więcej niż jedna "
-                            "instancja tego bridge'a jednocześnie."
-                        )
-                        monitor_task.cancel()
-                        break
-                try:
-                    await monitor_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            finally:
-                keep_alive_task.cancel()
-                try:
-                    await keep_alive_task
-                except (asyncio.CancelledError, Exception):
-                    pass
+            client = self._client
+            while client is not None and client is self._client and not getattr(client, "stopped", True):
+                await asyncio.sleep(5)
 
         await self._supervisor.run(_connect_and_monitor)

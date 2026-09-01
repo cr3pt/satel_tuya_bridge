@@ -771,6 +771,18 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
         config["satel"]["integration_key"] = satel_form["integration_key"].strip()
     else:
         config["satel"].setdefault("integration_key", "")
+    # Klucz SZYFROWANIA transmisji (AES, satel_integra >=1.0.0) - NIE kod
+    # użytkownika wyżej, patrz obszerny docstring bridge/satel_client.py.
+    # Opcjonalny - puste pole = brak szyfrowania (cleartext, jak dotychczas)
+    # ALBO "zostaw bez zmian", jeśli już ustawiony (ten sam wzorzec sekretu
+    # co integration_key wyżej). Jawne czyszczenie: patrz
+    # "encryption_key_clear" niżej.
+    if (satel_form.get("encryption_key") or "").strip():
+        config["satel"]["encryption_key"] = satel_form["encryption_key"].strip()
+    elif satel_form.get("encryption_key_clear"):
+        config["satel"]["encryption_key"] = None
+    else:
+        config["satel"].setdefault("encryption_key", None)
     config["satel"].setdefault("virtual_inputs", {})
     # Tryb wirtualnych wejść IP (patrz obszerny docstring
     # bridge/satel_client.py) - "library" (set_output, przez połączenie
@@ -907,6 +919,7 @@ def connections_to_form(existing: dict) -> dict:
             "virtual_inputs_mode": satel.get("virtual_inputs", {}).get("mode", "library"),
             "virtual_inputs_port": satel.get("virtual_inputs", {}).get("port", 8888),
             "integration_key_set": bool(satel.get("integration_key")),
+            "encryption_key_set": bool(satel.get("encryption_key")),
             "status_poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
         },
         "tuya_local": {
@@ -1266,6 +1279,10 @@ def build_config_dict(form: dict) -> dict:
             "host": satel_form["host"],
             "port": int(satel_form.get("port", 7094)),
             "integration_key": satel_form["integration_key"],
+            # Opcjonalny klucz szyfrowania transmisji (AES) - patrz
+            # obszerny docstring bridge/satel_client.py, NIE mylić z
+            # kluczem integracji wyżej. Puste/brak = brak szyfrowania.
+            "encryption_key": (satel_form.get("encryption_key") or "").strip() or None,
             "partition": int(satel_form.get("partition", 1)),
             "virtual_inputs": {
                 "mode": satel_form.get("virtual_inputs_mode") or "library",

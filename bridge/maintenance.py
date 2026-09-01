@@ -1,8 +1,7 @@
 """Rotacja starych danych i backup bazy SQLite.
 
-RPi Zero W ma ograniczoną kartę SD - baza `bridge_history.db` rosłaby w
-nieskończoność bez czyszczenia (odczyty z kotła co kilkadziesiąt sekund,
-zdarzenia ruchu, itd.). Ten moduł:
+Baza `bridge_history.db` rosłaby w nieskończoność bez czyszczenia (odczyty
+z kotła co kilkadziesiąt sekund, zdarzenia ruchu, itd.). Ten moduł:
 
   1. Usuwa dane starsze niż `retention_days` (odczyty, zdarzenia,
      ZAKOŃCZONE alerty i komendy). AKTYWNE alerty i OCZEKUJĄCE komendy
@@ -151,7 +150,7 @@ def run_maintenance(config) -> dict:
     summary = {}
 
     if maint_cfg.get("purge_enabled", True):
-        summary["purge"] = purge_old_data(db_path, maint_cfg.get("retention_days", 90))
+        summary["purge"] = purge_old_data(db_path, maint_cfg.get("retention_days", 180))
 
     if maint_cfg.get("backup_enabled", False):
         backup_path = backup_database(

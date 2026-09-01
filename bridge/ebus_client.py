@@ -46,7 +46,7 @@ def discover_topics(mqtt_host: str, mqtt_port: int = 1883, topic_prefix: str = "
     def _on_message(client, userdata, msg) -> None:
         topics.add(msg.topic)
 
-    client = mqtt.Client()
+    client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     client.on_message = _on_message
     try:
         client.connect(mqtt_host, mqtt_port, keepalive=max(int(timeout_seconds) + 5, 10))
@@ -100,7 +100,7 @@ class BackgroundTopicDiscovery:
                 with self._lock:
                     self._topics.add(msg.topic)
 
-            client = mqtt.Client()
+            client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
             client.on_message = _on_message
             try:
                 client.connect(mqtt_host, mqtt_port, keepalive=max(int(duration_seconds) + 30, 60))
@@ -162,7 +162,7 @@ class EbusMqttListener:
             "ebus_mqtt", history=history, notify_cfg=notify_cfg,
             grace_seconds=grace_seconds, loop=asyncio.get_event_loop(),
         )
-        self._client = mqtt.Client()
+        self._client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message
@@ -200,20 +200,20 @@ class EbusMqttListener:
         self._client.loop_stop()
         self._client.disconnect()
 
-    def _on_connect(self, client, userdata, flags, rc) -> None:
-        if rc != 0:
-            logger.error("Nie udało się połączyć z MQTT ebusd (kod %s)", rc)
-            self._health.report(False, f"kod błędu {rc}")
+    def _on_connect(self, client, userdata, connect_flags, reason_code, properties) -> None:
+        if reason_code != 0:
+            logger.error("Nie udało się połączyć z MQTT ebusd (kod %s)", reason_code)
+            self._health.report(False, f"kod błędu {reason_code}")
             return
         self._health.report(True)
         for topic in self._topic_to_sensor:
             client.subscribe(topic)
             logger.info("Subskrybuję topik ebusd: %s", topic)
 
-    def _on_disconnect(self, client, userdata, rc) -> None:
-        if rc != 0:
-            logger.warning("Utracono połączenie MQTT z ebusd (kod %s) - paho ponowi próbę automatycznie", rc)
-        self._health.report(False, f"kod {rc}" if rc != 0 else "")
+    def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
+        if reason_code != 0:
+            logger.warning("Utracono połączenie MQTT z ebusd (kod %s) - paho ponowi próbę automatycznie", reason_code)
+        self._health.report(False, f"kod {reason_code}" if reason_code != 0 else "")
 
     def _on_message(self, client, userdata, msg) -> None:
         sensor_cfg = self._topic_to_sensor.get(msg.topic)

@@ -16,22 +16,21 @@ kilka miejsc wymaga uzupełnienia danymi specyficznymi dla Twojej instalacji
   w `config.example.yaml`) skopiuj z zakładki "Wejścia IP" w DLOADX po
   skonfigurowaniu konkretnego wejścia - firmware może różnić się formatem
   zapytania między wersjami.
-- **Wersja biblioteki `satel_integra`** (`bridge/satel_client.py`) - nasz
-  kod jest napisany pod STARE, prywatne API pakietu (linia 0.3.x: konstruktor
-  `AsyncSatel(host, port, loop, ...)`, `monitor_status()`, `keep_alive()`,
-  `generate_query()`, atrybuty `_zone_changed_callback`/... ustawiane
-  bezpośrednio). `requirements.txt` celowo przypina `<1.0.0` - pakiet
-  `satel-integra` 1.0.0+ (wymaga Python 3.12+, więc na obrazie `python:3.11-slim`
-  z Dockerfile w tym repo `pip` go i tak nie wybierze) to KOMPLETNIE
-  PRZEPISANE API: inny konstruktor (bez `loop`, `integration_key` na
-  starcie), `register_callbacks()`/`start(enable_monitoring=True)` zamiast
-  `monitor_status()`, brak `generate_query()`. **To jest właśnie wersja,
-  której obecnie używa integracja Satel w Home Assistant** (patrz
-  `homeassistant/components/satel_integra/client.py`) - jej źródła są dobrym
-  odniesieniem architektonicznym (patrz niżej), ale NIE nadają się jako
-  bezpośredni przykład wywołań metod dla tego repo, bo to inne, niekompatybilne
-  API. Jeśli kiedyś zajdzie potrzeba przejścia na 1.0.0+, to pełne
-  przepisanie `satel_client.py`, nie drobna poprawka.
+- **Wersja biblioteki `satel_integra`** (`bridge/satel_client.py`) - kod jest
+  napisany pod NOWE, publiczne API pakietu (linia 1.x, obecnie przypięta
+  `>=1.4.0,<2.0.0` w `requirements.txt`): konstruktor `AsyncSatel(host,
+  port, integration_key=...)` (bez `loop`, gdzie `integration_key` to
+  opcjonalny KLUCZ SZYFROWANIA transmisji - patrz `satel.encryption_key`
+  niżej, coś innego niż kod użytkownika w `satel.integration_key`),
+  `register_callbacks()` + `await start(enable_monitoring=True)` zamiast
+  blokującego `monitor_status()`, wbudowany keepalive/reconnect i
+  wykrywanie "centrala zajęta" (`SatelPanelBusyError`). Wymaga Python
+  **3.12+** (patrz `Dockerfile` - obraz bazowy to `python:3.12-slim`).
+  **To jest ta sama linia API, której obecnie używa integracja Satel w
+  Home Assistant** (patrz `homeassistant/components/satel_integra/client.py`)
+  - jej źródła są dobrym odniesieniem architektonicznym (patrz niżej).
+  Szczegóły migracji i różnice względem starego (0.3.x) API opisuje
+  obszerny docstring na górze `bridge/satel_client.py`.
 - **Format wiadomości Pulsar dla kamer Tuya** (`bridge/tuya_cloud_events.py`) -
   różni się między modelami kamer, zweryfikuj w zakładce "Cloud Debugging"
   na developer.tuya.com dla swoich urządzeń.
@@ -45,7 +44,7 @@ pytest
 pytest --cov=bridge --cov=dashboard --cov-report=term-missing
 ```
 
-**296 testów, wszystkie przechodzą, pokrycie kodu ~76%.** Uczciwie o
+**946 testów, wszystkie przechodzą, pokrycie kodu ~84%.** Uczciwie o
 brakującym pokryciu: moduły będące cienkimi wrapperami na biblioteki
 zewnętrzne (`satel_client.py` - satel_integra, `ebus_client.py` -
 callbacki paho-mqtt, `tuya_cloud_events.py`/`unifi_protect_events.py` -
@@ -64,9 +63,8 @@ test, żadnych prawdziwych połączeń sieciowych) - fałszywe (fake) wersje
 prawdziwych urządzeń.
 
 CI (`.github/workflows/tests.yml`) uruchamia cały zestaw na Pythonie
-3.11/3.12/3.13 przy każdym push/PR - projekt nie jest już ograniczony do
-RPi Zero, więc macierz testuje nowsze, aktualnie wspierane wersje (część
-zależności, np. `uiprotect>=6.0`, i tak już wymaga Python ≥3.10).
+3.12/3.13 przy każdym push/PR - dolna granica to teraz 3.12, twardy wymóg
+`satel-integra>=1.4.0` (patrz "Status tego kodu" wyżej).
 
 ## Instalacja
 
@@ -508,11 +506,11 @@ DP po stronie Tuya oczekuje typu liczbowego.
 
 ## Rotacja i backup bazy
 
-RPi Zero W ma ograniczoną kartę SD - `bridge_history.db` rosłaby w
-nieskończoność bez czyszczenia (odczyty z kotła co kilkadziesiąt sekund,
-zdarzenia ruchu, itd.). Domyślnie bridge **sam, automatycznie** czyści
-dane starsze niż 90 dni raz na dobę (konfigurowalne, sekcja `maintenance`
-w `config.yaml`) - zero dodatkowej konfiguracji potrzebnej "z pudełka".
+`bridge_history.db` rosłaby w nieskończoność bez czyszczenia (odczyty z
+kotła co kilkadziesiąt sekund, zdarzenia ruchu, itd.). Domyślnie bridge
+**sam, automatycznie** czyści dane starsze niż 180 dni raz na dobę
+(konfigurowalne, sekcja `maintenance` w `config.yaml`) - zero dodatkowej
+konfiguracji potrzebnej "z pudełka".
 
 **Ważne rozróżnienie**: aktywne alerty i oczekujące komendy (jeszcze nie
 wykonane przez bridge) NIGDY nie są usuwane niezależnie od wieku -
@@ -847,8 +845,8 @@ przy każdym przeładowaniu konfiguracji).
 **Interwał odpytywania (Satel i Tuya lokalnie).** Te dwie karty mają
 dodatkowo pole "Interwał odpytywania" - jak często bridge SAM dopytuje o
 bieżący stan wejść/wyjść (Satel: `satel.status_poll_interval_seconds`,
-domyślnie 15s) i urządzeń Tuya (`tuya.status_poll_interval_seconds`,
-domyślnie 30s, obejmuje też podurządzenia Zigbee - ta sama pętla). To
+domyślnie 10s) i urządzeń Tuya (`tuya.status_poll_interval_seconds`,
+domyślnie 15s, obejmuje też podurządzenia Zigbee - ta sama pętla). To
 osobny mechanizm od broadcastów samej centrali/urządzeń o zmianie stanu -
 zaobserwowano na realnej instalacji, że zmiana stanu WYJŚCIA nie zawsze
 dociera jako broadcast (w odróżnieniu od wejść), więc samo poleganie na
@@ -1042,47 +1040,51 @@ używaj VPN (WireGuard/Tailscale) zamiast wystawiać port bezpośrednio.
 
 #### A komunikacja z centralą Satel - czy jest szyfrowana kluczem?
 
-**Nie.** `satel.integration_key` w `config.yaml` (ten sam, który wpisujesz
-w kreatorze) to **hasło protokołu integracji** - autoryzuje polecenia
-(uzbrojenie/rozbrojenie, sterowanie wyjściem), ale **nie jest kluczem
-szyfrowania transmisji**. Biblioteka `satel_integra` w wersji, na której
-oparty jest ten bridge (0.3.x - patrz wyjaśnienie w `requirements.txt`
-i sekcji "Status tego kodu" wyżej, dlaczego jest to celowo przypięte),
-**nie implementuje** opcjonalnego szyfrowania AES komunikacji TCP, jakie
-oferuje protokół integracji części central/modułów ETHM (ustawianego
-osobno w DLOADX, innym kluczem niż hasło integracji) - cała komunikacja
-z centralą (port 7094) i wywołania wirtualnych wejść IP (port z sekcji
-`virtual_inputs`) idą **czystym tekstem** po sieci LAN. UWAGA: nowsza
-wersja tej biblioteki (1.0.0+, obecnie używana przez integrację Satela w
-Home Assistant) OBSŁUGUJE już to szyfrowanie - ale to inne, niekompatybilne
-API (patrz wyżej), więc przejście na nią to pełne przepisanie
-`satel_client.py`, nie prosta aktualizacja pakietu.
+**Opcjonalnie tak**, od migracji na `satel-integra>=1.4.0`. Są tu DWA
+zupełnie różne klucze, celowo osobne pola w konfiguracji - nie mylić ich:
 
-W praktyce, w zaufanej, odizolowanej sieci domowej to zwykle akceptowalne
-ryzyko (dokładnie ta sama klasa kompromisu co Basic Auth panelu wyżej).
-Jeśli jednak centrala/RPi są w sieci współdzielonej z niezaufanymi
-urządzeniami, albo zależy Ci na dodatkowej warstwie ochrony:
+- **`satel.integration_key`** (ten sam, który wpisujesz w kreatorze w
+  kroku 1) - **hasło protokołu integracji** (kod użytkownika DLOADX/GUARDX).
+  Autoryzuje polecenia (uzbrojenie/rozbrojenie, sterowanie wyjściem),
+  wysyłane przy KAŻDEJ komendzie. To NIE jest klucz szyfrowania transmisji.
+- **`satel.encryption_key`** (nowe pole, sekcja "Połączenia" w ustawieniach
+  oraz krok 1 kreatora) - opcjonalny **klucz szyfrowania AES** transmisji
+  TCP, jeśli centrala/moduł ETHM ma włączoną funkcję "Encrypted connections"
+  (ustawianą osobno w DLOADX, jako całkiem inne pole niż hasło integracji).
+  Gdy ustawiony, `bridge/satel_client.py` łączy się przez
+  `SatelEncryptedTransport` biblioteki `satel_integra` zamiast domyślnego
+  `SatelPlainTransport`. Gdy puste (domyślnie) - komunikacja z centralą
+  (port 7094) i wywołania wirtualnych wejść IP (port z sekcji
+  `virtual_inputs`) idą czystym tekstem po sieci LAN, jak dotychczas.
+
+Jeśli Twoja centrala nie ma włączonego szyfrowania w DLOADX, zostaw
+`satel.encryption_key` puste - ustawienie błędnego/niepasującego klucza
+uniemożliwi połączenie. W praktyce, nawet bez szyfrowania, w zaufanej,
+odizolowanej sieci domowej czyste połączenie to zwykle akceptowalne ryzyko
+(dokładnie ta sama klasa kompromisu co Basic Auth panelu wyżej). Jeśli
+jednak centrala/RPi są w sieci współdzielonej z niezaufanymi urządzeniami,
+albo zależy Ci na dodatkowej warstwie ochrony:
+- włącz szyfrowanie w DLOADX i wpisz ten sam klucz w `satel.encryption_key`,
 - odizoluj VLAN-em urządzenia automatyki domowej od reszty sieci,
 - **nie** wystawiaj portu centrali (7094) ani portu wejść IP na świat -
   jeśli potrzebujesz zdalnego dostępu, użyj VPN (WireGuard/Tailscale) do
-  całej podsieci, a nie przekierowania portu,
-- rozważ zgłoszenie/wsparcie szyfrowania w `satel_integra` upstream, jeśli
-  Twoja centrala i tak wymaga go po stronie DLOADX.
+  całej podsieci, a nie przekierowania portu.
 
 #### A uzbrajam/rozbrajam z panelu, nic się nie dzieje na centrali (ale stan wyświetla się poprawnie)
 
-Do wersji z tej rundy poprawek `arm()`/`disarm()`/`set_output()` w
-`satel_client.py` uznawały samo WYSŁANIE bajtów po sieci za sukces -
-biblioteka `satel_integra` NIE czeka sama na potwierdzenie z centrali
-(ramka 0xEF "command result"). Błędny `satel.integration_key` albo
-odrzucenie komendy przez centralę kończyło się więc CISZĄ porażką: w
-logach/panelu komenda wyglądała na wykonaną, a fizycznie nic się nie
-działo - podczas gdy ODCZYT stanu (broadcast/cykliczny poll) działał
-poprawnie, bo w ogóle nie przechodzi przez to potwierdzenie. Teraz
-`_send_and_confirm()` w `satel_client.py` czeka na odpowiedź centrali i
-rzuca czytelny błąd (widoczny w statusie komendy w panelu), jeśli centrala
-odrzuci polecenie albo nie odpowie w 5s - jeśli dalej nic się nie dzieje,
-sprawdź w logach dokładny komunikat błędu.
+Biblioteka `satel_integra` (zarówno stare 0.3.x, jak i obecne 1.x) sama z
+siebie NIE czeka na potwierdzenie z centrali (ramka 0xEF "command result")
+przy `arm()`/`disarm()`/`set_output()` - uznaje samo WYSŁANIE bajtów po
+sieci za sukces. Błędny `satel.integration_key` albo odrzucenie komendy
+przez centralę kończyłoby się więc CISZĄ porażką: w logach/panelu komenda
+wyglądałaby na wykonaną, a fizycznie nic by się nie działo - podczas gdy
+ODCZYT stanu (broadcast/cykliczny poll) działa poprawnie, bo w ogóle nie
+przechodzi przez to potwierdzenie. Dlatego `bridge/satel_client.py`
+buduje potwierdzane komendy samodzielnie (`_wait_for_command_result()`,
+patrz docstring modułu) i czeka na odpowiedź centrali, rzucając czytelny
+błąd (widoczny w statusie komendy w panelu), jeśli centrala odrzuci
+polecenie albo nie odpowie w 5s - jeśli dalej nic się nie dzieje, sprawdź
+w logach dokładny komunikat błędu.
 
 #### A w logach widzę "Got exception: N bytes read... Most likely the other side has disconnected!" zaraz po "Starting monitor_status loop"
 
@@ -1951,13 +1953,13 @@ patrz "Instalacja bezpośrednio na hoście (bez Dockera) - PRZESTARZAŁE") -
 jeden obraz (`Dockerfile`),
 budowany **w całości lokalnie** poleceniem `docker compose build`/`up
 --build` z plików w tym repo (nic nie jest publikowane ani pobierane z
-żadnego prywatnego rejestru - obraz bazowy `python:3.11-slim` pochodzi z
+żadnego prywatnego rejestru - obraz bazowy `python:3.12-slim` pochodzi z
 oficjalnego, publicznego Docker Hub, tak jak w praktycznie każdym
 Dockerfile). Dwa kontenery z `docker-compose.yml` (bridge + panel
 webowy), dzielące wspólny wolumen na dane (`config.db` - cała
 konfiguracja, patrz "Konfiguracja w bazie danych" wyżej - plus
 `bridge_history.db` i backupy). Działa tak samo na RPi (arm64/armv7) jak
-na amd64 - `python:3.11-slim` ma gotowe obrazy dla obu architektur.
+na amd64 - `python:3.12-slim` ma gotowe obrazy dla obu architektur.
 Instalacja bezpośrednio na hoście (`venv`/systemd, patrz "Instalacja"
 wyżej) zostaje jako alternatywa dla tych, którzy wolą nie używać Dockera.
 
@@ -2108,8 +2110,8 @@ builda) - to NIE jest żaden z modułów tego repo; sprawdź inne procesy na
 tej samej maszynie.
 
 `requirements.txt` celowo używa `>=` (nie dokładnie przypiętych wersji,
-poza górnym ograniczeniem `satel-integra<1.0.0` - patrz komentarz w
-pliku), więc **każdy build bez cache'u Dockera i tak pobiera najnowsze
+poza górnym ograniczeniem `satel-integra<2.0.0` i `paho-mqtt<3.0` - patrz
+komentarze w pliku, dlaczego), więc **każdy build bez cache'u Dockera i tak pobiera najnowsze
 zgodne wersje** z PyPI. Warstwa `RUN pip install` jest jednak
 cache'owana przez Docker dopóki `requirements.txt` się nie zmieni - żeby
 wymusić świeże pobranie pakietów Python mimo niezmienionego
@@ -2185,6 +2187,6 @@ satel_tuya_bridge/
     notifications/routes.py   # /plugins/notifications - adres tematu ntfy + okres ciszy
     presence_simulation/routes.py  # /plugins/presence_simulation - włącznik/log_level (lista urządzeń w /automations)
   tests/                     # testy pytest (patrz sekcja "Testy automatyczne")
-  .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.11/3.12/3.13
+  .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.12/3.13
   maintenance.py              # CLI do rotacji/backupu bazy (do crona, patrz sekcja "Rotacja i backup bazy")
 ```

@@ -83,10 +83,11 @@ class RulesEngine:
             monitored_zones=config.satel.get("monitored_zones"),
             monitored_outputs=config.satel.get("monitored_outputs"),
             virtual_inputs=config.satel.get("virtual_inputs", {}).get("inputs"),
+            encryption_key=config.satel.get("encryption_key"),
             history=self.history,
             notify_cfg=notify_cfg,
             grace_seconds=grace_seconds,
-            status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 15),
+            status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 10),
         )
         # Tryb "http" wirtualnych wejść IP (satel.virtual_inputs.mode) - osobne
         # połączenie HTTP, niezależne od kolejki poleceń protokołu integracji
@@ -898,8 +899,8 @@ class RulesEngine:
 
     # ------------------------------------------------------------------
     # Cykliczne odpytywanie statusów Tuya (nie mają callbacków lokalnie -
-    # trzeba je samemu pollingować; interwał dobrany tak, żeby nie
-    # obciążać RPi Zero W ani sieci)
+    # trzeba je samemu pollingować; projekt nie jest już ograniczony do
+    # RPi Zero W, patrz README "Status tego kodu")
     # ------------------------------------------------------------------
     async def _tuya_status_poll_loop(self) -> None:
         # HealthReporter tworzony tutaj (nie w __init__) - potrzebuje
@@ -979,7 +980,7 @@ class RulesEngine:
             # podmienić interwał na żywo, bez restartu procesu (patrz
             # analogiczne rozwiązanie dla Satela: SatelIntegraClient.
             # status_poll_interval_seconds).
-            await asyncio.sleep(self.config.tuya.get("status_poll_interval_seconds", 30))
+            await asyncio.sleep(self.config.tuya.get("status_poll_interval_seconds", 15))
 
     def _seed_satel_status_labels(self) -> None:
         """Zapisuje początkowy stan (OK/nieaktywne) dla wszystkich
@@ -1170,18 +1171,13 @@ class RulesEngine:
         # numery/nazwy stref-wyjść-partycji w locie i te zamknięcia od razu
         # zobaczyły nowe wartości, bez ponownego rejestrowania callbacków.
         async def _on_zone_change(status: dict) -> None:
-            # UWAGA: biblioteka satel_integra woła ten callback z PEŁNYM
-            # obiektem `{"zones": {numer: 0/1, ...}}` (patrz
-            # AsyncSatel._zone_violated() w satel_integra/satel_integra.py),
-            # NIE z samym wewnętrznym słownikiem numer->stan - bez tego
-            # `.get("zones", ...)` poniższa pętla iterowałaby po SAMYM
-            # kluczu "zones" (jedna fałszywa "zmiana" o numerze-stringu
-            # "zones", zawsze potraktowana jako naruszona, bo niepusty
-            # słownik jest prawdziwy w Pythonie) - a PRAWDZIWE numery stref
-            # nigdy nie dostawałyby zapisu statusu, więc panel zamrażałby
-            # się na wartości z zasiania (_seed_satel_status_labels).
+            # UWAGA: satel_integra >=1.0.0 woła ten callback BEZPOŚREDNIO
+            # z `{numer: 0/1, ...}` (patrz AsyncSatel._zones_violated() w
+            # satel_integra/satel_integra.py oraz obszerny docstring
+            # bridge/satel_client.py) - w odróżnieniu od poprzedniej wersji
+            # 0.3.x, która owijała to w `{"zones": {...}}`.
             zone_name_by_number = {v: k for k, v in self.satel.monitored_zones.items()}
-            for zone_number, violated in status.get("zones", {}).items():
+            for zone_number, violated in status.items():
                 self.history.set_status(
                     f"satel_input:{zone_number}", "satel_input",
                     "naruszone" if violated else "OK",
@@ -1203,10 +1199,10 @@ class RulesEngine:
                 )
 
         async def _on_output_change(status: dict) -> None:
-            # Analogicznie do _on_zone_change wyżej - biblioteka woła z
-            # `{"outputs": {numer: 0/1, ...}}`.
+            # Analogicznie do _on_zone_change wyżej - `{numer: 0/1, ...}`
+            # bezpośrednio.
             output_name_by_number = {v: k for k, v in self.satel.monitored_outputs.items()}
-            for output_number, active in status.get("outputs", {}).items():
+            for output_number, active in status.items():
                 self.history.set_status(
                     f"satel_output:{output_number}", "satel_output",
                     "włączone" if active else "wyłączone",

@@ -35,7 +35,7 @@ class HomeAssistantMqttBridge:
             "home_assistant_mqtt", history=history, notify_cfg=notify_cfg,
             grace_seconds=grace_seconds, loop=self._loop,
         )
-        self._client = mqtt.Client()
+        self._client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message
@@ -57,10 +57,10 @@ class HomeAssistantMqttBridge:
     def publish_state(self, topic: str, value: str) -> None:
         self._client.publish(topic, payload=value, retain=True)
 
-    def _on_connect(self, client, userdata, flags, rc) -> None:
-        if rc != 0:
-            logger.error("Nie udało się połączyć z MQTT (Home Assistant): kod %s", rc)
-            self._health.report(False, f"kod błędu {rc}")
+    def _on_connect(self, client, userdata, connect_flags, reason_code, properties) -> None:
+        if reason_code != 0:
+            logger.error("Nie udało się połączyć z MQTT (Home Assistant): kod %s", reason_code)
+            self._health.report(False, f"kod błędu {reason_code}")
             return
         self._health.report(True)
 
@@ -74,8 +74,8 @@ class HomeAssistantMqttBridge:
             client.subscribe(topic)
             logger.info("Subskrybuję temat komend HA: %s", topic)
 
-    def _on_disconnect(self, client, userdata, rc) -> None:
-        self._health.report(False, f"kod {rc}" if rc != 0 else "")
+    def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
+        self._health.report(False, f"kod {reason_code}" if reason_code != 0 else "")
 
     def _on_message(self, client, userdata, msg) -> None:
         handler = self._command_handlers.get(msg.topic)
