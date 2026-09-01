@@ -1278,6 +1278,13 @@ def clean_sensors_payload(payload) -> tuple[list | None, str | None]:
             "name": name,
             "label": (item.get("label") or name).strip(),
             "mqtt_topic": mqtt_topic,
+            # Opcjonalne - potrzebne TYLKO gdy ebusd publikuje na ten temat
+            # tryb --mqttjson z KILKOMA polami naraz (temat na poziomie
+            # obwodu, np. "ebusd/hc1") - wskazuje, który klucz z obiektu
+            # JSON wziąć jako wartość tego czujnika. Puste dla zwykłych
+            # tematów (czysty tekst albo JSON z jednym polem) - patrz
+            # EbusMqttListener._parse_payload w bridge/ebus_client.py.
+            "mqtt_field": (item.get("mqtt_field") or "").strip(),
             "targets": {
                 "history": bool(targets.get("history", True)),
                 "mqtt_publish": bool(targets.get("mqtt_publish", False)),

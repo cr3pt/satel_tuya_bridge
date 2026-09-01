@@ -11,6 +11,13 @@
 # Skopiuj jako sensors.yaml i uzupełnij, albo edytuj przez panel webowy.
 #
 # Jak znaleźć dostępne pola: `ebusctl find -d` na RPi (patrz README).
+#
+# mqtt_field (opcjonalne, patrz przykład "kociol_temp_podlogowa" niżej):
+# potrzebne TYLKO jeśli ebusd działa z opcją --mqttjson i publikuje na dany
+# temat KILKA pól naraz (temat na poziomie obwodu, np. "ebusd/hc1", zamiast
+# osobnego tematu per pole) - wtedy wskazuje, które pole z wiadomości JSON
+# wziąć jako wartość tego czujnika. Zwykłe tematy (jedno pole, czysty tekst
+# albo JSON z jednym kluczem) nie potrzebują tego pola.
 # ============================================================================
 
 sensors:
@@ -44,6 +51,20 @@ sensors:
   - name: kociol_temp_zewnetrzna
     label: "Temperatura zewnętrzna"
     mqtt_topic: "ebusd/bai/OutdoorstempSensor"
+    targets:
+      history: true
+      mqtt_publish: true
+      tuya_virtual_device: false
+      tuya_dp: ""
+
+  # Przykład tematu obwodu grzewczego z ebusd --mqttjson, który publikuje
+  # kilka pól naraz na JEDEN temat, np.:
+  #   ebusd/hc1 -> {"MixerStatus": {"value": "on"}, "TempFloor": {"value": 21.3}}
+  # mqtt_field wskazuje, które pole z tej wiadomości wziąć.
+  - name: kociol_temp_podlogowa
+    label: "Temperatura podłogowa (obwód 1)"
+    mqtt_topic: "ebusd/hc1"
+    mqtt_field: "TempFloor"
     targets:
       history: true
       mqtt_publish: true

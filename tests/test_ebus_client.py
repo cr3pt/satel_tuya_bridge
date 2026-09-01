@@ -179,6 +179,75 @@ class TestEbusMqttListenerUpdateSensors:
         assert fake.subscribed == []
 
 
+class TestEbusMqttListenerParsePayload:
+    """_on_message()/_parse_payload() - obsługa DWÓCH formatów wiadomości
+    ebusd: domyślnego (czysty tekst, jedno pole na temat) i --mqttjson
+    (obiekt JSON, ewentualnie z kilkoma polami na temat obwodu). Zgłoszony
+    błąd: wartości z trybu --mqttjson wyświetlały się jako nieczytelny
+    surowy JSON, bo _on_message próbował tylko float()/zostawiał tekst."""
+
+    def _make_listener(self, monkeypatch, sensors):
+        fake = FakeMqttClientForListener()
+        monkeypatch.setattr("bridge.ebus_client.mqtt.Client", lambda **kw: fake)
+        cfg = {"mqtt_host": "127.0.0.1", "sensors": sensors}
+        received = []
+        listener = EbusMqttListener(cfg, lambda sensor_cfg, value: received.append((sensor_cfg["name"], value)))
+        return listener, received
+
+    def _deliver(self, listener, topic, payload):
+        listener._on_message(None, None, SimpleNamespace(topic=topic, payload=payload.encode()))
+
+    # --- Format domyślny ebusd (czysty tekst) - zachowanie sprzed zmiany ---
+
+    async def test_plain_numeric_text_becomes_float(self, monkeypatch):
+        listener, received = self._make_listener(monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/a"}])
+        self._deliver(listener, "ebusd/a", "22.5")
+        assert received == [("a", 22.5)]
+
+    async def test_plain_non_numeric_text_stays_string(self, monkeypatch):
+        listener, received = self._make_listener(monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/a"}])
+        self._deliver(listener, "ebusd/a", "heating")
+        assert received == [("a", "heating")]
+
+    # --- Tryb --mqttjson: pojedyncze pole na temat ---
+
+    async def test_single_field_json_with_value_wrapper_is_unwrapped(self, monkeypatch):
+        listener, received = self._make_listener(monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/bai/FlowTemp"}])
+        self._deliver(listener, "ebusd/bai/FlowTemp", '{"FlowTemp": {"value": 22.5}}')
+        assert received == [("a", 22.5)]
+
+    async def test_single_field_json_bare_scalar_is_used_directly(self, monkeypatch):
+        listener, received = self._make_listener(monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/bai/FlowTemp"}])
+        self._deliver(listener, "ebusd/bai/FlowTemp", '{"FlowTemp": 22.5}')
+        assert received == [("a", 22.5)]
+
+    # --- Tryb --mqttjson: kilka pól na temat obwodu (composite) ---
+
+    async def test_multi_field_json_with_mqtt_field_picks_configured_key(self, monkeypatch):
+        listener, received = self._make_listener(
+            monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/hc1", "mqtt_field": "TempFloor"}],
+        )
+        self._deliver(
+            listener, "ebusd/hc1",
+            '{"MixerStatus": {"value": "on"}, "TempFloor": {"value": 21.3}}',
+        )
+        assert received == [("a", 21.3)]
+
+    async def test_multi_field_json_without_mqtt_field_is_skipped(self, monkeypatch, caplog):
+        listener, received = self._make_listener(monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/hc1"}])
+        self._deliver(listener, "ebusd/hc1", '{"MixerStatus": {"value": "on"}, "TempFloor": {"value": 21.3}}')
+        assert received == []
+        assert "mqtt_field" in caplog.text
+
+    async def test_multi_field_json_with_unknown_mqtt_field_is_skipped(self, monkeypatch, caplog):
+        listener, received = self._make_listener(
+            monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/hc1", "mqtt_field": "NieIstnieje"}],
+        )
+        self._deliver(listener, "ebusd/hc1", '{"MixerStatus": {"value": "on"}, "TempFloor": {"value": 21.3}}')
+        assert received == []
+        assert "NieIstnieje" in caplog.text
+
+
 class FakeMqttClientBg:
     """Symuluje paho.mqtt.client.Client na tyle, ile potrzebuje
     BackgroundTopicDiscovery - connect (synchroniczne, nie connect_async)/
