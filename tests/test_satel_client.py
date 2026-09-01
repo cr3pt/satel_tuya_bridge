@@ -557,6 +557,41 @@ class TestPeriodicStatusSync:
         assert len(zone_queries) >= 2, "dopytanie powinno się powtarzać, nie tylko raz po połączeniu"
         assert len(output_queries) >= 2
 
+    async def test_survives_transient_send_error_and_keeps_polling(self):
+        """Zgłoszony błąd (z prawdziwego sprzętu): włączenie wyjścia z
+        innego źródła niż bridge (np. aplikacja Satela na telefonie) nie
+        było widoczne w panelu, mimo że karta "Zdrowie połączeń" cały czas
+        pokazywała "połączono". Przyczyna: _send_data() rzucający wyjątek
+        (np. chwilowa zadyszka sieci) wcześniej TRWALE zatrzymywał tę
+        pętlę (return w except) - kolejne dopytania już nigdy by nie
+        poszły, mimo że samo połączenie TCP/keep-alive zostawało zdrowe.
+        Po jednym nieudanym zapytaniu pętla musi próbować dalej."""
+        class FlakyFakeAsyncSatel(FakeAsyncSatel):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                self.calls = 0
+
+            async def _send_data(self, msg):
+                self.calls += 1
+                if self.calls == 1:
+                    raise ConnectionResetError("chwilowa zadyszka sieci")
+                await super()._send_data(msg)
+
+        client = SatelIntegraClient("127.0.0.1", 7094, "key", monitored_outputs={"Brama": 3})
+        fake = FlakyFakeAsyncSatel("127.0.0.1", 7094)
+        client._client = fake
+        client._initial_status_delay_seconds = 0.01
+        client.status_poll_interval_seconds = 0.02
+
+        task = asyncio.create_task(client._periodic_status_sync())
+        await asyncio.sleep(0.09)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert fake.calls >= 3, "pętla powinna próbować dalej po jednym błędzie, nie zatrzymać się na stałe"
+        assert len(fake.sent_queries) >= 2, "kolejne (udane) zapytania powinny nadal trafiać do kolejki"
+
     async def test_stops_when_superseded_by_reconnect(self):
         """Zadanie NIE może żyć wiecznie po utracie aktualności - jeśli
         connect() (re)połączenia tworzy NOWY obiekt AsyncSatel, stare
