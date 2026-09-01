@@ -65,10 +65,11 @@ satel:
   #   innymi wyjściami), które je SERIALIZUJE (centrala obsługuje tylko
   #   jednego klienta integracji naraz).
   #
-  # "http" - funkcja "Wejścia IP" ETHM-1 Plus: osobne żądanie HTTP GET na
-  #   port/URL poniżej, z hasłem CAŁEGO modułu ("key" niżej, z DLOADX,
-  #   zakładka "Wejścia IP" - WSPÓLNE dla wszystkich wejść, NIE per wejście)
-  #   - NIEZALEŻNE od kolejki poleceń protokołu integracji, kosztem
+  # "http" - funkcja "Wejścia IP" ETHM-1: osobne, ZWYKŁE, NIEUWIERZYTELNIONE
+  #   żądanie HTTP GET na port poniżej, http://{host}:{port}/{nazwa} -
+  #   {nazwa} to WPROST nazwa wejścia z "inputs" niżej (fragment ścieżki
+  #   URL, NIE parametr), BEZ ŻADNEGO klucza/hasła/kodu DLOADX -
+  #   NIEZALEŻNE od kolejki poleceń protokołu integracji, kosztem
   #   dodatkowej konfiguracji i zależności od wersji firmware.
   #
   # UWAGA: "inputs" niżej, "monitored_zones"/"monitored_outputs"/"partitions"
@@ -81,9 +82,8 @@ satel:
   # config.yaml, wciąż działa (wsteczna zgodność) - patrz bridge/config.py.
   virtual_inputs:
     mode: library    # "library" (zalecane) albo "http"
-    port: 8888                  # tylko dla mode: http (port TCP/IP ETHM-1 Plus)
-    key: ""                     # tylko dla mode: http - hasło CAŁEGO modułu z DLOADX (WSPÓLNE, nie per wejście)
-    url_template: "http://{host}:{port}/input.cgi?key={key}&input={input_no}"  # tylko mode: http
+    port: 8888                  # tylko dla mode: http (port TCP/IP ETHM-1)
+    url_template: "http://{host}:{port}/{name}"  # tylko mode: http
     inputs:
       # nazwa logiczna -> numer wejścia (zaprogramowanego w DLOADX) - TEN
       # SAM kształt niezależnie od "mode" wyżej.

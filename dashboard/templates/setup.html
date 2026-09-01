@@ -296,26 +296,22 @@
       (numer 1-256), wyzwalane przez to samo połączenie integracji co
       reszta poleceń - te polecenia CZEKAJĄ w jednej kolejce, bo centrala
       obsługuje tylko jednego klienta integracji naraz. <b>HTTP (Wejścia IP
-      ETHM-1 Plus)</b> - osobne połączenie, niezależne od tej kolejki,
-      skonfigurowane w DLOADX (zakładka "Wejścia IP"), kosztem osobnego
-      portu i WSPÓLNEGO hasła CAŁEGO modułu do tej funkcji (ustawianego RAZ
-      w DLOADX, NIE per wejście).
+      ETHM-1)</b> - osobne połączenie, niezależne od tej kolejki,
+      skonfigurowane w module (port poniżej), kosztem osobnego portu -
+      zwykłe, NIEUWIERZYTELNIONE żądanie GET (host:port/nazwa wejścia),
+      BEZ żadnego klucza/kodu DLOADX.
     </div>
     <div class="field-row">
       <div class="field">
         <label>Tryb</label>
         <select id="satel_virtual_inputs_mode">
           <option value="library">Biblioteka satel_integra (zalecane)</option>
-          <option value="http">HTTP (Wejścia IP ETHM-1 Plus)</option>
+          <option value="http">HTTP (Wejścia IP ETHM-1)</option>
         </select>
       </div>
       <div class="field" id="satel_vi_port_field" hidden>
-        <label>Port HTTP (ETHM-1 Plus)</label>
+        <label>Port HTTP (ETHM-1)</label>
         <input type="number" id="satel_virtual_inputs_port" value="8888">
-      </div>
-      <div class="field" id="satel_vi_key_field" hidden>
-        <label>Hasło HTTP wejść IP (z DLOADX)</label>
-        <input type="text" id="satel_virtual_inputs_key" placeholder="hasło z DLOADX">
       </div>
     </div>
     <div id="virtualInputsRows"></div>
@@ -696,9 +692,9 @@ function collectNameNumberRows(containerId) {
 
 // ------------------------------------------------------------------
 // Wirtualne wejścia IP - nazwa + numer, TEN SAM kształt niezależnie od
-// trybu (patrz obszerny docstring bridge/satel_client.py): tryb "http"
-// uwierzytelnia się WSPÓLNYM hasłem CAŁEGO modułu (pole
-// "satel_virtual_inputs_key" wyżej), NIE osobnym kluczem per wejście.
+// trybu (patrz obszerny docstring bridge/satel_client.py): tryb "http" to
+// zwykły, NIEUWIERZYTELNIONY GET (host:port/nazwa), BEZ żadnego
+// klucza/kodu DLOADX - numer jest w nim po prostu nieużywany.
 // ------------------------------------------------------------------
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');
@@ -728,7 +724,6 @@ function collectVirtualInputs() {
 document.getElementById('satel_virtual_inputs_mode').addEventListener('change', () => {
   const isHttp = document.getElementById('satel_virtual_inputs_mode').value === 'http';
   document.getElementById('satel_vi_port_field').hidden = !isHttp;
-  document.getElementById('satel_vi_key_field').hidden = !isHttp;
 });
 
 document.getElementById('satel_encryption_enabled').addEventListener('change', () => {
@@ -1315,7 +1310,6 @@ function collectFormData() {
       encryption_key: document.getElementById('satel_encryption_key').value.trim(),
       virtual_inputs_mode: document.getElementById('satel_virtual_inputs_mode').value,
       virtual_inputs_port: document.getElementById('satel_virtual_inputs_port').value,
-      virtual_inputs_key: document.getElementById('satel_virtual_inputs_key').value.trim(),
     },
     partitions: collectNameNumberRows('partitionsRows'),
     monitored_zones: collectNameNumberRows('zonesRows'),
@@ -1379,10 +1373,8 @@ function populateForm(data) {
   set('satel_encryption_key', satel.encryption_key);
   set('satel_virtual_inputs_mode', satel.virtual_inputs_mode || 'library');
   set('satel_virtual_inputs_port', satel.virtual_inputs_port);
-  set('satel_virtual_inputs_key', satel.virtual_inputs_key);
   const satelViIsHttp = document.getElementById('satel_virtual_inputs_mode').value === 'http';
   document.getElementById('satel_vi_port_field').hidden = !satelViIsHttp;
-  document.getElementById('satel_vi_key_field').hidden = !satelViIsHttp;
 
   (data.partitions || []).forEach(p => addNameNumberRow('partitionsRows', p));
   (data.monitored_zones || []).forEach(z => addNameNumberRow('zonesRows', z));

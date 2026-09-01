@@ -279,9 +279,8 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
 
     def test_build_satel_fields_shape_same_regardless_of_mode(self):
         """Kształt "virtual_inputs" (nazwa -> numer) jest TEN SAM w obu
-        trybach - tryb "http" uwierzytelnia się WSPÓLNYM hasłem całego
-        modułu (satel.virtual_inputs.key, sekcja 🔌 Połączenie), nie
-        osobnym kluczem per wejście (patrz docstring bridge/satel_client.py)."""
+        trybach - tryb "http" to zwykły, nieuwierzytelniony GET, BEZ
+        żadnego klucza/kodu DLOADX (patrz docstring bridge/satel_client.py)."""
         form = {
             "virtual_inputs": [{"name": "motion_hall_camera", "number": "17"}],
         }
@@ -477,7 +476,7 @@ class TestConnectionsBuilder:
     EXISTING = {
         "satel": {
             "host": "192.168.1.10", "port": 7094, "integration_key": "stary_klucz", "partition": 1,
-            "virtual_inputs": {"port": 8888, "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}"},
+            "virtual_inputs": {"port": 8888, "url_template": "http://{host}:{port}/{name}"},
             "outputs": {}, "fields_file": "satel_fields.yaml",
         },
         "tuya": {"status_poll_interval_seconds": 30, "devices_file": "tuya_devices.yaml"},
@@ -911,28 +910,13 @@ class TestSatelConnectionForm:
         )
         assert patched["encryption_key"] is None
 
-    def test_to_form_reports_virtual_inputs_key_set(self):
-        """Hasło CAŁEGO modułu do funkcji "Wejścia IP" (tryb "http") -
-        WSPÓLNE, nie per wejście (zgłoszony błąd projektowy naprawiony -
-        patrz docstring bridge/satel_client.py). Nigdy nie wraca w jawnej
-        postaci, tylko flaga `_set`, ten sam wzorzec co integration_key."""
-        section = {"host": "1.2.3.4", "virtual_inputs": {"key": "sekret_http"}}
-        form = satel_connection_to_form(section)
-        assert "sekret_http" not in str(form)
-        assert form["virtual_inputs_key_set"] is True
-        assert satel_connection_to_form({"host": "1.2.3.4"})["virtual_inputs_key_set"] is False
-
-    def test_patch_blank_virtual_inputs_key_preserves_existing(self):
-        existing = {"host": "1.2.3.4", "virtual_inputs": {"key": "stary_http_klucz"}}
-        patched = build_satel_connection_patch({"host": "1.2.3.4", "virtual_inputs_key": ""}, existing)
-        assert patched["virtual_inputs"]["key"] == "stary_http_klucz"
-
-    def test_patch_non_blank_virtual_inputs_key_overwrites(self):
-        existing = {"host": "1.2.3.4", "virtual_inputs": {"key": "stary"}}
-        patched = build_satel_connection_patch(
-            {"host": "1.2.3.4", "virtual_inputs_key": "nowy_http_klucz"}, existing,
-        )
-        assert patched["virtual_inputs"]["key"] == "nowy_http_klucz"
+    def test_patch_http_mode_url_template_has_no_key_or_number(self):
+        """Tryb "http" (funkcja "Wejścia IP" ETHM-1) to zwykły,
+        NIEUWIERZYTELNIONY GET - BEZ żadnego klucza/kodu DLOADX
+        (potwierdzone na prawdziwym sprzęcie), ścieżka URL to WPROST nazwa
+        wejścia - patrz obszerny docstring bridge/satel_client.py."""
+        patched = build_satel_connection_patch({"host": "1.2.3.4"}, {"host": "1.2.3.4"})
+        assert patched["virtual_inputs"]["url_template"] == "http://{host}:{port}/{name}"
 
     def test_patch_preserves_fields_not_in_this_form(self):
         """monitored_zones/partitions/zone_types itd. żyją w OSOBNYM
