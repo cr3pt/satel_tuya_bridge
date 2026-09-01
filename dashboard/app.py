@@ -422,8 +422,15 @@ def api_satel_test_output():
     przez połączenie integracji, wymaga zapisanego klucza integracji.
     Tryb "http": body {name, state} - `name` to nazwa JUŻ SKONFIGUROWANEGO
     wirtualnego wejścia (satel.virtual_inputs.inputs), bo ten tryb wymaga
-    klucza PER WEJŚCIE, którego nie da się podać ad-hoc z tego formularza."""
-    satel_cfg = config_raw.get("satel", {})
+    klucza PER WEJŚCIE, którego nie da się podać ad-hoc z tego formularza.
+
+    UWAGA: czytamy sekcję "satel" ŚWIEŻO z config_store, NIE z config_raw
+    (to migawka configu sprzed startu procesu, aktualizowana tylko przy
+    pełnym restarcie) - inaczej zapisanie nowego trybu/portu wejść IP w
+    sekcji 🔌 Połączenie i od razu kliknięcie TEST wciąż testowałoby
+    STARY tryb, dając mylący błąd z niewłaściwej gałęzi (np. "Podaj numer
+    wyjścia" mimo wybranego i zapisanego trybu HTTP)."""
+    satel_cfg = config_store.get("config").get("satel", {})
     host = (satel_cfg.get("host") or "").strip()
     port = satel_cfg.get("port")
     if not host or not port:

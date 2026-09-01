@@ -169,6 +169,23 @@
     </div>
   </div>
 
+  <div class="actions-bar">
+    <button id="saveConnectionBtn" type="button">Zapisz połączenie</button>
+  </div>
+  <div id="connectionMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="testOutputSection">
+  <h2>🧪 Test wyjścia / wejścia wirtualnego IP</h2>
+  <div class="section-hint">
+    Jednorazowe wyzwolenie - do sprawdzenia, czy wybrany wyżej tryb
+    wyzwalania faktycznie działa, ZANIM zaczniesz z niego korzystać w
+    scenach/regułach ruchu. Używa NAJŚWIEŻEJ zapisanej konfiguracji
+    (host/port/klucze/tryb) - w odróżnieniu od reszty panelu, TEN
+    przycisk działa od razu po kliknięciu "Zapisz połączenie" wyżej,
+    BEZ restartu procesu bridge'a.
+  </div>
+
   <div class="discover-row" id="testLibraryRow">
     <label for="testOutputNumber" style="margin: 0;">Numer wyjścia</label>
     <input type="number" id="testOutputNumber" min="1" max="256" style="width: 70px;" placeholder="np. 15">
@@ -181,11 +198,6 @@
     <button type="button" class="secondary" id="testHttpBtn">TEST</button>
     <span class="discover-status" id="testHttpStatus">Wysyła żądanie HTTP dla wybranego, JUŻ SKONFIGUROWANEGO wejścia (z kluczem z DLOADX) - patrz sekcja niżej.</span>
   </div>
-
-  <div class="actions-bar">
-    <button id="saveConnectionBtn" type="button">Zapisz połączenie</button>
-  </div>
-  <div id="connectionMsg" class="msg-box"></div>
 </div>
 
 <div class="section" id="satelSection">
