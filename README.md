@@ -143,10 +143,10 @@ do logów serwera - hasła/klucze/sekrety są w nim zawsze ukryte.
 **Krok 1 (Satel)** ma dwa przyciski:
 - **"🔌 Testuj połączenie"** - sprawdza, czy pod podanym adresem/portem w
   ogóle coś odpowiada (TCP), zanim przejdziesz dalej. Uczciwie: to test
-  osiągalności, NIE samego klucza integracji - protokół integracji Satela
-  wysyła klucz dopiero przy konkretnym poleceniu (uzbrojenie/wyjście), a
+  osiągalności, NIE samego kodu użytkownika - protokół integracji Satela
+  wysyła go dopiero przy konkretnym poleceniu (uzbrojenie/wyjście), a
   test świadomie niczego takiego nie wykonuje, żeby nic nie zmienić w
-  systemie alarmowym. Błędny klucz integracji ujawni się dopiero przy
+  systemie alarmowym. Błędny kod użytkownika ujawni się dopiero przy
   pierwszym uzbrojeniu/rozbrojeniu.
 - **"🔍 Wykryj aktywne strefy/wyjścia"** - protokół integracji Satela NIE
   udostępnia pełnej listy skonfigurowanych stref/wyjść wraz z nazwami
@@ -833,13 +833,13 @@ zakładce ⚙ Ogólne (patrz wyżej), albo "Build i rebuild - krok po kroku"
 
 Kreator (`/setup`) jest **celowo zablokowany** po pierwszym zapisie (żeby
 przypadkowe ponowne wejście na `/setup` nigdy nie nadpisało ręcznych zmian
-w `config.yaml`) - więc host/port centrali Satel, klucz integracji, adres
+w `config.yaml`) - więc host/port centrali Satel, kod użytkownika, adres
 brokera MQTT, poświadczenia Tuya Cloud, Home Assistant i tematy MQTT
 zmienia się **z panelu**, w sekcji **"🔌 Połączenie"** na stronie
 odpowiedniej wtyczki (`/plugins/satel`, `/plugins/ebus`, `/plugins/tuya_cloud`,
 `/plugins/home_assistant`). Na stronie Satela - w odróżnieniu od reszty
 tej strony - **odczyt też wymaga hasła administratora** (kliknij
-"🔒 Wczytaj bieżące ustawienia"), bo dane obejmują klucz integracji;
+"🔒 Wczytaj bieżące ustawienia"), bo dane obejmują kod użytkownika;
 formularz nigdy nie pokazuje prawdziwej wartości sekretu z powrotem -
 tylko informację, czy jest już ustawiony. Zostaw pole hasła/klucza puste,
 żeby go NIE zmieniać.
@@ -2172,7 +2172,7 @@ coś w Twojej sieci tego wymaga (np. discovery po multicaście), w
 Kontener działa jako **użytkownik bez uprawnień roota** (UID 1000) -
 stąd wymóg `chown` katalogu `data/` przed pierwszym uruchomieniem
 (inaczej Docker utworzy go jako root i kontener nie będzie mógł zapisać
-`config.db`). Sekrety (klucz integracji Satela, local_key urządzeń
+`config.db`). Sekrety (kod użytkownika centrali Satela, local_key urządzeń
 Tuya, hasła) trafiają wyłącznie do zamontowanego `./data/config.db` -
 nigdy do obrazu ani do warstw builda.
 

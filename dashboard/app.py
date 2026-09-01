@@ -487,7 +487,7 @@ def api_satel_test_output():
 
     integration_key = satel_cfg.get("integration_key") or ""
     if not integration_key:
-        return jsonify({"error": "Najpierw zapisz klucz integracji (sekcja 🔌 Połączenie, /plugins/satel)"}), 400
+        return jsonify({"error": "Najpierw zapisz kod użytkownika centrali (sekcja 🔌 Połączenie, /plugins/satel)"}), 400
     try:
         output_number = int(payload.get("output_number"))
     except (TypeError, ValueError):
