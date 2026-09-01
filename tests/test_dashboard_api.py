@@ -334,6 +334,75 @@ class TestVirtualInputEndpoints:
         assert resp.status_code == 404
 
 
+class TestSatelTestOutputEndpoint:
+    """POST /api/satel/test-output - przycisk TEST w nowej sekcji "🧪 Test
+    wyjścia / wejścia wirtualnego IP" na /plugins/satel. Musi czytać tryb
+    (library/http) ŚWIEŻO z config_store, NIE z config_raw (migawka sprzed
+    startu procesu) - inaczej zapisanie nowego trybu przez
+    /api/plugins/satel/connection i od razu TEST wciąż testowałoby STARY
+    tryb, dając błąd z niewłaściwej gałęzi walidacji (zgłoszony bug:
+    "Podaj numer wyjścia" mimo wybranego i zapisanego trybu HTTP)."""
+
+    def test_requires_auth(self, client):
+        resp = client.post("/api/satel/test-output", json={"output_number": 1})
+        assert resp.status_code == 401
+
+    def test_library_mode_uses_freshly_saved_output_number(self, client, monkeypatch):
+        captured = {}
+
+        async def fake_test_output(host, port, integration_key, output_number, state, **_kwargs):
+            captured["output_number"] = output_number
+
+        monkeypatch.setattr("dashboard.app.test_satel_output", fake_test_output)
+        resp = client.post(
+            "/api/satel/test-output", json={"output_number": 15, "state": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert captured["output_number"] == 15
+
+    def test_http_mode_saved_after_client_created_is_picked_up_without_restart(self, client, monkeypatch):
+        # CONFIG_TEMPLATE nie ustawia virtual_inputs.mode - domyślnie
+        # "library". Zmieniamy go tu na "http" TAK, jak robi to
+        # /api/plugins/satel/connection (zapis do config_store), BEZ
+        # ponownego wywołania create_app() - dokładnie odtwarzając
+        # scenariusz "zapisz połączenie -> od razu TEST, bez restartu".
+        import dashboard.app as app_module
+        current = app_module.config_store.get("config")
+        current["satel"]["virtual_inputs"]["mode"] = "http"
+        app_module.config_store.set("config", current)
+
+        captured = {}
+
+        async def fake_test_http(host, port, url_template, key, number, **_kwargs):
+            captured["number"] = number
+
+        monkeypatch.setattr("dashboard.app.test_satel_virtual_input_http", fake_test_http)
+        resp = client.post(
+            "/api/satel/test-output", json={"name": "motion_hall", "state": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert captured["number"] == 1
+
+    def test_http_mode_with_output_number_payload_does_not_leak_library_error(self, client):
+        # Regresja dla zgłoszonego buga: frontend w trybie HTTP wysyła
+        # {name, state}, NIE {output_number, state} - gdyby backend mimo
+        # to poszedł gałęzią "library" (bo czytał stary tryb), dostalibyśmy
+        # mylące "Podaj numer wyjścia" zamiast błędu o brakującym wejściu.
+        import dashboard.app as app_module
+        current = app_module.config_store.get("config")
+        current["satel"]["virtual_inputs"]["mode"] = "http"
+        app_module.config_store.set("config", current)
+
+        resp = client.post(
+            "/api/satel/test-output", json={"state": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+        assert "wyjścia" not in resp.get_json()["error"]
+
+
 class TestSystemLogsLoggersEndpoint:
     """/api/system/logs/loggers - lista WYSTĘPUJĄCYCH nazw loggerów, do
     rozwijanej listy filtra w panelu (⚙ Ogólne -> Logi), patrz
