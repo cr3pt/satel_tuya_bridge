@@ -6,8 +6,16 @@
    rządek linków (⚙ Ustawienia czujników eBUS / 🧩 Wtyczki / 🎬 Automatyzacje
    / ⚙ Ustawienia ogólne) - cztery osobne pozycje najwyższego poziomu, z
    których DWIE nazywały się "Ustawienia" (co innego), tworząc chaos. Teraz
-   jest JEDNA pozycja "⚙ Ustawienia" z rozwijanym menu, w którym są
-   podgrupy: eBUS/Wtyczki/Automatyzacje/Ogólne.
+   jest JEDNA pozycja "⚙ Ustawienia" z rozwijanym menu.
+
+   Dawna pozycja "📡 Czujniki eBUS" (-> /config, wspólna strona z
+   czujnikami eBUS, polami Satela i urządzeniami Tuya naraz) została
+   USUNIĘTA - każda z tych trzech integracji ma teraz WŁASNĄ stronę pod
+   🧩 Wtyczki (host/port/klucze + strefy/czujniki/urządzenia w jednym
+   miejscu), więc osobna pozycja menu na to była zdublowanym wejściem do
+   tych samych danych (patrz zgłoszenie: rozdzielić Połączenia na właściwe
+   wtyczki). Lokalizacja (wschód/zachód słońca) przeniesiona do
+   🎬 Automatyzacje, restart/kopia zapasowa do ⚙ Ogólne.
 
    `request` jest dostępne w Jinja automatycznie (Flask wstrzykuje je do
    każdego kontekstu szablonu) - używane tu tylko do ukrycia linku "Wróć do
@@ -17,7 +25,6 @@
   <span class="settings-menu">
     <a href="#" class="settings-menu-btn" onclick="toggleSettingsMenu(event); return false;">⚙ Ustawienia ▾</a>
     <span class="settings-menu-panel" id="settingsMenuPanel">
-      <a href="/config" class="{{ 'active' if request.path == '/config' else '' }}">📡 Czujniki eBUS</a>
       <a href="/plugins" class="{{ 'active' if request.path.startswith('/plugins') else '' }}">🧩 Wtyczki</a>
       <a href="/automations" class="{{ 'active' if request.path == '/automations' else '' }}">🎬 Automatyzacje</a>
       <a href="/system" class="{{ 'active' if request.path == '/system' else '' }}">⚙ Ogólne</a>

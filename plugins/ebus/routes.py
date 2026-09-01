@@ -8,7 +8,10 @@ from __future__ import annotations
 from flask import Flask, jsonify, render_template, request
 
 from bridge.ebus_client import discover_topics as discover_ebus_topics, BackgroundTopicDiscovery
-from dashboard.setup import clean_sensors_payload
+from dashboard.setup import (
+    clean_sensors_payload,
+    ebus_connection_to_form, build_ebus_connection_patch, validate_ebus_connection,
+)
 from plugins import PluginMeta, register_settings_route
 
 META = PluginMeta(
@@ -108,6 +111,44 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
     @app.route("/api/plugins/ebus/discover/stop", methods=["POST"])
     def api_plugin_ebus_discover_stop():
         return jsonify(_background_discovery.stop())
+
+    @app.route("/api/plugins/ebus/connection", methods=["GET"])
+    def api_plugin_ebus_connection_get():
+        """Adres/port brokera MQTT i temat stanu eBUS - dawniej zakładka
+        🔌 Połączenia (/config), przeniesione tutaj razem z resztą
+        konfiguracji eBUS (patrz zgłoszenie: rozdzielić Połączenia na
+        właściwe wtyczki). Jak reszta stron wtyczek, chronione globalnie
+        przez _require_login_for_settings_and_control w dashboard/app.py
+        (allowlist publicznych ścieżek) - bez sekretów, więc bez dodatkowego
+        @require_auth() wprost (w odróżnieniu od /api/plugins/satel/connection,
+        gdzie klucz integracji uzasadnia jawne podkreślenie tego wymogu)."""
+        current = get_config_store().get("config")
+        return jsonify(ebus_connection_to_form(current.get("ebus", {}), current.get("boiler_output", {})))
+
+    @app.route("/api/plugins/ebus/connection", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    def api_plugin_ebus_connection_post():
+        """Zapisuje TYLKO adres/port brokera/temat stanu - zmiany zaczną
+        działać dopiero po pełnym restarcie procesu bridge'a (żywe
+        połączenie MQTT nie jest odtwarzane w locie), w odróżnieniu od
+        /api/plugins/ebus/sensors (lista czujników), które bridge
+        przeładowuje sam, bez restartu."""
+        form = request.get_json(silent=True)
+        if not isinstance(form, dict):
+            return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+        errors = validate_ebus_connection(form)
+        if errors:
+            return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+        current = get_config_store().get("config")
+        new_config = build_ebus_connection_patch(form, current)
+        get_config_store().set("config", new_config)
+
+        return jsonify({
+            "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a - "
+                       "użyj przycisku restartu w zakładce ⚙ Ustawienia -> Ogólne.",
+        })
 
     def _get_ebus_section() -> dict:
         # STORED sekcja z dokumentu "config" - lista czujników żyje osobno

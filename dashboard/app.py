@@ -34,7 +34,6 @@ from bridge.config import BridgeConfig
 from bridge.config_store import ConfigStore, resolve_db_and_legacy_paths
 from bridge.log_capture import attach_log_capture
 from bridge.logging_config import apply_log_levels, VALID_LEVELS as LOG_LEVELS
-from bridge.ebus_client import discover_topics as discover_ebus_topics, BackgroundTopicDiscovery
 from bridge.history_store import HistoryStore
 from bridge.satel_client import test_connection as test_satel_connection
 from bridge.satel_client import test_output as test_satel_output
@@ -45,12 +44,10 @@ from bridge.tuya_local import scan_network as scan_tuya_network, fetch_cloud_dev
 from dashboard.auth import AuthGuard, require_auth, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
 from dashboard.setup import (
     build_config_dict, validate, build_automations_dict, validate_automations,
-    build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
+    build_satel_fields_dict, build_tuya_devices_dict,
     build_connections_patch, validate_connections, connections_to_form, list_plugins,
     build_location_patch, validate_location,
     draft_path_for, load_draft, save_draft, delete_draft,
-    dict_to_name_number_rows, zones_to_rows, virtual_inputs_to_rows,
-    tuya_devices_to_rows, zigbee_gateways_to_rows, clean_sensors_payload,
 )
 
 app = Flask(__name__)
@@ -430,7 +427,7 @@ def api_satel_test_output():
     host = (satel_cfg.get("host") or "").strip()
     port = satel_cfg.get("port")
     if not host or not port:
-        return jsonify({"error": "Najpierw zapisz adres IP i port centrali (zakładka Połączenia)"}), 400
+        return jsonify({"error": "Najpierw zapisz adres IP i port centrali (sekcja 🔌 Połączenie, /plugins/satel)"}), 400
 
     vi_cfg = satel_cfg.get("virtual_inputs", {})
     mode = vi_cfg.get("mode", "library")
@@ -459,7 +456,7 @@ def api_satel_test_output():
 
     integration_key = satel_cfg.get("integration_key") or ""
     if not integration_key:
-        return jsonify({"error": "Najpierw zapisz klucz integracji (zakładka Połączenia)"}), 400
+        return jsonify({"error": "Najpierw zapisz klucz integracji (sekcja 🔌 Połączenie, /plugins/satel)"}), 400
     try:
         output_number = int(payload.get("output_number"))
     except (TypeError, ValueError):
@@ -626,102 +623,15 @@ def api_setup_save():
     return resp
 
 
-@app.route("/config")
-def config_page():
-    return render_template("config.html")
-
-
 @app.route("/api/config/sensors", methods=["GET"])
 def api_config_sensors_get():
+    """Metadane czujników (etykiety/tematy MQTT) dla panelu głównego
+    (index.html) - jak reszta /api/*, chronione globalnie przez
+    _require_login_for_settings_and_control (allowlist wyżej), mimo braku
+    @require_auth() wprost na tym routingu. Zapis przeniesiony do
+    /api/plugins/ebus/sensors (patrz zgłoszenie: rozdzielić dawną wspólną
+    zakładkę Ustawienia/Połączenia na właściwe strony wtyczek)."""
     return jsonify(config_store.get("sensors").get("sensors", []))
-
-
-@app.route("/api/config/sensors", methods=["POST"])
-@require_auth()
-def api_config_sensors_post():
-    """Nadpisuje CAŁĄ zawartość sensors.yaml przesłaną listą. Walidacja jest
-    celowo minimalna (tylko to, co faktycznie zepsułoby resztę bridge'a przy
-    starcie) - reszta pól ma sensowne wartości domyślne."""
-    payload = request.get_json(silent=True)
-    cleaned, error = clean_sensors_payload(payload)
-    if error:
-        return jsonify({"error": error}), 400
-
-    config_store.set("sensors", {"sensors": cleaned})
-    _enqueue_bridge_reload()
-
-    return jsonify({"saved": len(cleaned), "message": _RELOAD_MESSAGE})
-
-
-@app.route("/api/discover/ebus", methods=["POST"])
-def api_discover_ebus():
-    """Krótkie (kilka sekund) nasłuchiwanie na MQTT ebusd - podpowiedź
-    tematów/pól do dodania jako czujnik w /config (patrz przycisk "Wykryj
-    czujniki"). Publiczny - to tylko podgląd sieci, nic nie zmienia.
-
-    UCZCIWIE: to najprostsza możliwa heurystyka (kto faktycznie opublikował
-    coś w krótkim oknie czasowym), NIE pełna lista pól dostępnych w ebusd -
-    rzadziej publikowane pola mogą się nie pojawić. Można kliknąć ponownie
-    albo dodać czujnik ręcznie (patrz README)."""
-    payload = request.get_json(silent=True) or {}
-    ebus_cfg = config_raw.get("ebus", {})
-    mqtt_host = payload.get("mqtt_host") or ebus_cfg.get("mqtt_host")
-    mqtt_port = payload.get("mqtt_port") or ebus_cfg.get("mqtt_port", 1883)
-    if not mqtt_host:
-        return jsonify({"error": "Brak adresu brokera MQTT"}), 400
-    try:
-        topics = discover_ebus_topics(mqtt_host, int(mqtt_port))
-    except ConnectionError as exc:
-        return jsonify({"error": str(exc)}), 502
-    except Exception as exc:
-        return jsonify({"error": f"Błąd wykrywania: {exc}"}), 502
-    return jsonify({"topics": topics})
-
-
-# Jedna instancja procesu-wide - jeden nasłuch w tle naraz wystarcza dla
-# panelu administrowanego przez jedną osobę (patrz
-# bridge/ebus_client.py:BackgroundTopicDiscovery).
-_ebus_background_discovery = BackgroundTopicDiscovery()
-
-
-@app.route("/api/discover/ebus/start", methods=["POST"])
-def api_discover_ebus_start():
-    """Rozpoczyna nasłuch MQTT ebusd W TLE (domyślnie 5 minut) - w
-    odróżnieniu od /api/discover/ebus wyżej (blokujące ~4s), to żądanie
-    wraca NATYCHMIAST; wyniki odbiera się przez /api/discover/ebus/status
-    (odpytywane cyklicznie przez panel). Dłuższy nasłuch łapie też
-    rzadziej publikowane pola, których krótkie okno mogło nie zauważyć."""
-    payload = request.get_json(silent=True) or {}
-    ebus_cfg = config_raw.get("ebus", {})
-    mqtt_host = payload.get("mqtt_host") or ebus_cfg.get("mqtt_host")
-    mqtt_port = payload.get("mqtt_port") or ebus_cfg.get("mqtt_port", 1883)
-    if not mqtt_host:
-        return jsonify({"error": "Brak adresu brokera MQTT"}), 400
-    try:
-        duration_seconds = min(float(payload.get("duration_seconds") or 300), 600)
-    except (TypeError, ValueError):
-        duration_seconds = 300.0
-
-    try:
-        _ebus_background_discovery.start(mqtt_host, int(mqtt_port), duration_seconds=duration_seconds)
-    except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 409
-    except ConnectionError as exc:
-        return jsonify({"error": str(exc)}), 502
-    except Exception as exc:
-        return jsonify({"error": f"Błąd uruchamiania nasłuchu: {exc}"}), 502
-
-    return jsonify(_ebus_background_discovery.status())
-
-
-@app.route("/api/discover/ebus/status")
-def api_discover_ebus_status():
-    return jsonify(_ebus_background_discovery.status())
-
-
-@app.route("/api/discover/ebus/stop", methods=["POST"])
-def api_discover_ebus_stop():
-    return jsonify(_ebus_background_discovery.stop())
 
 
 @app.route("/api/discover/tuya", methods=["POST"])
@@ -762,142 +672,6 @@ def api_discover_tuya_cloud():
     except Exception as exc:
         return jsonify({"error": f"Błąd importu z Tuya Cloud: {exc}"}), 502
     return jsonify({"devices": devices})
-
-
-@app.route("/api/config/satel-fields", methods=["GET"])
-def api_config_satel_fields_get():
-    satel = config_raw.get("satel", {})
-    return jsonify({
-        "partitions": dict_to_name_number_rows(satel.get("partitions", {})),
-        "monitored_zones": zones_to_rows(satel.get("monitored_zones", {}), satel.get("zone_types", {})),
-        "monitored_outputs": zones_to_rows(satel.get("monitored_outputs", {}), satel.get("output_types", {})),
-        "virtual_inputs": virtual_inputs_to_rows(satel.get("virtual_inputs", {}).get("inputs", {})),
-        # Tryb wirtualnych wejść IP (satel.virtual_inputs.mode, patrz
-        # docstring bridge/satel_client.py) - CZYTELNY tu (nie edytowalny,
-        # to robi się w zakładce Połączenia), żeby ten formularz wiedział,
-        # czy pokazać pole klucza per wiersz (tryb "http") czy nie.
-        "virtual_inputs_mode": satel.get("virtual_inputs", {}).get("mode", "library"),
-        # Mapy nazwa -> rodzaj, osobno (obok wierszy wyżej) - wygodne dla
-        # panelu głównego (index.html), który dopasowuje typ do statusu po
-        # etykiecie (status.label), bez potrzeby osobnego zapytania.
-        "zone_types": satel.get("zone_types", {}),
-        "output_types": satel.get("output_types", {}),
-    })
-
-
-@app.route("/api/config/satel-fields", methods=["POST"])
-@require_auth()
-def api_config_satel_fields_post():
-    """Nadpisuje CAŁĄ zawartość satel_fields.yaml (strefy/wyjścia/wejścia
-    IP/partycje) przesłanym formularzem - ten sam kształt danych, jaki
-    zbiera kreator w kroku "Centrala Satel Integra" (patrz dashboard/setup.py:
-    validate_satel_fields/build_satel_fields_dict)."""
-    form = request.get_json(silent=True)
-    if not isinstance(form, dict):
-        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
-
-    # Tryb wirtualnych wejść IP jest AUTORYTATYWNIE w config.yaml (zakładka
-    # Połączenia, nie ten formularz) - czytamy go stąd, nigdy z przesłanego
-    # `form`, żeby klient nie mógł podszyć się pod inny tryb niż faktycznie
-    # zapisany (patrz walidacja klucza w validate_satel_fields).
-    vi_mode = config_raw.get("satel", {}).get("virtual_inputs", {}).get("mode", "library")
-    errors = validate_satel_fields(form, vi_mode)
-    if errors:
-        return jsonify({"error": "Popraw błędy:", "details": errors}), 400
-
-    satel_fields_dict = build_satel_fields_dict(form, vi_mode)
-    config_store.set("satel_fields", satel_fields_dict)
-
-    config = BridgeConfig.load(config_path)
-    create_app(config)
-    _enqueue_bridge_reload()
-
-    return jsonify({
-        "saved": {k: len(v) if isinstance(v, dict) else v for k, v in satel_fields_dict.items()},
-        "message": _RELOAD_MESSAGE,
-    })
-
-
-@app.route("/api/config/tuya-devices", methods=["GET"])
-def api_config_tuya_devices_get():
-    return jsonify({
-        "devices": tuya_devices_to_rows(config_raw.get("tuya", {}).get("devices", {})),
-        "zigbee_gateways": zigbee_gateways_to_rows(config_raw.get("tuya", {}).get("zigbee_gateways", {})),
-    })
-
-
-@app.route("/api/config/tuya-devices", methods=["POST"])
-@require_auth()
-def api_config_tuya_devices_post():
-    """Nadpisuje CAŁĄ zawartość tuya_devices.yaml przesłanym formularzem -
-    ten sam kształt danych, jaki zbiera kreator w kroku "Urządzenia Tuya"
-    (patrz dashboard/setup.py: validate_tuya_devices/build_tuya_devices_dict)."""
-    form = request.get_json(silent=True)
-    if not isinstance(form, dict):
-        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
-
-    errors = validate_tuya_devices(form)
-    if errors:
-        return jsonify({"error": "Popraw błędy:", "details": errors}), 400
-
-    # Ta strona edytuje TYLKO urządzenia lokalne/bramki - "cloud_devices"
-    # (zakładka Tuya Cloud, plugins/tuya_cloud/routes.py) dzieli ten sam
-    # dokument ConfigStore, więc trzeba go zachować, inaczej zapis stąd
-    # kasowałby listę urządzeń chmurowych.
-    tuya_devices_dict = build_tuya_devices_dict(form)
-    existing = config_store.get("tuya_devices")
-    existing["devices"] = tuya_devices_dict["devices"]
-    existing["zigbee_gateways"] = tuya_devices_dict["zigbee_gateways"]
-    config_store.set("tuya_devices", existing)
-
-    config = BridgeConfig.load(config_path)
-    create_app(config)
-    _enqueue_bridge_reload()
-
-    return jsonify({"saved": len(tuya_devices_dict["devices"]), "message": _RELOAD_MESSAGE})
-
-
-@app.route("/api/config/connections", methods=["GET"])
-@require_auth()
-def api_config_connections_get():
-    """Zakładka "Połączenia" panelu ⚙ Ustawienia - jedyne miejsce, w
-    którym da się PO PIERWSZEJ KONFIGURACJI zmienić host/port/klucze/tematy
-    MQTT (kreator /setup jest celowo zablokowany po zapisie, patrz
-    api_setup_save - to była świadoma decyzja, żeby przypadkowe ponowne
-    wejście na /setup nigdy nie nadpisało całego config.yaml). Wymaga
-    hasła administratora NAWET do odczytu (w odróżnieniu od reszty
-    endpointów /api/config/*) - zwracane dane obejmują, czy klucz integracji
-    Satela / Tuya Cloud Access Secret SĄ ustawione, nigdy ich wartości."""
-    current = config_store.get("config")
-    return jsonify(connections_to_form(current))
-
-
-@app.route("/api/config/connections", methods=["POST"])
-@require_auth()
-def api_config_connections_post():
-    """Nadpisuje TYLKO pola połączeń w config.yaml (patrz
-    dashboard/setup.py: build_connections_patch) - reszta pliku (reguły
-    kamer/alarmów, automatyka kotła, ustawienia konserwacji itd.) zostaje
-    nietknięta."""
-    form = request.get_json(silent=True)
-    if not isinstance(form, dict):
-        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
-
-    errors = validate_connections(form)
-    if errors:
-        return jsonify({"error": "Popraw błędy:", "details": errors}), 400
-
-    current = config_store.get("config")
-    new_config = build_connections_patch(form, current)
-    config_store.set("config", new_config)
-
-    config = BridgeConfig.load(config_path)
-    create_app(config)
-
-    return jsonify({
-        "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a "
-                    "(nie samego panelu) - np. `sudo systemctl restart satel-tuya-bridge`.",
-    })
 
 
 @app.route("/api/config/location", methods=["GET"])

@@ -95,7 +95,16 @@
   #saveMessage.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
   #saveMessage.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
   #saveMessage ul { margin: 6px 0 0; padding-left: 20px; }
+  #locationMap { height: 280px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 12px; background: #262a32; }
+  .leaflet-control-attribution { background: rgba(29,32,38,0.8) !important; color: var(--muted) !important; }
+  .leaflet-control-attribution a { color: var(--accent) !important; }
+  .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .discover-status { font-size: 12.5px; color: var(--muted); }
+  .msg-box { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; display: none; }
+  .msg-box.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  .msg-box.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
 </style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 </head>
 <body>
 {% include "_nav.html" %}
@@ -108,6 +117,33 @@
   patrz README) - dotyczy zarówno przeglądania tej strony, jak i zapisu.
   <br><strong>Zmiany wchodzą w życie automatycznie w ciągu ok. 1-2s, bez
   restartu bridge'a</strong> (panel prosi bridge o przeładowanie w tle).
+</div>
+
+<div class="section" id="locationSection">
+  <h2>🌍 Lokalizacja (wschód/zachód słońca)</h2>
+  <div class="section-hint">
+    Okna czasowe reguł ruchu (niżej) i symulacji obecności mogą używać
+    "sunset"/"sunrise" zamiast stałej godziny - do tego bridge musi znać
+    przybliżoną lokalizację (liczy wschód/zachód lokalnie, biblioteką
+    <code>astral</code>, bez żadnego zewnętrznego API pogodowego). Kliknij
+    na mapie, użyj przycisku lokalizacji przeglądarki, albo wpisz
+    współrzędne ręcznie. <strong>Zapisuje się od razu na żywo, bez
+    restartu procesu.</strong>
+  </div>
+  <div id="locationMap"></div>
+  <div class="discover-row">
+    <button type="button" class="secondary" id="geolocateBtn">📍 Wykryj lokalizację przeglądarki</button>
+    <span class="discover-status" id="geolocateStatus"></span>
+  </div>
+  <div class="field-row">
+    <div class="field"><label>Szerokość geograficzna</label><input type="text" id="loc_lat" placeholder="52.23"></div>
+    <div class="field"><label>Długość geograficzna</label><input type="text" id="loc_lon" placeholder="21.01"></div>
+  </div>
+  <div class="actions-bar" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <button id="saveLocationBtn" type="button">Zapisz lokalizację</button>
+    <button id="clearLocationBtn" type="button" class="secondary">✕ Wyczyść (wyłącz sunset/sunrise)</button>
+  </div>
+  <div id="locationMsg" class="msg-box"></div>
 </div>
 
 <div class="section" id="scenesSection">
@@ -171,6 +207,7 @@
   <div id="saveMessage"></div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 let context = {
   tuya_devices: [], virtual_inputs: [], satel_partitions: {}, status_keys: [], motion_rule_names: [],
@@ -1221,6 +1258,135 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
   }
 });
 
+// ------------------------------------------------------------------
+// Lokalizacja (wschód/zachód słońca dla okien czasowych "sunset"/
+// "sunrise") - mapa Leaflet+OpenStreetMap (kliknij, żeby ustawić punkt),
+// przycisk geolokalizacji przeglądarki i ręczne pola lat/lon jako
+// fallback/precyzyjna korekta. Zapisuje się na żywo, bez restartu procesu
+// (patrz dashboard/app.py: /api/config/location i
+// RulesEngine.reload_config - lokalizacja to czyste dane, nie żywe
+// połączenie sieciowe do zerwania, w odróżnieniu od reszty ustawień
+// przeniesionych do stron poszczególnych wtyczek).
+// ------------------------------------------------------------------
+function showLocationMsg(ok, text) {
+  const el = document.getElementById('locationMsg');
+  el.className = 'msg-box ' + (ok ? 'ok' : 'error');
+  el.style.display = '';
+  el.textContent = (ok ? '✅ ' : '❌ ') + text;
+}
+
+let locationMap = null;
+let locationMarker = null;
+const DEFAULT_MAP_CENTER = [52.0, 19.0]; // środek Polski - widok domyślny, dopóki nic nie jest ustawione
+
+function placeLocationMarker(lat, lon) {
+  if (locationMarker) {
+    locationMarker.setLatLng([lat, lon]);
+  } else {
+    locationMarker = L.marker([lat, lon], { draggable: true }).addTo(locationMap);
+    locationMarker.on('dragend', () => {
+      const pos = locationMarker.getLatLng();
+      setLocationFields(pos.lat, pos.lng);
+    });
+  }
+}
+
+function setLocationFields(lat, lon) {
+  document.getElementById('loc_lat').value = lat.toFixed(5);
+  document.getElementById('loc_lon').value = lon.toFixed(5);
+}
+
+function initLocationMap(lat, lon) {
+  const hasCoords = lat !== null && lon !== null && !isNaN(lat) && !isNaN(lon);
+  const center = hasCoords ? [lat, lon] : DEFAULT_MAP_CENTER;
+  locationMap = L.map('locationMap').setView(center, hasCoords ? 11 : 6);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
+    maxZoom: 18,
+  }).addTo(locationMap);
+  if (hasCoords) {
+    placeLocationMarker(lat, lon);
+  }
+  locationMap.on('click', (e) => {
+    setLocationFields(e.latlng.lat, e.latlng.lng);
+    placeLocationMarker(e.latlng.lat, e.latlng.lng);
+  });
+}
+
+async function loadLocation() {
+  let lat = null, lon = null;
+  try {
+    const resp = await fetch('/api/config/location');
+    if (resp.ok) {
+      const data = await resp.json();
+      lat = data.latitude ?? null;
+      lon = data.longitude ?? null;
+      if (lat !== null && lon !== null) {
+        document.getElementById('loc_lat').value = lat;
+        document.getElementById('loc_lon').value = lon;
+      }
+    }
+  } catch (e) {
+    // brak połączenia z serwerem - mapa i tak pokaże się z domyślnym widokiem
+  }
+  initLocationMap(lat, lon);
+}
+
+document.getElementById('geolocateBtn').addEventListener('click', () => {
+  const status = document.getElementById('geolocateStatus');
+  if (!navigator.geolocation) {
+    status.textContent = '❌ Ta przeglądarka nie obsługuje geolokalizacji - kliknij na mapie albo wpisz współrzędne ręcznie.';
+    return;
+  }
+  status.textContent = '⏳ Pytam przeglądarkę o pozwolenie na lokalizację...';
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude, longitude } = pos.coords;
+      setLocationFields(latitude, longitude);
+      placeLocationMarker(latitude, longitude);
+      locationMap.setView([latitude, longitude], 11);
+      status.textContent = '✅ Wykryto lokalizację - kliknij "Zapisz lokalizację", żeby ją zachować.';
+    },
+    (err) => {
+      status.textContent = '❌ Nie udało się pobrać lokalizacji (' + err.message + ') - kliknij na mapie albo wpisz współrzędne ręcznie.';
+    },
+    { enableHighAccuracy: false, timeout: 10000 },
+  );
+});
+
+document.getElementById('saveLocationBtn').addEventListener('click', async () => {
+  const payload = {
+    latitude: document.getElementById('loc_lat').value.trim(),
+    longitude: document.getElementById('loc_lon').value.trim(),
+  };
+  try {
+    const resp = await authorizedFetch('/api/config/location', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const details = data.details ? ' - ' + data.details.join('; ') : '';
+      showLocationMsg(false, (data.error || 'Błąd zapisu') + details);
+    } else {
+      showLocationMsg(true, data.message);
+    }
+  } catch (e) {
+    showLocationMsg(false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+document.getElementById('clearLocationBtn').addEventListener('click', () => {
+  if (!confirm('Wyczyścić lokalizację? Okna czasowe z "sunset"/"sunrise" przestaną działać (reguła zostanie potraktowana jako zawsze aktywna).')) {
+    return;
+  }
+  document.getElementById('loc_lat').value = '';
+  document.getElementById('loc_lon').value = '';
+  document.getElementById('saveLocationBtn').click();
+});
+
+loadLocation();
 loadAll();
 </script>
 </body>

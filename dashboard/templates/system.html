@@ -152,6 +152,46 @@
   </div>
 </div>
 
+<div class="section" id="maintenanceSection">
+  <h2>🛠 Restart i kopia zapasowa</h2>
+  <div class="section-hint">
+    Akcje globalne, niezwiązane z żadną pojedynczą wtyczką - przeniesione
+    tutaj z dawnej wspólnej zakładki 🔌 Połączenia.
+  </div>
+  <div class="actions-bar">
+    <button id="restartBtn" type="button" class="secondary">🔄 Zrestartuj bridge i panel teraz</button>
+  </div>
+  <div class="section-hint" style="margin-top: 10px;">
+    Zmiany hosta/portu/kluczy w zakładkach wtyczek (np. 🔒 Satel, 🔥 eBUS)
+    NIE działają automatycznie - wymagają pełnego restartu procesu (żywe
+    połączenia TCP z centralą/brokerami nie są odtwarzane w locie). Użyj
+    przycisku wyżej, żeby zrobić to od razu z panelu, bez dostępu do
+    konsoli/SSH - restartuje OBA kontenery (bridge + panel); ta strona
+    przestanie odpowiadać na kilka-kilkanaście sekund.
+  </div>
+  <div id="restartMsg" class="msg-box"></div>
+
+  <div class="section-hint" style="margin-top: 20px;">
+    <strong>Kopia zapasowa konfiguracji.</strong> Cała konfiguracja żyje w
+    bazie (nie w plikach .yaml na dysku) - tu można ją wyeksportować do
+    prawdziwego archiwum .zip (pliki .yaml w środku, do wglądu/backupu
+    dowolnym programem) albo zaimportować z powrotem (np. po przeniesieniu
+    na inny serwer). Import jest <strong>podwójnie sprawdzany PRZED
+    zapisem</strong> - najpierw poprawność samego YAML-a, potem czy
+    wynikowa konfiguracja w ogóle przejdzie start procesu (dokładnie ta
+    sama ścieżka kodu, co przy prawdziwym uruchomieniu bridge'a) - błędne
+    albo niekompletne archiwum jest odrzucane w całości, nic się wtedy nie
+    zmienia. Import NADPISUJE wskazane sekcje - zmiany połączeń wymagają
+    potem pełnego restartu (przycisk wyżej).
+  </div>
+  <div class="actions-bar">
+    <button id="exportYamlBtn" type="button" class="secondary">⬇ Eksportuj konfigurację (.zip)</button>
+    <button id="importYamlBtn" type="button" class="secondary">⬆ Importuj konfigurację (.zip)</button>
+    <input type="file" id="importYamlFile" accept=".zip" style="display:none;">
+  </div>
+  <div id="backupMsg" class="msg-box"></div>
+</div>
+
 <div class="section" id="logsSection">
   <h2>🐞 Logi</h2>
   <div class="section-hint">
@@ -326,6 +366,89 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
   } else {
     showMsg('settingsMsg', true, data.message);
   }
+});
+
+// ------------------------------------------------------------------
+// Restart i kopia zapasowa
+// ------------------------------------------------------------------
+document.getElementById('restartBtn').addEventListener('click', async () => {
+  if (!confirm('Zrestartować bridge i panel teraz? Panel przestanie odpowiadać na kilka-kilkanaście sekund.')) {
+    return;
+  }
+  const btn = document.getElementById('restartBtn');
+  btn.disabled = true;
+  try {
+    const resp = await authorizedFetch('/api/system/restart', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('restartMsg', false, data.error || 'Błąd restartu');
+      btn.disabled = false;
+      return;
+    }
+    showMsg('restartMsg', true, data.message);
+    // Panel zaraz zniknie razem z procesem - odśwież stronę po chwili,
+    // żeby złapać go z powrotem, gdy Docker go podniesie.
+    setTimeout(() => window.location.reload(), 15000);
+  } catch (e) {
+    showMsg('restartMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('exportYamlBtn').addEventListener('click', async () => {
+  try {
+    const resp = await authorizedFetch('/api/config/export-zip');
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      showMsg('backupMsg', false, data.error || 'Błąd eksportu');
+      return;
+    }
+    const blob = await resp.blob();
+    const disposition = resp.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : 'satel-tuya-bridge-config.zip';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showMsg('backupMsg', true, 'Wyeksportowano - plik .zip pobrany.');
+  } catch (e) {
+    showMsg('backupMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+document.getElementById('importYamlBtn').addEventListener('click', () => {
+  document.getElementById('importYamlFile').click();
+});
+
+document.getElementById('importYamlFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!confirm('Import NADPISZE wskazane sekcje konfiguracji zawartością archiwum (po sprawdzeniu, że się zgadza i wystartuje). Kontynuować?')) {
+    e.target.value = '';
+    return;
+  }
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const resp = await authorizedFetch('/api/config/import-zip', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('backupMsg', false, data.error || 'Błąd importu');
+    } else {
+      showMsg('backupMsg', true, data.message);
+    }
+  } catch (err) {
+    showMsg('backupMsg', false, 'Błąd odczytu/importu pliku: ' + err);
+  }
+  e.target.value = '';
 });
 
 // ------------------------------------------------------------------

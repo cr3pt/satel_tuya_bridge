@@ -11,6 +11,8 @@ from dashboard.setup import (
     build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
     validate_cloud_devices, cloud_devices_to_rows,
     build_connections_patch, validate_connections, connections_to_form, list_plugins,
+    satel_connection_to_form, build_satel_connection_patch, validate_satel_connection,
+    ebus_connection_to_form, build_ebus_connection_patch, validate_ebus_connection,
     build_location_patch, validate_location,
     draft_path_for, load_draft, save_draft, delete_draft,
 )
@@ -251,8 +253,9 @@ class TestBuildConfigDict:
 
 class TestSatelFieldsAndTuyaDevicesBuilders:
     """build_satel_fields_dict/build_tuya_devices_dict i ich walidatory -
-    współdzielone przez kreator i panel /config (patrz dashboard/app.py:
-    /api/config/satel-fields, /api/config/tuya-devices)."""
+    współdzielone przez kreator i strony wtyczek Satel/Tuya (patrz
+    plugins/satel/routes.py: /api/plugins/satel/fields,
+    plugins/tuya_local/routes.py: /api/plugins/tuya/devices)."""
 
     def test_build_satel_fields_shape(self):
         """Tryb domyślny "library" (patrz obszerny docstring
@@ -579,7 +582,8 @@ class TestConnectionsBuilder:
 
     def test_tuya_cloud_save_preserves_api_region_set_elsewhere(self):
         """Regresja: ta funkcja przepisuje CAŁY słownik tuya.cloud od zera -
-        zakładka Połączenia (config.html) nie edytuje w ogóle regionu (to
+        jedyny dziś żywy wywołujący (GET/POST /api/plugins, przełącznik
+        enabled na zakładce 🧩 Wtyczki) nie edytuje w ogóle regionu (to
         robi osobna strona /plugins/tuya_cloud), więc każdy zapis TUTAJ bez
         zachowania już ustawionego api_region kasowałby go, psując
         sterowanie chmurowe (Tuya OpenAPI "cross-region access is not
@@ -855,6 +859,130 @@ class TestConnectionsToForm:
         assert patched["satel"]["integration_key"] == existing["satel"]["integration_key"]
 
 
+class TestSatelConnectionForm:
+    """satel_connection_to_form/build_satel_connection_patch/
+    validate_satel_connection - wersja scoped-do-sekcji-satel dawnego
+    connections_to_form/build_connections_patch/validate_connections,
+    używana przez /api/plugins/satel/connection (patrz zgłoszenie:
+    rozdzielić dawną wspólną zakładkę Połączenia na właściwe wtyczki)."""
+
+    def test_validate_requires_host(self):
+        assert validate_satel_connection({"host": ""}) != []
+        assert validate_satel_connection({"host": "1.2.3.4"}) == []
+
+    def test_to_form_never_exposes_secrets(self):
+        section = {"host": "1.2.3.4", "integration_key": "sekret", "encryption_key": "AESKEY"}
+        form = satel_connection_to_form(section)
+        assert "sekret" not in str(form)
+        assert "AESKEY" not in str(form)
+        assert form["integration_key_set"] is True
+        assert form["encryption_key_set"] is True
+
+    def test_to_form_reports_unset_secrets_and_defaults(self):
+        form = satel_connection_to_form({"host": "1.2.3.4"})
+        assert form["integration_key_set"] is False
+        assert form["encryption_key_set"] is False
+        assert form["encryption_enabled"] is False
+        assert form["virtual_inputs_mode"] == "library"
+        assert form["port"] == 7094
+
+    def test_patch_updates_host_and_port(self):
+        existing = {"host": "1.2.3.4", "port": 7094, "integration_key": "x"}
+        patched = build_satel_connection_patch({"host": "10.0.0.9", "port": "7095"}, existing)
+        assert patched["host"] == "10.0.0.9"
+        assert patched["port"] == 7095
+
+    def test_patch_blank_integration_key_preserves_existing(self):
+        existing = {"host": "1.2.3.4", "integration_key": "sekret"}
+        patched = build_satel_connection_patch({"host": "1.2.3.4", "integration_key": ""}, existing)
+        assert patched["integration_key"] == "sekret"
+
+    def test_patch_non_blank_integration_key_overwrites(self):
+        existing = {"host": "1.2.3.4", "integration_key": "stary"}
+        patched = build_satel_connection_patch({"host": "1.2.3.4", "integration_key": "nowy"}, existing)
+        assert patched["integration_key"] == "nowy"
+
+    def test_patch_encryption_key_clear(self):
+        existing = {"host": "1.2.3.4", "encryption_key": "AESKEY"}
+        patched = build_satel_connection_patch(
+            {"host": "1.2.3.4", "encryption_key_clear": True}, existing,
+        )
+        assert patched["encryption_key"] is None
+
+    def test_patch_preserves_fields_not_in_this_form(self):
+        """monitored_zones/partitions/zone_types itd. żyją w OSOBNYM
+        dokumencie satel_fields (nadpisują to, co w configu, patrz
+        BridgeConfig.load) - obecność/nieobecność tutaj nie ma znaczenia,
+        ale status_poll_interval_seconds/outputs/fields_file (edytowane
+        gdzie indziej) muszą przetrwać zapis stąd niezmienione."""
+        existing = {
+            "host": "1.2.3.4", "status_poll_interval_seconds": 5, "outputs": {"a": 1},
+            "fields_file": "custom.yaml",
+        }
+        patched = build_satel_connection_patch({"host": "1.2.3.4"}, existing)
+        assert patched["status_poll_interval_seconds"] == 5
+        assert patched["outputs"] == {"a": 1}
+        assert patched["fields_file"] == "custom.yaml"
+
+    def test_roundtrip(self):
+        existing = {
+            "host": "1.2.3.4", "port": 7094, "partition": 1, "integration_key": "sekret",
+            "virtual_inputs": {"mode": "library", "port": 8888},
+        }
+        form = satel_connection_to_form(existing)
+        browser_form = {
+            "host": form["host"], "port": str(form["port"]), "partition": str(form["partition"]),
+            "virtual_inputs_mode": form["virtual_inputs_mode"],
+            "virtual_inputs_port": str(form["virtual_inputs_port"]), "integration_key": "",
+        }
+        patched = build_satel_connection_patch(browser_form, existing)
+        assert patched["host"] == existing["host"]
+        assert patched["integration_key"] == existing["integration_key"]
+
+
+class TestEbusConnectionForm:
+    """ebus_connection_to_form/build_ebus_connection_patch/
+    validate_ebus_connection - odpowiednik TestSatelConnectionForm dla
+    /api/plugins/ebus/connection."""
+
+    def test_validate_requires_mqtt_host(self):
+        assert validate_ebus_connection({"mqtt_host": ""}) != []
+        assert validate_ebus_connection({"mqtt_host": "127.0.0.1"}) == []
+
+    def test_to_form_reads_topic_prefix_from_boiler_output(self):
+        form = ebus_connection_to_form(
+            {"mqtt_host": "127.0.0.1", "mqtt_port": 1884},
+            {"mqtt": {"topic_prefix": "dom/kociol"}},
+        )
+        assert form == {"mqtt_host": "127.0.0.1", "mqtt_port": 1884, "topic_prefix": "dom/kociol"}
+
+    def test_to_form_defaults_when_unset(self):
+        form = ebus_connection_to_form({}, {})
+        assert form == {"mqtt_host": "", "mqtt_port": 1883, "topic_prefix": "home/boiler"}
+
+    def test_patch_mirrors_host_and_port_into_boiler_output_mqtt(self):
+        existing = {"ebus": {"mqtt_host": "1.2.3.4", "mqtt_port": 1883}, "satel": {"host": "9.9.9.9"}}
+        patched = build_ebus_connection_patch({"mqtt_host": "10.0.0.5", "mqtt_port": "1884"}, existing)
+        assert patched["ebus"]["mqtt_host"] == "10.0.0.5"
+        assert patched["ebus"]["mqtt_port"] == 1884
+        assert patched["boiler_output"]["mqtt"]["host"] == "10.0.0.5"
+        assert patched["boiler_output"]["mqtt"]["port"] == 1884
+        # nietknięta sekcja spoza tego formularza
+        assert patched["satel"]["host"] == "9.9.9.9"
+
+    def test_patch_updates_topic_prefix(self):
+        existing = {"ebus": {"mqtt_host": "1.2.3.4"}, "boiler_output": {"mqtt": {"topic_prefix": "home/boiler"}}}
+        patched = build_ebus_connection_patch(
+            {"mqtt_host": "1.2.3.4", "topic_prefix": "dom/kociol"}, existing,
+        )
+        assert patched["boiler_output"]["mqtt"]["topic_prefix"] == "dom/kociol"
+
+    def test_patch_blank_topic_prefix_preserves_existing(self):
+        existing = {"ebus": {"mqtt_host": "1.2.3.4"}, "boiler_output": {"mqtt": {"topic_prefix": "dom/kociol"}}}
+        patched = build_ebus_connection_patch({"mqtt_host": "1.2.3.4", "topic_prefix": ""}, existing)
+        assert patched["boiler_output"]["mqtt"]["topic_prefix"] == "dom/kociol"
+
+
 @pytest.fixture
 def setup_client(tmp_path):
     """Klient testowy w stanie 'NIE skonfigurowany' - config.yaml jeszcze
@@ -877,9 +1005,9 @@ class TestSetupRedirect:
         assert resp.status_code == 302
         assert "/setup" in resp.headers["Location"]
 
-    def test_config_page_redirects_to_setup_when_unconfigured(self, setup_client):
+    def test_plugins_page_redirects_to_setup_when_unconfigured(self, setup_client):
         client, _ = setup_client
-        resp = client.get("/config", follow_redirects=False)
+        resp = client.get("/plugins", follow_redirects=False)
         assert resp.status_code == 302
 
     def test_setup_page_itself_loads_without_redirect(self, setup_client):

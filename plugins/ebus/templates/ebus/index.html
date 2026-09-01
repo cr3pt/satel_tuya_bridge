@@ -56,6 +56,9 @@
   .field-group > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
   .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
   .discover-status { font-size: 12.5px; color: var(--muted); }
+  .conn-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .conn-grid .field label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+  @media (max-width: 640px) { .conn-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -105,6 +108,26 @@
     <button id="savePluginSettingsBtn" type="button">Zapisz ustawienia wtyczki</button>
   </div>
   <div id="pluginSettingsMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="connectionSection">
+  <h2>🔌 Połączenie</h2>
+  <div class="section-hint">
+    Adres/port brokera MQTT ebusd i temat publikacji stanu kotła -
+    przeniesione tutaj z dawnej wspólnej zakładki 🔌 Połączenia.
+    <strong>Zmiany wymagają pełnego restartu procesu</strong> (przycisk w
+    zakładce ⚙ Ustawienia -> Ogólne) - w odróżnieniu od czujników niżej,
+    które bridge przeładowuje sam.
+  </div>
+  <div class="conn-grid">
+    <div class="field"><label>Adres brokera</label><input type="text" id="conn_mqtt_host" placeholder="127.0.0.1"></div>
+    <div class="field"><label>Port</label><input type="number" id="conn_mqtt_port" placeholder="1883"></div>
+    <div class="field"><label>Temat MQTT dla stanu eBUS</label><input type="text" id="conn_topic_prefix" placeholder="home/boiler"></div>
+  </div>
+  <div class="actions-bar">
+    <button id="saveConnectionBtn" type="button">Zapisz połączenie</button>
+  </div>
+  <div id="connectionMsg" class="msg-box"></div>
 </div>
 
 <div class="section" id="discoverSection">
@@ -208,6 +231,43 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
     }
   } catch (e) {
     showMsg('pluginSettingsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+// ------------------------------------------------------------------
+// Połączenie (adres/port brokera MQTT/temat stanu) - publiczny odczyt (bez
+// sekretów, w odróżnieniu od /plugins/satel), więc wczytujemy od razu przy
+// starcie strony zamiast za przyciskiem.
+// ------------------------------------------------------------------
+async function loadConnection() {
+  const data = await (await fetch('/api/plugins/ebus/connection')).json();
+  document.getElementById('conn_mqtt_host').value = data.mqtt_host || '';
+  document.getElementById('conn_mqtt_port').value = data.mqtt_port || '';
+  document.getElementById('conn_topic_prefix').value = data.topic_prefix || '';
+}
+loadConnection();
+
+document.getElementById('saveConnectionBtn').addEventListener('click', async () => {
+  const payload = {
+    mqtt_host: document.getElementById('conn_mqtt_host').value.trim(),
+    mqtt_port: document.getElementById('conn_mqtt_port').value,
+    topic_prefix: document.getElementById('conn_topic_prefix').value.trim(),
+  };
+  try {
+    const resp = await authorizedFetch('/api/plugins/ebus/connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const details = data.details ? ' - ' + data.details.join('; ') : '';
+      showMsg('connectionMsg', false, (data.error || 'Błąd zapisu') + details);
+    } else {
+      showMsg('connectionMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('connectionMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
 

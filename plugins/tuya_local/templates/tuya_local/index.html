@@ -272,14 +272,22 @@ function addDeviceRow(initial) {
       <option value="socket">Gniazdko/przełącznik</option>
       <option value="dimmer">Ściemniacz</option>
     </select>
+    <input type="text" placeholder="DP jasności (tylko ściemniacz)" class="dev-dp" style="max-width: 140px; display:none;">
     <input type="text" placeholder="bramka Zigbee (opcjonalnie)" class="dev-gateway">
     <button type="button" class="row-remove">✕</button>`;
+  const typeSelect = row.querySelector('.dev-type');
+  const dpInput = row.querySelector('.dev-dp');
+  typeSelect.addEventListener('change', () => {
+    dpInput.style.display = typeSelect.value === 'dimmer' ? '' : 'none';
+  });
   if (initial) {
     row.querySelector('.dev-name').value = initial.name ?? '';
     row.querySelector('.dev-id').value = initial.id ?? '';
     row.querySelector('.dev-ip').value = initial.ip ?? '';
     row.querySelector('.dev-key').value = initial.local_key ?? '';
-    row.querySelector('.dev-type').value = initial.type || 'socket';
+    typeSelect.value = initial.type || 'socket';
+    dpInput.value = initial.dimmer_dp || '';
+    dpInput.style.display = typeSelect.value === 'dimmer' ? '' : 'none';
     row.querySelector('.dev-gateway').value = initial.gateway ?? '';
   }
   row.querySelector('.row-remove').addEventListener('click', () => row.remove());
@@ -296,7 +304,7 @@ function collectDevices() {
       local_key: row.querySelector('.dev-key').value.trim(),
       type: row.querySelector('.dev-type').value,
       gateway: row.querySelector('.dev-gateway').value.trim(),
-      dimmer_dp: '1',
+      dimmer_dp: row.querySelector('.dev-dp').value.trim() || '1',
     }))
     .filter(d => d.name);
 }

@@ -12,6 +12,7 @@ from bridge.satel_client import discover_active_zones_and_outputs
 from dashboard.setup import (
     build_satel_fields_dict, validate_satel_fields,
     dict_to_name_number_rows, zones_to_rows, virtual_inputs_to_rows,
+    satel_connection_to_form, build_satel_connection_patch, validate_satel_connection,
 )
 from plugins import PluginMeta, register_settings_route
 
@@ -129,6 +130,41 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         current = get_config_store().get("config")
         current["satel"] = section
         get_config_store().set("config", current)
+
+    @app.route("/api/plugins/satel/connection", methods=["GET"])
+    @require_auth(get_guard=get_auth_guard)
+    def api_plugin_satel_connection_get():
+        """Host/port/klucze centrali - dawniej zakładka 🔌 Połączenia
+        (/config), przeniesione tutaj razem z resztą konfiguracji Satela
+        (patrz zgłoszenie: rozdzielić Połączenia na właściwe wtyczki).
+        Wymaga hasła administratora NAWET do odczytu (w odróżnieniu od
+        /api/plugins/satel/fields) - zwracane dane obejmują, czy klucz
+        integracji/klucz szyfrowania SĄ ustawione, nigdy ich wartości."""
+        return jsonify(satel_connection_to_form(_get_satel_section()))
+
+    @app.route("/api/plugins/satel/connection", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    def api_plugin_satel_connection_post():
+        """Zapisuje TYLKO host/port/klucze/tryb wejść IP - zmiany zaczną
+        działać dopiero po pełnym restarcie procesu bridge'a (żywe
+        połączenie TCP z centralą nie jest odtwarzane w locie), w
+        odróżnieniu od /api/plugins/satel/fields (strefy/wyjścia), które
+        bridge przeładowuje sam, bez restartu."""
+        form = request.get_json(silent=True)
+        if not isinstance(form, dict):
+            return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+        errors = validate_satel_connection(form)
+        if errors:
+            return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+        new_section = build_satel_connection_patch(form, _get_satel_section())
+        _save_satel_section(new_section)
+
+        return jsonify({
+            "message": "Zapisano. Zmiany zaczną działać po restarcie procesu bridge'a - "
+                       "użyj przycisku restartu w zakładce ⚙ Ustawienia -> Ogólne.",
+        })
 
     register_settings_route(
         app, "satel", require_auth=require_auth, get_auth_guard=get_auth_guard,
