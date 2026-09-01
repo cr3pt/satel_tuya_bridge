@@ -1325,6 +1325,35 @@ class TestStaleStatusPruning:
         assert engine.history.get_status_value("automation:wykryto_intruza") is None
 
 
+class TestPluginDisabledHealthStatus:
+    """Zgłoszony błąd: wyłączenie wtyczki w 🧩 Wtyczki (satel.enabled /
+    tuya.enabled / ebus.enabled = false) nigdy nie aktualizowało statusu
+    "system_health" - panel pokazywał więc żywe, zielone "połączono"
+    zamrożone z ostatniej sesji sprzed wyłączenia, dla wtyczki, która w
+    ogóle nie próbuje się już łączyć (patrz RulesEngine.start())."""
+
+    async def test_disabled_satel_writes_neutral_status_without_connecting(self, engine):
+        engine.config.satel["enabled"] = False
+        await engine.start()
+        assert engine.history.get_status_value("health:satel") == "wyłączono (wtyczka)"
+
+    async def test_disabled_tuya_writes_neutral_status(self, engine):
+        engine.config.tuya["enabled"] = False
+        await engine.start()
+        assert engine.history.get_status_value("health:tuya_local") == "wyłączono (wtyczka)"
+
+    async def test_disabled_ebus_writes_neutral_status(self, engine):
+        engine.config.ebus["enabled"] = False
+        await engine.start()
+        assert engine.history.get_status_value("health:ebus_mqtt") == "wyłączono (wtyczka)"
+
+    async def test_enabled_plugins_do_not_get_neutral_status(self, engine):
+        await engine.start()
+        assert engine.history.get_status_value("health:satel") != "wyłączono (wtyczka)"
+        assert engine.history.get_status_value("health:tuya_local") != "wyłączono (wtyczka)"
+        assert engine.history.get_status_value("health:ebus_mqtt") != "wyłączono (wtyczka)"
+
+
 class TestHomeWhizStatusSeeding:
     """_seed_homewhiz_status_labels() - urządzenie HomeWhiz od razu widoczne
     na stronie głównej (status 'nieznany', zanim się w ogóle odezwie po

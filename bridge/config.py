@@ -97,16 +97,19 @@ class BridgeConfig:
         #   wcześniejsze wersje tego modułu błędnie zakładały klucz per
         #   wejście, potem błędnie wspólny klucz całego modułu) - nazwa ->
         #   numer (int, TEN SAM kształt co w trybie "library", numer po
-        #   prostu nieużywany w http - URL niesie samą nazwę). "port"/
-        #   "url_template" mają wartości domyślne (potrzebne tylko w trybie
-        #   "http") - inaczej config bez jawnie zapisanej sekcji zostawiłby
-        #   je nieobecne, co wywala silnik reguł (RulesEngine.__init__
-        #   zawsze tworzy SatelVirtualInputTrigger) KeyErrorem przy
-        #   starcie/przeładowaniu.
+        #   prostu nieużywany w http - URL niesie samą nazwę). "port" ma
+        #   wartość domyślną (potrzebną tylko w trybie "http") - inaczej
+        #   config bez jawnie zapisanej sekcji zostawiłby je nieobecne, co
+        #   wywala silnik reguł (RulesEngine.__init__ zawsze tworzy
+        #   SatelVirtualInputTrigger) KeyErrorem przy starcie/przeładowaniu.
+        #   "url_template" CELOWO nie jest tu ustawiany/przechowywany -
+        #   SatelVirtualInputTrigger używa stałej DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE
+        #   wprost (zgłoszony błąd: przechowana wartość zamrażała STARY
+        #   format URL sprzed poprawki protokołu i psuła realne wyzwalanie
+        #   z KeyErrorem, mimo poprawionego kodu).
         data["satel"].setdefault("virtual_inputs", {})
         data["satel"]["virtual_inputs"].setdefault("mode", "library")
         data["satel"]["virtual_inputs"].setdefault("port", 8888)
-        data["satel"]["virtual_inputs"].setdefault("url_template", "http://{host}:{port}/{name}")
         if "virtual_inputs" in satel_fields:
             data["satel"]["virtual_inputs"]["inputs"] = satel_fields["virtual_inputs"]
         else:

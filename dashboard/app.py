@@ -469,9 +469,13 @@ def api_satel_test_output():
         if name not in inputs:
             return jsonify({"error": "Wybierz skonfigurowane wirtualne wejście"}), 400
         vi_port = vi_cfg.get("port", DEFAULT_VIRTUAL_INPUT_HTTP_PORT)
-        url_template = vi_cfg.get("url_template", DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE)
+        # CELOWO stała, NIE vi_cfg.get("url_template", ...) - to szczegół
+        # protokołu, żaden formularz go nie edytuje. Czytanie zapisanej
+        # wartości groziło (i groziło naprawdę - zgłoszony błąd, KeyError:
+        # 'key') zamrożeniem STAREGO formatu URL w instalacjach, które
+        # zapisały połączenie PRZED poprawką protokołu.
         try:
-            asyncio.run(test_satel_virtual_input_http(host, int(vi_port), url_template, name))
+            asyncio.run(test_satel_virtual_input_http(host, int(vi_port), DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE, name))
         except ConnectionError as exc:
             return jsonify({"error": str(exc)}), 502
         except Exception as exc:
