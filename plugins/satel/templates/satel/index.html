@@ -150,29 +150,24 @@
       Satela, przez to samo połączenie integracji co reszta poleceń
       (uzbrojenie, sterowanie wyjściami) - te polecenia CZEKAJĄ w jednej
       kolejce, bo centrala obsługuje tylko jednego klienta integracji naraz.
-      <strong>HTTP (Wejścia IP ETHM-1 Plus)</strong> - osobne połączenie,
-      NIEZALEŻNE od tej kolejki, kosztem osobnego portu i WSPÓLNEGO hasła
-      CAŁEGO modułu do tej funkcji (ustawianego RAZ w DLOADX, NIE per
-      wejście) - dostępność zależy od wersji firmware.
+      <strong>HTTP (Wejścia IP ETHM-1)</strong> - osobne połączenie,
+      NIEZALEŻNE od tej kolejki, kosztem osobnego portu - zwykłe,
+      NIEUWIERZYTELNIONE żądanie GET (host:port/nazwa_wejścia), BEZ
+      żadnego klucza/kodu DLOADX - dostępność zależy od wersji firmware.
     </div>
     <div class="conn-grid">
       <div class="field">
         <label>Tryb</label>
         <select id="conn_vi_mode">
           <option value="library">Biblioteka satel_integra (zalecane)</option>
-          <option value="http">HTTP (Wejścia IP ETHM-1 Plus)</option>
+          <option value="http">HTTP (Wejścia IP ETHM-1)</option>
         </select>
       </div>
       <div class="field" id="conn_vi_port_field" hidden>
-        <label>Port HTTP (ETHM-1 Plus)</label>
+        <label>Port HTTP (ETHM-1)</label>
         <input type="number" id="conn_vi_port" placeholder="8888">
       </div>
-      <div class="field" id="conn_vi_key_field" hidden>
-        <label>Hasło HTTP wejść IP (z DLOADX)</label>
-        <input type="password" id="conn_vi_key" placeholder="(bez zmian)">
-      </div>
     </div>
-    <div class="secret-hint" id="conn_vi_key_hint" hidden></div>
   </div>
 
   <div class="actions-bar">
@@ -202,7 +197,7 @@
     <label for="testVirtualInputName" style="margin: 0;">Wirtualne wejście</label>
     <select id="testVirtualInputName" style="max-width: 220px;"></select>
     <button type="button" class="secondary" id="testHttpBtn">TEST</button>
-    <span class="discover-status" id="testHttpStatus">Wysyła żądanie HTTP dla wybranego, JUŻ SKONFIGUROWANEGO wejścia (numer z sekcji niżej), uwierzytelnione wspólnym hasłem z pola "Hasło HTTP wejść IP" wyżej.</span>
+    <span class="discover-status" id="testHttpStatus">Wysyła zwykłe, NIEUWIERZYTELNIONE żądanie HTTP GET dla wybranego, JUŻ SKONFIGUROWANEGO wejścia (nazwa wejścia jako ścieżka URL) - bez żadnego klucza/kodu DLOADX.</span>
   </div>
 </div>
 
@@ -372,9 +367,6 @@ async function loadConnection(auto) {
     document.getElementById('conn_enc_key_clear').checked = false;
     document.getElementById('conn_vi_mode').value = data.virtual_inputs_mode || 'library';
     document.getElementById('conn_vi_port').value = data.virtual_inputs_port || '';
-    document.getElementById('conn_vi_key_hint').textContent = data.virtual_inputs_key_set
-      ? 'Hasło jest już ustawione - zostaw pole puste, żeby go nie zmieniać.'
-      : 'Hasło NIE jest jeszcze ustawione - test/wyzwalanie w trybie HTTP nie zadziała bez niego.';
     savedVirtualInputMode = data.virtual_inputs_mode || 'library';
     syncVirtualInputModeUI();
 
@@ -411,7 +403,6 @@ document.getElementById('saveConnectionBtn').addEventListener('click', async () 
     encryption_key_clear: document.getElementById('conn_enc_key_clear').checked,
     virtual_inputs_mode: document.getElementById('conn_vi_mode').value,
     virtual_inputs_port: document.getElementById('conn_vi_port').value,
-    virtual_inputs_key: document.getElementById('conn_vi_key').value,
   };
   try {
     const resp = await authorizedFetch('/api/plugins/satel/connection', {
@@ -427,7 +418,6 @@ document.getElementById('saveConnectionBtn').addEventListener('click', async () 
       document.getElementById('conn_key').value = '';
       document.getElementById('conn_enc_key').value = '';
       document.getElementById('conn_enc_key_clear').checked = false;
-      document.getElementById('conn_vi_key').value = '';
       savedVirtualInputMode = payload.virtual_inputs_mode;
       syncVirtualInputModeUI();
       showMsg('connectionMsg', true, data.message);
@@ -441,8 +431,6 @@ function syncVirtualInputModeUI() {
   const selectedMode = document.getElementById('conn_vi_mode').value;
   const isHttp = selectedMode === 'http';
   document.getElementById('conn_vi_port_field').hidden = !isHttp;
-  document.getElementById('conn_vi_key_field').hidden = !isHttp;
-  document.getElementById('conn_vi_key_hint').hidden = !isHttp;
   document.getElementById('testLibraryRow').hidden = isHttp;
   document.getElementById('testHttpRow').hidden = !isHttp;
   if (isHttp) loadVirtualInputNamesForTest();
@@ -610,8 +598,8 @@ function collectZoneOrOutputRows(containerId) {
 
 // Wirtualne wejście to nazwa+numer, NIEZALEŻNIE od trybu wyzwalania
 // (satel.virtual_inputs.mode, ustawianego w sekcji 🔌 Połączenie wyżej) -
-// tryb "http" uwierzytelnia się WSPÓLNYM hasłem CAŁEGO modułu (pole "Hasło
-// HTTP wejść IP" tamże), NIE osobnym kluczem per wiersz jak dawniej.
+// tryb "http" to zwykły, NIEUWIERZYTELNIONY GET (host:port/nazwa), BEZ
+// żadnego klucza/kodu DLOADX, numer jest w nim po prostu nieużywany.
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');
   const row = document.createElement('div');

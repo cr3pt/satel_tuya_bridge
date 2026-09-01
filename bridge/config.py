@@ -91,23 +91,22 @@ class BridgeConfig:
         # "Wirtualne wejścia IP" - dwa tryby wyzwalania (satel.virtual_inputs.mode,
         # patrz obszerny docstring bridge/satel_client.py):
         # "library" (domyślny) - zwykłe wyjście Satela, set_output(), nazwa ->
-        #   numer (int). "http" - funkcja "Wejścia IP" ETHM-1 Plus, osobne
-        #   połączenie HTTP - nazwa -> numer (int, TEN SAM kształt co w
-        #   trybie "library"). "key" to WSPÓLNE hasło CAŁEGO modułu ETHM do
-        #   tej funkcji (ustawiane RAZ w DLOADX, NIE per wejście - wcześniejsza
-        #   wersja błędnie wymagała osobnego klucza per wejście, zgłoszony
-        #   błąd). "port"/"url_template"/"key" mają wartości domyślne
-        #   (potrzebne tylko w trybie "http") - inaczej config bez jawnie
-        #   zapisanej sekcji zostawiłby je nieobecne, co wywala silnik reguł
-        #   (RulesEngine.__init__ zawsze tworzy SatelVirtualInputTrigger)
-        #   KeyErrorem przy starcie/przeładowaniu.
+        #   numer (int). "http" - funkcja "Wejścia IP" ETHM-1, osobne
+        #   połączenie HTTP, ZWYKŁY nieuwierzytelniony GET (BEZ żadnego
+        #   klucza/kodu DLOADX - potwierdzone na prawdziwym sprzęcie, dwie
+        #   wcześniejsze wersje tego modułu błędnie zakładały klucz per
+        #   wejście, potem błędnie wspólny klucz całego modułu) - nazwa ->
+        #   numer (int, TEN SAM kształt co w trybie "library", numer po
+        #   prostu nieużywany w http - URL niesie samą nazwę). "port"/
+        #   "url_template" mają wartości domyślne (potrzebne tylko w trybie
+        #   "http") - inaczej config bez jawnie zapisanej sekcji zostawiłby
+        #   je nieobecne, co wywala silnik reguł (RulesEngine.__init__
+        #   zawsze tworzy SatelVirtualInputTrigger) KeyErrorem przy
+        #   starcie/przeładowaniu.
         data["satel"].setdefault("virtual_inputs", {})
         data["satel"]["virtual_inputs"].setdefault("mode", "library")
         data["satel"]["virtual_inputs"].setdefault("port", 8888)
-        data["satel"]["virtual_inputs"].setdefault("key", "")
-        data["satel"]["virtual_inputs"].setdefault(
-            "url_template", "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
-        )
+        data["satel"]["virtual_inputs"].setdefault("url_template", "http://{host}:{port}/{name}")
         if "virtual_inputs" in satel_fields:
             data["satel"]["virtual_inputs"]["inputs"] = satel_fields["virtual_inputs"]
         else:

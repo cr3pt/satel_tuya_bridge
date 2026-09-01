@@ -57,22 +57,22 @@ automatyzacji, np. z Tuya) ma DWA niezależne sposoby wyzwolenia
    poleceniem co zwykłe wyjście - `SatelIntegraClient.set_output()` -
    przez TO SAMO połączenie integracji co reszta poleceń.
 
-2. "http" (`SatelVirtualInputTrigger` niżej) - funkcja "Wejścia IP"
-   modułu ETHM-1 Plus: osobne żądanie HTTP GET na skonfigurowany w
-   DLOADX port, z WSPÓLNYM hasłem CAŁEGO modułu (satel.virtual_inputs.key)
-   - to hasło ustawia się RAZ dla całej funkcji "Wejścia IP" w DLOADX, NIE
-   per wejście (wcześniejsza wersja tego modułu błędnie wymagała osobnego
-   klucza per wejście - zgłoszony błąd, poprawiony). WAŻNE, dlaczego to
-   osobny tryb:
-   centrala Satel Integra obsługuje TYLKO JEDNEGO klienta protokołu
+2. "http" (`SatelVirtualInputTrigger` niżej) - funkcja "Wejścia IP" ETHM-1:
+   osobne, ZWYKŁE, NIEUWIERZYTELNIONE żądanie HTTP GET na skonfigurowany
+   port modułu, `http://{host}:{port}/{nazwa}` - `{nazwa}` to WPROST nazwa
+   wirtualnego wejścia (fragment ścieżki URL, NIE parametr zapytania),
+   BEZ ŻADNEGO klucza/hasła/kodu DLOADX (potwierdzone przez użytkownika na
+   prawdziwym sprzęcie - wcześniejsze wersje tego modułu błędnie zakładały
+   klucz per wejście, potem błędnie wspólny klucz całego modułu; obie
+   wersje były niepoprawne i zostały usunięte). WAŻNE, dlaczego to osobny
+   tryb: centrala Satel Integra obsługuje TYLKO JEDNEGO klienta protokołu
    integracji naraz (port 7094) i kolejkuje na nim wszystkie polecenia
    zapisu - w trybie "library" wyzwolenie wirtualnego wejścia w trakcie
    naruszenia CZEKA w tej samej kolejce co inne polecenia (uzbrojenie,
-   sterowanie innymi wyjściami). Tryb "http" idzie przez OSOBNE
-   połączenie, niezależne od tej kolejki - kosztem osobnego klucza per
-   wejście i portu HTTP modułu ETHM-1 Plus (dostępność samej funkcji
-   zależy od wersji firmware). Moduł NIE zwraca standardowego kodu HTTP
-   200 dla tych zapytań (potwierdzone przez Satela - nie planują tego
+   sterowanie innymi wyjściami). Tryb "http" idzie przez OSOBNE połączenie,
+   niezależne od tej kolejki, kosztem portu HTTP modułu (dostępność samej
+   funkcji zależy od wersji firmware). Moduł NIE zwraca standardowego kodu
+   HTTP 200 dla tych zapytań (potwierdzone przez Satela - nie planują tego
    poprawiać) - klient poniżej celowo ignoruje kod odpowiedzi i traktuje
    sam brak wyjątku sieciowego jako sukces."""
 from __future__ import annotations
@@ -88,7 +88,7 @@ from .resilience import Supervisor
 logger = logging.getLogger("bridge.satel")
 
 DEFAULT_VIRTUAL_INPUT_HTTP_PORT = 8888
-DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE = "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
+DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE = "http://{host}:{port}/{name}"
 
 # Kody błędu ramki odpowiedzi na komendę zapisu (RESULT, 0xEF) traktowane
 # jako sukces - 0x00 to oczywiste "OK", 0xFF wygląda myląco (protokół
@@ -324,41 +324,35 @@ async def test_output(host: str, port: int, integration_key: str, output_number:
 
 class SatelVirtualInputTrigger:
     """Tryb "http" wirtualnych wejść IP (patrz docstring modułu, punkt 2) -
-    funkcja "Wejścia IP" ETHM-1 Plus, OSOBNE połączenie HTTP, niezależne od
+    funkcja "Wejścia IP" ETHM-1, OSOBNE połączenie HTTP, niezależne od
     kolejki poleceń protokołu integracji (SatelIntegraClient). Nie korzysta
-    z biblioteki `satel_integra` w ogóle - czysty aiohttp."""
+    z biblioteki `satel_integra` w ogóle - czysty aiohttp. Zwykły,
+    NIEUWIERZYTELNIONY GET - `{name}` w url_template to WPROST nazwa
+    wejścia, BEZ żadnego klucza/kodu DLOADX (patrz obszerny docstring
+    modułu wyżej)."""
 
     def __init__(self, host: str, cfg: dict):
         self.host = host
         self.port = cfg.get("port", DEFAULT_VIRTUAL_INPUT_HTTP_PORT)
         self.url_template = cfg.get("url_template", DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE)
-        # WSPÓLNE hasło CAŁEGO modułu ETHM do funkcji "Wejścia IP" (z DLOADX)
-        # - NIE per wejście, patrz docstring modułu wyżej.
-        self.key = cfg.get("key", "")
-        self.inputs = cfg.get("inputs", {})  # nazwa -> numer wejścia (int)
+        self.inputs = cfg.get("inputs", {})  # nazwa -> numer wejścia (int, nieużywany w trybie http)
 
     async def trigger(self, input_name: str, retries: int = 1) -> None:
         if input_name not in self.inputs:
             logger.error("Nieznane wirtualne wejście IP (tryb http): %s", input_name)
             return
-        input_number = self.inputs[input_name]
-        url = self.url_template.format(
-            host=self.host,
-            port=self.port,
-            key=self.key,
-            input_no=input_number,
-        )
+        url = self.url_template.format(host=self.host, port=self.port, name=input_name)
         for attempt in range(retries + 1):
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                        # Celowo nie sprawdzamy resp.status == 200 - ETHM-1 Plus
+                        # Celowo nie sprawdzamy resp.status == 200 - ETHM-1
                         # go nie zwraca w standardowej formie. Sam brak wyjątku
                         # przy wysyłce = uznajemy za wysłane.
                         await resp.read()
                 logger.info(
-                    "Wysłano naruszenie wirtualnego wejścia '%s' (nr %s, tryb http)",
-                    input_name, input_number,
+                    "Wysłano naruszenie wirtualnego wejścia '%s' (tryb http)",
+                    input_name,
                 )
                 return
             except asyncio.TimeoutError:
@@ -382,15 +376,15 @@ class SatelVirtualInputTrigger:
                     )
 
 
-async def test_virtual_input_http(host: str, port: int, url_template: str, key: str, input_number: int,
+async def test_virtual_input_http(host: str, port: int, url_template: str, name: str,
                                    timeout_seconds: float = 5.0) -> None:
     """Jednorazowy test trybu "http" wirtualnych wejść IP - do przycisku
     "TEST" w panelu, gdy satel.virtual_inputs.mode == "http". W odróżnieniu
     od test_output() wyżej (tryb "library") NIE czeka na żadne
-    potwierdzenie z centrali - ETHM-1 Plus go nie zwraca (patrz docstring
+    potwierdzenie z centrali - ETHM-1 go nie zwraca (patrz docstring
     modułu) - sam brak wyjątku sieciowego = sukces. Rzuca ConnectionError
     przy niepowodzeniu."""
-    url = url_template.format(host=host, port=port, key=key, input_no=input_number)
+    url = url_template.format(host=host, port=port, name=name)
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout_seconds)) as resp:

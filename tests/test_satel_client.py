@@ -850,27 +850,27 @@ class _FakeHttpSession:
 
 class TestVirtualInputHttpTrigger:
     """SatelVirtualInputTrigger.trigger() i test_virtual_input_http() -
-    tryb "http" wirtualnych wejść IP (funkcja "Wejścia IP" ETHM-1 Plus,
-    patrz obszerny docstring bridge/satel_client.py) - czysty aiohttp, bez
-    zależności od satel_integra, więc BEZ ZMIAN względem migracji."""
+    tryb "http" wirtualnych wejść IP (funkcja "Wejścia IP" ETHM-1, patrz
+    obszerny docstring bridge/satel_client.py) - czysty aiohttp, bez
+    zależności od satel_integra. Zwykły, NIEUWIERZYTELNIONY GET
+    (host:port/nazwa) - BEZ żadnego klucza/kodu DLOADX (potwierdzone na
+    prawdziwym sprzęcie - dwie wcześniejsze wersje tego modułu błędnie
+    zakładały klucz, najpierw per wejście, potem wspólny dla modułu)."""
 
     def _patch_aiohttp(self, monkeypatch, urls: list, exc=None):
         import aiohttp
         monkeypatch.setattr(aiohttp, "ClientSession", lambda: _FakeHttpSession(urls, exc))
 
-    async def test_trigger_sends_get_with_shared_key_and_input_number(self, monkeypatch):
-        """Klucz jest teraz WSPÓLNY dla całego modułu (cfg["key"]), NIE per
-        wejście - patrz docstring bridge/satel_client.py."""
+    async def test_trigger_sends_get_to_host_port_name(self, monkeypatch):
         urls = []
         self._patch_aiohttp(monkeypatch, urls)
         vi = SatelVirtualInputTrigger("192.168.1.50", {
-            "port": 8888,
-            "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}",
-            "key": "KLUCZWSPOLNY",
-            "inputs": {"motion_hall_camera": 17},
+            "port": 9786,
+            "url_template": "http://{host}:{port}/{name}",
+            "inputs": {"zmywarka": 17},
         })
-        await vi.trigger("motion_hall_camera")
-        assert urls == ["http://192.168.1.50:8888/input.cgi?key=KLUCZWSPOLNY&input=17"]
+        await vi.trigger("zmywarka")
+        assert urls == ["http://192.168.1.50:9786/zmywarka"]
 
     async def test_trigger_unknown_name_logs_and_does_not_raise(self, monkeypatch):
         urls = []
@@ -885,20 +885,17 @@ class TestVirtualInputHttpTrigger:
         DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE."""
         urls = []
         self._patch_aiohttp(monkeypatch, urls)
-        vi = SatelVirtualInputTrigger("192.168.1.50", {
-            "key": "k",
-            "inputs": {"x": 1},
-        })
+        vi = SatelVirtualInputTrigger("192.168.1.50", {"inputs": {"x": 1}})
         await vi.trigger("x")
-        assert urls == ["http://192.168.1.50:8888/input.cgi?key=k&input=1"]
+        assert urls == ["http://192.168.1.50:8888/x"]
 
     async def test_test_virtual_input_http_succeeds_silently(self, monkeypatch):
         urls = []
         self._patch_aiohttp(monkeypatch, urls)
         await satel_test_virtual_input_http(
-            "192.168.1.50", 8888, "http://{host}:{port}/input.cgi?key={key}&input={input_no}", "k", 17,
+            "192.168.1.50", 9786, "http://{host}:{port}/{name}", "zmywarka",
         )  # nie powinno rzucić wyjątku
-        assert urls == ["http://192.168.1.50:8888/input.cgi?key=k&input=17"]
+        assert urls == ["http://192.168.1.50:9786/zmywarka"]
 
     async def test_test_virtual_input_http_raises_connection_error_on_network_failure(self, monkeypatch):
         import aiohttp
@@ -906,5 +903,5 @@ class TestVirtualInputHttpTrigger:
         self._patch_aiohttp(monkeypatch, urls, exc=aiohttp.ClientConnectionError("refused"))
         with pytest.raises(ConnectionError, match="Błąd sieci"):
             await satel_test_virtual_input_http(
-                "192.168.1.50", 8888, "http://{host}:{port}/input.cgi?key={key}&input={input_no}", "k", 17,
+                "192.168.1.50", 9786, "http://{host}:{port}/{name}", "zmywarka",
             )

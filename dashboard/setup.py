@@ -103,9 +103,8 @@ def validate_satel_fields(form: dict) -> list[str]:
 
     Wirtualne wejście to nazwa+numer, NIEZALEŻNIE od trybu (satel.
     virtual_inputs.mode, patrz obszerny docstring bridge/satel_client.py) -
-    tryb "http" (funkcja "Wejścia IP" ETHM-1 Plus) używa WSPÓLNEGO hasła
-    całego modułu (satel.virtual_inputs.key, ustawianego w sekcji
-    🔌 Połączenie), NIE osobnego klucza per wejście."""
+    tryb "http" (funkcja "Wejścia IP" ETHM-1) to zwykły, NIEUWIERZYTELNIONY
+    GET, BEZ żadnego klucza/kodu DLOADX."""
     errors = []
     for i, vi in enumerate(form.get("virtual_inputs", [])):
         if not vi.get("name") or not vi.get("number"):
@@ -631,9 +630,8 @@ def _build_output_types(form: dict) -> dict:
 def _build_virtual_inputs(form: dict) -> dict:
     """nazwa -> numer wejścia (int) - TEN SAM kształt NIEZALEŻNIE od trybu
     (satel.virtual_inputs.mode, patrz docstring bridge/satel_client.py):
-    tryb "http" (funkcja "Wejścia IP" ETHM-1 Plus) uwierzytelnia się
-    WSPÓLNYM hasłem całego modułu (satel.virtual_inputs.key, sekcja
-    🔌 Połączenie), nie osobnym kluczem per wejście."""
+    numer jest nieużywany w trybie "http" (zwykły, nieuwierzytelniony GET,
+    ścieżka URL niesie samą nazwę - BEZ żadnego klucza/kodu DLOADX)."""
     return {
         vi["name"]: int(vi["number"])
         for vi in form.get("virtual_inputs", [])
@@ -793,25 +791,17 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     config["satel"].setdefault("virtual_inputs", {})
     # Tryb wirtualnych wejść IP (patrz obszerny docstring
     # bridge/satel_client.py) - "library" (set_output, przez połączenie
-    # integracji) albo "http" (funkcja "Wejścia IP" ETHM-1 Plus, osobne
-    # połączenie, niezależne od kolejki poleceń integracji). Kształt
-    # zapisanych wierszy "inputs" (nazwa -> numer) jest TEN SAM w obu
-    # trybach, więc zmiana trybu nie wymaga ponownego uzupełniania wejść -
-    # tylko "key" (hasło HTTP) niżej dotyczy wyłącznie trybu "http".
+    # integracji) albo "http" (funkcja "Wejścia IP" ETHM-1, zwykły
+    # nieuwierzytelniony GET, BEZ żadnego klucza/kodu DLOADX - potwierdzone
+    # na prawdziwym sprzęcie). Kształt zapisanych wierszy "inputs"
+    # (nazwa -> numer) jest TEN SAM w obu trybach, więc zmiana trybu nie
+    # wymaga ponownego uzupełniania wejść.
     vi_mode = satel_form.get("virtual_inputs_mode") or config["satel"]["virtual_inputs"].get("mode") or "library"
     config["satel"]["virtual_inputs"]["mode"] = vi_mode
     config["satel"]["virtual_inputs"]["port"] = int(
         satel_form.get("virtual_inputs_port") or config["satel"]["virtual_inputs"].get("port") or 8888
     )
-    # Hasło CAŁEGO modułu (tryb "http", patrz build_satel_connection_patch)
-    # - pole-sekret, ten sam wzorzec "puste = zachowaj" co integration_key.
-    if (satel_form.get("virtual_inputs_key") or "").strip():
-        config["satel"]["virtual_inputs"]["key"] = satel_form["virtual_inputs_key"].strip()
-    else:
-        config["satel"]["virtual_inputs"].setdefault("key", "")
-    config["satel"]["virtual_inputs"].setdefault(
-        "url_template", "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
-    )
+    config["satel"]["virtual_inputs"].setdefault("url_template", "http://{host}:{port}/{name}")
     config["satel"]["virtual_inputs"].setdefault("inputs", {})
     config["satel"].setdefault("outputs", {})
     config["satel"].setdefault("fields_file", "satel_fields.yaml")
@@ -943,7 +933,6 @@ def connections_to_form(existing: dict) -> dict:
             "partition": satel.get("partition", 1),
             "virtual_inputs_mode": satel.get("virtual_inputs", {}).get("mode", "library"),
             "virtual_inputs_port": satel.get("virtual_inputs", {}).get("port", 8888),
-            "virtual_inputs_key_set": bool(satel.get("virtual_inputs", {}).get("key")),
             "integration_key_set": bool(satel.get("integration_key")),
             "encryption_key_set": bool(satel.get("encryption_key")),
             "encryption_enabled": bool(satel.get("encryption_enabled")),
@@ -996,9 +985,10 @@ def satel_connection_to_form(satel_section: dict) -> dict:
     """Odwrotność build_satel_connection_patch - konwertuje SUROWĄ sekcję
     `satel` (dokument "config", patrz plugins/satel/routes.py:
     _get_satel_section) na kształt formularza GET /api/plugins/satel/connection.
-    Klucz integracji/klucz szyfrowania/hasło HTTP wejść IP NIGDY nie
-    wracają w jawnej postaci - tylko flaga `*_set`, ten sam wzorzec co
-    connections_to_form()."""
+    Klucz integracji/klucz szyfrowania NIGDY nie wracają w jawnej postaci -
+    tylko flaga `*_set`, ten sam wzorzec co connections_to_form(). Tryb
+    "http" wejść IP nie ma żadnego klucza/hasła do maskowania (patrz
+    obszerny docstring bridge/satel_client.py)."""
     return {
         "host": satel_section.get("host", ""),
         "port": satel_section.get("port", 7094),
@@ -1008,7 +998,6 @@ def satel_connection_to_form(satel_section: dict) -> dict:
         "encryption_enabled": bool(satel_section.get("encryption_enabled")),
         "virtual_inputs_mode": satel_section.get("virtual_inputs", {}).get("mode", "library"),
         "virtual_inputs_port": satel_section.get("virtual_inputs", {}).get("port", 8888),
-        "virtual_inputs_key_set": bool(satel_section.get("virtual_inputs", {}).get("key")),
     }
 
 
@@ -1050,17 +1039,7 @@ def build_satel_connection_patch(form: dict, existing_satel_section: dict) -> di
     section["virtual_inputs"]["port"] = int(
         form.get("virtual_inputs_port") or section["virtual_inputs"].get("port") or 8888
     )
-    # Hasło CAŁEGO modułu ETHM do funkcji "Wejścia IP" (z DLOADX, tryb
-    # "http") - WSPÓLNE dla wszystkich wejść, nie per wejście (patrz
-    # docstring bridge/satel_client.py). Pole-sekret: pusta wartość =
-    # ZACHOWAJ dotychczasowe, tak samo jak integration_key wyżej.
-    if (form.get("virtual_inputs_key") or "").strip():
-        section["virtual_inputs"]["key"] = form["virtual_inputs_key"].strip()
-    else:
-        section["virtual_inputs"].setdefault("key", "")
-    section["virtual_inputs"].setdefault(
-        "url_template", "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
-    )
+    section["virtual_inputs"].setdefault("url_template", "http://{host}:{port}/{name}")
     section["virtual_inputs"].setdefault("inputs", {})
     section.setdefault("outputs", {})
     section.setdefault("fields_file", "satel_fields.yaml")
@@ -1467,11 +1446,7 @@ def build_config_dict(form: dict) -> dict:
             "virtual_inputs": {
                 "mode": satel_form.get("virtual_inputs_mode") or "library",
                 "port": int(satel_form.get("virtual_inputs_port") or 8888),
-                # Hasło CAŁEGO modułu ETHM do funkcji "Wejścia IP" (tryb
-                # "http", z DLOADX) - WSPÓLNE dla wszystkich wejść, patrz
-                # docstring bridge/satel_client.py.
-                "key": (satel_form.get("virtual_inputs_key") or "").strip(),
-                "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}",
+                "url_template": "http://{host}:{port}/{name}",
                 "inputs": {},
             },
             "outputs": {},
