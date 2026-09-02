@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import time
 
 import pytest
@@ -1250,6 +1251,32 @@ class TestTuyaStatusPollLoop:
             pass
 
         assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+
+class TestStaleCheckLoop:
+
+    async def test_survives_exception_in_check_stale_sensors_and_keeps_looping(self, engine, monkeypatch):
+        real_sleep = asyncio.sleep
+        monkeypatch.setattr(asyncio, "sleep", lambda *a, **k: real_sleep(0))
+
+        calls = {"count": 0}
+
+        async def _raising_check():
+            calls["count"] += 1
+            raise RuntimeError("baza zablokowana")
+
+        monkeypatch.setattr(engine.alarms, "check_stale_sensors", _raising_check)
+
+        task = asyncio.create_task(engine._stale_check_loop())
+        for _ in range(30):
+            await real_sleep(0.001)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert calls["count"] >= 2, (
+            "Pętla sprawdzania nieaktywnych czujników zatrzymała się trwale po jednym błędzie"
+        )
 
 
 class TestStateMqttPublisher:

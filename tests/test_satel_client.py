@@ -457,12 +457,6 @@ class TestRunForever:
         assert len(fakes) >= 2, "Supervisor powinien ponowić connect() po wykryciu stopped"
 
     async def test_reconnects_when_reading_loop_dies_without_stopped_flag(self, monkeypatch):
-        # Reprodukuje realny błąd: satel_integra._reading_loop() kończy się
-        # cicho po nieobsłużonym wyjątku w handlerze wiadomości (np. przy
-        # niedopasowanej długości bitmaski), ale NIE ustawia client.stopped -
-        # połączenie TCP nadal wygląda na zdrowe, mimo że dalsze odczyty stref/
-        # wyjść/alarmu są już martwe. run_forever() musi to wykryć i ponowić
-        # connect(), zamiast czekać w nieskończoność.
         real_sleep = asyncio.sleep
         monkeypatch.setattr(asyncio, "sleep", lambda *a, **k: real_sleep(0))
 
@@ -496,11 +490,6 @@ class TestRunForever:
 
 
 class TestPatchSatelIntegraVariableLengthBitmasks:
-    # Reprodukuje realny błąd z logów użytkownika: centrala obsługująca do
-    # 128 stref wysyła 16-bajtową bitmaskę ZONES_VIOLATED, a satel_integra
-    # 1.4.0 zakłada na sztywno 32 bajty (panel 256-strefowy), co bez tej
-    # łatki kończy się ValueError w _zones_violated() -> nieobsłużony wyjątek
-    # w _reading_loop() -> trwałe zamrożenie odczytu stref/wyjść/alarmu.
 
     def test_get_active_bits_tolerates_shorter_bitmask_than_expected(self):
         from bridge.satel_client import _patch_satel_integra_variable_length_bitmasks
@@ -605,9 +594,6 @@ class TestReadingLoopWatchdog:
         await client.connect()
         assert client._reading_loop_alive is True
 
-        # symuluje zachowanie satel_integra: _reading_loop wywoływane jako
-        # zadanie w tle przez AsyncSatel.start() (tu robimy to ręcznie, bo
-        # FakeAsyncSatel.start() nie tworzy realnych zadań asyncio)
         await client._client._reading_loop()
         assert client._reading_loop_alive is False
         assert client.is_connected is False
