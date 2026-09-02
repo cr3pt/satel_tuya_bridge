@@ -438,7 +438,7 @@ async def api_config_sensors_get():
 @app.route("/api/discover/tuya", methods=["POST"])
 async def api_discover_tuya():
     try:
-        devices = scan_tuya_network()
+        devices = await asyncio.get_event_loop().run_in_executor(None, scan_tuya_network)
     except Exception as exc:
         return jsonify({"error": f"Błąd skanowania: {exc}"}), 502
     return jsonify({"devices": devices})
@@ -454,7 +454,9 @@ async def api_discover_tuya_cloud():
         return jsonify({"error": "Region, Access ID i Access Secret są wymagane"}), 400
 
     try:
-        devices = fetch_tuya_cloud_devices(api_region, access_id, access_key)
+        devices = await asyncio.get_event_loop().run_in_executor(
+            None, fetch_tuya_cloud_devices, api_region, access_id, access_key,
+        )
     except ConnectionError as exc:
         return jsonify({"error": str(exc)}), 502
     except Exception as exc:
