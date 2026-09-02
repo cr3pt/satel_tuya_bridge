@@ -25,6 +25,30 @@ def _describe_result_error(error_byte: int | None) -> str:
     return _RESULT_ERROR_NAMES.get(error_byte, f"kod błędu 0x{error_byte:02X}")
 
 
+def _patch_satel_integra_variable_length_bitmasks() -> None:
+    from satel_integra.messages import SatelReadMessage
+    from satel_integra.utils import decode_bitmask_le
+
+    if getattr(SatelReadMessage.get_active_bits, "_bridge_patched", False):
+        return
+
+    def get_active_bits(self, expected_length: int) -> list[int]:
+        actual_length = len(self.msg_data)
+        if actual_length != expected_length:
+            logger.warning(
+                "Satel: centrala przysłała bitmaskę o długości %s B zamiast "
+                "zakładanych przez bibliotekę %s B (najpewniej ten model centrali "
+                "obsługuje mniej stref/wyjść niż 256) - używam faktycznej długości "
+                "zamiast zgłaszać błąd",
+                actual_length, expected_length,
+            )
+            expected_length = actual_length
+        return decode_bitmask_le(self.msg_data, expected_length)
+
+    get_active_bits._bridge_patched = True
+    SatelReadMessage.get_active_bits = get_active_bits
+
+
 async def _wait_for_command_result(client, action: str, msg, timeout: float = 5.0) -> None:
     try:
         result = await asyncio.wait_for(client._send_data_and_wait(msg), timeout=timeout)
@@ -43,6 +67,7 @@ async def _wait_for_command_result(client, action: str, msg, timeout: float = 5.
 async def test_connection(host: str, port: int, timeout_seconds: float = 5.0,
                            encryption_key: str | None = None) -> None:
     from satel_integra import AsyncSatel
+    _patch_satel_integra_variable_length_bitmasks()
     from satel_integra.exceptions import (
         SatelConnectFailedError, SatelConnectionInitializationError, SatelPanelBusyError,
     )
@@ -75,6 +100,7 @@ async def test_connection(host: str, port: int, timeout_seconds: float = 5.0,
 async def discover_active_zones_and_outputs(host: str, port: int, timeout_seconds: float = 60.0,
                                              encryption_key: str | None = None) -> dict:
     from satel_integra import AsyncSatel
+    _patch_satel_integra_variable_length_bitmasks()
     from satel_integra.exceptions import (
         SatelConnectFailedError, SatelConnectionInitializationError, SatelPanelBusyError,
     )
@@ -176,6 +202,7 @@ async def test_output(host: str, port: int, integration_key: str, output_number:
                        state: bool = True, timeout_seconds: float = 5.0,
                        encryption_key: str | None = None) -> None:
     from satel_integra import AsyncSatel
+    _patch_satel_integra_variable_length_bitmasks()
     from satel_integra.commands import SatelWriteCommand
     from satel_integra.exceptions import (
         SatelConnectFailedError, SatelConnectionInitializationError, SatelPanelBusyError,
@@ -286,12 +313,14 @@ class SatelIntegraClient:
         self._zone_cb = None
         self._output_cb = None
         self._alarm_status_cb = None
+        self._reading_loop_alive = True
         self._supervisor = Supervisor("satel", history=history, notify_cfg=notify_cfg, grace_seconds=grace_seconds)
         self.status_poll_interval_seconds = status_poll_interval_seconds
         self._initial_status_delay_seconds = 1.0
 
     async def connect(self) -> None:
         from satel_integra import AsyncSatel, AlarmState
+        _patch_satel_integra_variable_length_bitmasks()
         from satel_integra.exceptions import (
             SatelConnectFailedError, SatelConnectionInitializationError, SatelPanelBusyError,
         )
@@ -323,6 +352,17 @@ class SatelIntegraClient:
                 f"(jeśli centrala ma włączone szyfrowanie, sprawdź też klucz szyfrowania): {exc}"
             ) from exc
         logger.info("Połączono z centralą Satel Integra (%s:%s)", self.host, self.port)
+
+        self._reading_loop_alive = True
+        original_reading_loop = self._client._reading_loop
+
+        async def _reading_loop_with_watchdog():
+            try:
+                await original_reading_loop()
+            finally:
+                self._reading_loop_alive = False
+
+        self._client._reading_loop = _reading_loop_with_watchdog
 
         await self._client.start(enable_monitoring=True)
 
@@ -464,7 +504,11 @@ class SatelIntegraClient:
 
     @property
     def is_connected(self) -> bool:
-        return self._client is not None and not getattr(self._client, "stopped", True)
+        return (
+            self._client is not None
+            and not getattr(self._client, "stopped", True)
+            and getattr(self, "_reading_loop_alive", True)
+        )
 
     async def run_forever(self) -> None:
 
@@ -472,7 +516,12 @@ class SatelIntegraClient:
             await self.connect()
             await on_connected()
             client = self._client
-            while client is not None and client is self._client and not getattr(client, "stopped", True):
+            while (
+                client is not None
+                and client is self._client
+                and not getattr(client, "stopped", True)
+                and self._reading_loop_alive
+            ):
                 await asyncio.sleep(5)
 
         await self._supervisor.run(_connect_and_monitor)
