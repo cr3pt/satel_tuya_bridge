@@ -537,6 +537,19 @@ Bridge rozpoznaje ten format automatycznie i wyciąga liczbę/tekst z
   ostrzeżenie z listą dostępnych pól w tej wiadomości) - to świadomy wybór
   zamiast zgadywania, które pole miałeś na myśli. Implementacja:
   `EbusMqttListener._parse_payload()` w `bridge/ebus_client.py`.
+- **temat z kilkoma polami, gdzie KAŻDE pole ma zarówno `"name"`, jak i
+  `"value"`** (typowe dla ebusd przy odczycie CAŁEJ wiadomości/definicji
+  na raz, np. `{"0": {"name": "N_A", "value": 5.0}, "1": {"name":
+  "TempOutdoor", "value": 17.699}, ...}`) - bez `mqtt_field` bridge NIE
+  odrzuca takiej wiadomości jak zwykłego przypadku "kilka pól", tylko
+  łączy wszystkie nazwane pola w jeden czytelny tekst, np.
+  `"TempOutdoor: 17.699 | TempDhwSet: 10.0"` (pola nazwane `"N_A"` -
+  placeholder ebusd dla nieużywanych/nienazwanych slotów - są pomijane).
+  Wygodne do podglądu całej wiadomości na raz bez konfigurowania osobnego
+  czujnika na każde pole; jeśli zależy Ci na historii/alarmach progowych/
+  publikacji do Tuya dla KONKRETNEGO pola z takiej wiadomości, nadal
+  ustaw `mqtt_field` na numer tego pola (np. `"1"`) - wtedy zadziała jak
+  zwykłe wyciąganie jednej wartości opisane wyżej.
 
 ## Rotacja i backup bazy
 

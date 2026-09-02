@@ -106,6 +106,20 @@ class BackgroundTopicDiscovery:
             }
 
 
+def _is_named_value_bundle(parsed: dict) -> bool:
+    return bool(parsed) and all(
+        isinstance(v, dict) and "name" in v and "value" in v for v in parsed.values()
+    )
+
+
+def _format_named_value_bundle(parsed: dict) -> str:
+    parts = [
+        f"{v['name']}: {v['value']}" for v in parsed.values()
+        if str(v.get("name", "")).strip() != "N_A"
+    ]
+    return " | ".join(parts)
+
+
 class EbusMqttListener:
     def __init__(self, cfg: dict, on_value: Callable[[dict, object], None], history=None,
                  notify_cfg: dict | None = None, grace_seconds: float = 120):
@@ -187,6 +201,8 @@ class EbusMqttListener:
             field_value = parsed[mqtt_field]
         elif len(parsed) == 1:
             field_value = next(iter(parsed.values()))
+        elif _is_named_value_bundle(parsed):
+            return _format_named_value_bundle(parsed) or None
         else:
             logger.warning(
                 "Temat %s: wiadomość JSON zawiera kilka pól (%s), ale czujnik '%s' nie ma "
