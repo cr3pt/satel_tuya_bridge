@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from quart import Quart, jsonify, render_template, request
 
 from bridge.tuya_local import TUYA_CLOUD_REGIONS, fetch_cloud_devices as fetch_tuya_cloud_devices
@@ -111,7 +113,9 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             }), 400
 
         try:
-            devices = fetch_tuya_cloud_devices(api_region, access_id, access_key)
+            devices = await asyncio.get_event_loop().run_in_executor(
+                None, fetch_tuya_cloud_devices, api_region, access_id, access_key,
+            )
         except ConnectionError as exc:
             return jsonify({"error": str(exc)}), 502
         except Exception as exc:
