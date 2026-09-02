@@ -281,6 +281,46 @@ class TestVirtualInputEndpoints:
         assert resp.status_code == 404
 
 
+class TestTuyaControlEndpoints:
+
+    async def test_on_without_auth_returns_401(self, client):
+        resp = (await client.post("/api/tuya/gniazdko/on"))
+        assert resp.status_code == 401
+
+    async def test_off_without_auth_returns_401(self, client):
+        resp = (await client.post("/api/tuya/gniazdko/off"))
+        assert resp.status_code == 401
+
+    async def test_on_with_auth_enqueues_command(self, client):
+        resp = (await client.post("/api/tuya/gniazdko/on", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        body = await resp.get_json()
+        assert body["status"] == "pending"
+        assert "command_id" in body
+
+    async def test_on_command_visible_via_status_endpoint(self, client):
+        resp = (await client.post("/api/tuya/gniazdko/on", headers=_basic_auth_header("test_haslo_123")))
+        command_id = (await resp.get_json())["command_id"]
+        status_resp = (await client.get(f"/api/commands/{command_id}", headers=_basic_auth_header("test_haslo_123")))
+        assert status_resp.status_code == 200
+        data = await status_resp.get_json()
+        assert data["status"] == "pending"
+        assert data["command"] == "tuya_on"
+        assert data["params"] == {"name": "gniazdko"}
+
+    async def test_off_command_has_correct_command_name(self, client):
+        resp = (await client.post("/api/tuya/gniazdko/off", headers=_basic_auth_header("test_haslo_123")))
+        command_id = (await resp.get_json())["command_id"]
+        status_resp = (await client.get(f"/api/commands/{command_id}", headers=_basic_auth_header("test_haslo_123")))
+        data = await status_resp.get_json()
+        assert data["command"] == "tuya_off"
+        assert data["params"] == {"name": "gniazdko"}
+
+    async def test_unknown_device_returns_404(self, client):
+        resp = (await client.post("/api/tuya/nieistniejace/on", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 404
+
+
 class TestSatelTestOutputEndpoint:
 
     async def test_requires_auth(self, client):

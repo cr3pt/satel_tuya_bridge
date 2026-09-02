@@ -71,6 +71,7 @@
   .status-card.on .value, .status-card.violated .value { color: var(--danger); }
   .status-card.off .value, .status-card.ok .value { color: var(--ok); }
   .status-card .ts { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .status-card .tuya-toggle-btn { margin-top: 6px; width: 100%; }
   .type-tag {
     display: inline-block; font-size: 10px; font-weight: 400; color: var(--muted);
     background: #1d2026; border: 1px solid var(--border); border-radius: 8px;
@@ -552,7 +553,8 @@ function renderStatusGrid(elementId, items) {
     const tsEl = card.querySelector('.ts');
     if (tsEl.textContent !== tsText) tsEl.textContent = tsText;
 
-    
+    if (s.category === 'tuya') updateTuyaToggleButton(card, s);
+
     if (el.children[idx] !== card) {
       el.insertBefore(card, el.children[idx] || null);
     }
@@ -561,6 +563,69 @@ function renderStatusGrid(elementId, items) {
   el.querySelectorAll('.status-card[data-key]').forEach(card => {
     if (!seenKeys.has(card.dataset.key)) card.remove();
   });
+}
+
+function updateTuyaToggleButton(card, s) {
+  const v = (s.value || '').toString().toLowerCase();
+  const isKnownState = v === 'włączone' || v === 'wyłączone';
+  let btn = card.querySelector('.tuya-toggle-btn');
+  if (!isLoggedIn || !isKnownState) {
+    if (btn) btn.remove();
+    return;
+  }
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'secondary tuya-toggle-btn';
+    btn.addEventListener('click', () => toggleTuyaDevice(btn));
+    card.appendChild(btn);
+  }
+  btn.dataset.device = s.label;
+  btn.dataset.nextState = v === 'włączone' ? 'off' : 'on';
+  if (!btn.disabled) {
+    btn.textContent = v === 'włączone' ? '⏻ Wyłącz' : '⏻ Włącz';
+  }
+}
+
+async function toggleTuyaDevice(btn) {
+  const device = btn.dataset.device;
+  const nextState = btn.dataset.nextState;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳...';
+  try {
+    const resp = await authorizedFetch(`/api/tuya/${encodeURIComponent(device)}/${nextState}`, { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      btn.textContent = '❌ ' + (data.error || 'Błąd');
+      setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2500);
+      return;
+    }
+    await pollTuyaCommand(data.command_id, btn, originalText);
+  } catch (e) {
+    btn.textContent = '❌ ' + e.message;
+    setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2500);
+  }
+}
+
+async function pollTuyaCommand(commandId, btn, originalText, attempt = 0) {
+  if (attempt > 15) {
+    btn.textContent = '❌ brak odpowiedzi';
+    setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2500);
+    return;
+  }
+  const cmd = await (await fetch(`/api/commands/${commandId}`)).json();
+  if (cmd.status === 'pending') {
+    setTimeout(() => pollTuyaCommand(commandId, btn, originalText, attempt + 1), 500);
+    return;
+  }
+  if (cmd.status === 'done') {
+    btn.textContent = '✅';
+    setTimeout(() => { btn.disabled = false; }, 800);
+  } else {
+    btn.textContent = '❌ ' + (cmd.result?.error || 'Błąd');
+    setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2500);
+  }
 }
 
 async function loadStatuses() {

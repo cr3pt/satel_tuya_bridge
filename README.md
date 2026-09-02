@@ -1631,6 +1631,19 @@ uzbrojenie/rozbrojenie (`POST /api/satel/virtual-inputs/<nazwa>/trigger` ->
 wykonuje w `RulesEngine._execute_command` w ciągu ok. 1.5s) - przycisk
 pokazuje "⏳..." w trakcie oczekiwania i wynik (✅/❌) po wykonaniu.
 
+### Włączanie/wyłączanie urządzeń Tuya z panelu głównego
+
+Karta "Urządzenia Tuya" na stronie głównej pokazuje, obok statusu, przycisk
+"⏻ Włącz"/"⏻ Wyłącz" dla każdego urządzenia, którego stan jest znany
+(włączone/wyłączone) - urządzenia z nieznanym/niedostępnym stanem (jeszcze
+nieodczytane, albo np. czujniki bez faktycznego przekaźnika) przycisku nie
+dostają. Działa dla urządzeń lokalnych i chmurowych (Tuya Cloud) - dokładnie
+tak samo jak wirtualne wejścia wyżej: przycisk idzie przez kolejkę komend w
+bazie (`POST /api/tuya/<nazwa>/on` albo `/off` ->
+`history.enqueue_command("tuya_on"/"tuya_off", ...)` -> bridge wykonuje w
+`RulesEngine._execute_command`), wymaga zalogowania, pokazuje "⏳..." w
+trakcie oczekiwania.
+
 ### Eskalacja przy powtarzających się naruszeniach
 
 Reguła ruchu z sekcją `escalation` liczy naruszenia w ruchomym oknie

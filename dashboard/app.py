@@ -847,6 +847,30 @@ async def api_satel_virtual_input_trigger(name):
     return jsonify({"command_id": command_id, "status": "pending"})
 
 
+async def _enqueue_tuya_command(name: str, *, turn_on: bool):
+    tuya_cfg = config_raw.get("tuya", {})
+    if name not in tuya_cfg.get("devices", {}) and name not in tuya_cfg.get("cloud_devices", {}):
+        return jsonify({"error": f"Nieznane urządzenie Tuya '{name}'"}), 404
+    command_id = history.enqueue_command("tuya_on" if turn_on else "tuya_off", {"name": name})
+    history.write_event(
+        "system", source="dashboard",
+        detail={"message": f"Zlecono {'włączenie' if turn_on else 'wyłączenie'} urządzenia Tuya '{name}'"},
+    )
+    return jsonify({"command_id": command_id, "status": "pending"})
+
+
+@app.route("/api/tuya/<name>/on", methods=["POST"])
+@require_auth()
+async def api_tuya_on(name):
+    return await _enqueue_tuya_command(name, turn_on=True)
+
+
+@app.route("/api/tuya/<name>/off", methods=["POST"])
+@require_auth()
+async def api_tuya_off(name):
+    return await _enqueue_tuya_command(name, turn_on=False)
+
+
 @app.route("/api/commands/<int:command_id>")
 async def api_command_status(command_id: int):
     cmd = history.get_command(command_id)

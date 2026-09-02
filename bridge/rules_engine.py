@@ -526,6 +526,14 @@ class RulesEngine:
                 name = cmd["params"]["name"]
                 await self._trigger_virtual_input(name)
                 self.history.mark_command_done(cmd["id"], {"message": f"Aktywowano wirtualne wejście '{name}'"})
+            elif cmd["command"] == "tuya_on":
+                name = cmd["params"]["name"]
+                await self.tuya.turn_on(name)
+                self.history.mark_command_done(cmd["id"], {"message": f"Włączono '{name}'"})
+            elif cmd["command"] == "tuya_off":
+                name = cmd["params"]["name"]
+                await self.tuya.turn_off(name)
+                self.history.mark_command_done(cmd["id"], {"message": f"Wyłączono '{name}'"})
             elif cmd["command"] == "reload_config":
                 result = await self.reload_config()
                 self.history.mark_command_done(cmd["id"], result)
