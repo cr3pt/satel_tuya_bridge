@@ -220,6 +220,33 @@ class TestEbusMqttListenerParsePayload:
         assert received == []
         assert "NieIstnieje" in caplog.text
 
+    async def test_named_value_bundle_without_mqtt_field_is_joined_readable(self, monkeypatch):
+        listener, received = self._make_listener(monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/bai/values"}])
+        self._deliver(
+            listener, "ebusd/bai/values",
+            '{ "0": {"name": "N_A", "value": 5.000}, "1": {"name": "TempOutdoor", "value": 17.699}, '
+            '"2": {"name": "N_A", "value": 64.000}, "3": {"name": "TempDhwSet", "value": 10.000}}',
+        )
+        assert received == [("a", "TempOutdoor: 17.699 | TempDhwSet: 10.0")]
+
+    async def test_named_value_bundle_with_mqtt_field_still_picks_single_key(self, monkeypatch):
+        listener, received = self._make_listener(
+            monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/bai/values", "mqtt_field": "1"}],
+        )
+        self._deliver(
+            listener, "ebusd/bai/values",
+            '{ "0": {"name": "N_A", "value": 5.000}, "1": {"name": "TempOutdoor", "value": 17.699}}',
+        )
+        assert received == [("a", 17.699)]
+
+    async def test_named_value_bundle_all_placeholders_is_skipped(self, monkeypatch):
+        listener, received = self._make_listener(monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/bai/values"}])
+        self._deliver(
+            listener, "ebusd/bai/values",
+            '{ "0": {"name": "N_A", "value": 5.000}, "1": {"name": "N_A", "value": 6.000}}',
+        )
+        assert received == []
+
 
 class FakeMqttClientBg:
 
