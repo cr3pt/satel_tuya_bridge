@@ -948,11 +948,6 @@ class TestDiscoveryEndpoints:
         assert resp.status_code == 502
 
     async def test_discover_tuya_does_not_block_event_loop(self, client, monkeypatch):
-        # tinytuya.deviceScan() blokuje synchronicznie nawet do ~18s (SCANTIME).
-        # Pod Quart/Hypercorn (jedna pętla zdarzeń) wywołanie tego bezpośrednio
-        # w handlerze zamroziłoby CAŁY dashboard (w tym odpytywanie statusów
-        # innych użytkowników) na czas skanu. Endpoint musi odpalać skan przez
-        # run_in_executor(), żeby pętla zdarzeń zostawała responsywna.
         def slow_scan():
             time.sleep(0.3)
             return [{"id": "d1", "ip": "1.2.3.4", "version": "3.4"}]
@@ -975,11 +970,6 @@ class TestDiscoveryEndpoints:
         resp, _ = await asyncio.gather(do_scan(), ticker())
 
         assert resp.status_code == 200
-        # Jeśli event loop był zablokowany przez synchroniczny time.sleep()
-        # skanu, WSZYSTKIE ticki mogły się wykonać dopiero po jego
-        # zakończeniu (loop nie mógł ich uruchomić w międzyczasie).
-        # Przy odpalaniu skanu przez run_in_executor() część ticków zdąży
-        # wykonać się RÓWNOLEGLE, zanim skan się zakończy.
         ticks_during_scan = [t for t in ticks if t < scan_finished_at[0]]
         assert len(ticks_during_scan) >= 3, (
             "Pętla zdarzeń była zablokowana podczas skanu Tuya - "

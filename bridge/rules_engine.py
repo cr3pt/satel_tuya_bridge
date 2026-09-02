@@ -479,7 +479,10 @@ class RulesEngine:
     async def _stale_check_loop(self) -> None:
         while True:
             await asyncio.sleep(60)
-            await self.alarms.check_stale_sensors()
+            try:
+                await self.alarms.check_stale_sensors()
+            except Exception:
+                logger.exception("Błąd w pętli sprawdzania nieaktywnych czujników")
 
     async def _maintenance_loop(self) -> None:
         maint_cfg = self.config.raw.get("maintenance", {})

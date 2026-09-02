@@ -436,6 +436,14 @@ class TestHomeWhizClientMessageHandling:
         await client._handle_message("$aws/things/abc123/shadow/update/accepted", payload)
         assert calls == []
 
+    async def test_decode_error_is_caught_and_logged_not_raised(self, caplog):
+        client, calls = self._make_client()
+        payload = json.dumps({"state": {"reported": {"wfa": 5, "wfaStartOffset": 0}}}).encode()
+        with caplog.at_level("ERROR"):
+            await client._handle_message("$aws/things/abc123/shadow/update/accepted", payload)
+        assert calls == []
+        assert any("błąd przetwarzania wiadomości" in r.message.lower() for r in caplog.records)
+
     async def test_run_forever_without_appliances_is_a_noop(self):
         calls = []
 

@@ -412,8 +412,11 @@ class HomeWhizClient:
             logger.debug("HomeWhiz: pominięto nieoczekiwaną wiadomość na %s", topic)
             return
 
-        state_name = decode_state(watch.config_descriptor, offset, wfa)
-        if state_name is None:
-            return
-        logger.debug("HomeWhiz '%s': stan -> %s", watch.name, state_name)
-        await self.on_state(watch.name, state_name)
+        try:
+            state_name = decode_state(watch.config_descriptor, offset, wfa)
+            if state_name is None:
+                return
+            logger.debug("HomeWhiz '%s': stan -> %s", watch.name, state_name)
+            await self.on_state(watch.name, state_name)
+        except Exception:
+            logger.exception("HomeWhiz '%s': błąd przetwarzania wiadomości na %s", watch.name, topic)

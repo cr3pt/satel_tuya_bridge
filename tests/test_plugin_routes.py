@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import time
 
 import pytest
 from werkzeug.security import generate_password_hash
@@ -495,6 +497,37 @@ class TestEbusPluginPage:
         monkeypatch.setattr("plugins.ebus.routes.discover_ebus_topics", fake_discover)
         (await client.post("/api/plugins/ebus/discover", json={}, headers=_basic_auth_header("test_haslo_123")))
         assert captured["host"] == "127.0.0.1"
+
+    async def test_discover_does_not_block_event_loop(self, client, monkeypatch):
+        def slow_discover(host, port):
+            time.sleep(0.3)
+            return ["ebusd/bai/FlowTemp"]
+
+        monkeypatch.setattr("plugins.ebus.routes.discover_ebus_topics", slow_discover)
+
+        ticks: list[float] = []
+        finished_at: list[float] = []
+
+        async def do_discover():
+            resp = await client.post(
+                "/api/plugins/ebus/discover", json={}, headers=_basic_auth_header("test_haslo_123"),
+            )
+            finished_at.append(time.monotonic())
+            return resp
+
+        async def ticker():
+            for _ in range(10):
+                await asyncio.sleep(0.03)
+                ticks.append(time.monotonic())
+
+        resp, _ = await asyncio.gather(do_discover(), ticker())
+
+        assert resp.status_code == 200
+        ticks_during = [t for t in ticks if t < finished_at[0]]
+        assert len(ticks_during) >= 3, (
+            "Pętla zdarzeń była zablokowana podczas wykrywania tematów eBUS - "
+            "żaden tick nie zdążył wykonać się równolegle"
+        )
 
     async def test_background_discovery_start_status_stop(self, client, monkeypatch):
         import plugins.ebus.routes as ebus_routes

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from quart import Quart, jsonify, render_template, request
 
 from bridge.ebus_client import discover_topics as discover_ebus_topics, BackgroundTopicDiscovery
@@ -57,7 +59,9 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         if not mqtt_host:
             return jsonify({"error": "Brak adresu brokera MQTT"}), 400
         try:
-            topics = discover_ebus_topics(mqtt_host, int(mqtt_port))
+            topics = await asyncio.get_event_loop().run_in_executor(
+                None, discover_ebus_topics, mqtt_host, int(mqtt_port),
+            )
         except ConnectionError as exc:
             return jsonify({"error": str(exc)}), 502
         except Exception as exc:
