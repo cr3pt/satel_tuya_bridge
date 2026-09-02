@@ -14,12 +14,8 @@ satel-integra>=1.4.0,<2.0.0
 paho-mqtt>=2.1,<3.0
 uiprotect>=16.6
 tuya-connector-python>=0.1.2
-Flask>=3.1
-# Flask ciągnie itsdangerous jako zależność tranzytywną, ale importujemy go
-# teraz wprost w dashboard/auth.py (podpisywanie tokenów sesji - patrz
-# obszerny docstring tamtego modułu) - deklarujemy jako bezpośrednią
-# zależność, zamiast polegać po cichu na tym, co akurat przyciągnie Flask.
+Quart>=0.20
 itsdangerous>=2.1
-waitress>=3.0.2
+hypercorn>=0.17
 
 astral>=3.2

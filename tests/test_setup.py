@@ -874,52 +874,52 @@ def setup_client(tmp_path):
 
 
 class TestSetupRedirect:
-    def test_index_redirects_to_setup_when_unconfigured(self, setup_client):
+    async def test_index_redirects_to_setup_when_unconfigured(self, setup_client):
         client, _ = setup_client
-        resp = client.get("/", follow_redirects=False)
+        resp = (await client.get("/", follow_redirects=False))
         assert resp.status_code == 302
         assert "/setup" in resp.headers["Location"]
 
-    def test_plugins_page_redirects_to_setup_when_unconfigured(self, setup_client):
+    async def test_plugins_page_redirects_to_setup_when_unconfigured(self, setup_client):
         client, _ = setup_client
-        resp = client.get("/plugins", follow_redirects=False)
+        resp = (await client.get("/plugins", follow_redirects=False))
         assert resp.status_code == 302
 
-    def test_setup_page_itself_loads_without_redirect(self, setup_client):
+    async def test_setup_page_itself_loads_without_redirect(self, setup_client):
         client, _ = setup_client
-        resp = client.get("/setup")
+        resp = (await client.get("/setup"))
         assert resp.status_code == 200
 
-    def test_satel_connection_test_reachable_without_redirect(self, setup_client, monkeypatch):
+    async def test_satel_connection_test_reachable_without_redirect(self, setup_client, monkeypatch):
         client, _ = setup_client
 
         async def fake_test_connection(host, port, **_kwargs):
             return None
 
         monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
-        resp = client.post("/api/setup/test-satel-connection", json={"host": "192.168.1.10", "port": 7094})
+        resp = (await client.post("/api/setup/test-satel-connection", json={"host": "192.168.1.10", "port": 7094}))
         assert resp.status_code == 200
 
-    def test_discover_tuya_cloud_reachable_without_redirect(self, setup_client, monkeypatch):
+    async def test_discover_tuya_cloud_reachable_without_redirect(self, setup_client, monkeypatch):
         client, _ = setup_client
         monkeypatch.setattr("dashboard.app.fetch_tuya_cloud_devices", lambda *a, **kw: [])
-        resp = client.post(
+        resp = (await client.post(
             "/api/discover/tuya-cloud",
             json={"api_region": "eu", "access_id": "x", "access_key": "y"},
-        )
+        ))
         assert resp.status_code == 200
 
-    def test_discover_tuya_lan_scan_reachable_without_redirect(self, setup_client, monkeypatch):
+    async def test_discover_tuya_lan_scan_reachable_without_redirect(self, setup_client, monkeypatch):
         client, _ = setup_client
         monkeypatch.setattr("dashboard.app.scan_tuya_network", lambda: [])
-        resp = client.post("/api/discover/tuya", json={})
+        resp = (await client.post("/api/discover/tuya", json={}))
         assert resp.status_code == 200
 
 
 class TestSetupSave:
-    def test_save_creates_config_db(self, setup_client):
+    async def test_save_creates_config_db(self, setup_client):
         client, tmp_path = setup_client
-        resp = client.post("/api/setup/save", json=VALID_FORM)
+        resp = (await client.post("/api/setup/save", json=VALID_FORM))
         assert resp.status_code == 200
         assert (tmp_path / "config.db").exists()
 
@@ -927,26 +927,26 @@ class TestSetupSave:
         assert app_module.config_store.get("config")["satel"]["host"]
         assert app_module.config_store.has("sensors")
 
-    def test_save_with_errors_returns_400(self, setup_client):
+    async def test_save_with_errors_returns_400(self, setup_client):
         client, _ = setup_client
         bad_form = {**VALID_FORM, "admin_password": "short"}
-        resp = client.post("/api/setup/save", json=bad_form)
+        resp = (await client.post("/api/setup/save", json=bad_form))
         assert resp.status_code == 400
-        assert "details" in resp.get_json()
+        assert "details" in await resp.get_json()
 
-    def test_save_with_non_numeric_field_returns_json_400_not_html_500(self, setup_client):
+    async def test_save_with_non_numeric_field_returns_json_400_not_html_500(self, setup_client):
         client, _ = setup_client
         bad_form = {
             **VALID_FORM,
             "partitions": [{"name": "Dom", "number": "niejestem_liczbą"}],
         }
-        resp = client.post("/api/setup/save", json=bad_form)
+        resp = (await client.post("/api/setup/save", json=bad_form))
         assert resp.status_code == 400
-        data = resp.get_json()
+        data = await resp.get_json()
         assert "details" in data
         assert "liczbow" in data["details"][0].lower()
 
-    def test_unexpected_error_in_api_route_returns_json_not_html(self, setup_client, monkeypatch):
+    async def test_unexpected_error_in_api_route_returns_json_not_html(self, setup_client, monkeypatch):
         import dashboard.setup as setup_module
 
         client, _ = setup_client
@@ -958,12 +958,12 @@ class TestSetupSave:
         import dashboard.app as app_module
         monkeypatch.setattr(app_module, "build_config_dict", _boom)
 
-        resp = client.post("/api/setup/save", json=VALID_FORM)
+        resp = (await client.post("/api/setup/save", json=VALID_FORM))
         assert resp.status_code == 500
         assert resp.content_type.startswith("application/json")
-        assert "błąd serwera" in resp.get_json()["error"].lower()
+        assert "błąd serwera" in (await resp.get_json())["error"].lower()
 
-    def test_permission_error_in_api_route_returns_actionable_message(self, setup_client, monkeypatch):
+    async def test_permission_error_in_api_route_returns_actionable_message(self, setup_client, monkeypatch):
         import dashboard.setup as setup_module
 
         client, _ = setup_client
@@ -975,37 +975,37 @@ class TestSetupSave:
         import dashboard.app as app_module
         monkeypatch.setattr(app_module, "save_draft", _boom)
 
-        resp = client.post("/api/setup/draft", json={"step": 1})
+        resp = (await client.post("/api/setup/draft", json={"step": 1}))
         assert resp.status_code == 500
         assert resp.content_type.startswith("application/json")
-        error = resp.get_json()["error"].lower()
+        error = (await resp.get_json())["error"].lower()
         assert "uprawnie" in error
         assert "chown" in error
 
-    def test_dashboard_usable_immediately_after_save(self, setup_client):
+    async def test_dashboard_usable_immediately_after_save(self, setup_client):
         client, _ = setup_client
-        client.post("/api/setup/save", json=VALID_FORM)
-        resp = client.get("/", follow_redirects=False)
+        (await client.post("/api/setup/save", json=VALID_FORM))
+        resp = (await client.get("/", follow_redirects=False))
         assert resp.status_code == 200
 
-    def test_second_save_attempt_rejected(self, setup_client):
+    async def test_second_save_attempt_rejected(self, setup_client):
         client, _ = setup_client
-        client.post("/api/setup/save", json=VALID_FORM)
-        resp = client.post("/api/setup/save", json=VALID_FORM)
+        (await client.post("/api/setup/save", json=VALID_FORM))
+        resp = (await client.post("/api/setup/save", json=VALID_FORM))
         assert resp.status_code == 409
 
-    def test_setup_page_redirects_to_index_once_configured(self, setup_client):
+    async def test_setup_page_redirects_to_index_once_configured(self, setup_client):
         client, _ = setup_client
-        client.post("/api/setup/save", json=VALID_FORM)
-        resp = client.get("/setup", follow_redirects=False)
+        (await client.post("/api/setup/save", json=VALID_FORM))
+        resp = (await client.get("/setup", follow_redirects=False))
         assert resp.status_code == 302
         assert resp.headers["Location"].endswith("/") or "index" in resp.headers["Location"] or resp.headers["Location"] == "/"
 
-    def test_saved_config_is_loadable_by_bridge_config(self, setup_client):
+    async def test_saved_config_is_loadable_by_bridge_config(self, setup_client):
         from bridge.config import BridgeConfig
 
         client, tmp_path = setup_client
-        client.post("/api/setup/save", json=VALID_FORM)
+        (await client.post("/api/setup/save", json=VALID_FORM))
         config = BridgeConfig.load(tmp_path / "config.yaml")
         assert config.satel["host"] == "192.168.1.10"
         assert config.ebus["sensors"] == []
@@ -1663,51 +1663,53 @@ class TestBuildConfigDictAdvanced:
 
 
 class TestSetupDraft:
-    def test_no_draft_returns_empty_object(self, setup_client):
+    async def test_no_draft_returns_empty_object(self, setup_client):
         client, _ = setup_client
-        resp = client.get("/api/setup/draft")
+        resp = (await client.get("/api/setup/draft"))
         assert resp.status_code == 200
-        assert resp.get_json() == {}
+        assert await resp.get_json() == {}
 
-    def test_saving_and_loading_draft_roundtrips(self, setup_client):
+    async def test_saving_and_loading_draft_roundtrips(self, setup_client):
         client, _ = setup_client
         payload = {"step": 3, "data": {"satel": {"host": "192.168.1.10"}}}
-        resp = client.post("/api/setup/draft", json=payload)
+        resp = (await client.post("/api/setup/draft", json=payload))
         assert resp.status_code == 200
 
-        resp = client.get("/api/setup/draft")
-        assert resp.get_json() == payload
+        resp = (await client.get("/api/setup/draft"))
+        assert await resp.get_json() == payload
 
-    def test_draft_persists_to_disk_next_to_config_path(self, setup_client):
+    async def test_draft_persists_to_disk_next_to_config_path(self, setup_client):
         client, tmp_path = setup_client
-        client.post("/api/setup/draft", json={"step": 2, "data": {"a": 1}})
+        (await client.post("/api/setup/draft", json={"step": 2, "data": {"a": 1}}))
         assert (tmp_path / ".setup_draft.json").exists()
 
-    def test_draft_overwritten_by_later_save(self, setup_client):
+    async def test_draft_overwritten_by_later_save(self, setup_client):
         client, _ = setup_client
-        client.post("/api/setup/draft", json={"step": 2, "data": {"a": 1}})
-        client.post("/api/setup/draft", json={"step": 5, "data": {"a": 2}})
-        resp = client.get("/api/setup/draft")
-        assert resp.get_json() == {"step": 5, "data": {"a": 2}}
+        (await client.post("/api/setup/draft", json={"step": 2, "data": {"a": 1}}))
+        (await client.post("/api/setup/draft", json={"step": 5, "data": {"a": 2}}))
+        resp = (await client.get("/api/setup/draft"))
+        assert await resp.get_json() == {"step": 5, "data": {"a": 2}}
 
-    def test_draft_rejected_when_already_configured(self, setup_client):
+    async def test_draft_rejected_when_already_configured(self, setup_client):
         client, _ = setup_client
-        client.post("/api/setup/save", json=VALID_FORM)
-        resp = client.post("/api/setup/draft", json={"step": 1, "data": {}})
+        (await client.post("/api/setup/save", json=VALID_FORM))
+        resp = (await client.post("/api/setup/draft", json={"step": 1, "data": {}}))
         assert resp.status_code == 409
-        resp = client.get("/api/setup/draft")
+        resp = (await client.get("/api/setup/draft"))
         assert resp.status_code == 409
 
-    def test_final_save_deletes_draft(self, setup_client):
+    async def test_final_save_deletes_draft(self, setup_client):
         client, tmp_path = setup_client
-        client.post("/api/setup/draft", json={"step": 4, "data": {"a": 1}})
+        (await client.post("/api/setup/draft", json={"step": 4, "data": {"a": 1}}))
         assert (tmp_path / ".setup_draft.json").exists()
-        client.post("/api/setup/save", json=VALID_FORM)
+        (await client.post("/api/setup/save", json=VALID_FORM))
         assert not (tmp_path / ".setup_draft.json").exists()
 
-    def test_invalid_draft_body_returns_400(self, setup_client):
+    async def test_invalid_draft_body_returns_400(self, setup_client):
         client, _ = setup_client
-        resp = client.post("/api/setup/draft", data="not json", content_type="application/json")
+        resp = (await client.post(
+            "/api/setup/draft", data="not json", headers={"Content-Type": "application/json"},
+        ))
         assert resp.status_code == 400
 
 

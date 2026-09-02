@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Flask, jsonify, render_template, request
+from quart import Quart, jsonify, render_template, request
 
 from plugins import PluginMeta, register_settings_route
 
@@ -13,7 +13,7 @@ META = PluginMeta(
 )
 
 
-def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
+def register(app: Quart, *, require_auth, get_auth_guard, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
 
     def _get_mqtt_publish_section() -> dict:
@@ -25,11 +25,11 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
         get_config_store().set("config", current)
 
     @app.route("/plugins/mqtt_publish")
-    def mqtt_publish_plugin_page():
-        return render_template("mqtt_publish/index.html")
+    async def mqtt_publish_plugin_page():
+        return await render_template("mqtt_publish/index.html")
 
     @app.route("/api/plugins/mqtt_publish/topics", methods=["GET"])
-    def api_plugin_mqtt_publish_topics_get():
+    async def api_plugin_mqtt_publish_topics_get():
         section = _get_mqtt_publish_section()
         topics = section.get("topics", {}) or {}
         return jsonify({
@@ -39,8 +39,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
 
     @app.route("/api/plugins/mqtt_publish/topics", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_mqtt_publish_topics_post():
-        form = request.get_json(silent=True)
+    async def api_plugin_mqtt_publish_topics_post():
+        form = await request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane"}), 400
 

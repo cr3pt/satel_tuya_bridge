@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from flask import Flask, jsonify, render_template, request
+from quart import Quart, jsonify, render_template, request
 
 from bridge.homewhiz_client import (
     HomeWhizError, fetch_config_descriptor, is_dishwasher, list_appliances, list_possible_states, login,
@@ -18,7 +18,7 @@ META = PluginMeta(
 )
 
 
-def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
+def register(app: Quart, *, require_auth, get_auth_guard, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
 
     def _get_section() -> dict:
@@ -30,11 +30,11 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
         get_config_store().set("config", current)
 
     @app.route("/plugins/homewhiz")
-    def homewhiz_plugin_page():
-        return render_template("homewhiz/index.html")
+    async def homewhiz_plugin_page():
+        return await render_template("homewhiz/index.html")
 
     @app.route("/api/plugins/homewhiz/credentials", methods=["GET"])
-    def api_plugin_homewhiz_credentials_get():
+    async def api_plugin_homewhiz_credentials_get():
         section = _get_section()
         return jsonify({
             "username": section.get("username", ""),
@@ -44,8 +44,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
 
     @app.route("/api/plugins/homewhiz/credentials", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_homewhiz_credentials_post():
-        form = request.get_json(silent=True)
+    async def api_plugin_homewhiz_credentials_post():
+        form = await request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane"}), 400
         username = (form.get("username") or "").strip()
@@ -67,7 +67,7 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
         return jsonify({"message": "Zapisano. Włączenie/wyłączenie integracji wciąż wymaga pełnego restartu procesu bridge'a."})
 
     @app.route("/api/plugins/homewhiz/appliances", methods=["GET"])
-    def api_plugin_homewhiz_appliances_get():
+    async def api_plugin_homewhiz_appliances_get():
         section = _get_section()
         appliances = section.get("appliances") or {}
         return jsonify({
@@ -79,8 +79,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
 
     @app.route("/api/plugins/homewhiz/appliances", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_homewhiz_appliances_post():
-        form = request.get_json(silent=True)
+    async def api_plugin_homewhiz_appliances_post():
+        form = await request.get_json(silent=True)
         if not isinstance(form, dict) or not isinstance(form.get("appliances"), list):
             return jsonify({"error": "Nieprawidłowe dane"}), 400
 
@@ -119,7 +119,7 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
 
     @app.route("/api/plugins/homewhiz/discover", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_homewhiz_discover():
+    async def api_plugin_homewhiz_discover():
         section = _get_section()
         username, password = section.get("username", ""), section.get("password", "")
         if not username or not password:
@@ -130,7 +130,7 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
             return await list_appliances(session)
 
         try:
-            appliances = asyncio.run(_discover())
+            appliances = await _discover()
         except HomeWhizError as exc:
             return jsonify({"error": str(exc)}), 502
         except Exception as exc:
@@ -151,7 +151,7 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
 
     @app.route("/api/plugins/homewhiz/appliances/<name>/states", methods=["GET"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_homewhiz_appliance_states(name):
+    async def api_plugin_homewhiz_appliance_states(name):
         section = _get_section()
         username, password = section.get("username", ""), section.get("password", "")
         if not username or not password:
@@ -168,7 +168,7 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
             return list_possible_states(descriptor)
 
         try:
-            states = asyncio.run(_fetch())
+            states = await _fetch()
         except HomeWhizError as exc:
             return jsonify({"error": str(exc)}), 502
         except Exception as exc:

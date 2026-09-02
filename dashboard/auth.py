@@ -6,7 +6,7 @@ import logging
 import time
 
 import itsdangerous
-from flask import jsonify, request
+from quart import jsonify, request
 from werkzeug.security import check_password_hash
 
 logger = logging.getLogger("bridge.dashboard_auth")
@@ -152,7 +152,7 @@ class AuthGuard:
 def require_auth(guard_attr: str = "auth_guard", get_guard=None):
     def decorator(fn):
         @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
+        async def wrapper(*args, **kwargs):
             guard: AuthGuard = get_guard() if get_guard is not None else fn.__globals__[guard_attr]
             ok, message = guard.check()
             if not ok:
@@ -160,6 +160,6 @@ def require_auth(guard_attr: str = "auth_guard", get_guard=None):
                 response.status_code = 401
                 response.headers["WWW-Authenticate"] = 'Basic realm="Panel administracyjny"'
                 return response
-            return fn(*args, **kwargs)
+            return await fn(*args, **kwargs)
         return wrapper
     return decorator

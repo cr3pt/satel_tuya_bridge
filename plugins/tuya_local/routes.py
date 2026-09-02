@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Flask, jsonify, render_template, request
+from quart import Quart, jsonify, render_template, request
 
 from bridge.tuya_local import scan_network as scan_tuya_network, fetch_cloud_devices as fetch_tuya_cloud_devices
 from dashboard.setup import (
@@ -17,15 +17,15 @@ META = PluginMeta(
 )
 
 
-def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
+def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
 
     @app.route("/plugins/tuya")
-    def tuya_plugin_page():
-        return render_template("tuya_local/index.html")
+    async def tuya_plugin_page():
+        return await render_template("tuya_local/index.html")
 
     @app.route("/api/plugins/tuya/devices", methods=["GET"])
-    def api_plugin_tuya_devices_get():
+    async def api_plugin_tuya_devices_get():
         tuya = get_config_raw().get("tuya", {})
         return jsonify({
             "devices": tuya_devices_to_rows(tuya.get("devices", {})),
@@ -34,8 +34,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
 
     @app.route("/api/plugins/tuya/devices", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_tuya_devices_post():
-        form = request.get_json(silent=True)
+    async def api_plugin_tuya_devices_post():
+        form = await request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
 
@@ -58,7 +58,7 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         })
 
     @app.route("/api/plugins/tuya/scan", methods=["POST"])
-    def api_plugin_tuya_scan():
+    async def api_plugin_tuya_scan():
         tuya = get_config_raw().get("tuya", {})
         known_by_id: dict[str, str] = {}
         for name, cfg in tuya.get("cloud_devices", {}).items():
@@ -77,8 +77,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         return jsonify({"devices": devices})
 
     @app.route("/api/plugins/tuya/cloud-import", methods=["POST"])
-    def api_plugin_tuya_cloud_import():
-        payload = request.get_json(silent=True) or {}
+    async def api_plugin_tuya_cloud_import():
+        payload = await request.get_json(silent=True) or {}
         api_region = (payload.get("api_region") or "").strip()
         access_id = (payload.get("access_id") or "").strip()
         access_key = (payload.get("access_key") or "").strip()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Flask, jsonify, render_template, request
+from quart import Quart, jsonify, render_template, request
 
 from bridge.tuya_local import TUYA_CLOUD_REGIONS, fetch_cloud_devices as fetch_tuya_cloud_devices
 from dashboard.setup import build_tuya_devices_dict, cloud_devices_to_rows, validate_cloud_devices
@@ -15,7 +15,7 @@ META = PluginMeta(
 )
 
 
-def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
+def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
 
     def _get_cloud_section() -> dict:
@@ -27,11 +27,11 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         get_config_store().set("config", current)
 
     @app.route("/plugins/tuya_cloud")
-    def tuya_cloud_plugin_page():
-        return render_template("tuya_cloud/index.html", regions=TUYA_CLOUD_REGIONS)
+    async def tuya_cloud_plugin_page():
+        return await render_template("tuya_cloud/index.html", regions=TUYA_CLOUD_REGIONS)
 
     @app.route("/api/plugins/tuya_cloud/credentials", methods=["GET"])
-    def api_plugin_tuya_cloud_credentials_get():
+    async def api_plugin_tuya_cloud_credentials_get():
         cloud = _get_cloud_section()
         return jsonify({
             "access_id": cloud.get("access_id", ""),
@@ -43,8 +43,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
 
     @app.route("/api/plugins/tuya_cloud/credentials", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_tuya_cloud_credentials_post():
-        form = request.get_json(silent=True)
+    async def api_plugin_tuya_cloud_credentials_post():
+        form = await request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane"}), 400
         access_id = (form.get("access_id") or "").strip()
@@ -70,14 +70,14 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         return jsonify({"message": "Zapisano. Bridge sam przeładuje konfigurację w ciągu ok. 1-2s, bez restartu procesu."})
 
     @app.route("/api/plugins/tuya_cloud/devices", methods=["GET"])
-    def api_plugin_tuya_cloud_devices_get():
+    async def api_plugin_tuya_cloud_devices_get():
         cloud_devices = get_config_raw().get("tuya", {}).get("cloud_devices", {})
         return jsonify({"devices": cloud_devices_to_rows(cloud_devices)})
 
     @app.route("/api/plugins/tuya_cloud/devices", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_tuya_cloud_devices_post():
-        form = request.get_json(silent=True)
+    async def api_plugin_tuya_cloud_devices_post():
+        form = await request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
 
@@ -100,7 +100,7 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
 
     @app.route("/api/plugins/tuya_cloud/cloud-import", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_tuya_cloud_cloud_import():
+    async def api_plugin_tuya_cloud_cloud_import():
         cloud = _get_cloud_section()
         api_region = cloud.get("api_region", "")
         access_id = cloud.get("access_id", "")

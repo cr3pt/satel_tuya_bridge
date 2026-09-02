@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Flask, jsonify, render_template, request
+from quart import Quart, jsonify, render_template, request
 
 from bridge.ebus_client import discover_topics as discover_ebus_topics, BackgroundTopicDiscovery
 from dashboard.setup import (
@@ -20,21 +20,21 @@ META = PluginMeta(
 _background_discovery = BackgroundTopicDiscovery()
 
 
-def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
+def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
 
     @app.route("/plugins/ebus")
-    def ebus_plugin_page():
-        return render_template("ebus/index.html")
+    async def ebus_plugin_page():
+        return await render_template("ebus/index.html")
 
     @app.route("/api/plugins/ebus/sensors", methods=["GET"])
-    def api_plugin_ebus_sensors_get():
+    async def api_plugin_ebus_sensors_get():
         return jsonify(get_config_store().get("sensors").get("sensors", []))
 
     @app.route("/api/plugins/ebus/sensors", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_ebus_sensors_post():
-        payload = request.get_json(silent=True)
+    async def api_plugin_ebus_sensors_post():
+        payload = await request.get_json(silent=True)
         cleaned, error = clean_sensors_payload(payload)
         if error:
             return jsonify({"error": error}), 400
@@ -49,8 +49,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         })
 
     @app.route("/api/plugins/ebus/discover", methods=["POST"])
-    def api_plugin_ebus_discover():
-        payload = request.get_json(silent=True) or {}
+    async def api_plugin_ebus_discover():
+        payload = await request.get_json(silent=True) or {}
         ebus_cfg = get_config_raw().get("ebus", {})
         mqtt_host = payload.get("mqtt_host") or ebus_cfg.get("mqtt_host")
         mqtt_port = payload.get("mqtt_port") or ebus_cfg.get("mqtt_port", 1883)
@@ -65,8 +65,8 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         return jsonify({"topics": topics})
 
     @app.route("/api/plugins/ebus/discover/start", methods=["POST"])
-    def api_plugin_ebus_discover_start():
-        payload = request.get_json(silent=True) or {}
+    async def api_plugin_ebus_discover_start():
+        payload = await request.get_json(silent=True) or {}
         ebus_cfg = get_config_raw().get("ebus", {})
         mqtt_host = payload.get("mqtt_host") or ebus_cfg.get("mqtt_host")
         mqtt_port = payload.get("mqtt_port") or ebus_cfg.get("mqtt_port", 1883)
@@ -89,22 +89,22 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_raw, get_co
         return jsonify(_background_discovery.status())
 
     @app.route("/api/plugins/ebus/discover/status")
-    def api_plugin_ebus_discover_status():
+    async def api_plugin_ebus_discover_status():
         return jsonify(_background_discovery.status())
 
     @app.route("/api/plugins/ebus/discover/stop", methods=["POST"])
-    def api_plugin_ebus_discover_stop():
+    async def api_plugin_ebus_discover_stop():
         return jsonify(_background_discovery.stop())
 
     @app.route("/api/plugins/ebus/connection", methods=["GET"])
-    def api_plugin_ebus_connection_get():
+    async def api_plugin_ebus_connection_get():
         current = get_config_store().get("config")
         return jsonify(ebus_connection_to_form(current.get("ebus", {}), current.get("boiler_output", {})))
 
     @app.route("/api/plugins/ebus/connection", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    def api_plugin_ebus_connection_post():
-        form = request.get_json(silent=True)
+    async def api_plugin_ebus_connection_post():
+        form = await request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
 

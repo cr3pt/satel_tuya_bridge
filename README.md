@@ -646,7 +646,7 @@ oficjalnych binarek dla architektury ARMv6 (RPi Zero W/oryginalne Zero).
 Panel poniżej daje praktycznie te same możliwości (wykresy historyczne,
 filtrowanie po czujniku/typie zdarzenia/zakresie czasu, baner aktywnych
 alarmów) - cały render wykresów robi przeglądarka (Chart.js), RPi tylko
-serwuje dane z SQLite przez lekki Flask + waitress.
+serwuje dane z SQLite przez lekki Quart + Hypercorn (ASGI).
 
 Uruchomienie (osobny proces od głównego bridge'a):
 
@@ -2184,7 +2184,7 @@ CDN Fastly - stąd adres IP bywa różny w zależności od tego, który węzeł
 brzegowy CDN jest najbliżej Twojego łącza) - to `RUN pip install -r
 requirements.txt` w `Dockerfile`, zwyczajne i wymagane pobieranie
 zależności (PyYAML, aiohttp, tinytuya, satel-integra, paho-mqtt,
-uiprotect, tuya-connector-python, Flask, waitress, astral). **Sam bridge
+uiprotect, tuya-connector-python, Quart, hypercorn, astral). **Sam bridge
 w trakcie DZIAŁANIA nie kontaktuje żadnego z tych adresów** - łączy się
 tylko z tym, co wpiszesz w panelu (centrala Satel, urządzenia Tuya,
 broker MQTT), a opcjonalnie z Tuya Cloud (`openapi.tuya*.com`, tylko
@@ -2249,7 +2249,7 @@ satel_tuya_bridge/
     ha_mqtt.py                 # klient MQTT integracji Home Assistant
     rules_engine.py          # spina wszystko razem wg BridgeConfig.raw
   dashboard/
-    app.py                   # backend panelu (Flask + waitress)
+    app.py                   # backend panelu (Quart + Hypercorn)
     auth.py                   # autoryzacja - tylko akcje zmieniające stan
     setup.py                   # logika kreatora + budowanie dokumentów configu
     templates/index.html     # frontend panelu (Chart.js, filtrowanie, sterowanie alarmem)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Flask, jsonify, render_template
+from quart import Quart, jsonify, render_template
 
 from plugins import PluginMeta, register_settings_route
 
@@ -13,7 +13,7 @@ META = PluginMeta(
 )
 
 
-def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
+def register(app: Quart, *, require_auth, get_auth_guard, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
 
     def _get_presence_section() -> dict:
@@ -25,11 +25,11 @@ def register(app: Flask, *, require_auth, get_auth_guard, get_config_store,
         get_config_store().set("automations", current)
 
     @app.route("/plugins/presence_simulation")
-    def presence_simulation_plugin_page():
-        return render_template("presence_simulation/index.html")
+    async def presence_simulation_plugin_page():
+        return await render_template("presence_simulation/index.html")
 
     @app.route("/api/plugins/presence_simulation/summary", methods=["GET"])
-    def api_plugin_presence_simulation_summary_get():
+    async def api_plugin_presence_simulation_summary_get():
         section = _get_presence_section()
         return jsonify({"devices": section.get("devices", [])})
 
