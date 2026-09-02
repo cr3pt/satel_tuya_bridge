@@ -884,6 +884,35 @@ class TestExecuteCommandRestartProcess:
         assert exit_calls == [0]
 
 
+class TestExecuteCommandTuya:
+
+    async def test_tuya_on_calls_turn_on_and_marks_done(self, engine, fake_tuya):
+        cmd_id = engine.history.enqueue_command("tuya_on", {"name": "gniazdko_salon"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        assert ("on", "gniazdko_salon", None) in fake_tuya.calls
+        assert engine.history.get_command(cmd_id)["status"] == "done"
+
+    async def test_tuya_off_calls_turn_off_and_marks_done(self, engine, fake_tuya):
+        cmd_id = engine.history.enqueue_command("tuya_off", {"name": "gniazdko_salon"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        assert ("off", "gniazdko_salon") in fake_tuya.calls
+        assert engine.history.get_command(cmd_id)["status"] == "done"
+
+    async def test_tuya_on_failure_marks_command_error(self, engine, fake_tuya):
+        fake_tuya.fail_devices.add("gniazdko_salon")
+        cmd_id = engine.history.enqueue_command("tuya_on", {"name": "gniazdko_salon"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        result = engine.history.get_command(cmd_id)
+        assert result["status"] == "error"
+        assert "symulowana awaria" in result["result"]["error"]
+
+
 class TestBuildTuyaController:
 
     def test_returns_dispatcher_wrapping_local_and_cloud(self):
