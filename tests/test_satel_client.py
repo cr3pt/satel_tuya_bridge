@@ -98,6 +98,9 @@ class FakeAsyncSatel:
             await asyncio.sleep(999)
         return self._confirm_response
 
+    async def _reading_loop(self):
+        await asyncio.sleep(999)
+
 
 def _patch_async_satel(monkeypatch, factory=None, **behavior):
     cls = factory or FakeAsyncSatel
@@ -453,6 +456,101 @@ class TestRunForever:
 
         assert len(fakes) >= 2, "Supervisor powinien ponowić connect() po wykryciu stopped"
 
+    async def test_reconnects_when_reading_loop_dies_without_stopped_flag(self, monkeypatch):
+        # Reprodukuje realny błąd: satel_integra._reading_loop() kończy się
+        # cicho po nieobsłużonym wyjątku w handlerze wiadomości (np. przy
+        # niedopasowanej długości bitmaski), ale NIE ustawia client.stopped -
+        # połączenie TCP nadal wygląda na zdrowe, mimo że dalsze odczyty stref/
+        # wyjść/alarmu są już martwe. run_forever() musi to wykryć i ponowić
+        # connect(), zamiast czekać w nieskończoność.
+        real_sleep = asyncio.sleep
+        monkeypatch.setattr(asyncio, "sleep", lambda *a, **k: real_sleep(0))
+
+        class CrashingReadingLoopFakeAsyncSatel(FakeAsyncSatel):
+            async def start(self, enable_monitoring=True):
+                await super().start(enable_monitoring)
+                asyncio.ensure_future(self._reading_loop())
+
+            async def _reading_loop(self):
+                return
+
+        fakes = _patch_async_satel(monkeypatch, factory=CrashingReadingLoopFakeAsyncSatel)
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+
+        task = asyncio.create_task(client.run_forever())
+        await real_sleep(0.01)
+        assert len(fakes) >= 1, "AsyncSatel nigdy nie zostało utworzone"
+        assert fakes[0].stopped is False, "Fałszywy klient nie powinien zgłaszać stopped"
+
+        for _ in range(30):
+            await real_sleep(0.001)
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert len(fakes) >= 2, (
+            "Supervisor powinien ponowić connect() po śmierci _reading_loop, "
+            "nawet gdy client.stopped pozostaje False"
+        )
+
+
+class TestPatchSatelIntegraVariableLengthBitmasks:
+    # Reprodukuje realny błąd z logów użytkownika: centrala obsługująca do
+    # 128 stref wysyła 16-bajtową bitmaskę ZONES_VIOLATED, a satel_integra
+    # 1.4.0 zakłada na sztywno 32 bajty (panel 256-strefowy), co bez tej
+    # łatki kończy się ValueError w _zones_violated() -> nieobsłużony wyjątek
+    # w _reading_loop() -> trwałe zamrożenie odczytu stref/wyjść/alarmu.
+
+    def test_get_active_bits_tolerates_shorter_bitmask_than_expected(self):
+        from bridge.satel_client import _patch_satel_integra_variable_length_bitmasks
+        from satel_integra.commands import SatelReadCommand
+        from satel_integra.messages import SatelReadMessage
+
+        _patch_satel_integra_variable_length_bitmasks()
+
+        msg_data = bytearray(16)
+        msg_data[0] = 0b00000101
+        msg = SatelReadMessage(SatelReadCommand.ZONES_VIOLATED, msg_data)
+
+        assert msg.get_active_bits(32) == [1, 3]
+
+    def test_zones_violated_handler_survives_16_byte_panel(self):
+        from bridge.satel_client import _patch_satel_integra_variable_length_bitmasks
+        from satel_integra import AsyncSatel
+        from satel_integra.commands import SatelReadCommand
+        from satel_integra.messages import SatelReadMessage
+
+        _patch_satel_integra_variable_length_bitmasks()
+
+        client = AsyncSatel("127.0.0.1", 7094)
+        msg_data = bytearray(16)
+        msg_data[0] = 0b00000101
+        msg = SatelReadMessage(SatelReadCommand.ZONES_VIOLATED, msg_data)
+
+        client._zones_violated(msg)
+
+        assert client.violated_zones == [1, 3]
+
+    def test_matching_length_still_decoded_correctly(self):
+        from bridge.satel_client import _patch_satel_integra_variable_length_bitmasks
+        from satel_integra.commands import SatelReadCommand
+        from satel_integra.messages import SatelReadMessage
+
+        _patch_satel_integra_variable_length_bitmasks()
+
+        msg_data = bytearray(4)
+        msg_data[0] = 0b00000001
+        msg = SatelReadMessage(SatelReadCommand.PARTITIONS_ARMED_MODE0, msg_data)
+
+        assert msg.get_active_bits(4) == [1]
+
+    def test_patch_is_idempotent(self):
+        from bridge.satel_client import _patch_satel_integra_variable_length_bitmasks
+
+        _patch_satel_integra_variable_length_bitmasks()
+        _patch_satel_integra_variable_length_bitmasks()
+
 
 class TestIsConnected:
     def test_false_before_connect(self):
@@ -475,6 +573,43 @@ class TestIsConnected:
             stopped = True
 
         client._client = FakeClient()
+        assert client.is_connected is False
+
+    def test_false_when_reading_loop_has_died_even_if_client_not_stopped(self):
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+
+        class FakeClient:
+            stopped = False
+
+        client._client = FakeClient()
+        client._reading_loop_alive = False
+        assert client.is_connected is False
+
+
+class TestReadingLoopWatchdog:
+
+    async def test_reading_loop_alive_true_right_after_connect(self, monkeypatch):
+        _patch_async_satel(monkeypatch)
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+        await client.connect()
+        assert client._reading_loop_alive is True
+        assert client.is_connected is True
+
+    async def test_reading_loop_alive_flips_false_once_loop_returns(self, monkeypatch):
+        class CrashingReadingLoopFakeAsyncSatel(FakeAsyncSatel):
+            async def _reading_loop(self):
+                return
+
+        _patch_async_satel(monkeypatch, factory=CrashingReadingLoopFakeAsyncSatel)
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+        await client.connect()
+        assert client._reading_loop_alive is True
+
+        # symuluje zachowanie satel_integra: _reading_loop wywoływane jako
+        # zadanie w tle przez AsyncSatel.start() (tu robimy to ręcznie, bo
+        # FakeAsyncSatel.start() nie tworzy realnych zadań asyncio)
+        await client._client._reading_loop()
+        assert client._reading_loop_alive is False
         assert client.is_connected is False
 
 
