@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Bridge Satel-Tuya-eBUS">
+  <!--
+    Logo bridge'a: centralny "hub" (sam bridge) z trzema kolorowymi
+    węzłami, po jednym na każdy integrowany system, połączonymi liniami:
+    dosłownie "mostek" łączący trzy niezależne systemy w jeden panel.
+    Kolory węzłów dobrane z istniejącej palety CSS paneli (zmienne danger
+    i ok z dashboard/templates), żeby logo pasowało do reszty UI, nie
+    wprowadzało nowej, obcej palety:
+      czerwony (góra): Satel (alarm/bezpieczeństwo)
+      zielony (dół, prawo): Tuya (smart home)
+      pomarańczowy (dół, lewo): eBUS/kocioł (ciepło)
+    Celowo BARDZO prosty kształt (kropki i linie, bez drobnych detali),
+    musi zostać czytelny jako favicon 16x16px, nie tylko jako duże logo.
+  -->
+  <rect x="1" y="1" width="62" height="62" rx="16" fill="#14161a" stroke="#2c3038" stroke-width="1"/>
+
+  <line x1="32" y1="32" x2="32" y2="14" stroke="#e5484d" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="32" y1="32" x2="47" y2="41" stroke="#3dd68c" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="32" y1="32" x2="17" y2="41" stroke="#f5a623" stroke-width="3.5" stroke-linecap="round"/>
+
+  <circle cx="32" cy="14" r="7" fill="#e5484d"/>
+  <circle cx="47" cy="41" r="7" fill="#3dd68c"/>
+  <circle cx="17" cy="41" r="7" fill="#f5a623"/>
+
+  <circle cx="32" cy="32" r="9" fill="#e6e8eb"/>
+  <circle cx="32" cy="32" r="9" fill="none" stroke="#14161a" stroke-width="1.5"/>
+</svg>

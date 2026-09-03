@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root {
@@ -70,6 +71,7 @@
   .status-card.on .value, .status-card.violated .value { color: var(--danger); }
   .status-card.off .value, .status-card.ok .value { color: var(--ok); }
   .status-card .ts { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .status-card .tuya-toggle-btn { margin-top: 6px; width: 100%; }
   .type-tag {
     display: inline-block; font-size: 10px; font-weight: 400; color: var(--muted);
     background: #1d2026; border: 1px solid var(--border); border-radius: 8px;
@@ -92,6 +94,8 @@
   .btn-disarm { background: var(--ok); color: #0a1a12; }
   #armMessage.ok { color: var(--ok); }
   #armMessage.error { color: var(--danger); }
+  #virtualInputMessage.ok { color: var(--ok); }
+  #virtualInputMessage.error { color: var(--danger); }
   .sensor-multiselect { position: relative; }
   .sensor-multi-panel {
     position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
@@ -119,7 +123,8 @@
 </style>
 </head>
 <body>
-<h1>Panel Satel-Tuya-eBUS <a href="/config" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">⚙ Ustawienia czujników eBUS</a> <a href="/automations" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">🎬 Automatyzacje</a> <a href="/plugins" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;">🧩 Wtyczki</a> <a id="authNavLink" href="/login" style="font-size: 13px; color: var(--accent); font-weight: 400; margin-left: 12px;"></a></h1>
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">Panel Satel-Tuya-eBUS</h1>
+{% include "_nav.html" %}
 
 <div id="alertsBanner" class="alerts-banner"></div>
 
@@ -150,8 +155,19 @@
 </div>
 
 <div class="card">
+  <h2>Wirtualne wejścia IP (Satel)</h2>
+  <div id="virtualInputsSection" class="status-grid"></div>
+  <div id="virtualInputMessage" style="font-size: 13px; margin-top: 10px; display: none;"></div>
+</div>
+
+<div class="card">
   <h2>Kocioł Wolf</h2>
   <div id="statusBoiler" class="status-grid"></div>
+</div>
+
+<div class="card">
+  <h2>Zmywarki/AGD HomeWhiz</h2>
+  <div id="statusHomewhiz" class="status-grid"></div>
 </div>
 
 <div class="controls">
@@ -217,12 +233,7 @@
 <script>
 let chart = null;
 
-// --- Autoryzacja (tylko dla akcji zmieniających stan: zapis configu,
-// uzbrojenie/rozbrojenie) - sesja przez /login (ciasteczko HttpOnly,
-// ustawiane przez serwer) - patrz dashboard/auth.py. Strona NIGDY sama nie
-// widzi ani nie trzyma hasła - jeśli akcja wymaga logowania i nie ma
-// ważnej sesji, przekierowujemy na /login zamiast pytać o hasło w prompt()
-// (który wyświetlał wpisywany tekst JAWNIE, bez maskowania).
+
 async function authorizedFetch(url, options = {}) {
   const resp = await fetch(url, options);
   if (resp.status === 401) {
@@ -232,10 +243,13 @@ async function authorizedFetch(url, options = {}) {
   return resp;
 }
 
+let isLoggedIn = false;  
+
 async function refreshAuthNav() {
   const link = document.getElementById('authNavLink');
   try {
     const status = await (await fetch('/api/auth/status')).json();
+    isLoggedIn = !!status.logged_in;
     if (status.logged_in) {
       link.textContent = '🔓 Wyloguj';
       link.href = '#';
@@ -250,7 +264,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 
@@ -258,23 +272,22 @@ function fmtTime(ts) {
   return new Date(ts * 1000).toLocaleString('pl-PL');
 }
 
-// --- Wybór czujników do wykresu (wielokrotny, pogrupowany wg obwodu) ---
-// Grupowanie po drugim segmencie tematu MQTT (ten sam mechanizm co w
-// /config dla wykrywania czujników eBUS) - np. "ebusd/bm/FlowTemp" i
-// "ebusd/fha/FlowTemp" trafiają do osobnych grup "bm"/"fha".
+
 function topicCircuit(topic) {
   const parts = (topic || '').split('/').filter(Boolean);
   return parts.length >= 2 ? parts[1] : 'inne';
 }
 
-let sensorNames = [];       // wszystkie nazwy z historycznymi danymi (/api/sensors)
-let sensorMeta = {};        // nazwa -> {label, mqtt_topic} (z /api/config/sensors, jeśli skonfigurowany)
+let sensorNames = [];       
+let sensorMeta = {};        
 let selectedSensors = new Set();
 
 async function loadSensors() {
+  
+  
   const [names, configured] = await Promise.all([
     fetch('/api/sensors').then(r => r.json()),
-    fetch('/api/config/sensors').then(r => r.json()),
+    fetch('/api/config/sensors').then(r => r.ok ? r.json() : []),
   ]);
   const byName = Object.fromEntries(configured.map(s => [s.name, s]));
   sensorNames = names;
@@ -283,9 +296,8 @@ async function loadSensors() {
     const cfg = byName[name];
     sensorMeta[name] = { label: (cfg && cfg.label) || name, mqtt_topic: cfg ? cfg.mqtt_topic : '' };
   });
-  // Domyślnie zaznacz pierwszy czujnik, żeby wykres nie startował pusty -
-  // ale tylko przy pierwszym wczytaniu (nie nadpisuj wyboru użytkownika
-  // przy kolejnych automatycznych odświeżeniach co 30s).
+  
+  
   if (names.length && selectedSensors.size === 0) selectedSensors.add(names[0]);
   renderSensorChecklist();
   updateSensorToggleLabel();
@@ -381,7 +393,7 @@ async function loadActiveAlerts() {
   ).join('');
 }
 
-// Paleta cykliczna dla wielu czujników naraz na jednym wykresie.
+
 const SENSOR_CHART_COLORS = ['#4d8dfd', '#3dd68c', '#e5484d', '#f2b93d', '#c792ea', '#5ecbe0', '#ff9f68', '#8b93a1'];
 
 async function loadHistory() {
@@ -392,11 +404,7 @@ async function loadHistory() {
     return;
   }
 
-  // Każdy czujnik publikuje niezależnie (różne znaczniki czasu) - dlatego
-  // punkty to {x, y} na osi liczbowej (unix timestamp), NIE wspólna oś
-  // kategoryczna "labels" (ta zakładałaby, że wszystkie czujniki mają
-  // DOKŁADNIE te same znaczniki czasu, co nieprawda przy więcej niż
-  // jednym czujniku naraz).
+  
   const datasets = await Promise.all(names.map(async (name, i) => {
     const data = await (await fetch(`/api/history?sensor=${encodeURIComponent(name)}&hours=${hours}`)).json();
     const color = SENSOR_CHART_COLORS[i % SENSOR_CHART_COLORS.length];
@@ -455,36 +463,42 @@ async function loadAlertsHistory() {
     </tr>`).join('');
 }
 
-// Rodzaje czujek/wyjść Satela - ikony/etykiety CZYSTO kosmetyczne (patrz
-// SATEL_ZONE_TYPES/SATEL_OUTPUT_TYPES w dashboard/setup.py i config.html,
-// gdzie się je przypisuje nazwie wejścia/wyjścia). Zielone OK/czerwone
-// naruszone zostaje jak dotychczas (statusCardClass) - typ dokłada tylko
-// ikonę i etykietę rodzaju, żeby dało się od razu odróżnić np. czujkę dymu
-// od czujki ruchu na liście wejść.
+
 const SATEL_ZONE_TYPE_ICONS = { drzwi: '🚪', okno: '🪟', ruch: '🚶', dym: '🔥', zalanie: '💧', wibracja: '📳', sabotaz: '🚨', inne: '❔' };
 const SATEL_ZONE_TYPE_LABELS = { drzwi: 'Drzwi', okno: 'Okno', ruch: 'Ruch (PIR)', dym: 'Dym', zalanie: 'Zalanie', wibracja: 'Wibracja', sabotaz: 'Sabotaż/24h', inne: 'Inne' };
 const SATEL_OUTPUT_TYPE_ICONS = { syrena: '🔔', przekaznik: '🔌', oswietlenie: '💡', brama: '🚧', ogrzewanie: '♨️', inne: '❔' };
 const SATEL_OUTPUT_TYPE_LABELS = { syrena: 'Syrena', przekaznik: 'Przekaźnik', oswietlenie: 'Oświetlenie', brama: 'Brama/rolety', ogrzewanie: 'Ogrzewanie', inne: 'Inne' };
 
-let satelZoneTypes = {};   // nazwa wejścia -> slug rodzaju (np. "drzwi")
-let satelOutputTypes = {}; // nazwa wyjścia -> slug rodzaju (np. "syrena")
+let satelZoneTypes = {};   
+let satelOutputTypes = {}; 
 
 async function loadSatelFieldTypes() {
+  
+  
   try {
-    const data = await (await fetch('/api/config/satel-fields')).json();
+    const data = await (await fetch('/api/satel/zone-types')).json();
     satelZoneTypes = data.zone_types || {};
     satelOutputTypes = data.output_types || {};
   } catch (e) {
-    // brak połączenia z serwerem - panel działa dalej, po prostu bez ikon rodzaju
+    
   }
 }
 
 function statusCardClass(category, value) {
   const v = (value || '').toString().toLowerCase();
+  
+  
+  if (v.startsWith('brak danych (wtyczka wyłączona)')) return '';
   if (category === 'satel_input') return v === 'naruszone' ? 'violated' : 'ok';
   if (category === 'tuya' && v === 'niedostępne') return 'violated';
   if (category === 'satel_output' || category === 'tuya') return v.startsWith('włącz') ? 'on' : 'off';
-  if (category === 'system_health') return v.startsWith('połączono') ? 'ok' : 'violated';
+  if (category === 'system_health') {
+    if (v.startsWith('połączono')) return 'ok';
+    
+    
+    if (v.startsWith('wyłączono (wtyczka)')) return '';
+    return 'violated';
+  }
   if (category === 'satel_partition') return v === 'uzbrojona' ? 'violated' : 'ok';
   return '';
 }
@@ -501,47 +515,152 @@ function statusCardTypeInfo(category, label) {
   return { icon: '', typeLabel: '' };
 }
 
+
 function renderStatusGrid(elementId, items) {
   const el = document.getElementById(elementId);
   if (items.length === 0) {
-    el.innerHTML = '<div style="color: var(--muted); font-size: 13px;">Brak danych — jeszcze nic nie odczytano.</div>';
+    if (el.dataset.empty !== '1') {
+      el.innerHTML = '<div style="color: var(--muted); font-size: 13px;">Brak danych — jeszcze nic nie odczytano.</div>';
+      el.dataset.empty = '1';
+    }
     return;
   }
-  el.innerHTML = items.map(s => {
+  if (el.dataset.empty === '1' || el.querySelector('.status-card') === null) {
+    el.innerHTML = '';
+  }
+  el.dataset.empty = '0';
+
+  const seenKeys = new Set();
+  items.forEach((s, idx) => {
+    const key = s.label;
+    seenKeys.add(key);
     const { icon, typeLabel } = statusCardTypeInfo(s.category, s.label);
-    return `
-    <div class="status-card ${statusCardClass(s.category, s.value)}">
-      <div class="label">${icon ? icon + ' ' : ''}${s.label}${typeLabel ? `<span class="type-tag">${typeLabel}</span>` : ''}</div>
-      <div class="value">${s.value}</div>
-      <div class="ts">${fmtTime(s.ts)}</div>
-    </div>`;
-  }).join('');
+    const wantedClass = 'status-card' + (statusCardClass(s.category, s.value) ? ' ' + statusCardClass(s.category, s.value) : '');
+    const labelHtml = `${icon ? icon + ' ' : ''}${s.label}${typeLabel ? `<span class="type-tag">${typeLabel}</span>` : ''}`;
+    const tsText = fmtTime(s.ts);
+
+    let card = el.querySelector(`.status-card[data-key="${CSS.escape(key)}"]`);
+    if (!card) {
+      card = document.createElement('div');
+      card.dataset.key = key;
+      card.innerHTML = '<div class="label"></div><div class="value"></div><div class="ts"></div>';
+    }
+    if (card.className !== wantedClass) card.className = wantedClass;
+    const labelEl = card.querySelector('.label');
+    if (labelEl.innerHTML !== labelHtml) labelEl.innerHTML = labelHtml;
+    const valueEl = card.querySelector('.value');
+    if (valueEl.textContent !== String(s.value)) valueEl.textContent = s.value;
+    const tsEl = card.querySelector('.ts');
+    if (tsEl.textContent !== tsText) tsEl.textContent = tsText;
+
+    if (s.category === 'tuya') updateTuyaToggleButton(card, s);
+
+    if (el.children[idx] !== card) {
+      el.insertBefore(card, el.children[idx] || null);
+    }
+  });
+
+  el.querySelectorAll('.status-card[data-key]').forEach(card => {
+    if (!seenKeys.has(card.dataset.key)) card.remove();
+  });
+}
+
+function updateTuyaToggleButton(card, s) {
+  const v = (s.value || '').toString().toLowerCase();
+  const isKnownState = v === 'włączone' || v === 'wyłączone';
+  let btn = card.querySelector('.tuya-toggle-btn');
+  if (!isLoggedIn || !isKnownState) {
+    if (btn) btn.remove();
+    return;
+  }
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'secondary tuya-toggle-btn';
+    btn.addEventListener('click', () => toggleTuyaDevice(btn));
+    card.appendChild(btn);
+  }
+  btn.dataset.device = s.label;
+  btn.dataset.nextState = v === 'włączone' ? 'off' : 'on';
+  if (!btn.disabled) {
+    btn.textContent = v === 'włączone' ? '⏻ Wyłącz' : '⏻ Włącz';
+  }
+}
+
+async function toggleTuyaDevice(btn) {
+  const device = btn.dataset.device;
+  const nextState = btn.dataset.nextState;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳...';
+  try {
+    const resp = await authorizedFetch(`/api/tuya/${encodeURIComponent(device)}/${nextState}`, { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      btn.textContent = '❌ ' + (data.error || 'Błąd');
+      setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2500);
+      return;
+    }
+    await pollTuyaCommand(data.command_id, btn, originalText);
+  } catch (e) {
+    btn.textContent = '❌ ' + e.message;
+    setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2500);
+  }
+}
+
+async function pollTuyaCommand(commandId, btn, originalText, attempt = 0) {
+  if (attempt > 15) {
+    btn.textContent = '❌ brak odpowiedzi';
+    setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2500);
+    return;
+  }
+  const cmd = await (await fetch(`/api/commands/${commandId}`)).json();
+  if (cmd.status === 'pending') {
+    setTimeout(() => pollTuyaCommand(commandId, btn, originalText, attempt + 1), 500);
+    return;
+  }
+  if (cmd.status === 'done') {
+    btn.textContent = '✅';
+    setTimeout(() => { btn.disabled = false; }, 800);
+  } else {
+    btn.textContent = '❌ ' + (cmd.result?.error || 'Błąd');
+    setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2500);
+  }
 }
 
 async function loadStatuses() {
-  const [health, tuya, inputs, outputs, boiler] = await Promise.all([
+  const [health, tuya, inputs, outputs, boiler, homewhiz] = await Promise.all([
     fetch('/api/status?category=system_health').then(r => r.json()),
     fetch('/api/status?category=tuya').then(r => r.json()),
     fetch('/api/status?category=satel_input').then(r => r.json()),
     fetch('/api/status?category=satel_output').then(r => r.json()),
     fetch('/api/status?category=boiler').then(r => r.json()),
+    fetch('/api/status?category=homewhiz').then(r => r.json()),
   ]);
   renderStatusGrid('statusHealth', health);
   renderStatusGrid('statusTuya', tuya);
   renderStatusGrid('statusSatelInputs', inputs);
   renderStatusGrid('statusSatelOutputs', outputs);
   renderStatusGrid('statusBoiler', boiler);
+  renderStatusGrid('statusHomewhiz', homewhiz);
 }
 
-// --- Sterowanie alarmem (uzbrojenie/rozbrojenie) - jedyna sekcja poza
-// /config, która wymaga hasła (patrz authorizedFetch wyżej) ---
+
 async function loadPartitionControls() {
+  const el = document.getElementById('partitionControls');
+  if (!isLoggedIn) {
+    el.innerHTML = `
+      <div style="color: var(--muted); font-size: 13px;">
+        🔒 Zaloguj się, aby sterować alarmem.
+        <a href="/login?next=${encodeURIComponent(location.pathname)}" style="color: var(--accent);">Zaloguj</a>
+      </div>`;
+    return;
+  }
   const [partitions, statuses] = await Promise.all([
     fetch('/api/satel/partitions').then(r => r.json()),
     fetch('/api/status?category=satel_partition').then(r => r.json()),
   ]);
   const stateByLabel = Object.fromEntries(statuses.map(s => [s.label, s.value]));
-  const el = document.getElementById('partitionControls');
   const entries = Object.entries(partitions);
   if (entries.length === 0) {
     el.innerHTML = '<div style="color: var(--muted); font-size: 13px;">Brak skonfigurowanych stref (satel.partitions w config.yaml)</div>';
@@ -617,9 +736,77 @@ function showArmMessage(kind, text) {
   el.textContent = text;
 }
 
-// Dziennik zdarzeń domyślnie UKRYTY (zbędny ruch/zapytania, dopóki nikt na
-// niego nie patrzy) - pokazuje się dopiero po kliknięciu przycisku
-// "DZIENNIK ZDARZEŃ" i dociąga dane dopiero wtedy.
+
+async function loadVirtualInputs() {
+  const el = document.getElementById('virtualInputsSection');
+  const data = await (await fetch('/api/satel/virtual-inputs')).json();
+  const names = data.virtual_inputs || [];
+  if (names.length === 0) {
+    el.innerHTML = '<div style="color: var(--muted); font-size: 13px;">Brak skonfigurowanych wirtualnych wejść (zakładka 🧩 Wtyczki -> Satel)</div>';
+    return;
+  }
+  el.innerHTML = names.map(name => `
+    <div class="status-card">
+      <div class="label">${name}</div>
+      <button type="button" class="secondary vi-trigger-btn" data-name="${name}" style="margin-top: 6px; width: 100%;">▶ Aktywuj</button>
+    </div>
+  `).join('');
+  el.querySelectorAll('.vi-trigger-btn').forEach(btn => {
+    btn.addEventListener('click', () => triggerVirtualInput(btn));
+  });
+}
+
+async function triggerVirtualInput(btn) {
+  const name = btn.dataset.name;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳...';
+  try {
+    const resp = await authorizedFetch(`/api/satel/virtual-inputs/${encodeURIComponent(name)}/trigger`, { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showVirtualInputMessage('error', '❌ ' + (data.error || 'Błąd'));
+      btn.textContent = originalText;
+      btn.disabled = false;
+      return;
+    }
+    await pollVirtualInputCommand(data.command_id, btn, originalText);
+  } catch (e) {
+    showVirtualInputMessage('error', '❌ ' + e.message);
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
+
+async function pollVirtualInputCommand(commandId, btn, originalText, attempt = 0) {
+  if (attempt > 15) {
+    showVirtualInputMessage('error', '❌ Brak odpowiedzi od bridge\'a - sprawdź, czy proces działa');
+    btn.textContent = originalText;
+    btn.disabled = false;
+    return;
+  }
+  const cmd = await (await fetch(`/api/commands/${commandId}`)).json();
+  if (cmd.status === 'pending') {
+    setTimeout(() => pollVirtualInputCommand(commandId, btn, originalText, attempt + 1), 1000);
+    return;
+  }
+  if (cmd.status === 'done') {
+    showVirtualInputMessage('ok', '✅ ' + (cmd.result?.message || 'Wykonano'));
+  } else {
+    showVirtualInputMessage('error', '❌ ' + (cmd.result?.error || 'Błąd wykonania'));
+  }
+  btn.textContent = originalText;
+  btn.disabled = false;
+}
+
+function showVirtualInputMessage(kind, text) {
+  const el = document.getElementById('virtualInputMessage');
+  el.className = kind;
+  el.style.display = 'block';
+  el.textContent = text;
+}
+
+
 let eventsVisible = false;
 
 document.getElementById('toggleEventsBtn').addEventListener('click', async () => {
@@ -630,8 +817,10 @@ document.getElementById('toggleEventsBtn').addEventListener('click', async () =>
 });
 
 async function refreshAll() {
+  await refreshAuthNav();  
   await loadStatuses();
   await loadPartitionControls();
+  await loadVirtualInputs();
   await loadActiveAlerts();
   await loadHistory();
   if (eventsVisible) await loadEvents();
@@ -646,8 +835,10 @@ document.getElementById('eventTypeSelect').addEventListener('change', () => { if
   await loadSensors();
   await loadSatelFieldTypes();
   await refreshAll();
-  setInterval(refreshAll, 30000);  // odświeżanie w tle co 30s (wykres/zdarzenia/alarmy) - bez przeładowania strony
-  setInterval(loadStatuses, 5000); // stany wejść/wyjść Satela i Tuya odświeżają się częściej - "na żywo"
+  setInterval(refreshAll, 30000);  
+  
+  
+  setInterval(loadStatuses, 1000);
 })();
 </script>
 </body>

@@ -1,4 +1,3 @@
-"""Testy dla bridge/history_store.py - odczyty, zdarzenia, alarmy, statusy, kolejka komend."""
 import time
 
 
@@ -81,6 +80,65 @@ class TestStatus:
         history.set_status("b", "satel_input", "2")
         assert len(history.get_status("tuya")) == 1
         assert len(history.get_status()) == 2
+
+    def test_get_status_value_returns_current_value(self, history):
+        history.set_status("satel_input:3", "satel_input", "naruszone")
+        assert history.get_status_value("satel_input:3") == "naruszone"
+
+    def test_get_status_value_reflects_latest_update(self, history):
+        history.set_status("satel_input:3", "satel_input", "naruszone")
+        history.set_status("satel_input:3", "satel_input", "OK")
+        assert history.get_status_value("satel_input:3") == "OK"
+
+    def test_get_status_value_unknown_key_is_none(self, history):
+        assert history.get_status_value("brak_takiego_klucza") is None
+
+    def test_prune_status_removes_keys_not_in_keep_set(self, history):
+        history.set_status("satel_input:1", "satel_input", "OK", label="Jeden")
+        history.set_status("satel_input:2", "satel_input", "OK", label="Dwa")
+        history.set_status("satel_input:3", "satel_input", "OK", label="Trzy")
+        removed = history.prune_status("satel_input", {"satel_input:1", "satel_input:3"})
+        assert removed == 1
+        remaining = {s["key"] for s in history.get_status("satel_input")}
+        assert remaining == {"satel_input:1", "satel_input:3"}
+
+    def test_prune_status_only_touches_given_category(self, history):
+        history.set_status("satel_input:1", "satel_input", "OK")
+        history.set_status("tuya:swiatlo", "tuya", "włączone")
+        history.prune_status("satel_input", set())
+        assert history.get_status("satel_input") == []
+        assert len(history.get_status("tuya")) == 1
+
+    def test_prune_status_empty_keep_set_removes_all_in_category(self, history):
+        history.set_status("satel_output:5", "satel_output", "wyłączone")
+        history.set_status("satel_output:6", "satel_output", "wyłączone")
+        removed = history.prune_status("satel_output", set())
+        assert removed == 2
+        assert history.get_status("satel_output") == []
+
+    def test_prune_status_keeps_everything_when_all_keys_still_valid(self, history):
+        history.set_status("satel_input:1", "satel_input", "OK")
+        history.set_status("satel_input:2", "satel_input", "OK")
+        removed = history.prune_status("satel_input", {"satel_input:1", "satel_input:2"})
+        assert removed == 0
+        assert len(history.get_status("satel_input")) == 2
+
+
+class TestLogs:
+    def test_get_log_loggers_returns_distinct_sorted_names(self, history):
+        history.write_log("bridge", "bridge.satel", "INFO", "połączono")
+        history.write_log("bridge", "bridge.tuya_local", "DEBUG", "odpytano")
+        history.write_log("bridge", "bridge.satel", "WARNING", "rozłączono")
+        assert history.get_log_loggers() == ["bridge.satel", "bridge.tuya_local"]
+
+    def test_get_log_loggers_filters_by_component(self, history):
+        history.write_log("bridge", "bridge.satel", "INFO", "a")
+        history.write_log("dashboard", "dashboard.app", "INFO", "b")
+        assert history.get_log_loggers("bridge") == ["bridge.satel"]
+        assert history.get_log_loggers("dashboard") == ["dashboard.app"]
+
+    def test_get_log_loggers_empty_when_no_logs(self, history):
+        assert history.get_log_loggers() == []
 
 
 class TestCommandQueue:

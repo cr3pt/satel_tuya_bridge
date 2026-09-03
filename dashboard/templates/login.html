@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Logowanie - Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 <style>
   :root {
     --bg: #14161a; --card: #1d2026; --border: #2c3038;
@@ -17,6 +18,14 @@
     min-height: 100vh; display: flex; align-items: center; justify-content: center;
     padding: 20px;
   }
+  .login-wrap {
+    display: flex; flex-direction: column; align-items: center;
+    width: 100%; max-width: 360px;
+  }
+  .login-logo {
+    width: 140px; height: 140px; margin-bottom: 22px;
+    filter: drop-shadow(0 6px 18px rgba(77, 141, 253, 0.35));
+  }
   .card {
     background: var(--card); border: 1px solid var(--border); border-radius: 10px;
     padding: 28px; width: 100%; max-width: 360px;
@@ -24,7 +33,7 @@
   h1 { font-size: 18px; font-weight: 500; margin: 0 0 6px; }
   .hint { color: var(--muted); font-size: 13px; margin-bottom: 18px; line-height: 1.5; }
   label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
-  input[type=password] {
+  input[type=password], input[type=text] {
     background: #262a32; color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 10px 12px; font-size: 14px; width: 100%; margin-bottom: 14px;
   }
@@ -39,27 +48,30 @@
 </style>
 </head>
 <body>
-<div class="card">
-  <h1>🔒 Logowanie administratora</h1>
-  <div class="hint">
-    Wymagane do zapisu ustawień (⚙ Ustawienia, 🎬 Automatyzacje) i
-    uzbrajania/rozbrajania stref. Samo przeglądanie panelu nie wymaga
-    logowania.
+<div class="login-wrap">
+  <img src="/static/logo.svg" alt="Satel-Tuya-eBUS" class="login-logo">
+  <div class="card">
+    <h1>🔒 Logowanie administratora</h1>
+    <div class="hint">
+      Wymagane do korzystania z panelu - przed zalogowaniem nic (żaden
+      status, ustawienia ani sterowanie) nie jest widoczne.
+    </div>
+    <form id="loginForm">
+      <label for="username">Nazwa użytkownika</label>
+      <input type="text" id="username" autocomplete="username" autofocus>
+      <label for="password">Hasło administratora</label>
+      <input type="password" id="password" autocomplete="current-password">
+      <button type="submit" id="loginBtn">Zaloguj</button>
+    </form>
+    <div id="loginMsg" class="msg-box"></div>
   </div>
-  <form id="loginForm">
-    <label for="password">Hasło administratora</label>
-    <input type="password" id="password" autocomplete="current-password" autofocus>
-    <button type="submit" id="loginBtn">Zaloguj</button>
-  </form>
-  <div id="loginMsg" class="msg-box"></div>
-  <a class="back-link" href="/">&larr; Wróć do panelu (bez logowania)</a>
 </div>
 <script>
 function nextUrl() {
   const params = new URLSearchParams(location.search);
   const next = params.get('next');
-  // Tylko ścieżki WEWNĄTRZ tej samej aplikacji - nigdy pełny URL (ochrona
-  // przed open-redirect przez spreparowany link "?next=https://zla-strona").
+  
+  
   return (next && next.startsWith('/')) ? next : '/';
 }
 
@@ -67,6 +79,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = document.getElementById('loginBtn');
   const msg = document.getElementById('loginMsg');
+  const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value;
   btn.disabled = true;
   msg.style.display = 'none';
@@ -74,7 +87,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     const resp = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ username, password }),
     });
     const data = await resp.json();
     if (!resp.ok) {

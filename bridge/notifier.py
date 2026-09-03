@@ -1,10 +1,3 @@
-"""Wspólny mechanizm powiadomień push (ntfy.sh lub self-hosted).
-
-Wydzielony do osobnego modułu, bo korzystają z niego zarówno alarmy
-progowe (bridge/alarms.py), jak i monitoring "zdrowia" połączeń
-(bridge/resilience.py) oraz statusu urządzeń Tuya (rules_engine.py) -
-nie chcemy trzech kopii tego samego kodu wysyłki HTTP.
-"""
 from __future__ import annotations
 
 import logging

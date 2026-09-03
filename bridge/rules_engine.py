@@ -1,7 +1,3 @@
-"""Silnik reguł - centralny punkt, w którym zdarzenia (ruch, zmiana stanu
-światła, ruch z kamery, dane z kotła) trafiają na akcje zdefiniowane
-w config.yaml.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -11,16 +7,21 @@ import time
 from datetime import datetime
 
 from .config import BridgeConfig
+from .logging_config import apply_log_levels
 from .satel_client import SatelIntegraClient, SatelVirtualInputTrigger
 from .tuya_local import TuyaLocalController
+from .tuya_cloud import TuyaCloudController
+from .tuya_dispatch import TuyaController
 from .tuya_cloud_events import TuyaCameraMotionListener
 from .unifi_protect_events import UnifiProtectMotionListener
+from .homewhiz_client import HomeWhizClient
 from .ebus_client import EbusMqttListener
 from .boiler_output import build_boiler_publishers, MqttBoilerPublisher, TuyaVirtualDevicePublisher
 from .history_store import HistoryStore
 from .alarms import AlarmEngine
 from .resilience import HealthReporter
 from .scheduling import is_within_window
+from .conditions import evaluate_condition
 from .scenes import SceneRunner
 from .presence_simulation import PresenceSimulation
 from .boiler_automation import BoilerAutomation
@@ -31,76 +32,76 @@ from .ha_mqtt import HomeAssistantMqttBridge
 logger = logging.getLogger("bridge.rules")
 
 
+def _build_tuya_controller(tuya_cfg: dict) -> TuyaController:
+    local = TuyaLocalController(tuya_cfg["devices"], tuya_cfg.get("zigbee_gateways"))
+    cloud = TuyaCloudController(tuya_cfg.get("cloud_devices", {}), tuya_cfg.get("cloud", {}))
+    return TuyaController(local, cloud)
+
+
 class RulesEngine:
     def __init__(self, config: BridgeConfig):
         self.config = config
 
-        # Historia + alarmy tworzone najpierw - inne komponenty (Satel, MQTT,
-        # kamery) dostają referencję do HistoryStore, żeby raportować status
-        # połączenia ('system_health') widoczny w panelu.
         self.history = HistoryStore(config.raw.get("dashboard", {}).get("db_path", "bridge_history.db"))
         notify_cfg = config.raw.get("notifications")
+        if notify_cfg and not notify_cfg.get("enabled", True):
+            notify_cfg = None
         self.alarms = AlarmEngine(
             config.raw.get("alarm_rules", []),
             self.history,
             notify_cfg=notify_cfg,
         )
-        # Ile sekund nieprzerwanego rozłączenia, zanim wyślemy powiadomienie
-        # push o utracie połączenia - chroni przed spamem przy chwilowych
-        # zerwaniach WiFi. Konfigurowalne globalnie (notifications.grace_seconds).
         grace_seconds = (notify_cfg or {}).get("grace_seconds", 120)
 
-        self.tuya = TuyaLocalController(config.tuya["devices"], config.tuya.get("zigbee_gateways"))
-        self.satel_virtual_inputs = SatelVirtualInputTrigger(
-            config.satel["host"], config.satel["virtual_inputs"]
-        )
+        self.tuya = _build_tuya_controller(config.tuya)
         self.satel = SatelIntegraClient(
             config.satel["host"],
             config.satel["port"],
-            config.satel["integration_key"],
+            config.satel.get("integration_key") or "",
             config.satel.get("partition", 1),
             monitored_zones=config.satel.get("monitored_zones"),
             monitored_outputs=config.satel.get("monitored_outputs"),
+            virtual_inputs=config.satel.get("virtual_inputs", {}).get("inputs"),
+            encryption_key=(
+                config.satel.get("encryption_key") if config.satel.get("encryption_enabled") else None
+            ),
             history=self.history,
             notify_cfg=notify_cfg,
             grace_seconds=grace_seconds,
-            status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 15),
+            status_poll_interval_seconds=config.satel.get("status_poll_interval_seconds", 3),
+        )
+        self._vi_mode = config.satel.get("virtual_inputs", {}).get("mode", "library")
+        self.satel_virtual_inputs = SatelVirtualInputTrigger(
+            config.satel["host"], config.satel.get("virtual_inputs", {}),
         )
         self._active_timers: dict[str, asyncio.Task] = {}
-        # Zadanie odliczające debounce dla _on_alarm_status_change() niżej -
-        # patrz tam po wyjaśnienie.
+        self._device_state_last_value: dict[tuple[str, str], str] = {}
         self._alarm_status_debounce_task: asyncio.Task | None = None
         self.boiler_publishers = build_boiler_publishers(config, history=self.history)
-        self.ebus_listener: EbusMqttListener | None = None  # utworzony w start(), potrzebny reload_config()
+        self.ebus_listener: EbusMqttListener | None = None
         self._notify_cfg = notify_cfg
         self._grace_seconds = grace_seconds
-        self._tuya_health: HealthReporter | None = None  # tworzony w start(), potrzebuje działającej pętli asyncio
+        self._tuya_health: HealthReporter | None = None
 
-        # Lokalizacja (do okien czasowych sunset/sunrise) - opcjonalna,
-        # potrzebna tylko jeśli jakaś reguła używa time_window z "sunset"/"sunrise"
         self._location_cfg = config.raw.get("location")
 
-        # Sceny - wspólny fundament dla harmonogramów, eskalacji i
-        # automatyki kotła (patrz bridge/scenes.py)
+        self._rule_name_index = self._build_rule_name_index()
+
         self.scenes = SceneRunner(
-            config.raw.get("scenes", []), self.tuya, self.satel, self.satel_virtual_inputs, history=self.history,
+            config.raw.get("scenes", []), self.tuya, self.satel,
+            satel_virtual_inputs=self.satel_virtual_inputs, virtual_input_mode=self._vi_mode,
+            history=self.history,
         )
         self.boiler_automation = BoilerAutomation(config.raw.get("boiler_rules", []), self.scenes)
         self.presence_simulation = PresenceSimulation(
             config.raw.get("presence_simulation", {}), self.tuya, location_cfg=self._location_cfg, history=self.history,
         )
 
-        # Stan w pamięci dla eskalacji (znaczniki czasu naruszeń per reguła)
-        # i cooldownu reguł kamer (ostatnie wywołanie per reguła)
         self._escalation_history: dict[str, list[float]] = {}
         self._camera_rule_last_triggered: dict[str, float] = {}
 
-        # Pętla asyncio - potrzebna, żeby bezpiecznie wywołać korutyny
-        # (boiler_automation) z callbacku MQTT działającego w INNYM wątku
-        # (patrz handle_boiler_value niżej)
         self._loop = asyncio.get_event_loop()
 
-        # Integracja z Home Assistant (MQTT Discovery) - opcjonalna
         self.ha_mqtt: HomeAssistantMqttBridge | None = None
         self._ha_topic_prefix = config.raw.get("home_assistant", {}).get("state_topic_prefix", "home/bridge")
         if config.raw.get("home_assistant", {}).get("enabled"):
@@ -111,14 +112,6 @@ class RulesEngine:
                 notify_cfg=notify_cfg, grace_seconds=grace_seconds,
             )
 
-        # Publikacja stanu Satel/Tuya do MQTT pod skonfigurowalnym tematem
-        # PER INTEGRACJA - NIEZALEŻNIE od Home Assistant (ha_mqtt wyżej
-        # publikuje TYLKO gdy home_assistant.enabled: true, pod jednym
-        # wspólnym `state_topic_prefix`). eBUS ma już swój odpowiednik od
-        # dawna (boiler_output.mqtt.topic_prefix, patrz handle_boiler_value)
-        # - to jest analogiczny mechanizm dla Satela i Tuyi. Osobny klient
-        # paho-mqtt (nie dzielimy z ha_mqtt/ebus_client/boiler_output) -
-        # zgodnie z resztą kodu, patrz docstring ha_mqtt.py.
         self.state_mqtt: HomeAssistantMqttBridge | None = None
         mqtt_publish_cfg = config.raw.get("mqtt_publish", {})
         self._satel_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("satel", "satel")
@@ -129,92 +122,287 @@ class RulesEngine:
                 entities=[], history=self.history, notify_cfg=notify_cfg, grace_seconds=grace_seconds,
             )
 
-    # ------------------------------------------------------------------
-    # Ruch -> włączenie urządzenia Tuya na czas (LUB scena, LUB eskalacja
-    # przy powtarzających się naruszeniach - patrz config.yaml)
-    # ------------------------------------------------------------------
-    async def handle_motion(self, source: str, zone_or_device_id) -> None:
+    def _build_rule_name_index(self) -> dict[str, int]:
+        return {
+            rule["name"]: idx
+            for idx, rule in enumerate(self.config.motion_rules)
+            if rule.get("name")
+        }
+
+    def _rule_gate_open(self, rule: dict, now: datetime) -> bool:
+        if not is_within_window(rule.get("time_window"), self._location_cfg, now):
+            return False
+        condition = rule.get("condition")
+        if not condition:
+            return True
+        try:
+            return evaluate_condition(
+                condition, get_status_value=self.history.get_status_value,
+                location_cfg=self._location_cfg, now=now,
+            )
+        except Exception:
+            logger.exception(
+                "Błąd ewaluacji warunku reguły ruchu '%s' - traktuję jako niespełniony",
+                rule.get("name", "?"),
+            )
+            return False
+
+    async def handle_motion(self, source: str, zone_or_device_id, trigger: str = "violated") -> None:
         now = datetime.now()
         for idx, rule in enumerate(self.config.motion_rules):
             if rule["source"] != source:
                 continue
             if source == "satel_zone" and rule.get("zone_number") != zone_or_device_id:
                 continue
-            # dla source == "tuya_pir" dopasowanie po device_id analogicznie
 
-            if not is_within_window(rule.get("time_window"), self._location_cfg, now):
-                continue  # poza skonfigurowanym oknem czasowym - reguła teraz nieaktywna
-
-            rule_key = f"motion_rule_{idx}"
-
-            # Eskalacja: licz naruszenia w ruchomym oknie czasowym,
-            # niezależnie od zwykłej akcji. Po przekroczeniu progu -
-            # mocniejsza scena ZAMIAST zwykłej akcji (nie oba naraz).
-            escalation_cfg = rule.get("escalation")
-            if escalation_cfg:
-                history = self._escalation_history.setdefault(rule_key, [])
-                history.append(time.time())
-                cutoff = time.time() - escalation_cfg["window_seconds"]
-                history[:] = [t for t in history if t >= cutoff]
-                if len(history) >= escalation_cfg["threshold_count"]:
-                    logger.warning(
-                        "Eskalacja reguły ruchu '%s': %d naruszeń w %ds -> scena '%s'",
-                        rule_key, len(history), escalation_cfg["window_seconds"], escalation_cfg["escalated_scene"],
-                    )
-                    self.history.write_event(
-                        "escalation", source=f"{source}:{zone_or_device_id}",
-                        detail={"count": len(history), "scene": escalation_cfg["escalated_scene"]},
-                    )
-                    await self.scenes.run(escalation_cfg["escalated_scene"])
-                    history.clear()  # reset po eskalacji, żeby nie spamować tej samej sceny co naruszenie
-                    continue
-
-            if "scene" in rule:
-                await self.scenes.run(rule["scene"])
-                self.history.write_event(
-                    "motion", source=f"{source}:{zone_or_device_id}", detail={"scene": rule["scene"]},
-                )
+            if not rule.get("enabled", True):
                 continue
 
-            device = rule["target_device"]
-            duration = rule["duration_seconds"]
-            dimmer = rule.get("dimmer_level_percent")
+            if not self._rule_matches_trigger(rule, trigger):
+                continue
 
-            # jeśli timer już trwa dla tego urządzenia - zresetuj go
-            # (kolejny ruch przedłuża włączenie, zamiast nakładać zadania)
-            if device in self._active_timers and not self._active_timers[device].done():
-                self._active_timers[device].cancel()
+            if not self._rule_gate_open(rule, now):
+                continue
 
-            self._active_timers[device] = asyncio.create_task(
-                self.tuya.turn_on_for_duration(device, duration, dimmer)
+            await self._fire_motion_rule(rule, f"motion_rule_{idx}", source, zone_or_device_id, trigger)
+
+    async def handle_device_state(self, source: str, device_name: str, value: str) -> None:
+        state_key = (source, device_name)
+        old_value = self._device_state_last_value.get(state_key)
+        self._device_state_last_value[state_key] = value
+        if old_value == value:
+            return
+
+        now = datetime.now()
+        for idx, rule in enumerate(self.config.motion_rules):
+            if rule.get("source") != source or rule.get("source_device") != device_name:
+                continue
+            if not rule.get("enabled", True):
+                continue
+
+            trigger_value = rule.get("trigger_value")
+            if value == trigger_value:
+                trigger = "violated"
+            elif self._is_until_restored(rule) and old_value == trigger_value:
+                trigger = "restored"
+            else:
+                continue
+
+            if not self._rule_gate_open(rule, now):
+                continue
+
+            await self._fire_motion_rule(rule, f"motion_rule_{idx}", source, device_name, trigger)
+
+    @staticmethod
+    def _is_until_restored(rule: dict) -> bool:
+        return (
+            "scene" not in rule
+            and rule.get("action") != "turn_off"
+            and rule.get("duration_seconds") in (None, 0)
+        )
+
+    @staticmethod
+    def _rule_matches_trigger(rule: dict, trigger: str) -> bool:
+        if RulesEngine._is_until_restored(rule):
+            return True
+        return rule.get("trigger_on", "violated") == trigger
+
+    async def _fire_motion_rule(
+        self, rule: dict, rule_key: str, source: str, zone_or_device_id,
+        trigger: str = "violated", _chain_depth: int = 0,
+    ) -> None:
+        escalation_cfg = rule.get("escalation")
+        if escalation_cfg:
+            history = self._escalation_history.setdefault(rule_key, [])
+            history.append(time.time())
+            cutoff = time.time() - escalation_cfg["window_seconds"]
+            history[:] = [t for t in history if t >= cutoff]
+            if len(history) >= escalation_cfg["threshold_count"]:
+                logger.warning(
+                    "Eskalacja reguły ruchu '%s': %d naruszeń w %ds -> scena '%s'",
+                    rule_key, len(history), escalation_cfg["window_seconds"], escalation_cfg["escalated_scene"],
+                )
+                self.history.write_event(
+                    "escalation", source=f"{source}:{zone_or_device_id}",
+                    detail={"count": len(history), "scene": escalation_cfg["escalated_scene"]},
+                )
+                await self.scenes.run(escalation_cfg["escalated_scene"])
+                history.clear()
+                await self._chain_trigger(rule, trigger, _chain_depth)
+                return
+
+        if "scene" in rule:
+            await self.scenes.run(rule["scene"])
+            self.history.write_event(
+                "motion", source=f"{source}:{zone_or_device_id}", detail={"scene": rule["scene"]},
             )
+            await self._chain_trigger(rule, trigger, _chain_depth)
+            return
+
+        if "virtual_input" in rule:
+            device = rule["virtual_input"]
+            target_system = "satel_virtual_input"
+        else:
+            device = rule["target_device"]
+            target_system = rule.get("target_system", "tuya")
+
+        if device in self._active_timers and not self._active_timers[device].done():
+            self._active_timers[device].cancel()
+
+        if rule.get("action") == "turn_off":
+            await self._set_target_state(target_system, device, False)
             logger.info(
-                "Reguła ruchu: %s(%s) -> %s na %ss",
-                source, zone_or_device_id, device, duration,
+                "Reguła ruchu: %s(%s) -> wyłączenie %s (%s)",
+                source, zone_or_device_id, device, target_system,
             )
             self.history.write_event(
                 "motion", source=f"{source}:{zone_or_device_id}",
-                detail={"target_device": device, "duration_seconds": duration, "dimmer_level_percent": dimmer},
+                detail={"target_device": device, "target_system": target_system, "action": "turn_off"},
             )
+            await self._chain_trigger(rule, trigger, _chain_depth)
+            return
 
-    # ------------------------------------------------------------------
-    # Zmiana stanu światła Tuya -> wirtualne wejście ETHM
-    # ------------------------------------------------------------------
+        duration = rule.get("duration_seconds")
+        dimmer = rule.get("dimmer_level_percent")
+
+        if self._is_until_restored(rule):
+            await self._set_target_state(target_system, device, trigger != "restored", dimmer)
+            logger.info(
+                "Reguła ruchu: %s(%s) -> %s %s (%s, do ustania naruszenia)",
+                source, zone_or_device_id, "wyłączenie" if trigger == "restored" else "włączenie",
+                device, target_system,
+            )
+            self.history.write_event(
+                "motion", source=f"{source}:{zone_or_device_id}",
+                detail={
+                    "target_device": device, "target_system": target_system,
+                    "until_restored": True, "trigger": trigger,
+                },
+            )
+            await self._chain_trigger(rule, trigger, _chain_depth)
+            return
+
+        rule_name = rule.get("name")
+        self._active_timers[device] = asyncio.create_task(
+            self._run_on_for_duration(target_system, device, duration, dimmer, rule_name)
+        )
+        logger.info(
+            "Reguła ruchu: %s(%s) -> %s (%s) na %ss",
+            source, zone_or_device_id, device, target_system, duration,
+        )
+        self.history.write_event(
+            "motion", source=f"{source}:{zone_or_device_id}",
+            detail={
+                "target_device": device, "target_system": target_system,
+                "duration_seconds": duration, "dimmer_level_percent": dimmer,
+            },
+        )
+        await self._chain_trigger(rule, trigger, _chain_depth)
+
+    async def _set_target_state(
+        self, target_system: str, device: str, on: bool, dimmer: int | None = None,
+    ) -> None:
+        if target_system == "satel_output":
+            output_number = self.satel.monitored_outputs.get(device)
+            if output_number is None:
+                logger.warning(
+                    "Reguła ruchu wskazuje na nieznane wyjście Satela '%s' (sprawdź zakładkę "
+                    "⚙ Ustawienia -> Satel) - pomijam", device,
+                )
+                return
+            await self.satel.set_output(output_number, on)
+        elif target_system == "satel_virtual_input":
+            await self._trigger_virtual_input(device, on)
+        elif on:
+            await self.tuya.turn_on(device, dimmer)
+        else:
+            await self.tuya.turn_off(device)
+
+    async def _run_on_for_duration(
+        self, target_system: str, device: str, duration: float, dimmer: int | None, rule_name: str | None,
+    ) -> None:
+        if rule_name:
+            self.history.set_status(f"automation:{rule_name}", "automation", "uruchomiona", label=rule_name)
+        try:
+            if target_system in ("satel_output", "satel_virtual_input"):
+                await self._set_target_state(target_system, device, True)
+                await asyncio.sleep(duration)
+                await self._set_target_state(target_system, device, False)
+            else:
+                await self.tuya.turn_on_for_duration(device, duration, dimmer)
+        finally:
+            if rule_name:
+                self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)
+
+    async def _chain_trigger(self, rule: dict, trigger: str, _chain_depth: int) -> None:
+        chain_name = (rule.get("then_trigger_rule") or "").strip()
+        if not chain_name:
+            return
+        if _chain_depth >= 5:
+            logger.warning(
+                "Łańcuch reguł ruchu przerwany (then_trigger_rule) - zbyt duża głębokość "
+                "(możliwa pętla) przed wyzwoleniem '%s'", chain_name,
+            )
+            return
+
+        idx = self._rule_name_index.get(chain_name)
+        if idx is None or idx >= len(self.config.motion_rules):
+            logger.warning(
+                "Reguła '%s' ma then_trigger_rule wskazujące na nieznaną/usuniętą regułę '%s'",
+                rule.get("name", "?"), chain_name,
+            )
+            return
+
+        target = self.config.motion_rules[idx]
+        if not target.get("enabled", True):
+            logger.debug(
+                "Łańcuchowe wyzwolenie '%s' pominięte - reguła docelowa wyłączona w edytorze", chain_name,
+            )
+            return
+        now = datetime.now()
+        if not self._rule_gate_open(target, now):
+            logger.debug(
+                "Łańcuchowe wyzwolenie '%s' pominięte - okno czasowe/warunek docelowej reguły niespełniony",
+                chain_name,
+            )
+            return
+
+        logger.info(
+            "Reguła ruchu '%s' wyzwala kolejną regułę '%s' (then_trigger_rule)",
+            rule.get("name", "?"), chain_name,
+        )
+        await self._fire_motion_rule(
+            target, f"motion_rule_{idx}", "chain", rule.get("name", "?"), trigger, _chain_depth + 1,
+        )
+
+    async def _trigger_virtual_input(self, name: str, state: bool = True) -> None:
+        if self._vi_mode == "http":
+            await self.satel_virtual_inputs.trigger(name)
+            return
+        output_number = self.satel.virtual_inputs.get(name)
+        if output_number is None:
+            logger.warning(
+                "Nieznane wirtualne wejście IP Satela '%s' (sprawdź zakładkę "
+                "⚙ Ustawienia -> Satel) - pomijam", name,
+            )
+            return
+        await self.satel.set_output(output_number, state)
+
     async def handle_light_state_change(self, device_name: str, is_on: bool) -> None:
         if not is_on:
             return
         for rule in self.config.light_to_satel_rules:
             if rule["source_device"] == device_name:
-                await self.satel_virtual_inputs.trigger(rule["virtual_input"])
+                await self._trigger_virtual_input(rule["virtual_input"])
                 self.history.write_event(
                     "light_to_satel", source=f"tuya:{device_name}",
                     detail={"virtual_input": rule["virtual_input"]},
                 )
 
-    # ------------------------------------------------------------------
-    # Ruch z kamery -> akcja w Satelu (LUB scena), z opcjonalnym oknem
-    # czasowym i cooldownem (żeby migoczący ruch nie strzelał w kółko)
-    # ------------------------------------------------------------------
+    async def _on_homewhiz_state(self, appliance_name: str, state_name: str) -> None:
+        self.history.set_status(f"homewhiz:{appliance_name}", "homewhiz", state_name, label=appliance_name)
+        await self.handle_device_state("homewhiz_state", appliance_name, state_name)
+
     async def handle_camera_motion(self, source: str, camera_id: str) -> None:
         now = datetime.now()
         for idx, rule in enumerate(self.config.camera_alarm_rules):
@@ -244,21 +432,16 @@ class RulesEngine:
 
             action = rule["action"]
             if action == "virtual_input":
-                await self.satel_virtual_inputs.trigger(rule["virtual_input"])
+                await self._trigger_virtual_input(rule["virtual_input"])
             elif action == "output":
                 await self.satel.set_output(rule["output_number"], True)
             elif action == "arm":
-                await self.satel.arm(rule.get("arm_mode", 0))
+                await self.satel.arm(rule.get("arm_mode", 0), rule.get("partitions"))
             logger.info("Reguła kamery: %s(%s) -> %s", source, camera_id, action)
             self.history.write_event(
                 "camera_alarm", source=f"{source}:{camera_id}", detail={"action": action},
             )
 
-    # ------------------------------------------------------------------
-    # Dane z kotła -> publikacja WEDŁUG WYBORU per czujnik (targets w
-    # config.yaml: ebus.sensors[].targets) - historia/panel, MQTT,
-    # wirtualne urządzenie Tuya to trzy NIEZALEŻNE przełączniki.
-    # ------------------------------------------------------------------
     def handle_boiler_value(self, sensor_cfg: dict, value) -> None:
         name = sensor_cfg["name"]
         label = sensor_cfg.get("label", name)
@@ -267,14 +450,11 @@ class RulesEngine:
 
         if targets.get("history", True):
             if is_numeric:
-                self.history.write_reading(name, value)  # tabela readings wymaga liczby (wykres historyczny)
+                self.history.write_reading(name, value)
             self.history.set_status(f"boiler:{name}", "boiler", value, label=label)
 
-        self.alarms.on_value(name, value)  # sam decyduje, czy wartość nadaje się do progów liczbowych
+        self.alarms.on_value(name, value)
 
-        # boiler_automation.on_value jest korutyną, a handle_boiler_value bywa
-        # wywoływane z wątku MQTT (paho), nie z głównej pętli asyncio - stąd
-        # run_coroutine_threadsafe zamiast zwykłego await/create_task.
         asyncio.run_coroutine_threadsafe(self.boiler_automation.on_value(name, value), self._loop)
 
         if targets.get("mqtt_publish") and "mqtt" in self.boiler_publishers:
@@ -299,18 +479,11 @@ class RulesEngine:
     async def _stale_check_loop(self) -> None:
         while True:
             await asyncio.sleep(60)
-            await self.alarms.check_stale_sensors()
+            try:
+                await self.alarms.check_stale_sensors()
+            except Exception:
+                logger.exception("Błąd w pętli sprawdzania nieaktywnych czujników")
 
-    # ------------------------------------------------------------------
-    # Rotacja starych danych + opcjonalny backup - raz na dobę, o ile
-    # config.yaml (maintenance.run_in_process) tego nie wyłączy (np. gdy
-    # wolisz to robić przez cron zamiast wbudowanego mechanizmu - patrz
-    # maintenance.py i README).
-    #
-    # VACUUM (część czyszczenia) to blokująca operacja I/O na dysku - żeby
-    # nie zamrozić na ten czas reszty pętli asyncio (Satel, MQTT, panel...),
-    # uruchamiamy ją w osobnym wątku wykonawczym.
-    # ------------------------------------------------------------------
     async def _maintenance_loop(self) -> None:
         maint_cfg = self.config.raw.get("maintenance", {})
         if not maint_cfg.get("run_in_process", True):
@@ -318,9 +491,6 @@ class RulesEngine:
             return
 
         interval_seconds = maint_cfg.get("interval_hours", 24) * 3600
-        # Pierwsze uruchomienie z opóźnieniem, żeby nie robić ciężkiego I/O
-        # tuż po starcie procesu, kiedy i tak dzieje się dużo innych rzeczy
-        # (łączenie z Satelem, MQTT, itd.)
         await asyncio.sleep(60)
         loop = asyncio.get_event_loop()
         while True:
@@ -332,12 +502,6 @@ class RulesEngine:
                 logger.exception("Błąd podczas automatycznej rotacji/backupu bazy")
             await asyncio.sleep(interval_seconds)
 
-    # ------------------------------------------------------------------
-    # Kolejka komend z panelu webowego (uzbrojenie/rozbrojenie stref) -
-    # panel to OSOBNY proces bez dostępu do żywego połączenia z Satelem,
-    # więc komunikują się przez tę samą bazę SQLite (patrz auth.py w
-    # dashboard oraz history_store.py: enqueue_command/get_pending_commands).
-    # ------------------------------------------------------------------
     async def _command_poll_loop(self, interval_seconds: float = 1.5) -> None:
         while True:
             try:
@@ -358,23 +522,24 @@ class RulesEngine:
                 partitions = cmd["params"]["partitions"]
                 await self.satel.disarm(partitions=partitions)
                 self.history.mark_command_done(cmd["id"], {"message": f"Rozbrojono strefy {partitions}"})
+            elif cmd["command"] == "satel_virtual_input":
+                name = cmd["params"]["name"]
+                await self._trigger_virtual_input(name)
+                self.history.mark_command_done(cmd["id"], {"message": f"Aktywowano wirtualne wejście '{name}'"})
+            elif cmd["command"] == "tuya_on":
+                name = cmd["params"]["name"]
+                await self.tuya.turn_on(name)
+                self.history.mark_command_done(cmd["id"], {"message": f"Włączono '{name}'"})
+            elif cmd["command"] == "tuya_off":
+                name = cmd["params"]["name"]
+                await self.tuya.turn_off(name)
+                self.history.mark_command_done(cmd["id"], {"message": f"Wyłączono '{name}'"})
             elif cmd["command"] == "reload_config":
                 result = await self.reload_config()
                 self.history.mark_command_done(cmd["id"], result)
             elif cmd["command"] == "restart_process":
                 self.history.mark_command_done(cmd["id"], {"message": "Restartuję proces bridge'a"})
                 self.history.write_event("system", detail={"message": "Restart procesu bridge'a zażądany z panelu"})
-                # Twardy exit (nie sys.exit/SystemExit - to dałoby się złapać
-                # gdzieś w kodzie i zignorować) - Docker Compose ma dla obu
-                # kontenerów `restart: unless-stopped` (patrz docker-compose.yml),
-                # więc po zakończeniu procesu kontener sam wstaje ponownie,
-                # z ŚWIEŻYM stanem procesu (nowe połączenia TCP, ponowne
-                # wczytanie CAŁEGO config.yaml - w odróżnieniu od
-                # reload_config() wyżej, które celowo NIE dotyka połączeń
-                # sieciowych). Krótkie opóźnienie na osobnym zadaniu, żeby
-                # mark_command_done()/write_event() wyżej zdążyły się zapisać
-                # (SQLite - synchroniczne, ale dajemy margines na wypadek
-                # równoległych zapisów) zanim proces zniknie.
                 asyncio.get_event_loop().call_later(0.5, os._exit, 0)
             else:
                 self.history.mark_command_error(cmd["id"], f"Nieznana komenda: {cmd['command']}")
@@ -382,83 +547,38 @@ class RulesEngine:
             logger.exception("Błąd wykonania komendy #%s (%s)", cmd["id"], cmd["command"])
             self.history.mark_command_error(cmd["id"], str(exc))
 
-    # ------------------------------------------------------------------
-    # Przeładowanie konfiguracji BEZ restartu procesu - patrz też
-    # _execute_command (komenda 'reload_config') i dashboard/app.py, gdzie
-    # panel dokłada tę komendę automatycznie po każdym zapisie czujników
-    # eBUS/pól Satela/urządzeń Tuya/automatyzacji.
-    # ------------------------------------------------------------------
     async def reload_config(self) -> dict:
-        """Przeładowuje 'lekką' część konfiguracji - dokładnie to, co
-        zmienia się CZĘSTO podczas donastrajania instalacji: czujniki eBUS
-        (sensors.yaml), pola Satela (satel_fields.yaml - etykiety/numery
-        stref/wyjść/wejść IP), urządzenia Tuya (tuya_devices.yaml), sceny/
-        reguły ruchu/symulacja obecności (automations.yaml), alarmy progowe.
-
-        CELOWO NIE dotyka żywych połączeń sieciowych - gniazdo TCP do
-        centrali Satel, klienci MQTT (eBUS/Home Assistant/publikacja
-        stanu), Tuya Cloud Pulsar. Host/port/klucz integracji Satela,
-        adresy brokerów MQTT i poświadczenia Tuya Cloud (zakładka
-        🔌 Połączenia) WCIĄŻ wymagają pełnego restartu procesu - bezpieczne
-        zamknięcie i odtworzenie żywych połączeń w trakcie działania byłoby
-        dużo bardziej ryzykowne niż warte tego dla ustawień, które i tak
-        zmienia się rzadko (w odróżnieniu od list czujników/urządzeń/reguł,
-        edytowanych często)."""
-        new_config = BridgeConfig.load(self.config.config_file)
+        new_config = BridgeConfig.load(self.config.db_path)
         self.config = new_config
+        apply_log_levels(new_config.raw)
+        self._rule_name_index = self._build_rule_name_index()
+        self._location_cfg = new_config.raw.get("location")
 
-        # Tuya lokalne - bezpieczne do podmiany w całości: TuyaLocalController
-        # nie trzyma żywego połączenia (tylko krótkie żądania per komenda).
-        self.tuya = TuyaLocalController(new_config.tuya["devices"], new_config.tuya.get("zigbee_gateways"))
+        self.tuya = _build_tuya_controller(new_config.tuya)
 
-        # Satel - etykiety/numery monitorowanych stref/wyjść/wejść IP,
-        # AKTUALIZOWANE na już istniejącym obiekcie klienta (NIE tworzymy
-        # nowego SatelIntegraClient - to zerwałoby żywe połączenie TCP).
-        # satel_integra przyjmuje monitored_zones/monitored_outputs tylko
-        # w konstruktorze AsyncSatel, więc faktyczne MONITOROWANIE nowych/
-        # usuniętych numerów zacznie działać dopiero po najbliższym
-        # (re)połączeniu - etykiety w panelu działają jednak natychmiast
-        # (patrz odświeżone na bieżąco zamknięcia _on_zone_change itp. w
-        # start()).
         self.satel.monitored_zones = new_config.satel.get("monitored_zones", {})
         self.satel.monitored_outputs = new_config.satel.get("monitored_outputs", {})
-        # Interwał cyklicznego dopytywania o stan (patrz satel_client.py:
-        # _periodic_status_sync) - W ODRÓŻNIENIU od host/portu/klucza,
-        # DZIAŁA NA ŻYWO od razu, bez restartu procesu - pętla czyta ten
-        # atrybut na bieżąco przy każdym obrocie, nie tylko raz na starcie.
-        self.satel.status_poll_interval_seconds = new_config.satel.get("status_poll_interval_seconds", 15)
+        self.satel.virtual_inputs = new_config.satel.get("virtual_inputs", {}).get("inputs", {})
+        self._vi_mode = new_config.satel.get("virtual_inputs", {}).get("mode", "library")
         self.satel_virtual_inputs = SatelVirtualInputTrigger(
-            new_config.satel["host"], new_config.satel["virtual_inputs"],
+            new_config.satel["host"], new_config.satel.get("virtual_inputs", {}),
         )
+        self.satel.status_poll_interval_seconds = new_config.satel.get("status_poll_interval_seconds", 3)
 
-        # Sceny/automatyka kotła/alarmy progowe - budowane na bieżąco z
-        # configu przy każdym wywołaniu, bezpieczne do pełnej podmiany.
         self.scenes = SceneRunner(
-            new_config.raw.get("scenes", []), self.tuya, self.satel, self.satel_virtual_inputs, history=self.history,
+            new_config.raw.get("scenes", []), self.tuya, self.satel,
+            satel_virtual_inputs=self.satel_virtual_inputs, virtual_input_mode=self._vi_mode,
+            history=self.history,
         )
         self.boiler_automation = BoilerAutomation(new_config.raw.get("boiler_rules", []), self.scenes)
         self.alarms = AlarmEngine(new_config.raw.get("alarm_rules", []), self.history, notify_cfg=self._notify_cfg)
 
-        # Symulacja obecności - AKTUALIZOWANA na istniejącym obiekcie (NIE
-        # podmieniana) - jej run_forever() to już działające zadanie w tle,
-        # przywiązane do KONKRETNEGO obiektu; podmiana obiektu zgubiłaby to
-        # zadanie na zawsze. Bezpieczne, bo pętla w presence_simulation.py
-        # czyta self.cfg NA ŚWIEŻO przy każdym obrocie. WYJĄTEK: jeśli przy
-        # starcie procesu było enabled=false, ta pętla już się zakończyła -
-        # dopiero TERAZ włączenie tej opcji wciąż wymaga restartu procesu.
         self.presence_simulation.cfg = new_config.raw.get("presence_simulation", {})
+        self.presence_simulation.location_cfg = self._location_cfg
 
-        # eBUS - AKTUALIZOWANY na istniejącym listenerze (subskrybuje nowe
-        # tematy bez zrywania połączenia MQTT, patrz ebus_client.py).
         if self.ebus_listener is not None:
             self.ebus_listener.update_sensors(new_config.ebus)
 
-        # Publishery danych z kotła (MQTT/Tuya virtual device) - budowane
-        # LENIWIE: jeśli nowa lista czujników potrzebuje kanału, którego
-        # jeszcze nie ma (np. dopiero co zaznaczono "MQTT" na jakimś
-        # czujniku, a wcześniej żaden tego nie potrzebował), tworzymy go
-        # teraz. Już istniejące zostają NIETKNIĘTE - nie zrywamy działających
-        # połączeń tylko po to, żeby je zaraz odtworzyć identycznie.
         sensors = new_config.ebus.get("sensors", [])
         if any(s.get("targets", {}).get("mqtt_publish") for s in sensors) and "mqtt" not in self.boiler_publishers:
             self.boiler_publishers["mqtt"] = MqttBoilerPublisher(
@@ -477,6 +597,8 @@ class RulesEngine:
 
         self._seed_satel_status_labels()
         self._seed_tuya_status_labels()
+        self._seed_homewhiz_status_labels()
+        self._seed_automation_status_labels()
 
         logger.info("Konfiguracja przeładowana bez restartu procesu")
         self.history.write_event("system", detail={"message": "Konfiguracja przeładowana (bez restartu procesu)"})
@@ -486,14 +608,7 @@ class RulesEngine:
                        "klucze/brokery MQTT, zakładka 🔌 Połączenia) wciąż wymagają pełnego restartu.",
         }
 
-    # ------------------------------------------------------------------
-    # Cykliczne odpytywanie statusów Tuya (nie mają callbacków lokalnie -
-    # trzeba je samemu pollingować; interwał dobrany tak, żeby nie
-    # obciążać RPi Zero W ani sieci)
-    # ------------------------------------------------------------------
     async def _tuya_status_poll_loop(self) -> None:
-        # HealthReporter tworzony tutaj (nie w __init__) - potrzebuje
-        # działającej pętli asyncio, którą mamy dopiero po starcie.
         self._tuya_health = HealthReporter(
             "tuya_local", history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
         )
@@ -501,11 +616,6 @@ class RulesEngine:
             try:
                 statuses = await self.tuya.get_all_statuses()
                 unreachable = [name for name, dps in statuses.items() if dps is None]
-                # Zdrowie = połączono, jeśli PRZYNAJMNIEJ JEDNO urządzenie
-                # odpowiada - pojedyncze niedostępne urządzenie to zwykle
-                # jego własny problem (np. wyjęty z gniazdka), a nie awaria
-                # całego kanału komunikacji z Tuya. Pełne "rozłączono" (i
-                # ewentualne powiadomienie) tylko gdy WSZYSTKIE nie odpowiadają.
                 all_unreachable = statuses and len(unreachable) == len(statuses)
                 self._tuya_health.report(
                     not all_unreachable,
@@ -513,24 +623,15 @@ class RulesEngine:
                 )
                 for device_name, dps in statuses.items():
                     if dps is None:
-                        # BEZ TEGO wpisu: urządzenie, które akurat nie
-                        # odpowiada (zły local_key/IP/wersja protokołu,
-                        # offline), w ogóle nie dostałoby żadnego statusu -
-                        # zniknęłoby z panelu (a raczej NIGDY by się na nim
-                        # nie pojawiło), bez żadnej wskazówki, że w ogóle
-                        # jest skonfigurowane. Health kanału (system_health)
-                        # jest już raportowany wyżej - to tu jest per-urządzenie.
                         self.history.set_status(
                             f"tuya:{device_name}", "tuya", "niedostępne", label=device_name,
                         )
+                        await self.handle_device_state("tuya_state", device_name, "niedostępne")
                         continue
-                    # DP '1' to konwencjonalnie stan on/off większości urządzeń Tuya
                     is_on = dps.get("1")
-                    self.history.set_status(
-                        f"tuya:{device_name}", "tuya",
-                        "włączone" if is_on else "wyłączone" if is_on is not None else "?",
-                        label=device_name,
-                    )
+                    tuya_value = "włączone" if is_on else "wyłączone" if is_on is not None else "?"
+                    self.history.set_status(f"tuya:{device_name}", "tuya", tuya_value, label=device_name)
+                    await self.handle_device_state("tuya_state", device_name, tuya_value)
                     if self.ha_mqtt and is_on is not None:
                         self.ha_mqtt.publish_state(
                             f"{self._ha_topic_prefix}/tuya/{device_name}/state",
@@ -541,8 +642,8 @@ class RulesEngine:
                             f"{self._tuya_mqtt_topic}/{device_name}/state",
                             "ON" if is_on else "OFF",
                         )
-                    cfg = self.config.tuya["devices"][device_name]
-                    if cfg.get("type") == "dimmer" and cfg.get("dimmer_dp") in dps:
+                    cfg = self.config.tuya["devices"].get(device_name)
+                    if cfg and cfg.get("type") == "dimmer" and cfg.get("dimmer_dp") in dps:
                         lo, hi = cfg.get("dimmer_range", [10, 1000])
                         raw = dps[cfg["dimmer_dp"]]
                         percent = round((raw - lo) / (hi - lo) * 100) if hi > lo else 0
@@ -551,71 +652,84 @@ class RulesEngine:
                             label=f"{device_name} (jasność)",
                         )
             except Exception:
-                # Ta pętla działa w tle przez cały czas życia procesu -
-                # pojedynczy nieoczekiwany błąd nie może jej zabić, bo
-                # straciłoby się cykliczne statusy Tuya na zawsze.
                 logger.exception("Błąd w pętli odpytywania statusów Tuya")
-            # Odczytywane NA ŚWIEŻO przy każdym obrocie (nie raz, na
-            # starcie zadania) - żeby RulesEngine.reload_config() mogło
-            # podmienić interwał na żywo, bez restartu procesu (patrz
-            # analogiczne rozwiązanie dla Satela: SatelIntegraClient.
-            # status_poll_interval_seconds).
-            await asyncio.sleep(self.config.tuya.get("status_poll_interval_seconds", 30))
+            await asyncio.sleep(self.config.tuya.get("status_poll_interval_seconds", 15))
 
     def _seed_satel_status_labels(self) -> None:
-        """Zapisuje początkowy stan (OK/nieaktywne) dla wszystkich
-        monitorowanych wejść/wyjść/stref, żeby panel pokazywał je od razu,
-        zanim cokolwiek się zmieni. Pomija numery, które JUŻ MAJĄ zapisany
-        status (patrz seen niżej) - ta metoda jest wołana też z
-        reload_config() (przy KAŻDYM zapisie dowolnego formularza w /config,
-        nie tylko pól Satela), więc bez tego pomijania nadpisywałaby żywy,
-        aktualny stan placeholderem przy każdym takim zapisie."""
-        seen = {s["key"] for s in self.history.get_status("satel_input")}
-        seen |= {s["key"] for s in self.history.get_status("satel_output")}
-        seen |= {s["key"] for s in self.history.get_status("satel_partition")}
+        satel_enabled = self.config.satel.get("enabled", True)
+        seen = set() if not satel_enabled else (
+            {s["key"] for s in self.history.get_status("satel_input")}
+            | {s["key"] for s in self.history.get_status("satel_output")}
+            | {s["key"] for s in self.history.get_status("satel_partition")}
+        )
+        input_keys = {f"satel_input:{number}" for number in self.satel.monitored_zones.values()}
+        output_keys = {f"satel_output:{number}" for number in self.satel.monitored_outputs.values()}
+        partition_keys = {
+            f"satel_partition:{number}" for number in self.config.satel.get("partitions", {}).values()
+        }
+        unavailable = "brak danych (wtyczka wyłączona)"
         for name, number in self.satel.monitored_zones.items():
             key = f"satel_input:{number}"
             if key not in seen:
-                self.history.set_status(key, "satel_input", "OK", label=name)
+                self.history.set_status(key, "satel_input", unavailable if not satel_enabled else "OK", label=name)
         for name, number in self.satel.monitored_outputs.items():
             key = f"satel_output:{number}"
             if key not in seen:
-                self.history.set_status(key, "satel_output", "wyłączone", label=name)
+                self.history.set_status(
+                    key, "satel_output", unavailable if not satel_enabled else "wyłączone", label=name,
+                )
         for name, number in self.config.satel.get("partitions", {}).items():
             key = f"satel_partition:{number}"
             if key not in seen:
-                self.history.set_status(key, "satel_partition", "nieznany", label=name)
+                self.history.set_status(
+                    key, "satel_partition", unavailable if not satel_enabled else "nieznany", label=name,
+                )
+
+        self.history.prune_status("satel_input", input_keys)
+        self.history.prune_status("satel_output", output_keys)
+        self.history.prune_status("satel_partition", partition_keys)
 
     def _seed_tuya_status_labels(self) -> None:
-        """Zapisuje wpis '?' dla KAŻDEGO skonfigurowanego urządzenia Tuya,
-        żeby panel od razu je pokazywał. BEZ TEGO: _tuya_status_poll_loop()
-        w ogóle NIE zapisuje statusu dla urządzenia, które akurat nie
-        odpowiada (zły local_key/IP/wersja protokołu, urządzenie offline -
-        patrz `if dps is None: continue` niżej) - dodane, ale niedostępne
-        urządzenie NIGDY by się nie pojawiło na głównej stronie, bez żadnej
-        wskazówki w panelu, że w ogóle istnieje w konfiguracji. Pomija
-        urządzenia, które już mają zapisany status - patrz analogiczny
-        komentarz w _seed_satel_status_labels()."""
         seen = {s["key"] for s in self.history.get_status("tuya")}
         for name in self.tuya.devices_cfg:
             key = f"tuya:{name}"
             if key not in seen:
                 self.history.set_status(key, "tuya", "?", label=name)
 
-    async def _on_alarm_status_change(self) -> None:
-        """Rzeczywisty callback rejestrowany przez register_alarm_status_callback
-        (patrz start() niżej) - odbija (debounce'uje) wybuchy powiadomień w
-        _handle_alarm_status_change() poniżej, tak samo jak robi to
-        integracja Home Assistant (PARTITION_UPDATE_DEBOUNCE_DELAY=0.15 w
-        homeassistant/components/satel_integra/coordinator.py).
+        tuya_keys = {f"tuya:{name}" for name in self.tuya.devices_cfg}
+        tuya_keys |= {f"tuya:{name}:brightness" for name in self.tuya.devices_cfg}
+        self.history.prune_status("tuya", tuya_keys)
 
-        DLACZEGO: centrala wysyła stan każdej strefy JAKO OSOBNĄ ramkę per
-        tryb (0x0A/0x2A/0x0B/0x0C/0x0E/... - patrz AsyncSatel.partition_states),
-        więc pojedyncza zmiana uzbrojenia/alarmu potrafi wywołać ten callback
-        KILKA razy pod rząd, zanim partition_states w bibliotece zdąży się
-        w pełni ustabilizować. Bez debounce _handle_alarm_status_change()
-        publikowałoby do MQTT/historii kilka pośrednich (niepełnych) stanów
-        zamiast jednego, ostatecznego."""
+    def _seed_homewhiz_status_labels(self) -> None:
+        homewhiz_cfg = self.config.homewhiz or {}
+        appliance_names = set((homewhiz_cfg.get("appliances") or {}).keys())
+        seen = {s["key"] for s in self.history.get_status("homewhiz")}
+        for name in appliance_names:
+            key = f"homewhiz:{name}"
+            if key not in seen:
+                self.history.set_status(key, "homewhiz", "nieznany", label=name)
+
+        homewhiz_keys = {f"homewhiz:{name}" for name in appliance_names}
+        self.history.prune_status("homewhiz", homewhiz_keys)
+
+    def _seed_automation_status_labels(self) -> None:
+        seen = {s["key"] for s in self.history.get_status("automation")}
+        valid_keys = {f"automation:{scene_name}" for scene_name in self.scenes.scenes}
+        for scene_name in self.scenes.scenes:
+            key = f"automation:{scene_name}"
+            if key not in seen:
+                self.history.set_status(key, "automation", "bezczynna", label=scene_name)
+        for rule in self.config.motion_rules:
+            name = rule.get("name")
+            if name and "scene" not in rule and rule.get("action") != "turn_off":
+                key = f"automation:{name}"
+                valid_keys.add(key)
+                if key not in seen:
+                    self.history.set_status(key, "automation", "bezczynna", label=name)
+
+        self.history.prune_status("automation", valid_keys)
+
+    async def _on_alarm_status_change(self) -> None:
         if self._alarm_status_debounce_task is not None and not self._alarm_status_debounce_task.done():
             self._alarm_status_debounce_task.cancel()
         self._alarm_status_debounce_task = asyncio.create_task(self._debounced_alarm_status_change())
@@ -628,15 +742,6 @@ class RulesEngine:
         await self._handle_alarm_status_change()
 
     async def _handle_alarm_status_change(self) -> None:
-        """Odświeża status uzbrojenia WSZYSTKICH skonfigurowanych stref w
-        panelu/MQTT. Wołane (z debounce, patrz _on_alarm_status_change
-        wyżej) po każdym powiadomieniu "coś się zmieniło" z Satela -
-        powiadomienie samo nie niesie stanu, więc trzeba go odczytać osobno
-        z self.satel.armed_partition_numbers, dla WSZYSTKICH skonfigurowanych
-        stref (nie tylko tej, która się akurat zmieniła - nie wiemy, która
-        to była). Wydzielone jako osobna metoda (nie domknięcie wewnątrz
-        start()) celowo - da się przetestować wprost, bez uruchamiania
-        całego start() (żywe połączenia MQTT/zadania w tle)."""
         armed_numbers = self.satel.armed_partition_numbers
         partition_name_by_number = {v: k for k, v in self.config.satel.get("partitions", {}).items()}
         for partition_number in self.config.satel.get("partitions", {}).values():
@@ -657,28 +762,18 @@ class RulesEngine:
                     "ON" if armed else "OFF",
                 )
 
-    # ------------------------------------------------------------------
     async def start(self) -> None:
         self.history.write_event("system", detail={"message": "Bridge uruchomiony"})
         asyncio.create_task(self._stale_check_loop())
 
         self._seed_satel_status_labels()
         self._seed_tuya_status_labels()
+        self._seed_homewhiz_status_labels()
+        self._seed_automation_status_labels()
 
-        # Callback z centrali: zmiana wejść -> reguły ruchu (source=satel_zone)
-        # + zapis statusu (widoczny w panelu jako "wejścia Satela").
-        # Rejestrujemy PRZED uruchomieniem run_forever() - callbacki są
-        # zapamiętane na obiekcie klienta i automatycznie podpinane na nowo
-        # przy każdym (re)połączeniu, patrz satel_client.py.
-        #
-        # Etykiety (zone_name_by_number itp.) są liczone NA ŚWIEŻO z
-        # self.satel/self.config PRZY KAŻDYM zdarzeniu (nie raz, na starcie)
-        # - celowo, żeby reload_config() (patrz niżej) mogło podmienić
-        # numery/nazwy stref-wyjść-partycji w locie i te zamknięcia od razu
-        # zobaczyły nowe wartości, bez ponownego rejestrowania callbacków.
-        async def _on_zone_change(zones: dict) -> None:
+        async def _on_zone_change(status: dict) -> None:
             zone_name_by_number = {v: k for k, v in self.satel.monitored_zones.items()}
-            for zone_number, violated in zones.items():
+            for zone_number, violated in status.items():
                 self.history.set_status(
                     f"satel_input:{zone_number}", "satel_input",
                     "naruszone" if violated else "OK",
@@ -694,12 +789,14 @@ class RulesEngine:
                         f"{self._satel_mqtt_topic}/input/{zone_number}/state",
                         "ON" if violated else "OFF",
                     )
-                if violated:
-                    await self.handle_motion("satel_zone", zone_number)
+                await self.handle_motion(
+                    "satel_zone", zone_number,
+                    trigger="violated" if violated else "restored",
+                )
 
-        async def _on_output_change(outputs: dict) -> None:
+        async def _on_output_change(status: dict) -> None:
             output_name_by_number = {v: k for k, v in self.satel.monitored_outputs.items()}
-            for output_number, active in outputs.items():
+            for output_number, active in status.items():
                 self.history.set_status(
                     f"satel_output:{output_number}", "satel_output",
                     "włączone" if active else "wyłączone",
@@ -720,27 +817,30 @@ class RulesEngine:
         self.satel.register_output_callback(_on_output_change)
         self.satel.register_alarm_status_callback(self._on_alarm_status_change)
 
-        # Wszystkie długożyjące połączenia jako nadzorowane zadania w tle -
-        # każde samo się podnosi po awarii (patrz bridge/resilience.py).
-        # Awaria jednego komponentu (np. Satel chwilowo nieosiągalny) nie
-        # blokuje ani nie zatrzymuje pozostałych.
-        asyncio.create_task(self.satel.run_forever())
-        asyncio.create_task(self._tuya_status_poll_loop())
+        if self.config.satel.get("enabled", True):
+            asyncio.create_task(self.satel.run_forever())
+        else:
+            logger.info("Satel wyłączony w ustawieniach (🧩 Wtyczki) - pomijam nawiązanie połączenia")
+            self.history.set_status("health:satel", "system_health", "wyłączono (wtyczka)", label="satel")
+        if self.config.tuya.get("enabled", True):
+            asyncio.create_task(self._tuya_status_poll_loop())
+        else:
+            logger.info("Tuya lokalnie wyłączone w ustawieniach (🧩 Wtyczki) - pomijam odpytywanie")
+            self.history.set_status("health:tuya_local", "system_health", "wyłączono (wtyczka)", label="tuya_local")
         asyncio.create_task(self.presence_simulation.run_forever())
         asyncio.create_task(self._command_poll_loop())
         asyncio.create_task(self._maintenance_loop())
 
-        # eBUS / kocioł (paho-mqtt ma wbudowany reconnect - patrz ebus_client.py)
-        # Trzymane na self (nie jako lokalna zmienna) - reload_config()
-        # potrzebuje do niej dostępu, żeby zaktualizować listę czujników
-        # bez zrywania połączenia MQTT.
-        self.ebus_listener = EbusMqttListener(
-            self.config.ebus, self.handle_boiler_value, history=self.history,
-            notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
-        )
-        self.ebus_listener.start()
+        if self.config.ebus.get("enabled", True):
+            self.ebus_listener = EbusMqttListener(
+                self.config.ebus, self.handle_boiler_value, history=self.history,
+                notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
+            )
+            self.ebus_listener.start()
+        else:
+            logger.info("eBUS wyłączony w ustawieniach (🧩 Wtyczki) - pomijam połączenie MQTT")
+            self.history.set_status("health:ebus_mqtt", "system_health", "wyłączono (wtyczka)", label="ebus_mqtt")
 
-        # Kamera Tuya (opcjonalnie, jeśli skonfigurowana)
         if "cloud" in self.config.tuya:
             camera_listener = TuyaCameraMotionListener(
                 self.config.tuya["cloud"],
@@ -751,8 +851,7 @@ class RulesEngine:
             )
             asyncio.create_task(camera_listener.run_forever())
 
-        # Kamera UniFi Protect (opcjonalnie)
-        if self.config.unifi_protect:
+        if self.config.unifi_protect and self.config.unifi_protect.get("enabled", True):
             unifi_listener = UnifiProtectMotionListener(
                 self.config.unifi_protect,
                 lambda cam_id: self.handle_camera_motion("unifi_protect", cam_id),
@@ -762,9 +861,13 @@ class RulesEngine:
             )
             asyncio.create_task(unifi_listener.run_forever())
 
-        # Integracja z Home Assistant (opcjonalna) - rejestrujemy handlery
-        # komend PRZED startem, żeby subskrypcja MQTT objęła je od razu
-        # po połączeniu (patrz HomeAssistantMqttBridge._on_connect).
+        if self.config.homewhiz and self.config.homewhiz.get("enabled", True):
+            homewhiz_client = HomeWhizClient(
+                self.config.homewhiz, self._on_homewhiz_state,
+                history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
+            )
+            asyncio.create_task(homewhiz_client.run_forever())
+
         if self.ha_mqtt:
             def _make_tuya_handler(name):
                 async def _handler(payload: str) -> None:

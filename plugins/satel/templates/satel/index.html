@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Satel Integra - Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<style>
+  :root {
+    --bg: #14161a; --card: #1d2026; --border: #2c3038;
+    --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
+    --danger: #e5484d; --ok: #3dd68c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 20px; max-width: 900px; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  .nav { margin-bottom: 16px; }
+  .nav a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
+  .section-hint { color: var(--muted); font-size: 13px; margin: 4px 0 14px; line-height: 1.5; }
+  .card, .section {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px; margin-bottom: 18px;
+  }
+  input[type=text], input[type=password], input[type=number] {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 100%;
+  }
+  select { background: #262a32; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; width: 100%; font-size: 13px; }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 8px 16px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .actions-bar { display: flex; gap: 10px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+  .msg-box { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; display: none; }
+  .msg-box.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  .msg-box.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
+  .repeatable-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+  .repeatable-row input, .repeatable-row select { flex: 1; min-width: 90px; }
+  .row-remove { background: transparent; color: var(--danger); border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; flex-shrink: 0; }
+  .add-row-btn { background: #262a32; color: var(--text); border: 1px dashed var(--border); border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-top: 4px; }
+  .field-group { margin-bottom: 18px; }
+  .field-group:last-child { margin-bottom: 0; }
+  .field-group > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .discover-status { font-size: 12.5px; color: var(--muted); }
+  .conn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .conn-grid .field label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+  @media (max-width: 640px) { .conn-grid { grid-template-columns: 1fr; } }
+  .secret-hint { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  input:disabled { opacity: 0.4; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+{% include "_nav.html" %}
+
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🔒 Centrala Satel Integra</h1>
+<div class="hint">
+  Strefy (do uzbrajania/rozbrajania), monitorowane wejścia/wyjścia oraz
+  wirtualne wejścia IP (do scen/reguł ruchu). Host/port/kod użytkownika
+  ustawia się osobno w zakładce 🔌 Połączenia (⚙ Ustawienia) - to tu jest
+  tylko lista stref/wejść/wyjść po nazwie i numerze. <strong>Wymagane zalogowanie administratora panelu</strong> - dotyczy zarówno przeglądania tej strony, jak i zapisu.
+</div>
+
+<div class="section" id="pluginSettingsSection">
+  <h2>⚙ Ustawienia wtyczki</h2>
+  <div class="section-hint">
+    Włącz/wyłącz tę integrację i ustaw poziom logowania jej zdarzeń
+    (niezależnie od domyślnego poziomu globalnego - zakładka
+    <a href="/system">⚙ Ustawienia ogólne</a>). Wyłączenie/włączenie wymaga
+    pełnego restartu procesu bridge'a, poziom logowania działa od razu, bez
+    restartu.
+  </div>
+  <div class="field-group">
+    <label style="display:flex; align-items:center; gap:8px; margin:0;">
+      <input type="checkbox" id="pluginEnabledCheckbox">
+      Wtyczka włączona
+    </label>
+  </div>
+  <div class="field-group">
+    <label>Poziom logowania zdarzeń</label>
+    <select id="pluginLogLevelSelect">
+      <option value="">(domyślny globalny)</option>
+      <option value="DEBUG">DEBUG</option>
+      <option value="INFO">INFO</option>
+      <option value="WARNING">WARNING</option>
+      <option value="ERROR">ERROR</option>
+      <option value="CRITICAL">CRITICAL</option>
+    </select>
+  </div>
+  <div class="actions-bar">
+    <button id="savePluginSettingsBtn" type="button">Zapisz ustawienia wtyczki</button>
+  </div>
+  <div id="pluginSettingsMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="connectionSection">
+  <h2>🔌 Połączenie</h2>
+  <div class="section-hint">
+    Host/port/kod użytkownika centrali - przeniesione tutaj z dawnej
+    wspólnej zakładki 🔌 Połączenia. <strong>Odczyt TEŻ wymaga hasła
+    administratora</strong> (w odróżnieniu od reszty tej strony) - dane
+    obejmują kod użytkownika. <strong>Zmiany wymagają pełnego restartu
+    procesu</strong> (przycisk w zakładce ⚙ Ustawienia -> Ogólne) - w
+    odróżnieniu od stref/wyjść niżej, które bridge przeładowuje sam.
+  </div>
+
+  <div class="discover-row">
+    <button type="button" class="secondary" id="loadConnectionBtn">🔒 Wczytaj bieżące ustawienia</button>
+    <span class="discover-status" id="connectionLoadStatus">Kliknij, żeby wczytać (wymaga hasła) - pola poniżej są puste, dopóki nie wczytasz.</span>
+  </div>
+
+  <div class="conn-grid">
+    <div class="field"><label>Adres IP centrali/ETHM</label><input type="text" id="conn_host" placeholder="192.168.1.20"></div>
+    <div class="field"><label>Port</label><input type="number" id="conn_port" placeholder="7094"></div>
+    <div class="field"><label>Kod użytkownika centrali (opcjonalny)</label><input type="password" id="conn_key" placeholder="(bez zmian)"></div>
+    <div class="field"><label>Strefa główna (numer)</label><input type="number" id="conn_partition" placeholder="1"></div>
+    <div class="field"><label>Klucz szyfrowania (opcjonalnie)</label><input type="password" id="conn_enc_key" placeholder="(bez zmian)"></div>
+  </div>
+  <div class="secret-hint" id="conn_key_hint"></div>
+  <div class="secret-hint" id="conn_enc_key_hint"></div>
+  <label style="font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-top: 4px;">
+    <input type="checkbox" id="conn_enc_enabled" style="width: auto;">
+    Centrala ma włączone szyfrowanie transmisji - używaj klucza szyfrowania
+  </label>
+  <label style="font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-top: 4px;">
+    <input type="checkbox" id="conn_enc_key_clear" style="width: auto;">
+    Usuń zapisany klucz szyfrowania
+  </label>
+  <div class="section-hint" style="margin: 4px 0 0;">
+    Klucz szyfrowania to NIE kod użytkownika wyżej - to osobny klucz
+    transmisji (AES), ustawiany w DLOADX TYLKO jeśli centrala ma jawnie
+    włączoną szyfrowaną komunikację integracji. Sam zapisany klucz NIE
+    wystarczy - szyfrowanie jest używane TYLKO gdy powyższy checkbox jest
+    zaznaczony. Zostaw obie opcje wyłączone, jeśli nie wiesz, o co chodzi.
+  </div>
+
+  <div class="field-group" style="margin-top: 14px;">
+    <label>Wirtualne wejścia IP - tryb wyzwalania</label>
+    <div class="section-hint" style="margin: 0 0 10px;">
+      <strong>Biblioteka satel_integra</strong> (zalecane) - zwykłe wyjście
+      Satela, przez to samo połączenie integracji co reszta poleceń
+      (uzbrojenie, sterowanie wyjściami) - te polecenia CZEKAJĄ w jednej
+      kolejce, bo centrala obsługuje tylko jednego klienta integracji naraz.
+      <strong>HTTP (Wejścia IP ETHM-1)</strong> - osobne połączenie,
+      NIEZALEŻNE od tej kolejki, kosztem osobnego portu - zwykłe,
+      NIEUWIERZYTELNIONE żądanie GET (host:port/nazwa_wejścia), BEZ
+      żadnego klucza/kodu DLOADX - dostępność zależy od wersji firmware.
+    </div>
+    <div class="conn-grid">
+      <div class="field">
+        <label>Tryb</label>
+        <select id="conn_vi_mode">
+          <option value="library">Biblioteka satel_integra (zalecane)</option>
+          <option value="http">HTTP (Wejścia IP ETHM-1)</option>
+        </select>
+      </div>
+      <div class="field" id="conn_vi_port_field" hidden>
+        <label>Port HTTP (ETHM-1)</label>
+        <input type="number" id="conn_vi_port" placeholder="8888">
+      </div>
+    </div>
+  </div>
+
+  <div class="actions-bar">
+    <button id="saveConnectionBtn" type="button">Zapisz połączenie</button>
+  </div>
+  <div id="connectionMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="testOutputSection">
+  <h2>🧪 Test wyjścia / wejścia wirtualnego IP</h2>
+  <div class="section-hint">
+    Jednorazowe wyzwolenie - do sprawdzenia, czy wybrany wyżej tryb
+    wyzwalania faktycznie działa, ZANIM zaczniesz z niego korzystać w
+    scenach/regułach ruchu. Używa NAJŚWIEŻEJ zapisanej konfiguracji
+    (host/port/klucze/tryb) - w odróżnieniu od reszty panelu, TEN
+    przycisk działa od razu po kliknięciu "Zapisz połączenie" wyżej,
+    BEZ restartu procesu bridge'a.
+  </div>
+
+  <div class="discover-row" id="testLibraryRow">
+    <label for="testOutputNumber" style="margin: 0;">Numer wyjścia</label>
+    <input type="number" id="testOutputNumber" min="1" max="256" style="width: 70px;" placeholder="np. 15">
+    <button type="button" class="secondary" id="testOutputBtn">TEST</button>
+    <span class="discover-status" id="testOutputStatus">Jednorazowo włącza/wyłącza podane wyjście (m.in. wirtualne wejście IP) - używa JUŻ ZAPISANEGO klucza integracji wyżej, wymaga zapisanego adresu/portu.</span>
+  </div>
+  <div class="discover-row" id="testHttpRow" hidden>
+    <label for="testVirtualInputName" style="margin: 0;">Wirtualne wejście</label>
+    <select id="testVirtualInputName" style="max-width: 220px;"></select>
+    <button type="button" class="secondary" id="testHttpBtn">TEST</button>
+    <span class="discover-status" id="testHttpStatus">Wysyła zwykłe, NIEUWIERZYTELNIONE żądanie HTTP GET dla wybranego, JUŻ SKONFIGUROWANEGO wejścia (nazwa wejścia jako ścieżka URL) - bez żadnego klucza/kodu DLOADX.</span>
+  </div>
+</div>
+
+<div class="section" id="satelSection">
+  <div class="section-hint">
+    Protokół integracji Satela nie udostępnia listy WSZYSTKICH
+    skonfigurowanych stref/wyjść wraz z nazwami (ograniczenie protokołu,
+    nie da się tego obejść) - dlatego przycisk "Wykryj" niżej nasłuchuje
+    przez wybrany czas (domyślnie 30s, maks. 120s) i notuje numery, które
+    w tym czasie FIZYCZNIE zmienią stan (otwórz/zamknij drzwi i okna,
+    wywołaj czujki ruchu, załącz wyjście). Strefy, które nie zmienią stanu
+    w tym oknie, nie zostaną wykryte - dodaj je ręcznie, jeśli znasz ich
+    numer z DLOADX, albo wydłuż czas nasłuchu i spróbuj ponownie.
+  </div>
+
+  <div class="discover-row">
+    <button type="button" class="secondary" id="discoverSatelBtn">🔍 Wykryj aktywne strefy/wyjścia</button>
+    <label style="font-size: 12.5px; color: var(--muted);">nasłuchuj
+      <input type="number" id="discoverSatelTimeout" value="30" min="5" max="120" style="width: 56px;"> s
+    </label>
+    <span class="discover-status" id="satelDiscoverStatus"></span>
+  </div>
+
+  <div class="field-group">
+    <label>Strefy (do uzbrajania/rozbrajania z panelu)</label>
+    <div id="partitionsRows"></div>
+    <button type="button" class="add-row-btn" id="addPartitionBtn">+ Dodaj strefę</button>
+  </div>
+
+  <div class="field-group">
+    <label>Monitorowane wejścia (czujki)</label>
+    <div id="zonesRows"></div>
+    <button type="button" class="add-row-btn" id="addZoneBtn">+ Dodaj wejście</button>
+  </div>
+
+  <div class="field-group">
+    <label>Monitorowane wyjścia</label>
+    <div id="outputsRows"></div>
+    <button type="button" class="add-row-btn" id="addOutputBtn">+ Dodaj wyjście</button>
+  </div>
+
+  <div class="field-group">
+    <label>Wirtualne wejścia IP (do scen/reguł ruchu - zakładka 🎬 Automatyzacje)</label>
+    <div id="virtualInputsRows"></div>
+    <button type="button" class="add-row-btn" id="addVirtualInputBtn">+ Dodaj wirtualne wejście</button>
+  </div>
+
+  <div class="actions-bar">
+    <button id="saveSatelBtn" type="button">Zapisz pola Satela</button>
+  </div>
+  <div id="satelMsg" class="msg-box"></div>
+</div>
+
+<script>
+async function authorizedFetch(url, options = {}) {
+  const resp = await fetch(url, options);
+  if (resp.status === 401) {
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname);
+    throw new Error('Wymagane zalogowanie - przekierowuję na /login...');
+  }
+  return resp;
+}
+
+async function refreshAuthNav() {
+  const link = document.getElementById('authNavLink');
+  try {
+    const status = await (await fetch('/api/auth/status')).json();
+    if (status.logged_in) {
+      link.textContent = '🔓 Wyloguj';
+      link.href = '#';
+      link.onclick = async (e) => {
+        e.preventDefault();
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.reload();
+      };
+    } else {
+      link.textContent = '🔒 Zaloguj';
+      link.href = '/login?next=' + encodeURIComponent(location.pathname);
+      link.onclick = null;
+    }
+  } catch (e) {
+    
+  }
+}
+refreshAuthNav();
+
+function showMsg(elId, ok, text) {
+  const el = document.getElementById(elId);
+  el.className = 'msg-box ' + (ok ? 'ok' : 'error');
+  el.style.display = '';
+  el.textContent = (ok ? '✅ ' : '❌ ') + text;
+}
+
+
+const PLUGIN_ID = 'satel';
+
+async function loadPluginSettings() {
+  const data = await (await fetch(`/api/plugins/${PLUGIN_ID}/settings`)).json();
+  document.getElementById('pluginEnabledCheckbox').checked = !!data.enabled;
+  document.getElementById('pluginLogLevelSelect').value = data.log_level || '';
+}
+loadPluginSettings();
+
+document.getElementById('savePluginSettingsBtn').addEventListener('click', async () => {
+  const payload = {
+    enabled: document.getElementById('pluginEnabledCheckbox').checked,
+    log_level: document.getElementById('pluginLogLevelSelect').value,
+  };
+  try {
+    const resp = await authorizedFetch(`/api/plugins/${PLUGIN_ID}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('pluginSettingsMsg', false, data.error || 'Błąd zapisu');
+    } else {
+      showMsg('pluginSettingsMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('pluginSettingsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+
+let connectionSnapshot = null;
+
+
+let savedVirtualInputMode = 'library';
+
+async function loadConnection(auto) {
+  const status = document.getElementById('connectionLoadStatus');
+  try {
+    const resp = await authorizedFetch('/api/plugins/satel/connection');
+    const data = await resp.json();
+    if (!resp.ok) {
+      
+      
+      if (!auto) status.textContent = '❌ ' + (data.error || 'Błąd wczytywania');
+      return;
+    }
+    connectionSnapshot = data;
+
+    document.getElementById('conn_host').value = data.host || '';
+    document.getElementById('conn_port').value = data.port || '';
+    document.getElementById('conn_partition').value = data.partition || '';
+    document.getElementById('conn_key_hint').textContent = data.integration_key_set
+      ? 'Kod użytkownika jest już ustawiony - zostaw pole puste, żeby go nie zmieniać.'
+      : 'Kod użytkownika NIE jest jeszcze ustawiony - panel działa tylko do odczytu, bez sterowania.';
+    document.getElementById('conn_enc_key_hint').textContent = data.encryption_key_set
+      ? 'Klucz szyfrowania jest już ustawiony - zostaw pole puste, żeby go nie zmieniać.'
+      : 'Klucz szyfrowania NIE jest ustawiony.';
+    document.getElementById('conn_enc_enabled').checked = !!data.encryption_enabled;
+    document.getElementById('conn_enc_key_clear').checked = false;
+    document.getElementById('conn_vi_mode').value = data.virtual_inputs_mode || 'library';
+    document.getElementById('conn_vi_port').value = data.virtual_inputs_port || '';
+    savedVirtualInputMode = data.virtual_inputs_mode || 'library';
+    syncVirtualInputModeUI();
+
+    status.textContent = '✅ Wczytano bieżące ustawienia.';
+  } catch (e) {
+    if (!auto) status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  }
+}
+document.getElementById('loadConnectionBtn').addEventListener('click', () => loadConnection(false));
+
+
+loadConnection(true);
+
+document.getElementById('saveConnectionBtn').addEventListener('click', async () => {
+  if (!connectionSnapshot) {
+    showMsg('connectionMsg', false, 'Najpierw wczytaj bieżące ustawienia (przycisk "🔒 Wczytaj bieżące ustawienia" wyżej).');
+    return;
+  }
+  const payload = {
+    host: document.getElementById('conn_host').value.trim(),
+    port: document.getElementById('conn_port').value,
+    partition: document.getElementById('conn_partition').value,
+    integration_key: document.getElementById('conn_key').value,
+    encryption_enabled: document.getElementById('conn_enc_enabled').checked,
+    encryption_key: document.getElementById('conn_enc_key').value,
+    encryption_key_clear: document.getElementById('conn_enc_key_clear').checked,
+    virtual_inputs_mode: document.getElementById('conn_vi_mode').value,
+    virtual_inputs_port: document.getElementById('conn_vi_port').value,
+  };
+  try {
+    const resp = await authorizedFetch('/api/plugins/satel/connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const details = data.details ? ' - ' + data.details.join('; ') : '';
+      showMsg('connectionMsg', false, (data.error || 'Błąd zapisu') + details);
+    } else {
+      document.getElementById('conn_key').value = '';
+      document.getElementById('conn_enc_key').value = '';
+      document.getElementById('conn_enc_key_clear').checked = false;
+      savedVirtualInputMode = payload.virtual_inputs_mode;
+      syncVirtualInputModeUI();
+      showMsg('connectionMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('connectionMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+function syncVirtualInputModeUI() {
+  const selectedMode = document.getElementById('conn_vi_mode').value;
+  const isHttp = selectedMode === 'http';
+  document.getElementById('conn_vi_port_field').hidden = !isHttp;
+  document.getElementById('testLibraryRow').hidden = isHttp;
+  document.getElementById('testHttpRow').hidden = !isHttp;
+  if (isHttp) loadVirtualInputNamesForTest();
+
+  
+  const mismatch = selectedMode !== savedVirtualInputMode;
+  const testOutputBtn = document.getElementById('testOutputBtn');
+  const testHttpBtn = document.getElementById('testHttpBtn');
+  testOutputBtn.disabled = mismatch;
+  testHttpBtn.disabled = mismatch;
+  const mismatchText = mismatch
+    ? ` ⚠ Niezapisana zmiana trybu - TEST użyje wciąż zapisanego trybu "${savedVirtualInputMode === 'http' ? 'HTTP' : 'biblioteka'}", zapisz połączenie, żeby przetestować nowy tryb.`
+    : '';
+  document.getElementById('testOutputStatus').dataset.base = document.getElementById('testOutputStatus').dataset.base
+    || document.getElementById('testOutputStatus').textContent;
+  document.getElementById('testHttpStatus').dataset.base = document.getElementById('testHttpStatus').dataset.base
+    || document.getElementById('testHttpStatus').textContent;
+  document.getElementById('testOutputStatus').textContent = document.getElementById('testOutputStatus').dataset.base + mismatchText;
+  document.getElementById('testHttpStatus').textContent = document.getElementById('testHttpStatus').dataset.base + mismatchText;
+}
+document.getElementById('conn_vi_mode').addEventListener('change', syncVirtualInputModeUI);
+
+async function loadVirtualInputNamesForTest() {
+  const select = document.getElementById('testVirtualInputName');
+  select.innerHTML = '<option value="">(wczytywanie...)</option>';
+  try {
+    const data = await (await fetch('/api/satel/virtual-inputs')).json();
+    const names = data.virtual_inputs || [];
+    select.innerHTML = names.length
+      ? names.map(n => `<option value="${n}">${n}</option>`).join('')
+      : '<option value="">(brak skonfigurowanych - sekcja niżej)</option>';
+  } catch (e) {
+    select.innerHTML = '<option value="">(błąd wczytywania)</option>';
+  }
+}
+
+document.getElementById('testOutputBtn').addEventListener('click', async () => {
+  const status = document.getElementById('testOutputStatus');
+  const outputNumber = parseInt(document.getElementById('testOutputNumber').value, 10);
+  if (!outputNumber || outputNumber < 1 || outputNumber > 256) {
+    status.textContent = '❌ Podaj numer wyjścia (1-256)';
+    return;
+  }
+  const btn = document.getElementById('testOutputBtn');
+  btn.disabled = true;
+  status.textContent = 'Testuję...';
+  try {
+    const resp = await authorizedFetch('/api/satel/test-output', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ output_number: outputNumber, state: true }),
+    });
+    const data = await resp.json();
+    status.textContent = resp.ok ? '✅ ' + data.message : '❌ ' + (data.error || 'Błąd testu');
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('testHttpBtn').addEventListener('click', async () => {
+  const status = document.getElementById('testHttpStatus');
+  const name = document.getElementById('testVirtualInputName').value;
+  if (!name) {
+    status.textContent = '❌ Wybierz wirtualne wejście';
+    return;
+  }
+  const btn = document.getElementById('testHttpBtn');
+  btn.disabled = true;
+  status.textContent = 'Testuję...';
+  try {
+    const resp = await authorizedFetch('/api/satel/test-output', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, state: true }),
+    });
+    const data = await resp.json();
+    status.textContent = resp.ok ? '✅ ' + data.message : '❌ ' + (data.error || 'Błąd testu');
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+
+function addNameNumberRow(containerId, initial) {
+  const container = document.getElementById(containerId);
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. Salon)" class="row-name">
+    <input type="number" placeholder="numer" class="row-number" style="max-width: 90px;">
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.row-name').value = initial.name ?? '';
+    row.querySelector('.row-number').value = initial.number ?? '';
+  }
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+document.getElementById('addPartitionBtn').addEventListener('click', () => addNameNumberRow('partitionsRows'));
+
+function collectNameNumberRows(containerId) {
+  return Array.from(document.querySelectorAll(`#${containerId} .repeatable-row`))
+    .map(row => ({ name: row.querySelector('.row-name').value.trim(), number: row.querySelector('.row-number').value }))
+    .filter(r => r.name && r.number);
+}
+
+
+const SATEL_ZONE_TYPES = {
+  drzwi: 'Drzwi', okno: 'Okno', ruch: 'Czujka ruchu (PIR)', dym: 'Czujka dymu',
+  zalanie: 'Czujka zalania', wibracja: 'Czujka wibracji/stłuczenia', sabotaz: 'Sabotaż/24h', inne: 'Inne',
+};
+const SATEL_OUTPUT_TYPES = {
+  syrena: 'Syrena', przekaznik: 'Przekaźnik/gniazdko', oswietlenie: 'Oświetlenie',
+  brama: 'Brama/rolety', ogrzewanie: 'Ogrzewanie', inne: 'Inne',
+};
+
+function typeOptionsHtml(types) {
+  return '<option value="">(rodzaj - opcjonalnie)</option>'
+    + Object.entries(types).map(([slug, label]) => `<option value="${slug}">${label}</option>`).join('');
+}
+
+function addZoneOrOutputRow(containerId, initial, types) {
+  const container = document.getElementById(containerId);
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. Salon)" class="row-name">
+    <input type="number" placeholder="numer" class="row-number" style="max-width: 90px;">
+    <select class="row-type" style="max-width: 180px;">${typeOptionsHtml(types)}</select>
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.row-name').value = initial.name ?? '';
+    row.querySelector('.row-number').value = initial.number ?? '';
+    row.querySelector('.row-type').value = initial.type ?? '';
+  }
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+document.getElementById('addZoneBtn').addEventListener('click', () => addZoneOrOutputRow('zonesRows', null, SATEL_ZONE_TYPES));
+document.getElementById('addOutputBtn').addEventListener('click', () => addZoneOrOutputRow('outputsRows', null, SATEL_OUTPUT_TYPES));
+
+function collectZoneOrOutputRows(containerId) {
+  return Array.from(document.querySelectorAll(`#${containerId} .repeatable-row`))
+    .map(row => ({
+      name: row.querySelector('.row-name').value.trim(),
+      number: row.querySelector('.row-number').value,
+      type: row.querySelector('.row-type').value,
+    }))
+    .filter(r => r.name && r.number);
+}
+
+
+function addVirtualInputRow(initial) {
+  const container = document.getElementById('virtualInputsRows');
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. motion_hall_camera)" class="vi-name">
+    <input type="number" placeholder="numer wejścia" class="vi-number" style="max-width: 120px;">
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.vi-name').value = initial.name ?? '';
+    row.querySelector('.vi-number').value = initial.number ?? '';
+  }
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+document.getElementById('addVirtualInputBtn').addEventListener('click', () => addVirtualInputRow());
+
+function collectVirtualInputs() {
+  return Array.from(document.querySelectorAll('#virtualInputsRows .repeatable-row')).map(row => ({
+    name: row.querySelector('.vi-name').value.trim(),
+    number: row.querySelector('.vi-number').value,
+  })).filter(v => v.name || v.number);
+}
+
+async function loadSatelFields() {
+  const data = await (await fetch('/api/plugins/satel/fields')).json();
+  (data.partitions || []).forEach(p => addNameNumberRow('partitionsRows', p));
+  (data.monitored_zones || []).forEach(z => addZoneOrOutputRow('zonesRows', z, SATEL_ZONE_TYPES));
+  (data.monitored_outputs || []).forEach(o => addZoneOrOutputRow('outputsRows', o, SATEL_OUTPUT_TYPES));
+  (data.virtual_inputs || []).forEach(v => addVirtualInputRow(v));
+}
+loadSatelFields();
+
+let satelScanPollTimer = null;
+
+function applySatelScanResult(data) {
+  const status = document.getElementById('satelDiscoverStatus');
+  const existingZones = new Set(collectZoneOrOutputRows('zonesRows').map(z => String(z.number)));
+  const existingOutputs = new Set(collectZoneOrOutputRows('outputsRows').map(o => String(o.number)));
+  let added = 0;
+  (data.zones || []).forEach(number => {
+    if (existingZones.has(String(number))) return;
+    addZoneOrOutputRow('zonesRows', { name: `Wejście ${number}`, number }, SATEL_ZONE_TYPES);
+    added++;
+  });
+  (data.outputs || []).forEach(number => {
+    if (existingOutputs.has(String(number))) return;
+    addZoneOrOutputRow('outputsRows', { name: `Wyjście ${number}`, number }, SATEL_OUTPUT_TYPES);
+    added++;
+  });
+  status.textContent = added
+    ? `Wykryto aktywność na ${added} numerach - dodano jako nowe wiersze niżej, nadaj im właściwe nazwy/rodzaj i zapisz.`
+    : 'Nie wykryto żadnej aktywności - żadna czujka/wyjście nie zmieniły stanu podczas nasłuchu. Spróbuj ponownie i fizycznie wyzwól interesujące Cię strefy w tym oknie.';
+}
+
+async function pollSatelScanStatus() {
+  const btn = document.getElementById('discoverSatelBtn');
+  const status = document.getElementById('satelDiscoverStatus');
+  const resp = await fetch('/api/plugins/satel/scan/status');
+  const data = await resp.json();
+  if (data.running) {
+    status.textContent = `Nasłuchuję... (${Math.round(data.elapsed_seconds || 0)}s / ${Math.round(data.duration_seconds || 0)}s) - przejdź teraz przez pilnowane pomieszczenia (otwórz/zamknij drzwi i okna, wywołaj czujki ruchu).`;
+    return;
+  }
+  if (satelScanPollTimer) { clearInterval(satelScanPollTimer); satelScanPollTimer = null; }
+  btn.disabled = false;
+  if (data.error) {
+    status.textContent = '❌ ' + data.error;
+  } else if (data.result) {
+    applySatelScanResult(data.result);
+  }
+}
+
+document.getElementById('discoverSatelBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('discoverSatelBtn');
+  const status = document.getElementById('satelDiscoverStatus');
+  const timeoutSeconds = Math.min(120, Math.max(5, parseInt(document.getElementById('discoverSatelTimeout').value, 10) || 30));
+  btn.disabled = true;
+  status.textContent = `Nasłuchuję ${timeoutSeconds}s...`;
+  try {
+    const resp = await fetch('/api/plugins/satel/scan/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timeout_seconds: timeoutSeconds }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = '❌ ' + (data.error || 'Błąd uruchamiania nasłuchu');
+      btn.disabled = false;
+      return;
+    }
+    if (satelScanPollTimer) clearInterval(satelScanPollTimer);
+    satelScanPollTimer = setInterval(pollSatelScanStatus, 2000);
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('saveSatelBtn').addEventListener('click', async () => {
+  const payload = {
+    partitions: collectNameNumberRows('partitionsRows'),
+    monitored_zones: collectZoneOrOutputRows('zonesRows'),
+    monitored_outputs: collectZoneOrOutputRows('outputsRows'),
+    virtual_inputs: collectVirtualInputs(),
+  };
+  try {
+    const resp = await authorizedFetch('/api/plugins/satel/fields', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const details = data.details ? ' - ' + data.details.join('; ') : '';
+      showMsg('satelMsg', false, (data.error || 'Błąd zapisu') + details);
+    } else {
+      showMsg('satelMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('satelMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+</script>
+</body>
+</html>

@@ -1,22 +1,3 @@
-"""Alarmy progowe na wartościach liczbowych (np. temperatura kotła Wolf).
-
-Reguły definiowane w config.yaml (sekcja `alarm_rules`), np.:
-
-  alarm_rules:
-    - name: "Zbyt wysoka temp. zasilania"
-      sensor: kociol_temp_zasilania
-      condition: "above"       # above | below
-      threshold: 85
-      hysteresis: 2            # o ile musi spaść/wzrosnąć, żeby zamknąć alarm
-    - name: "Brak danych z kotła"
-      sensor: kociol_temp_zasilania
-      condition: "stale"       # brak nowych odczytów przez X sekund
-      max_age_seconds: 600
-
-Przy przekroczeniu progu: zapis do tabeli `alerts` (widoczny w panelu jako
-czerwony baner) + opcjonalne powiadomienie push przez ntfy.sh (lekkie,
-jeden POST HTTP, bez zależności) lub dowolny webhook.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -35,14 +16,13 @@ class AlarmEngine:
         self.rules = rules
         self.history = history
         self.notifier = Notifier(notify_cfg)
-        # stan w pamięci: rule_name -> (alert_id albo None, last_value, last_ts)
         self._state: dict[str, dict] = {r["name"]: {"alert_id": None} for r in rules}
         self._last_seen: dict[str, float] = {}
 
     def on_value(self, sensor: str, value) -> None:
-        self._last_seen[sensor] = time.time()  # aktualizowane niezależnie od typu wartości - liczy się sam fakt odczytu
+        self._last_seen[sensor] = time.time()
         if not isinstance(value, (int, float)):
-            return  # progi liczbowe nie mają sensu dla wartości tekstowych (np. status palnika)
+            return
         for rule in self.rules:
             if rule["sensor"] != sensor or rule["condition"] == "stale":
                 continue
@@ -76,8 +56,6 @@ class AlarmEngine:
                 state["alert_id"] = None
 
     async def check_stale_sensors(self) -> None:
-        """Wywoływać cyklicznie (np. co 60s) z rules_engine - wykrywa brak
-        nowych odczytów (np. ebusd/moduł eBUS przestał odpowiadać)."""
         now = time.time()
         for rule in self.rules:
             if rule["condition"] != "stale":

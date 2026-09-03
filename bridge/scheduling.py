@@ -1,27 +1,3 @@
-"""Warunki czasowe ("okna") dla reguł automatyki.
-
-Dwa formaty czasu w oknie:
-  - stały: "22:00" (HH:MM)
-  - względem słońca: "sunset" / "sunrise" (opcjonalnie z przesunięciem
-    w minutach, np. "sunset+30" = 30 minut po zachodzie, "sunrise-15" =
-    15 minut przed wschodem)
-
-Obliczenia wschodu/zachodu robi biblioteka `astral` - w pełni lokalnie,
-bez żadnego zewnętrznego API pogodowego (ważne, bo RPi Zero W nie zawsze
-ma stabilny dostęp do internetu, a to nie powinno blokować podstawowej
-automatyki domu).
-
-Przykład w config.yaml:
-  location:
-    latitude: 52.23
-    longitude: 21.01
-
-  reguły_ruchu:
-    - ...
-      time_window:
-        start: "sunset-15"
-        end: "23:30"
-"""
 from __future__ import annotations
 
 import datetime as dt
@@ -34,8 +10,6 @@ _SUN_SPEC_RE = re.compile(r"^(sunset|sunrise)([+-]\d+)?$")
 
 
 def is_within_window(window: dict | None, location_cfg: dict | None, now: dt.datetime | None = None) -> bool:
-    """Zwraca True, jeśli `now` (domyślnie bieżący czas) mieści się w oknie.
-    Brak okna (None) = zawsze aktywne (reguła bez ograniczenia czasowego)."""
     if not window:
         return True
     now = now or dt.datetime.now()
@@ -52,7 +26,6 @@ def is_within_window(window: dict | None, location_cfg: dict | None, now: dt.dat
     if start <= end:
         return start <= current <= end
     else:
-        # okno przechodzące przez północ, np. 22:00 -> 06:00
         return current >= start or current <= end
 
 
@@ -76,10 +49,8 @@ def _resolve_time(spec: str | None, location_cfg: dict | None, now: dt.datetime)
         event_dt = sun_times[event]
         if offset_str:
             event_dt += dt.timedelta(minutes=int(offset_str))
-        # astral zwraca czas w UTC - konwertujemy do lokalnej strefy systemu
         local_dt = event_dt.astimezone()
         return local_dt.time()
 
-    # format stały "HH:MM"
     h, m = spec.split(":")
     return dt.time(hour=int(h), minute=int(m))

@@ -11,9 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 3.9 to najstarszy Python realnie spotykany na Raspberry Pi OS
-        # (Bullseye), 3.11/3.12 to nowsze obrazy - testujemy oba krańce
-        python-version: ["3.9", "3.11", "3.12"]
+        # Projekt nie jest już ograniczony do RPi Zero. Dolna granica to
+        # teraz Python 3.12 - twardy wymóg satel-integra>=1.4.0
+        # (requires-python >=3.12, patrz requirements.txt), więc 3.11 nie
+        # da się już zainstalować (pip install -r requirements-dev.txt by
+        # się wywalił). 3.13 to najnowsza stabilna gałąź - testujemy ją
+        # razem z 3.12.
+        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +38,7 @@ jobs:
           python -m pytest tests/ --cov=bridge --cov=dashboard --cov-report=term-missing --cov-report=xml
 
       - name: Wgraj raport pokrycia (artefakt)
-        if: matrix.python-version == '3.11'
+        if: matrix.python-version == '3.12'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -46,7 +50,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Sprawdź składnię wszystkich plików Python
         run: |
           python -m py_compile bridge/*.py dashboard/*.py main.py tests/*.py

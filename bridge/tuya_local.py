@@ -1,9 +1,3 @@
-"""Lokalne sterowanie przełącznikami/gniazdkami/ściemniaczami Tuya (tinytuya).
-
-Działa całkowicie w sieci LAN, bez zależności od chmury Tuya - dobre dla
-RPi Zero W (mało zasobów, nie chcemy zależności od internetu dla
-podstawowego sterowania światłem/gniazdkiem).
-"""
 from __future__ import annotations
 
 import asyncio
@@ -15,16 +9,6 @@ logger = logging.getLogger("bridge.tuya_local")
 
 
 def scan_network(maxretry: int = 1) -> list[dict]:
-    """Skanuje sieć LAN (broadcast UDP) w poszukiwaniu urządzeń Tuya i
-    zwraca listę {id, ip, version} dla znalezionych urządzeń - podpowiedź
-    do panelu (/config), żeby nie trzeba było ręcznie szukać adresu IP.
-
-    WAŻNE: broadcast Tuya NIE zawiera `local_key` (nie jest rozgłaszany ze
-    względów bezpieczeństwa) ani nazwy urządzenia - to wciąż trzeba
-    wyciągnąć osobno narzędziem `python -m tinytuya wizard` (patrz README).
-    Skan trwa ok. `tinytuya.SCANTIME` sekund na każde `maxretry` (domyślnie
-    ~18s) - synchroniczne i blokujące, celowo (wywoływane z endpointu
-    Flask, nie z głównej pętli bridge'a)."""
     raw = tinytuya.deviceScan(verbose=False, maxretry=maxretry, poll=False)
     devices = []
     for ip, info in raw.items():
@@ -36,10 +20,6 @@ def scan_network(maxretry: int = 1) -> list[dict]:
     return devices
 
 
-# Kody regionów Tuya Cloud rozpoznawane przez tinytuya.Cloud - to samo, czego
-# używa `tinytuya wizard`. "cn" to domyślny region biblioteki (nie na liście
-# poniżej, bo Tuya IoT Platform i tak wymaga wyboru regionu przy zakładaniu
-# projektu - "cn" rzadko dotyczy instalacji spoza Chin).
 TUYA_CLOUD_REGIONS = {
     "eu": "Europa (Centralna)",
     "eu-w": "Europa (Zachodnia)",
@@ -52,21 +32,6 @@ TUYA_CLOUD_REGIONS = {
 
 
 def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> list[dict]:
-    """Pobiera WSZYSTKIE urządzenia podpięte do projektu Tuya Cloud (nazwa,
-    id, `local_key`) przez `tinytuya.Cloud` - dokładnie to samo, czego
-    używa `python -m tinytuya wizard`, tylko bez interaktywnej konsoli.
-    Alternatywa dla ręcznego dodawania urządzenia po urządzeniu w
-    kreatorze/panelu - przydatna, gdy jest ich dużo.
-
-    Krzyżuje wynik z krótkim skanem LAN (`scan_network`), żeby dorzucić
-    adres IP tam, gdzie się da (Tuya Cloud go nie zwraca) - dopasowanie po
-    ID urządzenia. Brak dopasowania w LAN (urządzenie offline/inna
-    podsieć) nie jest błędem - `ip` zostaje puste, użytkownik uzupełnia
-    ręcznie.
-
-    Wymaga projektu w Tuya IoT Platform (developer.tuya.com) z podpiętą
-    aplikacją (Tuya Smart / Smart Life) - patrz README po instrukcję
-    założenia projektu i znalezienia Access ID/Secret."""
     try:
         cloud = tinytuya.Cloud(apiRegion=api_region, apiKey=access_id, apiSecret=access_key)
     except Exception as exc:
@@ -87,17 +52,6 @@ def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> lis
         raise ConnectionError("Nieoczekiwana odpowiedź z Tuya Cloud")
 
     if not result:
-        # UWAGA - prawdziwy bug w tinytuya, nie w naszym kodzie: jeśli
-        # odpowiedź Tuya Cloud na żądanie listy urządzeń nie ma klucza
-        # 'result' (typowe dla błędów logowania/podpisu/regionu/uprawnień -
-        # Tuya wtedy zwraca {"success": false, "code": ..., "msg": ...} BEZ
-        # 'result'), tinytuya.Cloud._get_all_devices() cicho zostawia
-        # domyślne {'result': []} zamiast zgłosić błąd - getdevices() więc
-        # zwraca pustą listę NIEODRÓŻNIALNĄ od legalnego "0 urządzeń w
-        # projekcie". Sprawdzamy surową odpowiedź (cloud.getdevices_raw,
-        # ustawianą przez getdevices() tuż przed budową listy) pod kątem
-        # jawnego success=false, żeby nie pokazywać mylącego "0 urządzeń"
-        # przy faktycznym błędzie logowania.
         raw = getattr(cloud, "getdevices_raw", None)
         if isinstance(raw, dict) and raw.get("success") is False:
             message = raw.get("msg") or f"kod błędu {raw.get('code', '?')}"
@@ -126,15 +80,7 @@ def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> lis
             "local_key": d.get("key", ""),
             "ip": lan_match.get("ip", ""),
             "version": lan_match.get("version", ""),
-            # Podurządzenie Zigbee bramki (nie samodzielne urządzenie WiFi) -
-            # tinytuya.Cloud dokłada te pola tylko dla sub-devices (patrz
-            # Cloud.py: filter_devices/_update_device_list, "gateway_id" i
-            # "node_id" w DEVICEFILE_SAVE_VALUES). Puste = zwykłe urządzenie
-            # WiFi. Panel (/config) używa tego do podpowiedzi "to jest
-            # podurządzenie Zigbee bramki X" przy imporcie z Tuya Cloud -
-            # NIE dopasowuje automatycznie nazwy bramki (id bramki w Tuya
-            # Cloud i lokalna nazwa bramki w tuya_devices.yaml to różne
-            # rzeczy), tylko podpowiada id i node_id do ręcznego dopasowania.
+            "category": d.get("category", ""),
             "gateway_id": d.get("gateway_id", ""),
             "node_id": d.get("node_id", ""),
         })
@@ -149,13 +95,6 @@ class TuyaLocalController:
         self.retries = retries
         self.retry_delay = retry_delay
 
-        # Bramki Zigbee (Tuya) - urządzenia WiFi same w sobie, przez które
-        # przechodzi cały ruch do podpiętych pod nie czujników/przełączników
-        # Zigbee. tinytuya obsługuje to jako "dziecko" (parent=<obiekt bramki>,
-        # cid=<id podurządzenia>) - biblioteka sama kieruje komendy przez
-        # połączenie TCP bramki, więc podurządzenie NIE dostaje własnego
-        # adresu IP ani local_key (patrz tinytuya.core.XenonDevice.__init__:
-        # "sub-devices do not need a local key").
         self._gateways: dict[str, tinytuya.Device] = {}
         for name, cfg in self.zigbee_gateways_cfg.items():
             gw = tinytuya.Device(cfg["id"], cfg["ip"], cfg["local_key"])
@@ -174,10 +113,6 @@ class TuyaLocalController:
                         name, gateway_name,
                     )
                     continue
-                # dev_type="zigbee" dobiera właściwy kształt zapytań DP dla
-                # podurządzeń (patrz tinytuya.core.XenonDevice payload_dict) -
-                # cid domyślnie = id urządzenia, jeśli nie podano osobnego
-                # node_id (typowe przy ręcznym dodawaniu, gdy oba się zgadzają).
                 dev = tinytuya.Device(
                     cfg["id"], cid=cfg.get("cid") or cfg["id"], dev_type="zigbee", parent=gateway,
                 )
@@ -187,10 +122,6 @@ class TuyaLocalController:
             self._devices[name] = dev
 
     async def _call_with_retry(self, device_name: str, func, *args):
-        """Lokalne urządzenia Tuya po WiFi bywają chwilowo nieosiągalne
-        (słaby zasięg, przeciążenie sieci) - tinytuya często nie rzuca
-        wyjątku w takiej sytuacji, tylko zwraca słownik z kluczem 'Error'.
-        Dlatego sprawdzamy oba przypadki i ponawiamy próbę."""
         loop = asyncio.get_event_loop()
         last_error = None
         for attempt in range(self.retries + 1):
@@ -219,7 +150,7 @@ class TuyaLocalController:
             dp = cfg["dimmer_dp"]
             lo, hi = cfg.get("dimmer_range", [10, 1000])
             value = int(lo + (hi - lo) * (dimmer_level_percent / 100))
-            await self._call_with_retry(device_name, dev.set_status, True, "1")  # włącz
+            await self._call_with_retry(device_name, dev.set_status, True, "1")
             await self._call_with_retry(device_name, dev.set_value, dp, value)
             logger.info("Ustawiono '%s' na %s%% jasności (DP=%s)", device_name, dimmer_level_percent, value)
         else:
@@ -232,41 +163,26 @@ class TuyaLocalController:
         logger.info("Wyłączono '%s'", device_name)
 
     async def get_status(self, device_name: str) -> dict:
-        """Zwraca surowy słownik DP (data points) urządzenia, np.
-        {'1': True, '3': 850} - '1' to zwykle stan on/off, reszta zależy
-        od typu urządzenia (jasność ściemniacza itp.)."""
         dev = self._devices[device_name]
         result = await self._call_with_retry(device_name, dev.status)
         return result.get("dps", {}) if isinstance(result, dict) else {}
 
     async def get_all_statuses(self) -> dict[str, dict]:
-        """Odpytuje wszystkie skonfigurowane urządzenia po kolei. Sekwencyjnie
-        (nie równolegle) - RPi Zero W ma jeden rdzeń, a tinytuya i tak działa
-        blokująco w wątku wykonawcy; równoległe odpytanie nie przyspieszy,
-        za to zwiększy szczyt zużycia pamięci."""
-        results = {}
-        for name in self.devices_cfg:
-            try:
-                results[name] = await self.get_status(name)
-            except Exception:
-                # get_status już zalogował szczegóły przez _call_with_retry -
-                # tu tylko zaznaczamy urządzenie jako niedostępne, nie
-                # przerywamy pętli dla pozostałych urządzeń.
-                results[name] = None
+        names = list(self.devices_cfg)
+        results_list = await asyncio.gather(
+            *(self.get_status(name) for name in names), return_exceptions=True,
+        )
+        results: dict[str, dict | None] = {}
+        for name, result in zip(names, results_list):
+            results[name] = None if isinstance(result, Exception) else result
         return results
 
     async def turn_on_for_duration(
         self, device_name: str, duration_seconds: int, dimmer_level_percent: int | None = None
     ) -> None:
-        """Włącza urządzenie i automatycznie wyłącza po zadanym czasie.
-        Uwaga: jeśli w międzyczasie ruch zostanie wykryty ponownie, warto
-        w rules_engine.py resetować timer zamiast dopuszczać nakładanie się
-        - patrz obsługa w RulesEngine._handle_motion."""
         try:
             await self.turn_on(device_name, dimmer_level_percent)
         except ConnectionError:
-            # Nie przerywamy - spróbujemy przynajmniej wyłączyć po czasie,
-            # gdyby urządzenie odpowiedziało tylko na pierwszą komendę.
             pass
         await asyncio.sleep(duration_seconds)
         try:

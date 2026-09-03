@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Wtyczki - Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 <style>
   :root {
     --bg: #14161a; --card: #1d2026; --border: #2c3038;
@@ -21,18 +22,31 @@
   .nav a { color: var(--accent); text-decoration: none; font-size: 13px; }
   .hint { color: var(--muted); font-size: 13px; margin-bottom: 18px; line-height: 1.5; }
   .hint code { background: #262a32; padding: 1px 5px; border-radius: 4px; }
-  .plugin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
-  @media (max-width: 640px) { .plugin-grid { grid-template-columns: 1fr; } }
-  .plugin-card {
+  .plugin-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+  .plugin-row {
     background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-    padding: 16px; display: flex; flex-direction: column; gap: 8px;
+    overflow: hidden;
   }
-  .plugin-card.on { border-color: var(--ok); }
-  .plugin-card-top { display: flex; align-items: flex-start; gap: 10px; }
-  .plugin-icon { font-size: 22px; line-height: 1; }
-  .plugin-name { font-size: 14.5px; font-weight: 600; margin-bottom: 2px; }
-  .plugin-desc { color: var(--muted); font-size: 12.5px; line-height: 1.4; }
-  .plugin-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 6px; }
+  .plugin-row.on { border-color: var(--ok); }
+  .plugin-row-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; }
+  .plugin-row-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .plugin-row-right {
+    display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 6px;
+    margin: -4px -6px; border-radius: 6px; transition: background 0.1s;
+  }
+  .plugin-row-right:hover { background: #262a32; }
+  .plugin-row-right:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chevron { color: var(--muted); font-size: 11px; transition: transform 0.15s; display: inline-block; }
+  .plugin-row.expanded .chevron { transform: rotate(90deg); }
+  .plugin-row-body {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 0 14px 14px; border-top: 1px dashed var(--border); margin-top: 0;
+  }
+  .plugin-row-body[hidden] { display: none; }
+  .plugin-icon { font-size: 20px; line-height: 1; flex-shrink: 0; }
+  .plugin-name { font-size: 14.5px; font-weight: 600; }
+  .plugin-desc { color: var(--muted); font-size: 12.5px; line-height: 1.4; padding-top: 10px; }
+  .plugin-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 6px; }
   .status-pill {
     font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 10px;
     display: inline-block; white-space: nowrap;
@@ -80,25 +94,28 @@
 </style>
 </head>
 <body>
-<div class="nav"><a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; <a href="/config">⚙ Ustawienia</a> &nbsp;·&nbsp; <a href="/automations">🎬 Automatyzacje</a> &nbsp;·&nbsp; <a id="authNavLink" href="/login"></a></div>
-<h1>🧩 Wtyczki</h1>
+{% include "_nav.html" %}
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🧩 Wtyczki</h1>
 <div class="hint">
   Jeden spójny przegląd wszystkich integracji. <strong>Przełącznik działa
-  TYLKO dla wtyczek, które już mają zapisane wymagane dane</strong>
-  (np. Tuya Cloud potrzebuje wcześniej wpisanego Access ID w zakładce
-  <code>🔌 Połączenia</code>) - to przełącznik włącz/wyłącz, nie edytor.
-  Pełna konfiguracja każdej integracji (adresy, klucze, urządzenia, reguły)
-  zostaje w jej właściwej zakładce - link w każdej karcie niżej.
+  TYLKO dla wtyczek, które już mają zapisane wymagane dane</strong> (np.
+  Tuya Cloud potrzebuje wcześniej wpisanego Access ID na jej własnej stronie,
+  link "⚙ Konfiguruj" w karcie niżej) - to przełącznik włącz/wyłącz, nie
+  edytor. Pełna konfiguracja każdej integracji (adresy, klucze, urządzenia,
+  reguły) zostaje na jej właściwej, dedykowanej stronie.
   <span class="restart-badge">wymaga restartu</span> oznacza, że zmiana
   zadziała dopiero po pełnym restarcie procesu bridge'a - reszta włącza
   się na żywo w ciągu ok. 1-2s. Centrala Satel i Tuya (lokalnie) mają
   dodatkowo pole <strong>"Interwał odpytywania"</strong> - jak często
   bridge sam dopytuje o bieżący stan (niezależnie od tego, czy centrala/
   urządzenie same zgłoszą zmianę) - to zawsze działa na żywo, bez restartu.
+  Każda karta ma też pole <strong>"Poziom logowania"</strong> - zapisuje
+  się od razu przy zmianie (bez osobnego przycisku), niezależnie od
+  domyślnego poziomu globalnego (zakładka ⚙ Ustawienia ogólne).
 </div>
 
 <div id="pluginsMsg" class="msg-box"></div>
-<div id="pluginGrid" class="plugin-grid"></div>
+<div id="pluginList" class="plugin-list"></div>
 <div class="actions-bar">
   <button id="saveBtn" type="button" disabled>Zapisz zmiany</button>
   <span id="pendingHint" style="color: var(--muted); font-size: 12.5px;"></span>
@@ -132,7 +149,7 @@ async function refreshAuthNav() {
       link.onclick = null;
     }
   } catch (e) {
-    // brak połączenia z serwerem - nie blokujemy reszty strony o to
+    
   }
 }
 
@@ -143,21 +160,25 @@ function showMsg(ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-// Gdzie faktycznie skonfigurować każdą wtyczkę (link w karcie) - te BEZ
-// wpisu tutaj nie mają osobnego edytora (np. Satel to rdzeń, jego
-// ustawienia są w zakładce Połączenia razem z resztą).
+
 const PLUGIN_CONFIG_LINKS = {
-  satel: { href: '/config', label: 'Połączenia →' },
-  tuya_local: { href: '/config', label: 'Urządzenia Tuya →' },
-  tuya_zigbee: { href: '/config', label: 'Bramki Zigbee →' },
-  tuya_cloud: { href: '/config', label: 'Połączenia →' },
-  ebus: { href: '/config', label: 'Czujniki eBUS →' },
-  home_assistant: { href: '/config', label: 'Połączenia →' },
-  mqtt_publish: { href: '/config', label: 'Połączenia →' },
-  presence_simulation: { href: '/automations', label: 'Automatyzacje →' },
+  satel: { href: '/plugins/satel', label: '⚙ Konfiguruj →' },
+  tuya_local: { href: '/plugins/tuya', label: '⚙ Konfiguruj →' },
+  tuya_zigbee: { href: '/plugins/tuya', label: '⚙ Konfiguruj →' },
+  tuya_cloud: { href: '/plugins/tuya_cloud', label: '⚙ Konfiguruj →' },
+  ebus: { href: '/plugins/ebus', label: '⚙ Konfiguruj →' },
+  home_assistant: { href: '/plugins/home_assistant', label: '⚙ Konfiguruj →' },
+  mqtt_publish: { href: '/plugins/mqtt_publish', label: '⚙ Konfiguruj →' },
+  unifi_protect: { href: '/plugins/unifi_protect', label: '⚙ Konfiguruj →' },
+  homewhiz: { href: '/plugins/homewhiz', label: '⚙ Konfiguruj →' },
+  presence_simulation: { href: '/plugins/presence_simulation', label: '⚙ Konfiguruj →' },
+  notifications: { href: '/plugins/notifications', label: '⚙ Konfiguruj →' },
 };
 
-let pendingChanges = {};  // {plugin_id: {enabled?: bool, status_poll_interval_seconds?: number}} - zebrane, ale jeszcze niezapisane zmiany
+
+const PLUGIN_SETTINGS_ENDPOINT_ID = { tuya_zigbee: 'tuya_local' };
+
+let pendingChanges = {};  
 
 function updateSaveButtonState() {
   const count = Object.keys(pendingChanges).length;
@@ -167,10 +188,7 @@ function updateSaveButtonState() {
     count > 0 ? `${count} niezapisana(e) zmiana(y)` : '';
 }
 
-// Zbiera pojedynczą zmianę pola (enabled / status_poll_interval_seconds)
-// dla danej wtyczki do pendingChanges - {plugin_id: {pole: wartość, ...}},
-// usuwając wpis, gdy pole wraca do wartości oryginalnej (żeby "Zapisz"
-// zgasło, kiedy nic już się nie różni od stanu z serwera).
+
 function setPendingField(pluginId, field, value, originalValue) {
   if (value === originalValue) {
     if (pendingChanges[pluginId]) {
@@ -183,9 +201,13 @@ function setPendingField(pluginId, field, value, originalValue) {
   updateSaveButtonState();
 }
 
+
+const expandedPluginIds = new Set();
+
 function renderPlugin(p) {
-  const card = document.createElement('div');
-  card.className = 'plugin-card' + (p.enabled ? ' on' : '');
+  const row = document.createElement('div');
+  const isExpanded = expandedPluginIds.has(p.id);
+  row.className = 'plugin-row' + (p.enabled ? ' on' : '') + (isExpanded ? ' expanded' : '');
 
   const pillClass = p.enabled ? 'on' : (p.configured ? 'off' : 'unconfigured');
   const pillText = p.enabled ? 'Włączona' : (p.configured ? 'Wyłączona' : 'Nieskonfigurowana');
@@ -194,61 +216,122 @@ function renderPlugin(p) {
   const linkHtml = link ? `<a class="plugin-link" href="${link.href}">${link.label}</a>` : '';
   const restartBadge = p.restart_required ? '<span class="restart-badge">wymaga restartu</span>' : '';
 
-  card.innerHTML = `
-    <div class="plugin-card-top">
-      <div class="plugin-icon">${p.icon}</div>
-      <div style="flex:1;">
-        <div class="plugin-name">${p.name}</div>
-        <div class="plugin-desc">${p.description}</div>
+  row.innerHTML = `
+    <div class="plugin-row-header">
+      <div class="plugin-row-left">
+        <span class="plugin-icon">${p.icon}</span>
+        <span class="plugin-name">${p.name}</span>
       </div>
-      ${p.toggleable ? `
-        <label class="toggle-switch">
-          <input type="checkbox" class="plugin-toggle" data-id="${p.id}" ${p.enabled ? 'checked' : ''}>
-          <span class="toggle-slider"></span>
-        </label>
+      <div class="plugin-row-right" tabindex="0" role="button" aria-expanded="${isExpanded ? 'true' : 'false'}">
+        <span class="status-pill ${pillClass}">${pillText}</span>
+        <span class="chevron">▸</span>
+      </div>
+    </div>
+    <div class="plugin-row-body" ${isExpanded ? '' : 'hidden'}>
+      <div class="plugin-desc">${p.description}</div>
+      <div class="plugin-status-row">
+        <div>
+          ${p.toggleable ? `
+            <label class="toggle-switch">
+              <input type="checkbox" class="plugin-toggle" data-id="${p.id}" ${p.enabled ? 'checked' : ''}>
+              <span class="toggle-slider"></span>
+            </label>
+          ` : ''}
+          <span class="plugin-detail">${p.detail}</span>
+        </div>
+        <div>${restartBadge} ${linkHtml}</div>
+      </div>
+      ${p.has_poll_interval ? `
+        <div class="poll-interval-row">
+          <span>Interwał odpytywania:</span>
+          <input type="number" min="${p.min_poll_interval_seconds || 3}" class="poll-interval-input" value="${p.poll_interval_seconds}">
+          <span>s</span>
+          <span class="live-badge">● działa na żywo, bez restartu</span>
+        </div>
+      ` : ''}
+      ${p.has_log_level ? `
+        <div class="poll-interval-row">
+          <span>Poziom logowania:</span>
+          <select class="log-level-select">
+            <option value="">(domyślny globalny)</option>
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+            <option value="CRITICAL">CRITICAL</option>
+          </select>
+          <span class="live-badge log-level-saved" style="display:none;">✓ zapisano</span>
+        </div>
       ` : ''}
     </div>
-    <div class="plugin-status-row">
-      <div>
-        <span class="status-pill ${pillClass}">${pillText}</span>
-        <span class="plugin-detail">${p.detail}</span>
-      </div>
-      <div>${restartBadge} ${linkHtml}</div>
-    </div>
-    ${p.has_poll_interval ? `
-      <div class="poll-interval-row">
-        <span>Interwał odpytywania:</span>
-        <input type="number" min="3" class="poll-interval-input" value="${p.poll_interval_seconds}">
-        <span>s</span>
-        <span class="live-badge">● działa na żywo, bez restartu</span>
-      </div>
-    ` : ''}
   `;
 
+  
+  const body = row.querySelector('.plugin-row-body');
+  const rightZone = row.querySelector('.plugin-row-right');
+  function toggleExpanded() {
+    const nowExpanded = body.hasAttribute('hidden');
+    body.toggleAttribute('hidden', !nowExpanded);
+    row.classList.toggle('expanded', nowExpanded);
+    rightZone.setAttribute('aria-expanded', nowExpanded ? 'true' : 'false');
+    if (nowExpanded) expandedPluginIds.add(p.id); else expandedPluginIds.delete(p.id);
+  }
+  rightZone.addEventListener('click', toggleExpanded);
+  rightZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpanded(); }
+  });
+
   if (p.toggleable) {
-    const checkbox = card.querySelector('.plugin-toggle');
+    const checkbox = row.querySelector('.plugin-toggle');
     checkbox.addEventListener('change', () => {
       setPendingField(p.id, 'enabled', checkbox.checked, p.enabled);
-      card.classList.toggle('on', checkbox.checked);
+      row.classList.toggle('on', checkbox.checked);
     });
   }
 
   if (p.has_poll_interval) {
-    const input = card.querySelector('.poll-interval-input');
+    const input = row.querySelector('.poll-interval-input');
     input.addEventListener('change', () => {
       const value = parseInt(input.value, 10);
       setPendingField(p.id, 'status_poll_interval_seconds', value, p.poll_interval_seconds);
     });
   }
 
-  return card;
+  if (p.has_log_level) {
+    
+    
+    const select = row.querySelector('.log-level-select');
+    const savedBadge = row.querySelector('.log-level-saved');
+    select.value = p.log_level || '';
+    select.addEventListener('change', async () => {
+      const endpointId = PLUGIN_SETTINGS_ENDPOINT_ID[p.id] || p.id;
+      try {
+        const resp = await authorizedFetch(`/api/plugins/${endpointId}/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ log_level: select.value }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          showMsg(false, data.error || 'Błąd zapisu poziomu logowania');
+          return;
+        }
+        savedBadge.style.display = '';
+        setTimeout(() => { savedBadge.style.display = 'none'; }, 2000);
+      } catch (e) {
+        showMsg(false, 'Błąd komunikacji z serwerem: ' + e);
+      }
+    });
+  }
+
+  return row;
 }
 
 async function loadPlugins() {
   const plugins = await (await fetch('/api/plugins')).json();
-  const grid = document.getElementById('pluginGrid');
-  grid.innerHTML = '';
-  plugins.forEach(p => grid.appendChild(renderPlugin(p)));
+  const list = document.getElementById('pluginList');
+  list.innerHTML = '';
+  plugins.forEach(p => list.appendChild(renderPlugin(p)));
 }
 
 document.getElementById('saveBtn').addEventListener('click', async () => {

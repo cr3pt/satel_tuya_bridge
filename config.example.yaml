@@ -1,41 +1,98 @@
 # ============================================================================
 # Konfiguracja bridge'a Satel Integra <-> Tuya <-> eBUS (Wolf)
-# Skopiuj ten plik jako config.yaml i uzupełnij własnymi danymi.
+#
+# UWAGA: od wersji z bazą config.db ten plik NIE jest już bezpośrednio
+# wczytywany przez bridge/panel (patrz README, sekcja "Konfiguracja w
+# bazie danych") - służy jako DOKUMENTACJA dostępnych pól. Dwa sposoby
+# użycia:
+#   1. Zwykle: przejdź kreator (/setup) - nie musisz w ogóle dotykać YAML-a.
+#   2. Ręcznie/skryptowo: skopiuj jako config.yaml, uzupełnij, uruchom
+#      raz `python main.py` albo panel - PIERWSZE uruchomienie migruje go
+#      automatycznie do config.db (i zmienia nazwę na config.yaml.migrated).
+#      Dalsze zmiany rób z panelu albo przez eksport/import YAML
+#      (`/api/config/export-yaml` / `/api/config/import-yaml`).
+#
+# WŁĄCZ/WYŁĄCZ WTYCZEK I POZIOM LOGOWANIA: prawie każda sekcja niżej (satel,
+# tuya, ebus, home_assistant, unifi_protect, notifications, mqtt_publish)
+# przyjmuje teraz też pola "enabled: true/false" i "log_level: DEBUG/INFO/
+# WARNING/ERROR/CRITICAL" - w praktyce ustawia się je z panelu (zakładka
+# 🧩 Wtyczki albo sekcja "⚙ Ustawienia wtyczki" na stronie każdej wtyczki,
+# patrz README), nie ręczną edycją tego pliku. Wyjątek: tuya_zigbee (dzieli
+# sekcję "tuya" z Tuya lokalnie, nie ma własnego enabled) i
+# presence_simulation (żyje w automations.yaml/dokumencie "automations",
+# nie tutaj).
 # ============================================================================
+
+# Domyślny poziom logowania (nadpisywany per wtyczka polem "log_level"
+# wyżej) - patrz README, sekcja "Poziom logowania per wtyczka".
+logging:
+  default_level: "INFO"   # DEBUG/INFO/WARNING/ERROR/CRITICAL
 
 satel:
   # Integration protocol (odczyt stanu wejść/wyjść, sterowanie wyjściami,
   # (roz)uzbrajanie) - wymaga biblioteki `satel_integra` (port zwykle 7094)
   host: "192.168.1.10"
   port: 7094
-  integration_key: "TWOJ_KLUCZ_INTEGRACJI"   # ustawiony w DLOADX
+  # To NUMERYCZNY KOD UŻYTKOWNIKA centrali (ten sam typ kodu, którym
+  # uzbraja/rozbraja się z klawiatury) - ustawiony w DLOADX/GUARDX, NIE
+  # żaden osobny "klucz integracji". Opcjonalny - bez niego panel działa
+  # TYLKO DO ODCZYTU (stany stref/wyjść widoczne, ale (roz)uzbrojenie i
+  # sterowanie wyjściami jest zablokowane z czytelnym komunikatem) - dopisz
+  # go później w sekcji "🔌 Połączenie" na stronie /plugins/satel, żeby
+  # odblokować sterowanie.
+  integration_key: "TWOJ_KOD_UZYTKOWNIKA"
+  # Klucz szyfrowania AES transmisji TCP ("Encrypted connections" w DLOADX)
+  # - CAŁKIEM INNY klucz niż integration_key wyżej (to hasło protokołu, nie
+  # klucz szyfrowania). Zostaw null/puste, jeśli centrala/moduł ETHM nie ma
+  # włączonego szyfrowania - patrz sekcja "A komunikacja z centralą Satel -
+  # czy jest szyfrowana kluczem?" w README.
+  encryption_key: null
+  # JAWNY przełącznik włącz/wyłącz - CELOWO osobny od samego faktu podania
+  # klucza wyżej. Sam zapisany klucz NIE wystarczy - szyfrowanie jest
+  # używane TYLKO gdy to pole jest true.
+  encryption_enabled: false
   partition: 1                                # numer strefy, zwykle 1
 
-  # "Wejścia IP" (wirtualne wejścia) ETHM-1 Plus - do WYSYŁANIA naruszeń
-  # (np. gdy Tuya wykryje ruch albo światło się zapala).
-  # Skonfigurowane w DLOADX -> zakładka "Wejścia IP".
-  # UWAGA: ETHM-1 Plus NIE zwraca standardowego kodu HTTP 200 dla tych
-  # zapytań - klient musi to tolerować (patrz satel_client.py).
+  # "Wirtualne wejścia IP" - do WYSYŁANIA naruszeń (np. gdy Tuya wykryje
+  # ruch albo światło się zapala). DWA niezależne tryby wyzwalania (mode
+  # niżej, patrz obszerny docstring bridge/satel_client.py):
+  #
+  # "library" (domyślny, zalecany) - to NIE jest osobna funkcja sprzętowa
+  #   ETHM-1 Plus - to zwykłe WYJŚCIE (numer 1-256, ten sam zakres co
+  #   "outputs"/monitored_outputs), które instalator zaprogramował w
+  #   DLOADX tak, żeby jego załączenie symulowało wewnątrz centrali
+  #   naruszenie wejścia/czujki. Wyzwala się je DOKŁADNIE tym samym
+  #   poleceniem co zwykłe wyjście (SatelIntegraClient.set_output,
+  #   uwierzytelnione wspólnym "integration_key" wyżej) - PRZEZ TO SAMO
+  #   połączenie integracji co reszta poleceń (uzbrojenie, sterowanie
+  #   innymi wyjściami), które je SERIALIZUJE (centrala obsługuje tylko
+  #   jednego klienta integracji naraz).
+  #
+  # "http" - funkcja "Wejścia IP" ETHM-1: osobne, ZWYKŁE, NIEUWIERZYTELNIONE
+  #   żądanie HTTP GET na port poniżej, http://{host}:{port}/{nazwa} -
+  #   {nazwa} to WPROST nazwa wejścia z "inputs" niżej (fragment ścieżki
+  #   URL, NIE parametr), BEZ ŻADNEGO klucza/hasła/kodu DLOADX -
+  #   NIEZALEŻNE od kolejki poleceń protokołu integracji, kosztem
+  #   dodatkowej konfiguracji i zależności od wersji firmware.
+  #
   # UWAGA: "inputs" niżej, "monitored_zones"/"monitored_outputs"/"partitions"
   # poniżej i "tuya.devices" kilka linii dalej w PRAWDZIWYM config.yaml
   # wygenerowanym przez kreator/panel NIE SĄ tutaj - trafiają do osobnych
   # plików satel_fields.yaml i tuya_devices.yaml (analogicznie do
   # sensors.yaml/automations.yaml), edytowalnych z powrotem w przeglądarce
-  # w zakładce "⚙ Ustawienia" (/config, wymaga hasła administratora do
-  # zapisu). Wpisanie ich TUTAJ, bezpośrednio w config.yaml, wciąż działa
-  # (wsteczna zgodność) - patrz bridge/config.py.
+  # na stronach wtyczek (/plugins/satel, /plugins/tuya, wymaga hasła
+  # administratora do zapisu). Wpisanie ich TUTAJ, bezpośrednio w
+  # config.yaml, wciąż działa (wsteczna zgodność) - patrz bridge/config.py.
   virtual_inputs:
-    port: 8888              # port TCP/IP ustawiony w DLOADX dla wejść IP
-    # Dokładny format URL/parametrów (klucz, numer wejścia) skopiuj z
-    # DLOADX po skonfigurowaniu konkretnego wejścia IP - różni się
-    # zależnie od wersji firmware. Wzór poniżej to placeholder do
-    # podmiany na realny z Twojej konfiguracji DLOADX.
-    url_template: "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
+    mode: library    # "library" (zalecane) albo "http"
+    port: 8888                  # tylko dla mode: http (port TCP/IP ETHM-1)
+    url_template: "http://{host}:{port}/{name}"  # tylko mode: http
     inputs:
-      # nazwa logiczna -> (numer wejścia w systemie, klucz z DLOADX)
-      motion_hall_camera:      {number: 17, key: "KLUCZ_WE17"}
-      motion_tuya_pir_garage:  {number: 18, key: "KLUCZ_WE18"}
-      light_on_living_room:    {number: 19, key: "KLUCZ_WE19"}
+      # nazwa logiczna -> numer wejścia (zaprogramowanego w DLOADX) - TEN
+      # SAM kształt niezależnie od "mode" wyżej.
+      motion_hall_camera:      17
+      motion_tuya_pir_garage:  18
+      light_on_living_room:    19
 
   # Wyjścia centrali sterowane programowo (np. przekaźnik, sygnalizacja)
   outputs:
@@ -63,16 +120,18 @@ satel:
   # (niezależnie od tego, czy centrala sama zgłosi zmianę broadcastem -
   # zaobserwowano, że wyjścia nie zawsze to robią, w odróżnieniu od wejść).
   # Edytowalne też z panelu (zakładka 🧩 Wtyczki) BEZ restartu procesu -
-  # minimum 3s, żeby nie zalewać centrali zapytaniami.
-  status_poll_interval_seconds: 15
+  # zalecany zakres 2-5s, minimum 2s (kolejka komend biblioteki i tak
+  # sekwencjonuje zapytania względem innych poleceń, patrz obszerny
+  # docstring bridge/satel_client.py).
+  status_poll_interval_seconds: 3
 
 tuya:
   # Co ile sekund odpytywać lokalnie urządzenia Tuya (WiFi i podurządzenia
   # Zigbee przez bramkę - patrz zigbee_gateways niżej) o status (on/off,
   # jasność) do panelu webowego. Krótszy interwał = szybciej widoczna
-  # zmiana w panelu, ale więcej ruchu sieciowego/obciążenia RPi. Edytowalne
-  # też z panelu (zakładka 🧩 Wtyczki) BEZ restartu procesu - minimum 3s.
-  status_poll_interval_seconds: 30
+  # zmiana w panelu, ale więcej ruchu sieciowego. Edytowalne też z panelu
+  # (zakładka 🧩 Wtyczki) BEZ restartu procesu - minimum 3s.
+  status_poll_interval_seconds: 15
 
   # Lokalne sterowanie (tinytuya) - gniazdka, włączniki, ściemniacze.
   # local_key wyciągasz raz narzędziem: `python -m tinytuya wizard` (albo
@@ -116,17 +175,31 @@ tuya:
       local_key: "zzzzzzzzzzzzzzzz"
       version: 3.4
 
-  # Detekcja ruchu z kamer Tuya - WYMAGA konta Tuya IoT Developer
-  # (developer.tuya.com), utworzonego projektu chmurowego, powiązania
-  # urządzeń z projektem i włączonej subskrypcji Message Service (Pulsar).
+  # Detekcja ruchu z kamer Tuya + import urządzeń/sterowanie chmurowe -
+  # WYMAGA konta Tuya IoT Developer (developer.tuya.com), utworzonego
+  # projektu chmurowego, powiązania urządzeń z projektem i (dla kamer)
+  # włączonej subskrypcji Message Service (Pulsar).
   cloud:
     access_id: "TWOJ_ACCESS_ID"
     access_key: "TWOJ_ACCESS_KEY"
-    api_endpoint: "https://openapi.tuyaeu.com"   # region UE
-    mq_endpoint: "wss://mqe.tuyaeu.com:8285/"    # region UE
+    api_region: "eu"                             # kod regionu (import urządzeń + sterowanie REST)
+    api_endpoint: "https://openapi.tuyaeu.com"   # region UE (tylko kamery Pulsar)
+    mq_endpoint: "wss://mqe.tuyaeu.com:8285/"    # region UE (tylko kamery Pulsar)
     camera_device_ids:
       - "bfabcdef1234567890"   # kamera 1
       - "bf1122334455667788"   # kamera 2
+
+  # Urządzenia sterowane WYŁĄCZNIE przez Tuya Cloud (REST) - typowo
+  # zaimportowane z Tuya Cloud (zakładka ☁ Tuya Cloud), dla których nie
+  # udało się uzyskać local_key/adresu IP w sieci LAN, więc sterowanie
+  # lokalne (devices wyżej) nie jest możliwe - patrz bridge/tuya_cloud.py.
+  # To samo urządzenie skonfigurowane też w "devices" wyżej pod TĄ SAMĄ
+  # nazwą - lokalne ma zawsze pierwszeństwo (bridge/tuya_dispatch.py).
+  cloud_devices:
+    lampa_taras:
+      id: "bfccccccccccccccc"
+      category: "kg"          # opcjonalne, czysto opisowe
+      switch_code: "switch_1" # kod DP wysyłany przy włączaniu/wyłączaniu
 
 location:
   # Potrzebne TYLKO jeśli jakaś reguła używa okna czasowego "sunset"/"sunrise"
@@ -217,6 +290,30 @@ reguły_ruchu:
       window_seconds: 120
       escalated_scene: "wykryto_intruza"
 
+  - name: wejscie_do_domu             # nazwa - potrzebna do then_trigger_rule niżej
+    source: satel_zone
+    zone_number: 3
+    target_device: swiatlo_przedpokoj
+    duration_seconds: 120
+    condition:
+      # Dodatkowy warunek (and/or/not/state/time_window, zagnieżdżony
+      # dowolnie głęboko - jak condition: w Home Assistant) - reguła
+      # zadziała TYLKO, gdy warunek jest spełniony (poza zwykłym
+      # dopasowaniem source/zone_number i time_window wyżej, które
+      # obowiązują zawsze razem z warunkiem).
+      type: and
+      conditions:
+        - {type: state, key: "satel_input:9", equals: "naruszone"}  # ktoś jest w przedpokoju
+        - type: not
+          conditions:
+            - {type: time_window, start: "22:00", end: "06:00"}      # ...ale NIE w nocy
+    then_trigger_rule: powiadom_o_wejsciu   # po zadziałaniu wyzwól też tę regułę
+
+  - name: powiadom_o_wejsciu
+    source: satel_zone
+    zone_number: 3                  # wymagane przez schemat, nieużywane przy wyzwoleniu łańcuchowym
+    scene: "wieczorne_powitanie"
+
 reguły_swiatlo_do_satela:
   # Włączenie danego urządzenia Tuya -> naruszenie wirtualnego wejścia ETHM
   - source_device: swiatlo_korytarz
@@ -272,16 +369,25 @@ dashboard:
   db_path: "bridge_history.db"
 
   auth:
-    # Hasło administratora chroniące TYLKO akcje, które coś zmieniają:
-    # zapis konfiguracji czujników (/config) oraz uzbrajanie/rozbrajanie
+    # Konto administratora chroniące TYLKO akcje, które coś zmieniają:
+    # zapis konfiguracji czujników/stref/urządzeń (/plugins/<id>) oraz
+    # uzbrajanie/rozbrajanie
     # stref. Samo przeglądanie panelu (historia, statusy, dziennik
-    # zdarzeń) zostaje otwarte - to świadomy wybór.
+    # zdarzeń) zostaje otwarte - to świadomy wybór. Oba pola ustawia się
+    # normalnie raz w kreatorze (/setup) - ręczna edycja poniżej to tylko
+    # dla ręcznie pisanego config.yaml (bez kreatora).
+    username: "admin"   # NIE jest sekretem (jak login, nie hasło) - jawny tekst
     #
     # Wygeneruj hash hasła (nigdy nie wpisuj hasła jawnym tekstem):
     #   python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('TWOJE_HASLO'))"
     password_hash: ""   # puste = akcje zmieniające stan są ZABLOKOWANE, dopóki nie ustawisz hasła
     max_failed_attempts: 5
     lockout_seconds: 300
+    allow_basic_auth: true   # wyłącz, żeby wymusić logowanie WYŁĄCZNIE przez /login (patrz README: Ustawienia ogólne)
+    # UWAGA: to jest jedyne konto z ręcznej edycji tego pliku - kolejne
+    # konta (wiele użytkowników) dodaje się już tylko z panelu, zakładka
+    # ⚙ Ustawienia ogólne (tabela "users" w config.db, patrz
+    # bridge/config_store.py) - nie ma dla nich odpowiednika w tym pliku.
 
   # UWAGA: Basic Auth przez zwykłe HTTP koduje hasło tylko w Base64, nie
   # szyfruje go - wystarczające w zaufanej sieci domowej, ale jeśli
@@ -309,11 +415,11 @@ alarm_rules:
     max_age_seconds: 600        # 10 minut bez nowego odczytu = alarm
 
 maintenance:
-  # Rotacja starych danych - baza SQLite rosłaby w nieskończoność na
-  # karcie SD bez czyszczenia. AKTYWNE alerty i OCZEKUJĄCE komendy nigdy
-  # nie są usuwane niezależnie od wieku - reprezentują bieżący stan.
+  # Rotacja starych danych - baza SQLite rosłaby w nieskończoność bez
+  # czyszczenia. AKTYWNE alerty i OCZEKUJĄCE komendy nigdy nie są usuwane
+  # niezależnie od wieku - reprezentują bieżący stan.
   purge_enabled: true
-  retention_days: 90          # jak długo trzymać historyczne odczyty/zdarzenia
+  retention_days: 180         # jak długo trzymać historyczne odczyty/zdarzenia
 
   # Backup - kopia bazy przez wbudowane API SQLite (bezpieczne nawet gdy
   # bridge jednocześnie zapisuje). Domyślnie WYŁĄCZONY - włącz i ustaw
@@ -348,8 +454,8 @@ mqtt_publish:
   # wyżej (ha_mqtt publikuje TYLKO gdy Home Assistant jest włączony, pod
   # jednym wspólnym state_topic_prefix). Domyślnie WŁĄCZONE, jeśli
   # ebus.mqtt_host (broker) jest ustawiony - edytowalne też z panelu,
-  # zakładka 🔌 Połączenia. Temat dla danych z kotła eBUS to osobne pole,
-  # patrz boiler_output.mqtt.topic_prefix niżej (istniało już wcześniej).
+  # strona /plugins/mqtt_publish. Temat dla danych z kotła eBUS to osobne
+  # pole, patrz boiler_output.mqtt.topic_prefix niżej (istniało już wcześniej).
   enabled: true
   topics:
     satel: "satel"   # -> satel/input/<numer>/state, satel/output/<numer>/state, satel/partition/<numer>/state

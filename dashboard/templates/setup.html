@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Kreator konfiguracji - Satel-Tuya-eBUS Bridge</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 <style>
   :root {
     --bg: #14161a; --card: #1d2026; --border: #2c3038;
@@ -48,6 +49,10 @@
   .step-hint { color: var(--muted); font-size: 13px; margin: -6px 0 14px 36px; line-height: 1.5; }
   .field-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
   .field { flex: 1; min-width: 140px; }
+  /* [hidden] mogłoby przegrać z regułą "display" o równej specyficzności
+     (np. .discover-row) w zależności od kolejności w arkuszu - wymuszamy,
+     żeby "hidden" zawsze wygrywało. */
+  [hidden] { display: none !important; }
   .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
   input[type=text], input[type=password], input[type=number] {
     background: #262a32; color: var(--text); border: 1px solid var(--border);
@@ -159,7 +164,7 @@
 </style>
 </head>
 <body>
-<h1>🧙 Kreator konfiguracji <button type="button" id="debugToggleBtn" class="secondary" style="font-size: 12px; padding: 5px 10px; vertical-align: middle; margin-left: 8px;">🐛 Pokaż debug</button></h1>
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🧙 Kreator konfiguracji <button type="button" id="debugToggleBtn" class="secondary" style="font-size: 12px; padding: 5px 10px; vertical-align: middle; margin-left: 8px;">🐛 Pokaż debug</button></h1>
 <div class="intro">
   Pierwsza konfiguracja bridge'a Satel-Tuya-eBUS - podzielona na etapy.
   Po każdym kliknięciu <b>Dalej</b> postęp zapisuje się automatycznie na
@@ -195,8 +200,37 @@
       <div class="field"><label>Port (integration protocol)</label><input type="number" id="satel_port" value="7094"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Klucz integracji</label><input type="text" id="satel_integration_key" placeholder="ustawiony w DLOADX"></div>
-      <div class="field"><label>Port wejść IP (wirtualne wejścia)</label><input type="number" id="satel_virtual_inputs_port" value="8888"></div>
+      <div class="field"><label>Kod użytkownika centrali (opcjonalny)</label><input type="text" id="satel_integration_key" placeholder="numeryczny PIN ustawiony w DLOADX/GUARDX - zostaw puste dla trybu tylko do odczytu"></div>
+    </div>
+    <div class="step-hint" style="margin: -6px 0 14px;">
+      To NIE jest hasło/klucz modułu ETHM - to zwykły, numeryczny kod
+      użytkownika centrali (ten sam typ kodu, którym uzbraja/rozbraja się
+      z klawiatury), autoryzujący każdą komendę zapisu (uzbrojenie/
+      rozbrojenie/wyjścia). Bez niego panel będzie działał <b>tylko do
+      odczytu</b> (podgląd stref/wyjść/partycji) - (roz)uzbrajanie i
+      sterowanie wyjściami będzie zablokowane, dopóki nie dopiszesz kodu
+      później w ⚙ Ustawienia -> 🔌 Połączenia.
+    </div>
+    <div class="field-row">
+      <div class="field" style="flex: none;">
+        <label><input type="checkbox" id="satel_encryption_enabled" style="width: auto; margin-right: 6px;">Centrala ma włączone szyfrowanie transmisji</label>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Klucz szyfrowania</label>
+        <input type="text" id="satel_encryption_key" placeholder="klucz szyfrowania z DLOADX" disabled>
+      </div>
+    </div>
+    <div class="step-hint" style="margin: -6px 0 14px;">
+      To NIE jest kod użytkownika wyżej - to osobny klucz szyfrowania
+      transmisji (AES), ustawiany w DLOADX TYLKO jeśli centrala ma
+      jawnie włączoną szyfrowaną komunikację integracji. Zostaw checkbox
+      wyłączony, jeśli nie wiesz, o co chodzi - większość instalacji tego
+      nie używa, transmisja idzie wtedy czystym tekstem po sieci LAN
+      (patrz sekcja "Bezpieczeństwo" w README). Sam wpisany klucz NIE
+      wystarczy - szyfrowanie jest używane TYLKO gdy checkbox jest
+      zaznaczony.
     </div>
 
     <div class="discover-row">
@@ -204,8 +238,9 @@
       <span class="discover-status" id="satelConnectionStatus"></span>
     </div>
     <div class="step-hint" style="margin: -6px 0 14px;">
-      Sprawdza tylko, czy pod tym adresem/portem coś odpowiada (TCP) - protokół
-      integracji Satela nie pozwala zweryfikować samego klucza bez wykonania
+      Sprawdza, czy centrala odpowiada i nie jest zajęta przez inny
+      klient integracji (DLOADX/GUARDX) - NIE zweryfikuje samego klucza
+      integracji (protokół nie pozwala tego sprawdzić bez wykonania
       polecenia zmieniającego stan (uzbrojenie/wyjście), więc test świadomie
       tego nie robi. Błędny klucz ujawni się dopiero przy pierwszym
       uzbrojeniu/rozbrojeniu.
@@ -223,19 +258,24 @@
     </div>
 
     <div class="discover-row">
-      <button type="button" class="secondary" id="discoverSatelBtn">🔍 Wykryj aktywne strefy/wyjścia (nasłuchuj 30s)</button>
+      <button type="button" class="secondary" id="discoverSatelBtn">🔍 Wykryj aktywne strefy/wyjścia</button>
+      <label style="font-size: 12.5px; color: var(--muted);">nasłuchuj
+        <input type="number" id="discoverSatelTimeout" value="30" min="5" max="120" style="width: 56px;"> s
+      </label>
       <span class="discover-status" id="satelDiscoverStatus"></span>
     </div>
     <div class="step-hint" style="margin: -6px 0 14px;">
       Protokół integracji Satela NIE udostępnia pełnej listy skonfigurowanych
       stref/wyjść wraz z nazwami (ograniczenie protokołu, nie dało się tego
-      obejść) - to, co REALNIE można zrobić: nasłuchiwać przez 30 sekund i
-      zanotować numery, które w tym czasie ZMIENIĄ STAN. <b>Podczas nasłuchu
-      przejdź przez pilnowane pomieszczenia</b> (otwórz/zamknij drzwi i okna,
-      wywołaj czujki ruchu) - wykryte numery trafią jako nowe wiersze niżej
-      (dopisz im nazwy). Strefy, które nie zmienią stanu w tym oknie, nie
-      zostaną wykryte - dodaj je ręcznie, jeśli znasz ich numer z DLOADX.
-      Nie wymaga klucza integracji (jak "Testuj połączenie" wyżej).
+      obejść) - to, co REALNIE można zrobić: nasłuchiwać przez wybrany czas
+      (domyślnie 30s, maks. 120s) i zanotować numery, które w tym czasie
+      ZMIENIĄ STAN. <b>Podczas nasłuchu przejdź przez pilnowane
+      pomieszczenia</b> (otwórz/zamknij drzwi i okna, wywołaj czujki ruchu)
+      - wykryte numery trafią jako nowe wiersze niżej (dopisz im nazwy).
+      Strefy, które nie zmienią stanu w tym oknie, nie zostaną wykryte -
+      dodaj je ręcznie, jeśli znasz ich numer z DLOADX, albo wydłuż czas
+      nasłuchu i spróbuj ponownie. Nie wymaga klucza integracji (jak
+      "Testuj połączenie" wyżej).
     </div>
 
     <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">Strefy (do uzbrajania/rozbrajania z panelu)</label>
@@ -251,10 +291,32 @@
     <button type="button" class="add-row-btn" id="addOutputBtn">+ Dodaj wyjście</button>
 
     <label style="font-size:13px; color: var(--muted); display:block; margin: 14px 0 6px;">
-      Wirtualne wejścia IP (do wysyłania naruszeń z Tuya/scen) - skonfigurowane
-      w DLOADX, zakładka "Wejścia IP"; nazwy stąd wykorzystasz w krokach
-      "Sceny" i "Reguły ruchu"
+      Wirtualne wejścia IP (do wysyłania naruszeń z Tuya/scen) - nazwy stąd
+      wykorzystasz w krokach "Sceny" i "Reguły ruchu"
     </label>
+    <div class="step-hint" style="margin: 0 0 10px;">
+      <b>Biblioteka satel_integra</b> (zalecane) - zwykłe wyjście Satela
+      (numer 1-256), wyzwalane przez to samo połączenie integracji co
+      reszta poleceń - te polecenia CZEKAJĄ w jednej kolejce, bo centrala
+      obsługuje tylko jednego klienta integracji naraz. <b>HTTP (Wejścia IP
+      ETHM-1)</b> - osobne połączenie, niezależne od tej kolejki,
+      skonfigurowane w module (port poniżej), kosztem osobnego portu -
+      zwykłe, NIEUWIERZYTELNIONE żądanie GET (host:port/nazwa wejścia),
+      BEZ żadnego klucza/kodu DLOADX.
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Tryb</label>
+        <select id="satel_virtual_inputs_mode">
+          <option value="library">Biblioteka satel_integra (zalecane)</option>
+          <option value="http">HTTP (Wejścia IP ETHM-1)</option>
+        </select>
+      </div>
+      <div class="field" id="satel_vi_port_field" hidden>
+        <label>Port HTTP (ETHM-1)</label>
+        <input type="number" id="satel_virtual_inputs_port" value="8888">
+      </div>
+    </div>
     <div id="virtualInputsRows"></div>
     <button type="button" class="add-row-btn" id="addVirtualInputBtn">+ Dodaj wirtualne wejście</button>
   </div>
@@ -361,8 +423,11 @@ sudo systemctl enable --now mosquitto</pre>
     <div class="step-header"><div class="step-number">4</div><div class="step-title">Hasło administratora panelu</div></div>
     <div class="step-hint">Wymagane tylko do zmiany ustawień i uzbrajania/rozbrajania - podgląd panelu zostaje bez hasła.</div>
     <div class="field-row">
-      <div class="field"><label>Hasło (min. 8 znaków)</label><input type="password" id="admin_password"></div>
-      <div class="field"><label>Powtórz hasło</label><input type="password" id="admin_password_confirm"></div>
+      <div class="field"><label>Nazwa użytkownika</label><input type="text" id="admin_username" value="admin" autocomplete="username"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Hasło (min. 8 znaków)</label><input type="password" id="admin_password" autocomplete="new-password"></div>
+      <div class="field"><label>Powtórz hasło</label><input type="password" id="admin_password_confirm" autocomplete="new-password"></div>
     </div>
   </div>
 
@@ -522,16 +587,7 @@ sudo systemctl enable --now satel-tuya-bridge</pre>
 const TOTAL_STEPS = 10;
 let currentStep = 1;
 
-// ------------------------------------------------------------------
-// Tryb debugowania - "🐛 Pokaż debug" ujawnia dziennik komunikacji
-// sieciowej (żądanie/odpowiedź) dla akcji w kreatorze (test połączenia,
-// wykrywanie stref/czujników, import z Tuya Cloud, skan sieci, zapis) -
-// przydatne, żeby zobaczyć DOKŁADNIE co poszło nie tak, bez zaglądania do
-// logów serwera/konsoli przeglądarki. Hasła/klucze/sekrety są ZAWSZE
-// ukryte (patrz redactForDebug) - panel pokazuje tylko to, co i tak widać
-// w devtoolsach przeglądarki (Network), tylko zebrane w jednym miejscu i
-// bez surowych nagłówków/ciasteczek.
-// ------------------------------------------------------------------
+
 let debugEntries = [];
 const DEBUG_REDACT_KEYS = new Set([
   'password', 'admin_password', 'admin_password_confirm', 'access_key',
@@ -600,9 +656,7 @@ document.getElementById('debugClearBtn').addEventListener('click', () => {
   renderDebugPanel();
 });
 
-// ------------------------------------------------------------------
-// Sekcje typu "nazwa + numer" (strefy, wejścia, wyjścia)
-// ------------------------------------------------------------------
+
 function addNameNumberRow(containerId, initial) {
   const container = document.getElementById(containerId);
   const row = document.createElement('div');
@@ -628,9 +682,7 @@ function collectNameNumberRows(containerId) {
     .filter(r => r.name && r.number);
 }
 
-// ------------------------------------------------------------------
-// Wirtualne wejścia IP (nazwa + numer + klucz DLOADX)
-// ------------------------------------------------------------------
+
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');
   const row = document.createElement('div');
@@ -638,12 +690,10 @@ function addVirtualInputRow(initial) {
   row.innerHTML = `
     <input type="text" placeholder="nazwa (np. motion_hall_camera)" class="vi-name">
     <input type="number" placeholder="numer wejścia" class="vi-number" style="max-width: 120px;">
-    <input type="text" placeholder="klucz z DLOADX" class="vi-key">
     <button type="button" class="row-remove">✕</button>`;
   if (initial) {
     row.querySelector('.vi-name').value = initial.name || '';
     row.querySelector('.vi-number').value = initial.number || '';
-    row.querySelector('.vi-key').value = initial.key || '';
   }
   row.querySelector('.row-remove').addEventListener('click', () => row.remove());
   row.querySelector('.vi-name').addEventListener('input', refreshVirtualInputsDatalist);
@@ -655,9 +705,17 @@ function collectVirtualInputs() {
   return Array.from(document.querySelectorAll('#virtualInputsRows .repeatable-row')).map(row => ({
     name: row.querySelector('.vi-name').value.trim(),
     number: row.querySelector('.vi-number').value,
-    key: row.querySelector('.vi-key').value.trim(),
-  })).filter(v => v.name || v.number || v.key);
+  })).filter(v => v.name || v.number);
 }
+
+document.getElementById('satel_virtual_inputs_mode').addEventListener('change', () => {
+  const isHttp = document.getElementById('satel_virtual_inputs_mode').value === 'http';
+  document.getElementById('satel_vi_port_field').hidden = !isHttp;
+});
+
+document.getElementById('satel_encryption_enabled').addEventListener('change', () => {
+  document.getElementById('satel_encryption_key').disabled = !document.getElementById('satel_encryption_enabled').checked;
+});
 
 document.getElementById('testSatelConnectionBtn').addEventListener('click', async () => {
   const btn = document.getElementById('testSatelConnectionBtn');
@@ -671,10 +729,15 @@ document.getElementById('testSatelConnectionBtn').addEventListener('click', asyn
   btn.disabled = true;
   status.textContent = 'Łączę...';
   try {
+    const encryptionEnabled = document.getElementById('satel_encryption_enabled').checked;
+    const encryptionKey = document.getElementById('satel_encryption_key').value.trim();
     const resp = await debugFetch('Testuj połączenie (Satel)', '/api/setup/test-satel-connection', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host, port }),
+      body: JSON.stringify({
+        host, port, encryption_enabled: encryptionEnabled,
+        encryption_key: encryptionEnabled ? (encryptionKey || undefined) : undefined,
+      }),
     });
     const data = await resp.json();
     status.textContent = (resp.ok ? '✅ ' : '❌ ') + (data.message || data.error);
@@ -694,13 +757,14 @@ document.getElementById('discoverSatelBtn').addEventListener('click', async () =
     status.textContent = '❌ Podaj najpierw adres IP centrali';
     return;
   }
+  const timeoutSeconds = Math.min(120, Math.max(5, parseInt(document.getElementById('discoverSatelTimeout').value, 10) || 30));
   btn.disabled = true;
-  status.textContent = 'Nasłuchuję 30s - przejdź teraz przez pilnowane pomieszczenia...';
+  status.textContent = `Nasłuchuję ${timeoutSeconds}s - przejdź teraz przez pilnowane pomieszczenia...`;
   try {
     const resp = await debugFetch('Wykryj strefy/wyjścia (Satel)', '/api/discover/satel', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host, port, timeout_seconds: 30 }),
+      body: JSON.stringify({ host, port, timeout_seconds: timeoutSeconds }),
     });
     const data = await resp.json();
     if (!resp.ok) {
@@ -722,7 +786,7 @@ document.getElementById('discoverSatelBtn').addEventListener('click', async () =
     });
     status.textContent = added
       ? `Wykryto aktywność na ${added} numerach - dodano jako nowe wiersze niżej, nadaj im właściwe nazwy przed zapisem.`
-      : 'Nie wykryto żadnej aktywności - żadna czujka/wyjście nie zmieniły stanu podczas nasłuchu. Spróbuj ponownie i fizycznie wyzwól interesujące Cię strefy w tym oknie.';
+      : (data.warning || 'Nie wykryto żadnej aktywności - żadna czujka/wyjście nie zmieniły stanu podczas nasłuchu. Spróbuj ponownie i fizycznie wyzwól interesujące Cię strefy w tym oknie.');
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
   } finally {
@@ -730,9 +794,7 @@ document.getElementById('discoverSatelBtn').addEventListener('click', async () =
   }
 });
 
-// ------------------------------------------------------------------
-// Urządzenia Tuya
-// ------------------------------------------------------------------
+
 function addTuyaDeviceRow(initial) {
   const container = document.getElementById('tuyaDevicesRows');
   const row = document.createElement('div');
@@ -777,10 +839,7 @@ function collectTuyaDevices() {
   })).filter(d => d.name || d.id || d.ip || d.local_key);
 }
 
-// Dodaje wykryte urządzenie (skan LAN albo import z Tuya Cloud) - jeśli
-// wiersz z tym samym ID już istnieje (np. skan LAN dodał samo ID+IP, a
-// import z Cloud dorzuca teraz nazwę+local_key), UZUPEŁNIA go zamiast
-// tworzyć duplikat.
+
 function upsertTuyaDeviceRow(device) {
   if (!device.id) { addTuyaDeviceRow(device); return; }
   const existingRow = Array.from(document.querySelectorAll('#tuyaDevicesRows .repeatable-row'))
@@ -797,9 +856,7 @@ function upsertTuyaDeviceRow(device) {
   return true;
 }
 
-// Zakładki "Ręcznie / skanuj sieć" vs "Import z Tuya Cloud" - obie
-// dopisują do TEJ SAMEJ listy urządzeń na dole, więc przełączanie
-// zakładek niczego nie ukrywa ani nie kasuje.
+
 document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
   btn.addEventListener('click', () => {
     const targetId = btn.dataset.tab;
@@ -865,13 +922,7 @@ document.getElementById('fetchTuyaCloudBtn').addEventListener('click', async () 
   }
 });
 
-// ------------------------------------------------------------------
-// Tuya Cloud: te same poświadczenia (Access ID/Secret) są potrzebne w
-// DWÓCH miejscach kreatora - import urządzeń (krok 2) i integracja
-// kamer/wirtualnego urządzenia (krok 7) - zamiast pytać dwa razy,
-// synchronizujemy pola na bieżąco w OBIE strony (wpisanie w
-// którymkolwiek miejscu wypełnia drugie).
-// ------------------------------------------------------------------
+
 [
   ['tuya_cloud_import_id', 'tuya_access_id'],
   ['tuya_cloud_import_key', 'tuya_access_key'],
@@ -882,15 +933,7 @@ document.getElementById('fetchTuyaCloudBtn').addEventListener('click', async () 
   elB.addEventListener('input', () => { if (elA.value !== elB.value) elA.value = elB.value; });
 });
 
-// Endpointy API/Pulsar zależą od regionu Tuya Cloud - wyprowadzane z
-// jedynego selektora regionu w kreatorze (krok 2, dotyczy też integracji
-// z kroku 7, patrz collectFormData). Hosty API potwierdzone wprost ze
-// źródeł tinytuya (Cloud.setregion) - hosty Pulsar/Message Service (mqe.*)
-// są pewne TYLKO dla głównych regionów (eu/us/cn/in, ten sam wzorzec co w
-// config.example.yaml); dla us-e/eu-w/sg NIE zgadujemy nieudokumentowanej
-// nazwy hosta - zostaje domyślny (UE) z wyraźnym ostrzeżeniem, żeby
-// zweryfikować go w developer.tuya.com (Cloud -> projekt -> Message
-// Service pokazuje faktyczny adres subskrypcji).
+
 const TUYA_REGION_ENDPOINTS = {
   'eu':   { api: 'https://openapi.tuyaeu.com',        mq: 'wss://mqe.tuyaeu.com:8285/' },
   'us':   { api: 'https://openapi.tuyaus.com',         mq: 'wss://mqe.tuyaus.com:8285/' },
@@ -912,7 +955,7 @@ function tuyaCloudRegionWarning() {
     el.textContent = '⚠ Adres serwera Pulsar (powiadomienia kamer) dla tego regionu nie jest ' +
       'pewny - jeśli włączysz integrację Tuya Cloud w kroku 7 i kamery nie będą działać, ' +
       'sprawdź faktyczny adres w developer.tuya.com (Cloud → Twój projekt → Message Service) ' +
-      'i popraw go ręcznie po zapisie w zakładce 🔌 Połączenia (panel /config).';
+      'i popraw go ręcznie po zapisie w zakładce ☁ Tuya Cloud (/plugins/tuya_cloud).';
   }
 }
 document.getElementById('tuya_cloud_import_region').addEventListener('change', tuyaCloudRegionWarning);
@@ -940,7 +983,7 @@ function refreshVirtualInputsDatalist() {
   list.innerHTML = getVirtualInputNames().map(n => `<option value="${escapeHtml(n)}">`).join('');
 }
 
-// Rozwijanie sekcji integracji opcjonalnych po zaznaczeniu checkboxa
+
 [['ha_enabled', 'haContent'], ['unifi_enabled', 'unifiContent'], ['tuya_cloud_enabled', 'tuyaCloudContent']]
   .forEach(([checkboxId, contentId]) => {
     document.getElementById(checkboxId).addEventListener('change', (e) => {
@@ -948,11 +991,7 @@ function refreshVirtualInputsDatalist() {
     });
   });
 
-// "Uruchom lokalny broker MQTT dla mnie" - po zaznaczeniu adres/port
-// wypełniają się same (127.0.0.1:1883, tam gdzie wyląduje mosquitto z
-// instrukcji w info-boxie) i znikają jako pole do ręcznego wypełnienia -
-// nie pytamy o to drugi raz. Po odznaczeniu wracamy do pustego pola do
-// ręcznego wpisania adresu istniejącego brokera.
+
 document.getElementById('ebus_run_local_broker').addEventListener('change', (e) => {
   const hostField = document.getElementById('ebus_mqtt_host');
   const portField = document.getElementById('ebus_mqtt_port');
@@ -972,9 +1011,7 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
-// ------------------------------------------------------------------
-// Sceny - karta na scenę, wewnątrz repeatable-row na każdą akcję
-// ------------------------------------------------------------------
+
 const SCENE_ACTION_LABELS = {
   tuya_on: 'Włącz urządzenie Tuya',
   tuya_off: 'Wyłącz urządzenie Tuya',
@@ -1091,10 +1128,7 @@ function collectScenes() {
   }));
 }
 
-// ------------------------------------------------------------------
-// Reguły ruchu - karta na regułę (Satel zone -> urządzenie/scena),
-// z opcjonalnym harmonogramem i eskalacją
-// ------------------------------------------------------------------
+
 function sceneOptionsHtml(selected) {
   const names = getSceneNames();
   const placeholder = `<option value="">${names.length ? '(wybierz scenę)' : '(brak scen - dodaj je w kroku 8)'}</option>`;
@@ -1220,15 +1254,16 @@ function collectMotionRules() {
   });
 }
 
-// ------------------------------------------------------------------
-// Zbieranie / wypełnianie całego formularza
-// ------------------------------------------------------------------
+
 function collectFormData() {
   return {
     satel: {
       host: document.getElementById('satel_host').value.trim(),
       port: document.getElementById('satel_port').value,
       integration_key: document.getElementById('satel_integration_key').value.trim(),
+      encryption_enabled: document.getElementById('satel_encryption_enabled').checked,
+      encryption_key: document.getElementById('satel_encryption_key').value.trim(),
+      virtual_inputs_mode: document.getElementById('satel_virtual_inputs_mode').value,
       virtual_inputs_port: document.getElementById('satel_virtual_inputs_port').value,
     },
     partitions: collectNameNumberRows('partitionsRows'),
@@ -1240,6 +1275,7 @@ function collectFormData() {
       mqtt_host: document.getElementById('ebus_mqtt_host').value.trim(),
       mqtt_port: document.getElementById('ebus_mqtt_port').value,
     },
+    admin_username: document.getElementById('admin_username').value.trim(),
     admin_password: document.getElementById('admin_password').value,
     admin_password_confirm: document.getElementById('admin_password_confirm').value,
     notifications: { ntfy_topic_url: document.getElementById('ntfy_topic_url').value.trim() },
@@ -1261,8 +1297,11 @@ function collectFormData() {
         enabled: document.getElementById('tuya_cloud_enabled').checked,
         access_id: document.getElementById('tuya_cloud_enabled').checked ? document.getElementById('tuya_access_id').value.trim() : '',
         access_key: document.getElementById('tuya_access_key').value,
-        // Wyprowadzone z JEDYNEGO selektora regionu w kreatorze (krok 2) -
-        // patrz TUYA_REGION_ENDPOINTS i tuyaCloudRegionWarning() wyżej.
+        
+        
+        api_region: region,
+        
+        
         api_endpoint: endpoints.api || '',
         mq_endpoint: endpoints.mq || '',
       };
@@ -1278,7 +1317,14 @@ function populateForm(data) {
 
   const satel = data.satel || {};
   set('satel_host', satel.host); set('satel_port', satel.port);
-  set('satel_integration_key', satel.integration_key); set('satel_virtual_inputs_port', satel.virtual_inputs_port);
+  set('satel_integration_key', satel.integration_key);
+  document.getElementById('satel_encryption_enabled').checked = !!satel.encryption_enabled;
+  document.getElementById('satel_encryption_key').disabled = !satel.encryption_enabled;
+  set('satel_encryption_key', satel.encryption_key);
+  set('satel_virtual_inputs_mode', satel.virtual_inputs_mode || 'library');
+  set('satel_virtual_inputs_port', satel.virtual_inputs_port);
+  const satelViIsHttp = document.getElementById('satel_virtual_inputs_mode').value === 'http';
+  document.getElementById('satel_vi_port_field').hidden = !satelViIsHttp;
 
   (data.partitions || []).forEach(p => addNameNumberRow('partitionsRows', p));
   (data.monitored_zones || []).forEach(z => addNameNumberRow('zonesRows', z));
@@ -1296,6 +1342,7 @@ function populateForm(data) {
     document.getElementById('ebusLocalBrokerInfo').style.display = '';
   }
 
+  set('admin_username', data.admin_username || 'admin');
   set('admin_password', data.admin_password); set('admin_password_confirm', data.admin_password_confirm);
   set('ntfy_topic_url', (data.notifications || {}).ntfy_topic_url);
 
@@ -1316,6 +1363,7 @@ function populateForm(data) {
   document.getElementById('tuya_cloud_enabled').checked = !!tc.enabled;
   document.getElementById('tuyaCloudContent').classList.toggle('show', !!tc.enabled);
   set('tuya_access_id', tc.access_id); set('tuya_access_key', tc.access_key);
+  if (tc.api_region) set('tuya_cloud_import_region', tc.api_region);
 
   (data.scenes || []).forEach(s => addSceneCard(s));
   (data.motion_rules || []).forEach(r => addMotionRuleCard(r));
@@ -1323,9 +1371,7 @@ function populateForm(data) {
   refreshRuleDropdowns();
 }
 
-// ------------------------------------------------------------------
-// Walidacja pojedynczego kroku (przed przejściem "Dalej"/zapisem)
-// ------------------------------------------------------------------
+
 const SCENE_ACTION_REQUIRED = {
   tuya_on: ['device'], tuya_off: ['device'], tuya_on_for_duration: ['device', 'duration_seconds'],
   satel_output: ['output_number'], satel_virtual_input: ['virtual_input'],
@@ -1336,9 +1382,10 @@ function validateStep(n, data) {
   const errors = [];
   if (n === 1) {
     if (!data.satel.host) errors.push('Adres IP centrali/ETHM jest wymagany');
-    if (!data.satel.integration_key) errors.push('Klucz integracji jest wymagany');
+    
+    
     data.virtual_inputs.forEach((v, i) => {
-      if (!(v.name && v.number && v.key)) errors.push(`Wirtualne wejście #${i + 1}: uzupełnij nazwę, numer i klucz (albo usuń wiersz)`);
+      if (!(v.name && v.number)) errors.push(`Wirtualne wejście #${i + 1}: uzupełnij nazwę i numer (albo usuń wiersz)`);
     });
   } else if (n === 2) {
     data.tuya_devices.forEach((d, i) => {
@@ -1347,6 +1394,7 @@ function validateStep(n, data) {
   } else if (n === 3) {
     if (!data.ebus.mqtt_host) errors.push('Adres brokera MQTT (eBUS) jest wymagany');
   } else if (n === 4) {
+    if (!data.admin_username) errors.push('Nazwa użytkownika administratora jest wymagana');
     if (data.admin_password.length < 8) errors.push('Hasło panelu: minimum 8 znaków');
     if (data.admin_password !== data.admin_password_confirm) errors.push('Hasła nie są identyczne');
   } else if (n === 6) {
@@ -1412,9 +1460,7 @@ function showStepError(errors) {
   box.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-// ------------------------------------------------------------------
-// Nawigacja między krokami + autozapis postępu na serwer
-// ------------------------------------------------------------------
+
 function renderProgressDots() {
   const dots = document.getElementById('progressDots');
   dots.innerHTML = '';
@@ -1451,8 +1497,8 @@ async function saveDraft(step, data) {
       body: JSON.stringify({ step, data }),
     });
   } catch (err) {
-    // Brak sieci nie powinien blokować dalszej pracy w kreatorze - spróbujemy
-    // zapisać przy kolejnym kroku. Ostateczny zapis i tak wymaga /api/setup/save.
+    
+    
     console.warn('Nie udało się zapisać postępu kreatora:', err);
   }
 }
@@ -1521,16 +1567,8 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
       resultBox.innerHTML = '✅ ' + respData.message + '<br>' +
         respData.next_steps.map(s => `<code>${escapeHtml(s)}</code>`).join('<br>') +
         '<br><br>Przenoszę do panelu (już zalogowany)...';
-      // Kreator ma się już nie pokazać ponownie po zapisie (/setup samo
-      // przekierowuje na / po tym, jak config.yaml istnieje - patrz
-      // dashboard/app.py: is_configured()) - tutaj tylko dajemy chwilę na
-      // przeczytanie komunikatu, zanim przełączymy stronę. api_setup_save
-      // już ustawiło ciasteczko sesji w SWOJEJ odpowiedzi (patrz
-      // dashboard/app.py), więc panel po przeładowaniu jest od razu
-      // zalogowany - nie trzeba niczego dodatkowo robić ani przekazywać
-      // hasła w adresie URL (wcześniejsza wersja robiła dokładnie to:
-      // #auth=base64(hasło) - jawne, odwracalne kodowanie hasła w pasku
-      // adresu, widoczne w historii przeglądarki).
+      
+      
       setTimeout(() => {
         window.location.href = '/';
       }, 1800);
@@ -1550,11 +1588,9 @@ document.getElementById('discardDraftBtn').addEventListener('click', async () =>
   location.reload();
 });
 
-// ------------------------------------------------------------------
-// Start: wczytaj zapisany postęp (jeśli jest), inaczej pusty krok 1
-// ------------------------------------------------------------------
+
 (async function init() {
-  addTuyaDeviceRow(); // domyślny jeden wiersz, nadpisywany przez populateForm() jeśli jest draft
+  addTuyaDeviceRow(); 
 
   let draft = {};
   try {

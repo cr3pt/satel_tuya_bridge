@@ -1,38 +1,3 @@
-"""Kreator pierwszej konfiguracji - budowanie config.yaml i jego towarzyszy
-(sensors.yaml/automations.yaml/satel_fields.yaml/tuya_devices.yaml) z danych
-wypełnionych w formularzu webowym (/setup).
-
-Wieloetapowy kreator (/setup): każdy krok to osobna "strona" w
-templates/setup.html, przechodzona przyciskiem "Dalej". Po każdym takim
-kliknięciu cały dotychczasowy stan formularza trafia do pliku roboczego
-(patrz save_draft/load_draft niżej) - dzięki temu konfigurację da się
-przerwać i wznowić później (np. inna sesja przeglądarki), zanim finalny
-config.yaml w ogóle powstanie.
-
-Pokrywa PODSTAWOWĄ konfigurację potrzebną do uruchomienia bridge'a (Satel,
-Tuya lokalnie, eBUS/MQTT, hasło panelu, powiadomienia, opcjonalnie Home
-Assistant/UniFi Protect/Tuya cloud) ORAZ bardziej zaawansowane rzeczy
-zbudowane na wspólnym fundamencie scen (bridge/scenes.py): sceny,
-harmonogramy czasowe (time_window) i eskalację przy powtarzających się
-naruszeniach (obie ostatnie jako pola reguł ruchu).
-
-Cztery rodzaje "pól" - czujniki eBUS, sceny/reguły ruchu/symulacja
-obecności, strefy/wyjścia/wejścia IP/partycje Satela, urządzenia Tuya -
-trafiają do OSOBNYCH plików (odpowiednio sensors.yaml/automations.yaml/
-satel_fields.yaml/tuya_devices.yaml), NIE do config.yaml: to jedyne pliki,
-które UI (kreator i panele /config, /automations - patrz dashboard/app.py)
-wolno mu bezpiecznie nadpisywać w całości, bez ryzyka skasowania ręcznych
-zmian i komentarzy w config.yaml. Po pierwszej konfiguracji wszystkie
-cztery da się w pełni edytować z powrotem w przeglądarce, w zabezpieczonych
-hasłem panelach - żadne z nich nie wymagają ręcznej edycji YAML-a (choć to
-wciąż działa, patrz bridge/config.py - wsteczna zgodność ze starszymi
-configami).
-
-Rzeczy, których panel WCIĄŻ nie obsługuje (reguły_kamera_alarm,
-reguły_swiatlo_do_satela, boiler_rules, alarm_rules) dostają puste/domyślne
-wartości w config.yaml - dodaje się je później ręcznie (plik zostaje w
-pełni edytowalny, to nie jest jednorazowy generator).
-"""
 from __future__ import annotations
 
 import copy
@@ -43,8 +8,6 @@ from werkzeug.security import generate_password_hash
 
 DRAFT_FILENAME = ".setup_draft.json"
 
-# Typy akcji scen obsługiwane przez SceneRunner (bridge/scenes.py) i pola,
-# które KAŻDA z nich wymaga - używane do walidacji formularza kreatora.
 SCENE_ACTION_REQUIRED_FIELDS = {
     "tuya_on": ["device"],
     "tuya_off": ["device"],
@@ -58,18 +21,19 @@ SCENE_ACTION_REQUIRED_FIELDS = {
 
 
 def validate(form: dict) -> list[str]:
-    """Zwraca listę komunikatów błędów (pusta lista = wszystko OK)."""
     errors = []
 
     satel = form.get("satel", {})
     if not satel.get("host"):
         errors.append("Satel: adres IP centrali/modułu ETHM jest wymagany")
-    if not satel.get("integration_key"):
-        errors.append("Satel: klucz integracji (ustawiony w DLOADX) jest wymagany")
 
     ebus = form.get("ebus", {})
     if not ebus.get("mqtt_host"):
         errors.append("eBUS: adres brokera MQTT jest wymagany")
+
+    username = (form.get("admin_username") or "").strip()
+    if not username:
+        errors.append("Nazwa użytkownika administratora jest wymagana")
 
     password = form.get("admin_password", "")
     if len(password) < 8:
@@ -77,32 +41,21 @@ def validate(form: dict) -> list[str]:
 
     errors.extend(validate_satel_fields(form))
     errors.extend(validate_tuya_devices(form))
+    errors.extend(validate_cloud_devices(form))
     errors.extend(validate_automations(form))
 
     return errors
 
 
 def validate_satel_fields(form: dict) -> list[str]:
-    """Waliduje TYLKO "pola" Satela (wirtualne wejścia IP - jedyne z nich
-    wymagające kompletu danych, żeby scenom/regułom było do czego się
-    odwołać). Strefy/wyjścia/partycje nie mają twardej walidacji - niepełny
-    wiersz (brakująca nazwa albo numer) jest po prostu pomijany przy
-    zapisie (patrz _build_monitored_zones/_build_monitored_outputs/
-    _build_partitions). Współdzielone przez kreator i panel /config."""
     errors = []
     for i, vi in enumerate(form.get("virtual_inputs", [])):
-        if not vi.get("name") or not vi.get("number") or not vi.get("key"):
-            errors.append(f"Wirtualne wejście #{i + 1}: nazwa, numer i klucz z DLOADX są wymagane")
+        if not vi.get("name") or not vi.get("number"):
+            errors.append(f"Wirtualne wejście #{i + 1}: nazwa i numer wejścia są wymagane")
     return errors
 
 
 def validate_tuya_devices(form: dict) -> list[str]:
-    """Waliduje urządzenia Tuya ORAZ bramki Zigbee - współdzielone przez
-    kreator i panel /config (patrz validate_satel_fields wyżej - ten sam
-    wzorzec). Urządzenie WSKAZUJĄCE bramkę (pole "gateway" - podurządzenie
-    Zigbee) nie ma własnego ip/local_key (tinytuya kieruje ruch przez
-    połączenie bramki, patrz bridge/tuya_local.py) - wymaga za to, żeby
-    wskazana bramka faktycznie istniała wśród zdefiniowanych niżej."""
     errors = []
     gateway_names = {
         g["name"].strip() for g in form.get("zigbee_gateways", [])
@@ -128,16 +81,29 @@ def validate_tuya_devices(form: dict) -> list[str]:
     return errors
 
 
+def validate_cloud_devices(form: dict) -> list[str]:
+    errors = []
+    for i, device in enumerate(form.get("cloud_devices", [])):
+        label = f"Urządzenie Tuya Cloud #{i + 1}"
+        if not device.get("name") or not device.get("id"):
+            errors.append(f"{label}: nazwa i ID są wymagane")
+    return errors
+
+
 def validate_automations(form: dict) -> list[str]:
-    """Waliduje TYLKO część "automatyzacje" formularza (scenes/motion_rules/
-    presence_simulation) - używane zarówno przez kreator (`validate()`
-    wyżej), jak i samodzielnie przez panel /automations (dashboard/app.py),
-    który nie ma (i nie potrzebuje) reszty pól kreatora."""
     scene_names = {s.get("name", "").strip() for s in form.get("scenes", []) if s.get("name", "").strip()}
+    rule_names = {r.get("name", "").strip() for r in form.get("motion_rules", []) if r.get("name", "").strip()}
     errors = []
     errors.extend(_validate_scenes(form.get("scenes", [])))
     errors.extend(_validate_motion_rules(form.get("motion_rules", []), scene_names))
     errors.extend(_validate_presence_simulation(form.get("presence_simulation", {})))
+    collision = scene_names & rule_names
+    if collision:
+        errors.append(
+            f"Nazwa(-y) {sorted(collision)} użyta(-e) jednocześnie jako nazwa sceny i reguły ruchu - "
+            f"nazwy scen i reguł ruchu muszą być unikalne między sobą (współdzielą jeden klucz statusu "
+            f"do warunku 'inna automatyzacja jest uruchomiona')"
+        )
     return errors
 
 
@@ -169,23 +135,87 @@ def _validate_scenes(scenes: list[dict]) -> list[str]:
     return errors
 
 
+_CONDITION_COMPOSITE_TYPES = ("and", "or", "not")
+_CONDITION_LEAF_TYPES = ("state", "time_window")
+
+
+def _validate_condition(condition: dict | None, label: str, depth: int = 0) -> list[str]:
+    errors: list[str] = []
+    if not condition:
+        return errors
+    if depth > 10:
+        errors.append(f"{label}: warunek zagnieżdżony zbyt głęboko (maksymalnie 10 poziomów)")
+        return errors
+
+    ctype = condition.get("type")
+    if ctype in _CONDITION_COMPOSITE_TYPES:
+        sub_conditions = condition.get("conditions") or []
+        if not sub_conditions:
+            errors.append(f"{label}: warunek '{ctype}' wymaga co najmniej jednego warunku podrzędnego")
+        for i, sub in enumerate(sub_conditions):
+            errors.extend(_validate_condition(sub, f"{label} -> {ctype}[{i + 1}]", depth + 1))
+    elif ctype == "state":
+        if not (condition.get("key") or "").strip():
+            errors.append(f"{label}: warunek 'state' wymaga wybrania statusu/urządzenia")
+        if condition.get("equals") in (None, "") and condition.get("not_equals") in (None, ""):
+            errors.append(f"{label}: warunek 'state' wymaga wartości porównania (równa się / różna od)")
+    elif ctype == "time_window":
+        if not condition.get("start") or not condition.get("end"):
+            errors.append(f"{label}: warunek 'okno czasowe' wymaga początku i końca")
+    else:
+        errors.append(f"{label}: nieznany typ warunku '{ctype}'")
+    return errors
+
+
+_MOTION_RULE_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state")
+
+
 def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str]:
     errors = []
+    rule_names = {(r.get("name") or "").strip() for r in rules if (r.get("name") or "").strip()}
+    seen_names = set()
     for i, rule in enumerate(rules):
         label = f"Reguła ruchu #{i + 1}"
-        if not rule.get("zone_number"):
-            errors.append(f"{label}: numer wejścia Satela jest wymagany")
+        source = (rule.get("source") or "satel_zone").strip()
+        if source not in _MOTION_RULE_SOURCES:
+            errors.append(f"{label}: nieznane wejście '{source}'")
+        if source == "satel_zone":
+            if not rule.get("zone_number"):
+                errors.append(f"{label}: numer wejścia Satela jest wymagany")
+        else:
+            if not (rule.get("source_device") or "").strip():
+                errors.append(f"{label}: wybierz urządzenie źródłowe")
+            if not (rule.get("trigger_value") or "").strip():
+                errors.append(f"{label}: wybierz wartość wyzwalającą")
+
+        name = (rule.get("name") or "").strip()
+        if name:
+            if name in seen_names:
+                errors.append(
+                    f"{label}: nazwa '{name}' powtarza się - nazwy reguł muszą być unikalne "
+                    f"(potrzebne do wyzwalania łańcuchowego)"
+                )
+            seen_names.add(name)
 
         uses_scene = bool((rule.get("scene") or "").strip())
+        uses_virtual_input = bool((rule.get("virtual_input") or "").strip())
         if uses_scene:
             scene_name = rule["scene"].strip()
             if scene_name not in scene_names:
                 errors.append(f"{label}: wybrana scena '{scene_name}' nie istnieje wśród zdefiniowanych scen")
+        elif uses_virtual_input:
+            pass
         else:
             if not rule.get("target_device"):
-                errors.append(f"{label}: wybierz urządzenie docelowe albo scenę")
-            if not rule.get("duration_seconds"):
-                errors.append(f"{label}: czas włączenia (sekundy) jest wymagany")
+                errors.append(f"{label}: wybierz urządzenie docelowe, wirtualne wejście albo scenę")
+            target_system = (rule.get("target_system") or "tuya").strip()
+            if target_system not in ("tuya", "satel_output"):
+                errors.append(f"{label}: nieznany system urządzenia docelowego '{target_system}'")
+
+        if source == "satel_zone":
+            trigger_on = (rule.get("trigger_on") or "violated").strip()
+            if trigger_on not in ("violated", "restored"):
+                errors.append(f"{label}: nieznany wyzwalacz '{trigger_on}'")
 
         window = rule.get("time_window") or {}
         if window.get("enabled"):
@@ -203,6 +233,17 @@ def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str
                 errors.append(f"{label}: eskalacja - wybierz scenę wywoływaną po przekroczeniu progu")
             elif escalated_scene not in scene_names:
                 errors.append(f"{label}: eskalacja - scena '{escalated_scene}' nie istnieje wśród zdefiniowanych scen")
+
+        errors.extend(_validate_condition(rule.get("condition"), f"{label}: warunek"))
+
+        chain_target = (rule.get("then_trigger_rule") or "").strip()
+        if chain_target:
+            if chain_target == name:
+                errors.append(f"{label}: reguła nie może wyzwalać (then_trigger_rule) samej siebie")
+            elif chain_target not in rule_names:
+                errors.append(
+                    f"{label}: 'wyzwól kolejną regułę' wskazuje na nieistniejącą nazwę reguły '{chain_target}'"
+                )
     return errors
 
 
@@ -245,38 +286,115 @@ def _build_scene_action(action: dict) -> dict:
     elif action_type == "satel_arm":
         if action.get("mode") not in (None, ""):
             built["mode"] = int(action["mode"])
+        if action.get("partitions"):
+            built["partitions"] = [int(p) for p in action["partitions"]]
+    elif action_type == "satel_disarm":
+        if action.get("partitions"):
+            built["partitions"] = [int(p) for p in action["partitions"]]
     elif action_type == "delay":
         built["seconds"] = float(action["seconds"])
     return built
 
 
 def _build_scenes(scenes_form: list[dict]) -> list[dict]:
-    return [
-        {
+    built_scenes = []
+    for scene in scenes_form:
+        if not (scene.get("name") or "").strip():
+            continue
+        built = {
             "name": scene["name"].strip(),
             "actions": [_build_scene_action(a) for a in scene.get("actions", [])],
         }
-        for scene in scenes_form
-        if (scene.get("name") or "").strip()
-    ]
+        if scene.get("enabled") is False:
+            built["enabled"] = False
+        built_scenes.append(built)
+    return built_scenes
+
+
+def _build_condition(condition: dict | None, depth: int = 0) -> dict | None:
+    if not condition or depth > 10:
+        return None
+    ctype = condition.get("type")
+
+    if ctype in _CONDITION_COMPOSITE_TYPES:
+        sub_conditions = [
+            built for built in (
+                _build_condition(sub, depth + 1) for sub in condition.get("conditions", [])
+            ) if built
+        ]
+        if not sub_conditions:
+            return None
+        return {"type": ctype, "conditions": sub_conditions}
+    if ctype == "state":
+        key = (condition.get("key") or "").strip()
+        if not key:
+            return None
+        built = {"type": "state", "key": key}
+        if condition.get("equals") not in (None, ""):
+            built["equals"] = condition["equals"]
+        elif condition.get("not_equals") not in (None, ""):
+            built["not_equals"] = condition["not_equals"]
+        else:
+            return None
+        return built
+    if ctype == "time_window":
+        start, end = condition.get("start"), condition.get("end")
+        if not start or not end:
+            return None
+        return {"type": "time_window", "start": start.strip(), "end": end.strip()}
+    return None
 
 
 def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
     rules = []
     for rule in rules_form:
-        if not rule.get("zone_number"):
-            continue
-        built = {"source": "satel_zone", "zone_number": int(rule["zone_number"])}
+        source = (rule.get("source") or "satel_zone").strip()
+        if source == "satel_zone":
+            if not rule.get("zone_number"):
+                continue
+            built = {"source": "satel_zone", "zone_number": int(rule["zone_number"])}
+        else:
+            source_device = (rule.get("source_device") or "").strip()
+            trigger_value = (rule.get("trigger_value") or "").strip()
+            if not source_device or not trigger_value:
+                continue
+            built = {"source": source, "source_device": source_device, "trigger_value": trigger_value}
+
+        name = (rule.get("name") or "").strip()
+        if name:
+            built["name"] = name
 
         scene_name = (rule.get("scene") or "").strip()
+        virtual_input_name = (rule.get("virtual_input") or "").strip()
         if scene_name:
             built["scene"] = scene_name
+        elif virtual_input_name:
+            built["virtual_input"] = virtual_input_name
+            if rule.get("duration_seconds") not in (None, ""):
+                built["duration_seconds"] = int(rule["duration_seconds"])
         else:
             built["target_device"] = rule["target_device"]
-            built["duration_seconds"] = int(rule["duration_seconds"])
-            built["dimmer_level_percent"] = (
-                int(rule["dimmer_level_percent"]) if rule.get("dimmer_level_percent") not in (None, "") else None
-            )
+            target_system = (rule.get("target_system") or "tuya").strip()
+            if target_system == "satel_output":
+                built["target_system"] = "satel_output"
+            if rule.get("action") == "turn_off":
+                built["action"] = "turn_off"
+            else:
+                if rule.get("duration_seconds") not in (None, ""):
+                    built["duration_seconds"] = int(rule["duration_seconds"])
+                if target_system != "satel_output":
+                    built["dimmer_level_percent"] = (
+                        int(rule["dimmer_level_percent"])
+                        if rule.get("dimmer_level_percent") not in (None, "") else None
+                    )
+
+        if source == "satel_zone":
+            trigger_on = (rule.get("trigger_on") or "violated").strip()
+            if trigger_on == "restored":
+                built["trigger_on"] = "restored"
+
+        if rule.get("enabled") is False:
+            built["enabled"] = False
 
         window = rule.get("time_window") or {}
         if window.get("enabled") and window.get("start") and window.get("end"):
@@ -290,14 +408,27 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
                 "escalated_scene": escalation["escalated_scene"].strip(),
             }
 
+        condition = _build_condition(rule.get("condition"))
+        if condition:
+            built["condition"] = condition
+
+        chain_target = (rule.get("then_trigger_rule") or "").strip()
+        if chain_target:
+            built["then_trigger_rule"] = chain_target
+
         rules.append(built)
     return rules
 
 
 def _build_presence_simulation(form: dict) -> dict:
     ps = form.get("presence_simulation") or {}
+    log_level = ps.get("log_level")
+
     if not ps.get("enabled"):
-        return {"enabled": False}
+        built = {"enabled": False}
+        if log_level:
+            built["log_level"] = log_level
+        return built
 
     built = {
         "enabled": True,
@@ -308,6 +439,8 @@ def _build_presence_simulation(form: dict) -> dict:
     window = ps.get("window") or {}
     if window.get("enabled") and window.get("start") and window.get("end"):
         built["window"] = {"start": window["start"].strip(), "end": window["end"].strip()}
+    if log_level:
+        built["log_level"] = log_level
     return built
 
 
@@ -324,9 +457,6 @@ def _build_monitored_outputs(form: dict) -> dict:
     return {o["name"]: int(o["number"]) for o in form.get("monitored_outputs", []) if o.get("name") and o.get("number")}
 
 
-# Rodzaje wejść (czujek) i wyjść Satela - CZYSTO opisowe (ikona/etykieta w
-# panelu, patrz index.html), nie wpływają na logikę bridge'a. "inne"/brak
-# wyboru = zachowanie jak dotychczas (generyczna czujka/wyjście).
 SATEL_ZONE_TYPES = {
     "drzwi": "Drzwi", "okno": "Okno", "ruch": "Czujka ruchu (PIR)",
     "dym": "Czujka dymu", "zalanie": "Czujka zalania", "wibracja": "Czujka wibracji/stłuczenia",
@@ -354,9 +484,9 @@ def _build_output_types(form: dict) -> dict:
 
 def _build_virtual_inputs(form: dict) -> dict:
     return {
-        vi["name"]: {"number": int(vi["number"]), "key": vi["key"]}
+        vi["name"]: int(vi["number"])
         for vi in form.get("virtual_inputs", [])
-        if vi.get("name")
+        if vi.get("name") and vi.get("number")
     }
 
 
@@ -367,9 +497,6 @@ def _build_tuya_devices(form: dict) -> dict:
             continue
         gateway_name = (d.get("gateway") or "").strip()
         if gateway_name:
-            # Podurządzenie Zigbee bramki - BEZ własnego ip/local_key/version,
-            # ruch idzie przez połączenie bramki (patrz TuyaLocalController w
-            # bridge/tuya_local.py). cid domyślnie = id, jeśli puste.
             entry = {"id": d["id"], "gateway": gateway_name, "type": d.get("type", "socket")}
             if d.get("cid"):
                 entry["cid"] = d["cid"]
@@ -396,11 +523,18 @@ def _build_zigbee_gateways(form: dict) -> dict:
     }
 
 
+def _build_cloud_devices(form: dict) -> dict:
+    return {
+        d["name"]: {
+            "id": d["id"], "category": d.get("category", ""),
+            "switch_code": (d.get("switch_code") or "switch_1").strip(),
+        }
+        for d in form.get("cloud_devices", [])
+        if d.get("name") and d.get("id")
+    }
+
+
 def validate_connections(form: dict) -> list[str]:
-    """Waliduje formularz zakładki "Połączenia" panelu /config (host/klucze/
-    tematy MQTT już skonfigurowanej instalacji) - współdzielony wzorzec z
-    validate() (kreator), ale bez wymogu hasła (to ustawia się tylko raz,
-    w kreatorze, i panel /config go nie zmienia)."""
     errors = []
     satel = form.get("satel", {})
     if not satel.get("host"):
@@ -418,13 +552,11 @@ def validate_connections(form: dict) -> list[str]:
     if ha.get("enabled") and not (ha.get("mqtt_host") or ebus.get("mqtt_host")):
         errors.append("Home Assistant: adres brokera MQTT jest wymagany, jeśli integracja włączona")
 
-    # Interwały odpytywania (zakładka 🧩 Wtyczki) - minimum 3s, żeby nie
-    # zalewać centrali/urządzeń zapytaniami przy pomyłce we wpisanej wartości.
     satel_interval = satel.get("status_poll_interval_seconds")
     if satel_interval not in (None, ""):
         try:
-            if int(satel_interval) < 3:
-                errors.append("Satel: interwał odpytywania musi wynosić co najmniej 3 sekundy")
+            if int(satel_interval) < 2:
+                errors.append("Satel: interwał odpytywania musi wynosić co najmniej 2 sekundy")
         except (TypeError, ValueError):
             errors.append("Satel: interwał odpytywania musi być liczbą")
 
@@ -440,21 +572,6 @@ def validate_connections(form: dict) -> list[str]:
 
 
 def build_connections_patch(form: dict, existing: dict) -> dict:
-    """Buduje NOWY słownik config.yaml na bazie JUŻ ISTNIEJĄCEGO (`existing`)
-    - nadpisuje TYLKO pola połączeń (host/port/klucze/tematy MQTT per
-    integracja), zostawiając nietknięte wszystkie inne sekcje
-    (reguły_kamera_alarm, boiler_rules, alarm_rules, maintenance,
-    dashboard.auth, itd.). W przeciwieństwie do build_config_dict()
-    (kreator, buduje config.yaml OD ZERA) - to jedyny bezpieczny sposób na
-    "rekonfigurację" już działającej instalacji bez ryzyka skasowania
-    ręcznych zmian w config.yaml (stąd /setup zostaje zablokowany po
-    pierwszym zapisie - patrz CONFIG_HEADER i api_setup_save).
-
-    Pola-sekrety (klucz integracji Satela, Tuya Cloud Access Secret): pusta
-    wartość w formularzu = ZACHOWAJ dotychczasową (formularz w przeglądarce
-    nigdy nie dostaje prawdziwego sekretu z powrotem - patrz
-    connections_to_form - więc "nic nie wpisano" nie może oznaczać
-    "wyczyść")."""
     config = copy.deepcopy(existing)
     satel_form = form.get("satel", {})
     ebus_form = form.get("ebus", {})
@@ -467,18 +584,25 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
         config["satel"]["integration_key"] = satel_form["integration_key"].strip()
     else:
         config["satel"].setdefault("integration_key", "")
+    if (satel_form.get("encryption_key") or "").strip():
+        config["satel"]["encryption_key"] = satel_form["encryption_key"].strip()
+    elif satel_form.get("encryption_key_clear"):
+        config["satel"]["encryption_key"] = None
+    else:
+        config["satel"].setdefault("encryption_key", None)
+    config["satel"]["encryption_enabled"] = bool(satel_form.get("encryption_enabled"))
     config["satel"].setdefault("virtual_inputs", {})
+    vi_mode = satel_form.get("virtual_inputs_mode") or config["satel"]["virtual_inputs"].get("mode") or "library"
+    config["satel"]["virtual_inputs"]["mode"] = vi_mode
     config["satel"]["virtual_inputs"]["port"] = int(
         satel_form.get("virtual_inputs_port") or config["satel"]["virtual_inputs"].get("port") or 8888
     )
-    config["satel"]["virtual_inputs"].setdefault(
-        "url_template", "http://{host}:{port}/input.cgi?key={key}&input={input_no}"
-    )
+    config["satel"]["virtual_inputs"].setdefault("inputs", {})
     config["satel"].setdefault("outputs", {})
     config["satel"].setdefault("fields_file", "satel_fields.yaml")
     config["satel"]["status_poll_interval_seconds"] = int(
         satel_form.get("status_poll_interval_seconds")
-        or config["satel"].get("status_poll_interval_seconds") or 15
+        or config["satel"].get("status_poll_interval_seconds") or 3
     )
 
     config.setdefault("ebus", {})
@@ -496,6 +620,7 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
     )
     config["boiler_output"].setdefault("tuya_virtual_device", {"device_id": ""})
 
+    existing_mqtt_publish = config.get("mqtt_publish", {})
     mqtt_publish_form = form.get("mqtt_publish", {})
     config["mqtt_publish"] = {
         "enabled": bool(mqtt_publish_form.get("enabled", True)),
@@ -504,20 +629,26 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
             "tuya": (mqtt_publish_form.get("tuya_topic") or "tuya").strip(),
         },
     }
+    if existing_mqtt_publish.get("log_level"):
+        config["mqtt_publish"]["log_level"] = existing_mqtt_publish["log_level"]
 
     config.setdefault("tuya", {})
     tuya_cloud_form = form.get("tuya_cloud", {})
     if tuya_cloud_form.get("enabled") and (tuya_cloud_form.get("access_id") or "").strip():
         existing_cloud = config["tuya"].get("cloud", {})
         config["tuya"]["cloud"] = {
+            "enabled": existing_cloud.get("enabled", True),
             "access_id": tuya_cloud_form["access_id"].strip(),
             "access_key": (tuya_cloud_form.get("access_key") or "").strip() or existing_cloud.get("access_key", ""),
+            "api_region": (tuya_cloud_form.get("api_region") or "").strip() or existing_cloud.get("api_region", "eu"),
             "api_endpoint": (tuya_cloud_form.get("api_endpoint") or "").strip()
                 or existing_cloud.get("api_endpoint", "https://openapi.tuyaeu.com"),
             "mq_endpoint": (tuya_cloud_form.get("mq_endpoint") or "").strip()
                 or existing_cloud.get("mq_endpoint", "wss://mqe.tuyaeu.com:8285/"),
             "camera_device_ids": existing_cloud.get("camera_device_ids", []),
         }
+        if existing_cloud.get("log_level"):
+            config["tuya"]["cloud"]["log_level"] = existing_cloud["log_level"]
     else:
         config["tuya"].pop("cloud", None)
     tuya_local_form = form.get("tuya_local", {})
@@ -538,6 +669,8 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
             "state_topic_prefix": existing_ha.get("state_topic_prefix", "home/bridge"),
             "device_name": existing_ha.get("device_name", "Satel-Tuya-eBUS Bridge"),
         }
+        if existing_ha.get("log_level"):
+            config["home_assistant"]["log_level"] = existing_ha["log_level"]
     else:
         config["home_assistant"] = {**existing_ha, "enabled": False}
 
@@ -552,14 +685,6 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
 
 
 def connections_to_form(existing: dict) -> dict:
-    """Odwrotność build_connections_patch - konwertuje AKTUALNY config.yaml
-    na kształt formularza zakładki "Połączenia" (GET /api/config/connections).
-    Sekretne pola (klucz integracji Satela, Tuya Cloud Access Secret) NIE są
-    tu NIGDY zwracane w jawnej postaci - tylko flaga `*_set`, czy są w ogóle
-    ustawione, żeby nie wyciekały przez GET do każdego w sieci LAN (w
-    odróżnieniu od np. local_key urządzeń Tuya w /api/config/tuya-devices -
-    tam ryzyko jest dużo mniejsze niż tu, bo klucz integracji Satela pozwala
-    rozbroić fizyczny system alarmowy)."""
     satel = existing.get("satel", {})
     tuya = existing.get("tuya", {})
     ebus = existing.get("ebus", {})
@@ -572,9 +697,12 @@ def connections_to_form(existing: dict) -> dict:
             "host": satel.get("host", ""),
             "port": satel.get("port", 7094),
             "partition": satel.get("partition", 1),
+            "virtual_inputs_mode": satel.get("virtual_inputs", {}).get("mode", "library"),
             "virtual_inputs_port": satel.get("virtual_inputs", {}).get("port", 8888),
             "integration_key_set": bool(satel.get("integration_key")),
-            "status_poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
+            "encryption_key_set": bool(satel.get("encryption_key")),
+            "encryption_enabled": bool(satel.get("encryption_enabled")),
+            "status_poll_interval_seconds": satel.get("status_poll_interval_seconds", 3),
         },
         "tuya_local": {
             "status_poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
@@ -593,6 +721,7 @@ def connections_to_form(existing: dict) -> dict:
             "enabled": bool(tuya_cloud),
             "access_id": tuya_cloud.get("access_id", ""),
             "access_key_set": bool(tuya_cloud.get("access_key")),
+            "api_region": tuya_cloud.get("api_region", "eu"),
             "api_endpoint": tuya_cloud.get("api_endpoint", "https://openapi.tuyaeu.com"),
             "mq_endpoint": tuya_cloud.get("mq_endpoint", "wss://mqe.tuyaeu.com:8285/"),
         },
@@ -607,47 +736,157 @@ def connections_to_form(existing: dict) -> dict:
     }
 
 
-# Integracje pokazywane na zakładce 🧩 Wtyczki - jedno spójne miejsce z
-# przeglądem WSZYSTKICH integracji (dotychczas rozrzucone po zakładkach
-# ⚙ Ustawienia/🔌 Połączenia/🎬 Automatyzacje). "toggleable" = ma osobną,
-# zapisaną flagę enabled, którą da się przełączyć wprost stąd (POST
-# /api/plugins) - reszta jest włączona/wyłączona PRZEZ SAMĄ OBECNOŚĆ
-# konfiguracji (np. dodanie choć jednego urządzenia Tuya) i wciąż wymaga
-# przejścia do właściwej zakładki, żeby to zmienić - to NIE jest w pełni
-# dynamiczny system wtyczek (start/stop w locie bez restartu) - taka
-# architektura wymagałaby dużo większej, ryzykowniejszej przebudowy
-# cyklu życia żywych połączeń sieciowych (Satel TCP, klienci MQTT, Tuya
-# Cloud Pulsar), a przełączanie integracji jest i tak rzadką operacją.
+def validate_satel_connection(form: dict) -> list[str]:
+    errors = []
+    if not (form.get("host") or "").strip():
+        errors.append("Adres IP centrali/modułu ETHM jest wymagany")
+    return errors
+
+
+def satel_connection_to_form(satel_section: dict) -> dict:
+    return {
+        "host": satel_section.get("host", ""),
+        "port": satel_section.get("port", 7094),
+        "partition": satel_section.get("partition", 1),
+        "integration_key_set": bool(satel_section.get("integration_key")),
+        "encryption_key_set": bool(satel_section.get("encryption_key")),
+        "encryption_enabled": bool(satel_section.get("encryption_enabled")),
+        "virtual_inputs_mode": satel_section.get("virtual_inputs", {}).get("mode", "library"),
+        "virtual_inputs_port": satel_section.get("virtual_inputs", {}).get("port", 8888),
+    }
+
+
+def build_satel_connection_patch(form: dict, existing_satel_section: dict) -> dict:
+    section = copy.deepcopy(existing_satel_section)
+    section["host"] = (form.get("host") or "").strip()
+    section["port"] = int(form.get("port") or section.get("port") or 7094)
+    section["partition"] = int(form.get("partition") or section.get("partition") or 1)
+    if (form.get("integration_key") or "").strip():
+        section["integration_key"] = form["integration_key"].strip()
+    else:
+        section.setdefault("integration_key", "")
+    if (form.get("encryption_key") or "").strip():
+        section["encryption_key"] = form["encryption_key"].strip()
+    elif form.get("encryption_key_clear"):
+        section["encryption_key"] = None
+    else:
+        section.setdefault("encryption_key", None)
+    section["encryption_enabled"] = bool(form.get("encryption_enabled"))
+    section.setdefault("virtual_inputs", {})
+    vi_mode = form.get("virtual_inputs_mode") or section["virtual_inputs"].get("mode") or "library"
+    section["virtual_inputs"]["mode"] = vi_mode
+    section["virtual_inputs"]["port"] = int(
+        form.get("virtual_inputs_port") or section["virtual_inputs"].get("port") or 8888
+    )
+    section["virtual_inputs"].setdefault("inputs", {})
+    section.setdefault("outputs", {})
+    section.setdefault("fields_file", "satel_fields.yaml")
+    section.setdefault("status_poll_interval_seconds", 3)
+    return section
+
+
+def validate_ebus_connection(form: dict) -> list[str]:
+    errors = []
+    if not (form.get("mqtt_host") or "").strip():
+        errors.append("Adres brokera MQTT jest wymagany")
+    return errors
+
+
+def ebus_connection_to_form(ebus_section: dict, boiler_output_section: dict) -> dict:
+    return {
+        "mqtt_host": ebus_section.get("mqtt_host", ""),
+        "mqtt_port": ebus_section.get("mqtt_port", 1883),
+        "topic_prefix": boiler_output_section.get("mqtt", {}).get("topic_prefix", "home/boiler"),
+    }
+
+
+def build_ebus_connection_patch(form: dict, existing_config: dict) -> dict:
+    config = copy.deepcopy(existing_config)
+    config.setdefault("ebus", {})
+    config["ebus"]["mqtt_host"] = (form.get("mqtt_host") or "").strip()
+    config["ebus"]["mqtt_port"] = int(form.get("mqtt_port") or config["ebus"].get("mqtt_port") or 1883)
+    config["ebus"].setdefault("sensors_file", "sensors.yaml")
+
+    config.setdefault("boiler_output", {})
+    config["boiler_output"].setdefault("mqtt", {})
+    config["boiler_output"]["mqtt"]["host"] = config["ebus"]["mqtt_host"]
+    config["boiler_output"]["mqtt"]["port"] = config["ebus"]["mqtt_port"]
+    config["boiler_output"]["mqtt"]["topic_prefix"] = (
+        (form.get("topic_prefix") or "").strip()
+        or config["boiler_output"]["mqtt"].get("topic_prefix", "home/boiler")
+    )
+    config["boiler_output"].setdefault("tuya_virtual_device", {"device_id": ""})
+    return config
+
+
+def validate_location(form: dict) -> list[str]:
+    errors = []
+    lat, lon = form.get("latitude"), form.get("longitude")
+    if lat in (None, "") and lon in (None, ""):
+        return errors
+    if lat in (None, "") or lon in (None, ""):
+        errors.append("Lokalizacja: podaj oba pola (szerokość i długość geograficzna) albo żadne")
+        return errors
+    try:
+        lat_f, lon_f = float(lat), float(lon)
+    except (TypeError, ValueError):
+        errors.append("Lokalizacja: szerokość i długość geograficzna muszą być liczbami")
+        return errors
+    if not (-90 <= lat_f <= 90):
+        errors.append("Lokalizacja: szerokość geograficzna musi być w zakresie -90..90")
+    if not (-180 <= lon_f <= 180):
+        errors.append("Lokalizacja: długość geograficzna musi być w zakresie -180..180")
+    return errors
+
+
+def build_location_patch(form: dict, existing: dict) -> dict:
+    config = copy.deepcopy(existing)
+    lat, lon = form.get("latitude"), form.get("longitude")
+    if lat in (None, "") or lon in (None, ""):
+        config.pop("location", None)
+    else:
+        config["location"] = {"latitude": float(lat), "longitude": float(lon)}
+    return config
+
+
 PLUGIN_DEFS = [
-    {"id": "satel", "name": "Centrala Satel Integra", "icon": "🔒", "toggleable": False, "restart_required": True,
-     "has_poll_interval": True,
-     "description": "Odczyt wejść/wyjść/stref i sterowanie (uzbrajanie, wyjścia) - rdzeń bridge'a, zawsze aktywny."},
-    {"id": "tuya_local", "name": "Tuya - urządzenia lokalne (WiFi)", "icon": "🔌", "toggleable": False, "restart_required": False,
-     "has_poll_interval": True,
+    {"id": "satel", "name": "Centrala Satel Integra", "icon": "🔒", "toggleable": True, "restart_required": True,
+     "has_poll_interval": True, "min_poll_interval_seconds": 2, "has_log_level": True,
+     "description": "Odczyt wejść/wyjść/stref i sterowanie (uzbrajanie, wyjścia)."},
+    {"id": "tuya_local", "name": "Tuya - urządzenia lokalne (WiFi)", "icon": "🔌", "toggleable": True, "restart_required": True,
+     "has_poll_interval": True, "min_poll_interval_seconds": 3, "has_log_level": True,
      "description": "Sterowanie gniazdkami/przełącznikami/ściemniaczami Tuya bezpośrednio w LAN, bez chmury (tinytuya) - obejmuje też podurządzenia Zigbee."},
     {"id": "tuya_zigbee", "name": "Tuya - bramki Zigbee", "icon": "🐝", "toggleable": False, "restart_required": False,
-     "description": "Czujniki/przełączniki Zigbee podpięte pod bramkę Tuya (Tuya Zigbee Gateway/Hub)."},
+     "has_log_level": True,
+     "description": "Czujniki/przełączniki Zigbee podpięte pod bramkę Tuya (Tuya Zigbee Gateway/Hub) - dzieli połączenie z 'Tuya lokalnie' wyżej, brak osobnego przełącznika."},
     {"id": "tuya_cloud", "name": "Tuya Cloud (kamery + import urządzeń)", "icon": "☁️", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Detekcja ruchu z kamer Tuya oraz import urządzeń z konta Tuya Cloud - wymaga projektu na developer.tuya.com."},
-    {"id": "ebus", "name": "eBUS / kocioł (dane grzewcze)", "icon": "🔥", "toggleable": False, "restart_required": False,
+    {"id": "ebus", "name": "eBUS / kocioł (dane grzewcze)", "icon": "🔥", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Odczyt czujników kotła (ebusd) przez MQTT - historia, alarmy progowe, automatyka."},
     {"id": "home_assistant", "name": "Home Assistant (MQTT Discovery)", "icon": "🏠", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Automatyczne udostępnienie encji (wejścia/wyjścia Satela, urządzenia Tuya, czujniki kotła) w Home Assistant."},
     {"id": "mqtt_publish", "name": "Publikacja stanu do MQTT", "icon": "📡", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Stan Satela/Tuya na osobnym temacie MQTT, niezależnie od Home Assistant."},
-    {"id": "unifi_protect", "name": "Kamery UniFi Protect", "icon": "📹", "toggleable": False, "restart_required": False,
+    {"id": "unifi_protect", "name": "Kamery UniFi Protect", "icon": "📹", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Detekcja ruchu z kamer UniFi Protect jako alternatywa/uzupełnienie kamer Tuya."},
+    {"id": "homewhiz", "name": "Zmywarki/AGD HomeWhiz", "icon": "🍽", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
+     "description": "Stan zmywarek (i innego AGD) BEQ/Arcelik sterowanych przez chmurę HomeWhiz - dostępny jako warunek 'stan' w automatyzacjach."},
     {"id": "presence_simulation", "name": "Symulacja obecności", "icon": "🎭", "toggleable": True, "restart_required": False,
+     "has_log_level": True,
      "description": "Losowe włączanie/wyłączanie wskazanych urządzeń Tuya pod nieobecność domowników."},
-    {"id": "notifications", "name": "Powiadomienia push (ntfy)", "icon": "🔔", "toggleable": False, "restart_required": False,
+    {"id": "notifications", "name": "Powiadomienia push (ntfy)", "icon": "🔔", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
      "description": "Push przy utracie/przywróceniu połączenia z centralą/MQTT/Tuya/kamerami oraz przy alarmach progowych."},
 ]
 
 
 def list_plugins(config_raw: dict) -> list[dict]:
-    """Buduje listę integracji (zakładka 🧩 Wtyczki) na bazie AKTUALNEGO
-    config.raw - każdy wpis mówi, czy jest włączony/skonfigurowany i czy da
-    się to przełączyć wprost stąd (patrz PLUGIN_DEFS wyżej)."""
     satel = config_raw.get("satel", {})
     tuya = config_raw.get("tuya", {})
     ebus = config_raw.get("ebus", {})
@@ -661,31 +900,37 @@ def list_plugins(config_raw: dict) -> list[dict]:
     zigbee_gateways = tuya.get("zigbee_gateways", {}) or {}
     ebus_sensors = config_raw.get("ebus", {}).get("sensors", []) or []
 
+    unifi_protect_cfg = config_raw.get("unifi_protect") or {}
+    homewhiz_cfg = config_raw.get("homewhiz") or {}
+
     state = {
         "satel": {
-            "enabled": True,
-            "configured": bool(satel.get("host") and satel.get("integration_key")),
-            "detail": f"{satel.get('host', '?')}:{satel.get('port', '?')}" if satel.get("host") else "nieskonfigurowana",
-            "poll_interval_seconds": satel.get("status_poll_interval_seconds", 15),
+            "enabled": satel.get("enabled", True) and bool(satel.get("host")),
+            "configured": bool(satel.get("host")),
+            "detail": (
+                f"{satel.get('host', '?')}:{satel.get('port', '?')}"
+                + ("" if satel.get("integration_key") else " (tylko odczyt - brak klucza integracji)")
+            ) if satel.get("host") else "nieskonfigurowana",
+            "poll_interval_seconds": satel.get("status_poll_interval_seconds", 3),
         },
         "tuya_local": {
-            "enabled": len(tuya_devices) > len(zigbee_devices),
+            "enabled": tuya.get("enabled", True) and len(tuya_devices) > len(zigbee_devices),
             "configured": len(tuya_devices) > len(zigbee_devices),
             "detail": f"{len(tuya_devices) - len(zigbee_devices)} urządzeń WiFi",
             "poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
         },
         "tuya_zigbee": {
-            "enabled": bool(zigbee_gateways),
+            "enabled": tuya.get("enabled", True) and bool(zigbee_gateways),
             "configured": bool(zigbee_gateways),
             "detail": f"{len(zigbee_gateways)} bramek, {len(zigbee_devices)} urządzeń",
         },
         "tuya_cloud": {
-            "enabled": bool(tuya.get("cloud")),
+            "enabled": tuya.get("cloud", {}).get("enabled", True) and bool(tuya.get("cloud", {}).get("access_id")),
             "configured": bool(tuya.get("cloud", {}).get("access_id")),
             "detail": "skonfigurowana" if tuya.get("cloud", {}).get("access_id") else "brak poświadczeń",
         },
         "ebus": {
-            "enabled": bool(ebus.get("mqtt_host")),
+            "enabled": ebus.get("enabled", True) and bool(ebus.get("mqtt_host")),
             "configured": bool(ebus.get("mqtt_host")),
             "detail": f"{len(ebus_sensors)} czujników" if ebus.get("mqtt_host") else "brak brokera MQTT",
         },
@@ -700,9 +945,14 @@ def list_plugins(config_raw: dict) -> list[dict]:
             "detail": "używa brokera eBUS" if ebus.get("mqtt_host") else "brak brokera MQTT",
         },
         "unifi_protect": {
-            "enabled": config_raw.get("unifi_protect") is not None,
+            "enabled": unifi_protect_cfg.get("enabled", True) and config_raw.get("unifi_protect") is not None,
             "configured": config_raw.get("unifi_protect") is not None,
             "detail": "skonfigurowane" if config_raw.get("unifi_protect") is not None else "nieskonfigurowane",
+        },
+        "homewhiz": {
+            "enabled": homewhiz_cfg.get("enabled", True) and bool(homewhiz_cfg.get("username") and homewhiz_cfg.get("appliances")),
+            "configured": bool(homewhiz_cfg.get("username") and homewhiz_cfg.get("appliances")),
+            "detail": f"{len(homewhiz_cfg.get('appliances', {}))} urządzeń" if homewhiz_cfg.get("appliances") else "brak poświadczeń/urządzeń",
         },
         "presence_simulation": {
             "enabled": bool(presence.get("enabled")),
@@ -710,22 +960,72 @@ def list_plugins(config_raw: dict) -> list[dict]:
             "detail": f"{len(presence.get('devices', []))} urządzeń" if presence.get("devices") else "brak urządzeń",
         },
         "notifications": {
-            "enabled": bool(notifications.get("ntfy_topic_url")),
+            "enabled": notifications.get("enabled", True) and bool(notifications.get("ntfy_topic_url")),
             "configured": bool(notifications.get("ntfy_topic_url")),
             "detail": "skonfigurowane" if notifications.get("ntfy_topic_url") else "nieskonfigurowane",
         },
     }
 
+    from bridge.logging_config import plugin_config_section
+
     return [
-        {"has_poll_interval": False, **plugin_def, **state[plugin_def["id"]]}
+        {
+            "has_poll_interval": False, **plugin_def, **state[plugin_def["id"]],
+            "log_level": plugin_config_section(config_raw, plugin_def["id"]).get("log_level") or "",
+        }
         for plugin_def in PLUGIN_DEFS
     ]
 
 
+def dict_to_name_number_rows(d: dict) -> list[dict]:
+    return [{"name": name, "number": number} for name, number in d.items()]
+
+
+def zones_to_rows(numbers: dict, types: dict) -> list[dict]:
+    return [{"name": name, "number": number, "type": types.get(name, "")} for name, number in numbers.items()]
+
+
+def virtual_inputs_to_rows(inputs: dict) -> list[dict]:
+    rows = []
+    for name, value in inputs.items():
+        number = value.get("number") if isinstance(value, dict) else value
+        rows.append({"name": name, "number": number})
+    return rows
+
+
+def tuya_devices_to_rows(devices: dict) -> list[dict]:
+    return [
+        {
+            "name": name, "id": cfg.get("id", ""), "ip": cfg.get("ip", ""),
+            "local_key": cfg.get("local_key", ""), "type": cfg.get("type", "socket"),
+            "dimmer_dp": cfg.get("dimmer_dp", ""),
+            "gateway": cfg.get("gateway", ""), "cid": cfg.get("cid", ""),
+        }
+        for name, cfg in devices.items()
+    ]
+
+
+def zigbee_gateways_to_rows(gateways: dict) -> list[dict]:
+    return [
+        {
+            "name": name, "id": cfg.get("id", ""), "ip": cfg.get("ip", ""),
+            "local_key": cfg.get("local_key", ""), "version": cfg.get("version", 3.4),
+        }
+        for name, cfg in gateways.items()
+    ]
+
+
+def cloud_devices_to_rows(devices: dict) -> list[dict]:
+    return [
+        {
+            "name": name, "id": cfg.get("id", ""), "category": cfg.get("category", ""),
+            "switch_code": cfg.get("switch_code", "switch_1"),
+        }
+        for name, cfg in devices.items()
+    ]
+
+
 def build_satel_fields_dict(form: dict) -> dict:
-    """Buduje zawartość satel_fields.yaml (strefy/wyjścia/wejścia IP/
-    partycje) - używane zarówno przez kreator (razem z build_config_dict),
-    jak i samodzielnie przez panel /config przy każdym zapisie."""
     return {
         "monitored_zones": _build_monitored_zones(form),
         "monitored_outputs": _build_monitored_outputs(form),
@@ -737,17 +1037,45 @@ def build_satel_fields_dict(form: dict) -> dict:
 
 
 def build_tuya_devices_dict(form: dict) -> dict:
-    """Buduje zawartość tuya_devices.yaml - analogicznie do
-    build_satel_fields_dict wyżej. "zigbee_gateways" to bramki Zigbee Tuya,
-    na które mogą wskazywać poszczególne "devices" (pole "gateway") zamiast
-    mieć własne ip/local_key - patrz TuyaLocalController."""
-    return {"devices": _build_tuya_devices(form), "zigbee_gateways": _build_zigbee_gateways(form)}
+    return {
+        "devices": _build_tuya_devices(form),
+        "zigbee_gateways": _build_zigbee_gateways(form),
+        "cloud_devices": _build_cloud_devices(form),
+    }
+
+
+def clean_sensors_payload(payload) -> tuple[list | None, str | None]:
+    if not isinstance(payload, list):
+        return None, "Oczekiwano listy czujników w ciele żądania"
+
+    cleaned = []
+    seen_names = set()
+    for i, item in enumerate(payload):
+        name = (item.get("name") or "").strip()
+        mqtt_topic = (item.get("mqtt_topic") or "").strip()
+        if not name or not mqtt_topic:
+            return None, f"Wiersz {i + 1}: pola 'name' i 'mqtt_topic' są wymagane"
+        if name in seen_names:
+            return None, f"Zduplikowana nazwa czujnika: '{name}'"
+        seen_names.add(name)
+
+        targets = item.get("targets") or {}
+        cleaned.append({
+            "name": name,
+            "label": (item.get("label") or name).strip(),
+            "mqtt_topic": mqtt_topic,
+            "mqtt_field": (item.get("mqtt_field") or "").strip(),
+            "targets": {
+                "history": bool(targets.get("history", True)),
+                "mqtt_publish": bool(targets.get("mqtt_publish", False)),
+                "tuya_virtual_device": bool(targets.get("tuya_virtual_device", False)),
+                "tuya_dp": (targets.get("tuya_dp") or "").strip(),
+            },
+        })
+    return cleaned, None
 
 
 def build_automations_dict(form: dict) -> dict:
-    """Buduje zawartość automations.yaml (sceny/reguły ruchu/symulacja
-    obecności) - używane zarówno przez kreator (razem z build_config_dict),
-    jak i samodzielnie przez panel /automations przy każdym zapisie."""
     return {
         "scenes": _build_scenes(form.get("scenes", [])),
         "reguły_ruchu": _build_motion_rules(form.get("motion_rules", [])),
@@ -756,42 +1084,28 @@ def build_automations_dict(form: dict) -> dict:
 
 
 def build_config_dict(form: dict) -> dict:
-    """Buduje pełny słownik config.yaml z danych formularza. Pola spoza
-    formularza (alarmy progowe, reguły kamer, automatyka kotła itd.) dostają
-    bezpieczne, puste wartości domyślne - użytkownik dopisze je później
-    ręcznie, jeśli będzie chciał (patrz docstring modułu i README)."""
     satel_form = form.get("satel", {})
 
     config = {
         "satel": {
             "host": satel_form["host"],
             "port": int(satel_form.get("port", 7094)),
-            "integration_key": satel_form["integration_key"],
+            "integration_key": (satel_form.get("integration_key") or "").strip(),
+            "encryption_key": (satel_form.get("encryption_key") or "").strip() or None,
+            "encryption_enabled": bool(satel_form.get("encryption_enabled")),
             "partition": int(satel_form.get("partition", 1)),
             "virtual_inputs": {
-                "port": int(satel_form.get("virtual_inputs_port", 8888)),
-                "url_template": "http://{host}:{port}/input.cgi?key={key}&input={input_no}",
+                "mode": satel_form.get("virtual_inputs_mode") or "library",
+                "port": int(satel_form.get("virtual_inputs_port") or 8888),
+                "inputs": {},
             },
             "outputs": {},
-            # Strefy/wyjścia/wejścia IP/partycje NIE są tutaj - trafiają do
-            # osobnego satel_fields.yaml (patrz build_satel_fields_dict),
-            # które zapisuje api_setup_save() zaraz po tym pliku.
-            # "fields_file" to jedyny ślad tego w config.yaml - analogicznie
-            # do ebus.sensors_file dla sensors.yaml.
             "fields_file": "satel_fields.yaml",
         },
         "tuya": {
             "status_poll_interval_seconds": 30,
-            # Urządzenia Tuya NIE są tutaj - trafiają do osobnego
-            # tuya_devices.yaml (patrz build_tuya_devices_dict), analogicznie
-            # do satel.fields_file wyżej.
             "devices_file": "tuya_devices.yaml",
         },
-        # Sceny/reguły ruchu/symulacja obecności NIE są tutaj - trafiają do
-        # osobnego automations.yaml (patrz build_automations_dict), które
-        # zapisuje api_setup_save() zaraz po tym pliku. "automations_file"
-        # to jedyny ślad tego w config.yaml - analogicznie do
-        # ebus.sensors_file dla sensors.yaml.
         "automations_file": "automations.yaml",
         "reguły_swiatlo_do_satela": [],
         "reguły_kamera_alarm": [],
@@ -810,6 +1124,7 @@ def build_config_dict(form: dict) -> dict:
         "dashboard": {
             "db_path": "bridge_history.db",
             "auth": {
+                "username": (form.get("admin_username") or "admin").strip() or "admin",
                 "password_hash": generate_password_hash(form["admin_password"]),
                 "max_failed_attempts": 5,
                 "lockout_seconds": 300,
@@ -854,11 +1169,7 @@ def build_config_dict(form: dict) -> dict:
         config["tuya"]["cloud"] = {
             "access_id": form["tuya_cloud"]["access_id"],
             "access_key": form["tuya_cloud"].get("access_key", ""),
-            # `or` (nie .get(key, default)) celowo - kreator wysyła ""
-            # (nie brak klucza) dla regionów, dla których nie zgadujemy
-            # nieudokumentowanego adresu Pulsar (patrz setup.html:
-            # TUYA_REGION_ENDPOINTS) - pusty string ma spaść do domyślnego
-            # (UE), nie zostać zapisany jako pusty adres.
+            "api_region": form["tuya_cloud"].get("api_region") or "eu",
             "api_endpoint": form["tuya_cloud"].get("api_endpoint") or "https://openapi.tuyaeu.com",
             "mq_endpoint": form["tuya_cloud"].get("mq_endpoint") or "wss://mqe.tuyaeu.com:8285/",
             "camera_device_ids": [],
@@ -868,16 +1179,10 @@ def build_config_dict(form: dict) -> dict:
 
 
 def draft_path_for(config_path: pathlib.Path) -> pathlib.Path:
-    """Ścieżka do pliku roboczego kreatora - obok docelowego config.yaml,
-    ale z kropką na początku (ukryty, nigdy nie mylony z prawdziwą
-    konfiguracją)."""
     return config_path.parent / DRAFT_FILENAME
 
 
 def load_draft(path: pathlib.Path) -> dict:
-    """Wczytuje zapisany wcześniej stan formularza. Zwraca pusty słownik,
-    jeśli pliku nie ma albo jest uszkodzony (np. przerwany zapis) - kreator
-    ma wtedy po prostu zacząć od kroku 1, zamiast się wywalić."""
     if not path.exists():
         return {}
     try:
@@ -889,9 +1194,6 @@ def load_draft(path: pathlib.Path) -> dict:
 
 def save_draft(path: pathlib.Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Zapis przez plik tymczasowy + atomowa podmiana - żeby przerwany zapis
-    # (np. utrata zasilania RPi) nie zostawił uszkodzonego/pustego pliku
-    # roboczego, przez który load_draft zgubiłoby dotychczasowy postęp.
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -933,7 +1235,7 @@ SATEL_FIELDS_HEADER = (
     "# Strefy / wyjścia / wejścia IP / partycje Satela - w pełni edytowalne\n"
     "# z panelu webowego (/config, wymaga hasła administratora do zapisu) -\n"
     "# każdy zapis stamtąd NADPISUJE cały ten plik. Połączenie z centralą\n"
-    "# (host/port/klucz integracji) zostaje w config.yaml.\n"
+    "# (host/port/kod użytkownika) zostaje w config.yaml.\n"
     "# Opis pól - patrz config.example.yaml (sekcja satel).\n\n"
 )
 

@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>eBUS - Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<style>
+  :root {
+    --bg: #14161a; --card: #1d2026; --border: #2c3038;
+    --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
+    --danger: #e5484d; --ok: #3dd68c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 20px; max-width: 900px; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  .nav { margin-bottom: 16px; }
+  .nav a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
+  .section-hint { color: var(--muted); font-size: 13px; margin: 4px 0 14px; line-height: 1.5; }
+  .card, .section {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px; margin-bottom: 18px;
+  }
+  input[type=text], input[type=password], input[type=number] {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 100%;
+  }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 8px 16px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .actions-bar { display: flex; gap: 10px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+  .msg-box { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; display: none; }
+  .msg-box.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  .msg-box.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
+  .sensor-row {
+    display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap;
+    background: #171a1f; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+  }
+  .sensor-row input[type=text] { flex: 1; min-width: 110px; }
+  .sensor-row .chk-group { display: flex; gap: 10px; align-items: center; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+  .sensor-row .chk-group label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .sensor-row .row-dp { max-width: 90px; }
+  .row-remove { background: transparent; color: var(--danger); border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; flex-shrink: 0; }
+  .add-row-btn { background: #262a32; color: var(--text); border: 1px dashed var(--border); border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-top: 4px; }
+  .field-group { margin-bottom: 18px; }
+  .field-group:last-child { margin-bottom: 0; }
+  .field-group > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .discover-status { font-size: 12.5px; color: var(--muted); }
+  .conn-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .conn-grid .field label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+  @media (max-width: 640px) { .conn-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+{% include "_nav.html" %}
+
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🔥 eBUS / kocioł</h1>
+<div class="hint">
+  Czujniki kotła odczytywane przez <code>ebusd</code> po MQTT - wybierz dla
+  każdego, dokąd ma trafiać: <strong>Historia</strong> (wykres i status w
+  panelu), <strong>MQTT</strong> (publikacja dalej, np. do Home Assistant) i
+  <strong>Tuya</strong> (wirtualne urządzenie w aplikacji Tuya). Adres
+  brokera MQTT ustawia się osobno w zakładce 🔌 Połączenia. Pole "pole JSON"
+  jest potrzebne TYLKO gdy <code>ebusd</code> działa z opcją
+  <code>--mqttjson</code> i publikuje na dany temat kilka pól naraz (temat
+  na poziomie obwodu, np. <code>ebusd/hc1</code>) - wskazuje wtedy, które
+  pole z wiadomości wziąć jako wartość tego czujnika.
+  <strong>Wymagane zalogowanie administratora panelu</strong> - dotyczy zarówno przeglądania tej strony, jak i zapisu.
+</div>
+
+<div class="section" id="pluginSettingsSection">
+  <h2>⚙ Ustawienia wtyczki</h2>
+  <div class="section-hint">
+    Włącz/wyłącz tę integrację i ustaw poziom logowania jej zdarzeń
+    (niezależnie od domyślnego poziomu globalnego - zakładka
+    <a href="/system">⚙ Ustawienia ogólne</a>). Wyłączenie/włączenie wymaga
+    pełnego restartu procesu bridge'a, poziom logowania działa od razu, bez
+    restartu.
+  </div>
+  <div class="field-group">
+    <label style="display:flex; align-items:center; gap:8px; margin:0;">
+      <input type="checkbox" id="pluginEnabledCheckbox">
+      Wtyczka włączona
+    </label>
+  </div>
+  <div class="field-group">
+    <label>Poziom logowania zdarzeń</label>
+    <select id="pluginLogLevelSelect">
+      <option value="">(domyślny globalny)</option>
+      <option value="DEBUG">DEBUG</option>
+      <option value="INFO">INFO</option>
+      <option value="WARNING">WARNING</option>
+      <option value="ERROR">ERROR</option>
+      <option value="CRITICAL">CRITICAL</option>
+    </select>
+  </div>
+  <div class="actions-bar">
+    <button id="savePluginSettingsBtn" type="button">Zapisz ustawienia wtyczki</button>
+  </div>
+  <div id="pluginSettingsMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="connectionSection">
+  <h2>🔌 Połączenie</h2>
+  <div class="section-hint">
+    Adres/port brokera MQTT ebusd i temat publikacji stanu kotła -
+    przeniesione tutaj z dawnej wspólnej zakładki 🔌 Połączenia.
+    <strong>Zmiany wymagają pełnego restartu procesu</strong> (przycisk w
+    zakładce ⚙ Ustawienia -> Ogólne) - w odróżnieniu od czujników niżej,
+    które bridge przeładowuje sam.
+  </div>
+  <div class="conn-grid">
+    <div class="field"><label>Adres brokera</label><input type="text" id="conn_mqtt_host" placeholder="127.0.0.1"></div>
+    <div class="field"><label>Port</label><input type="number" id="conn_mqtt_port" placeholder="1883"></div>
+    <div class="field"><label>Temat MQTT dla stanu eBUS</label><input type="text" id="conn_topic_prefix" placeholder="home/boiler"></div>
+  </div>
+  <div class="actions-bar">
+    <button id="saveConnectionBtn" type="button">Zapisz połączenie</button>
+  </div>
+  <div id="connectionMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="discoverSection">
+  <h2>Wykrywanie czujników</h2>
+  <div class="section-hint">
+    Nasłuch tematów MQTT, na które <code>ebusd</code> faktycznie coś
+    publikuje - to tylko PODPOWIEDŹ (pola publikowane rzadziej niż okno
+    nasłuchu mogą się nie pojawić). Nasłuch w tle działa do 5 minut i nie
+    blokuje strony - wykryte tematy dopisują się na bieżąco.
+  </div>
+  <div class="discover-row">
+    <button type="button" class="secondary" id="discoverStartBtn">🔍 Rozpocznij nasłuch (5 min, w tle)</button>
+    <button type="button" class="secondary" id="discoverStopBtn" style="display:none;">⏹ Zatrzymaj teraz</button>
+    <span class="discover-status" id="discoverStatus"></span>
+  </div>
+  <div id="discoveredTopics" style="font-size: 12.5px; color: var(--muted);"></div>
+</div>
+
+<div class="section" id="sensorsSection">
+  <div class="field-group">
+    <label>Czujniki</label>
+    <div id="sensorsRows"></div>
+    <button type="button" class="add-row-btn" id="addSensorBtn">+ Dodaj czujnik</button>
+  </div>
+
+  <div class="actions-bar">
+    <button id="saveSensorsBtn" type="button">Zapisz czujniki</button>
+  </div>
+  <div id="sensorsMsg" class="msg-box"></div>
+</div>
+
+<script>
+async function authorizedFetch(url, options = {}) {
+  const resp = await fetch(url, options);
+  if (resp.status === 401) {
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname);
+    throw new Error('Wymagane zalogowanie - przekierowuję na /login...');
+  }
+  return resp;
+}
+
+async function refreshAuthNav() {
+  const link = document.getElementById('authNavLink');
+  try {
+    const status = await (await fetch('/api/auth/status')).json();
+    if (status.logged_in) {
+      link.textContent = '🔓 Wyloguj';
+      link.href = '#';
+      link.onclick = async (e) => {
+        e.preventDefault();
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.reload();
+      };
+    } else {
+      link.textContent = '🔒 Zaloguj';
+      link.href = '/login?next=' + encodeURIComponent(location.pathname);
+      link.onclick = null;
+    }
+  } catch (e) {
+    
+  }
+}
+refreshAuthNav();
+
+function showMsg(elId, ok, text) {
+  const el = document.getElementById(elId);
+  el.className = 'msg-box ' + (ok ? 'ok' : 'error');
+  el.style.display = '';
+  el.textContent = (ok ? '✅ ' : '❌ ') + text;
+}
+
+
+const PLUGIN_ID = 'ebus';
+
+async function loadPluginSettings() {
+  const data = await (await fetch(`/api/plugins/${PLUGIN_ID}/settings`)).json();
+  document.getElementById('pluginEnabledCheckbox').checked = !!data.enabled;
+  document.getElementById('pluginLogLevelSelect').value = data.log_level || '';
+}
+loadPluginSettings();
+
+document.getElementById('savePluginSettingsBtn').addEventListener('click', async () => {
+  const payload = {
+    enabled: document.getElementById('pluginEnabledCheckbox').checked,
+    log_level: document.getElementById('pluginLogLevelSelect').value,
+  };
+  try {
+    const resp = await authorizedFetch(`/api/plugins/${PLUGIN_ID}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('pluginSettingsMsg', false, data.error || 'Błąd zapisu');
+    } else {
+      showMsg('pluginSettingsMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('pluginSettingsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+
+async function loadConnection() {
+  const data = await (await fetch('/api/plugins/ebus/connection')).json();
+  document.getElementById('conn_mqtt_host').value = data.mqtt_host || '';
+  document.getElementById('conn_mqtt_port').value = data.mqtt_port || '';
+  document.getElementById('conn_topic_prefix').value = data.topic_prefix || '';
+}
+loadConnection();
+
+document.getElementById('saveConnectionBtn').addEventListener('click', async () => {
+  const payload = {
+    mqtt_host: document.getElementById('conn_mqtt_host').value.trim(),
+    mqtt_port: document.getElementById('conn_mqtt_port').value,
+    topic_prefix: document.getElementById('conn_topic_prefix').value.trim(),
+  };
+  try {
+    const resp = await authorizedFetch('/api/plugins/ebus/connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const details = data.details ? ' - ' + data.details.join('; ') : '';
+      showMsg('connectionMsg', false, (data.error || 'Błąd zapisu') + details);
+    } else {
+      showMsg('connectionMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('connectionMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+
+function addSensorRow(initial) {
+  const container = document.getElementById('sensorsRows');
+  const row = document.createElement('div');
+  row.className = 'sensor-row';
+  const targets = initial?.targets || { history: true, mqtt_publish: false, tuya_virtual_device: false, tuya_dp: '' };
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. kociol_temp)" class="s-name">
+    <input type="text" placeholder="etykieta w panelu" class="s-label">
+    <input type="text" placeholder="temat MQTT (np. ebusd/bai/FlowTemp)" class="s-topic" style="flex: 2;">
+    <input type="text" placeholder="pole JSON (tylko --mqttjson, kilka pól na temat)" class="s-field" style="flex: 1.5;">
+    <div class="chk-group">
+      <label><input type="checkbox" class="s-history"> Historia</label>
+      <label><input type="checkbox" class="s-mqtt"> MQTT</label>
+      <label><input type="checkbox" class="s-tuya"> Tuya DP:</label>
+      <input type="text" class="s-dp row-dp" placeholder="101">
+    </div>
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.s-name').value = initial.name ?? '';
+    row.querySelector('.s-label').value = initial.label ?? '';
+    row.querySelector('.s-topic').value = initial.mqtt_topic ?? '';
+    row.querySelector('.s-field').value = initial.mqtt_field ?? '';
+  }
+  row.querySelector('.s-history').checked = !!targets.history;
+  row.querySelector('.s-mqtt').checked = !!targets.mqtt_publish;
+  row.querySelector('.s-tuya').checked = !!targets.tuya_virtual_device;
+  row.querySelector('.s-dp').value = targets.tuya_dp || '';
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+document.getElementById('addSensorBtn').addEventListener('click', () => addSensorRow());
+
+function collectSensors() {
+  return Array.from(document.querySelectorAll('#sensorsRows .sensor-row'))
+    .map(row => ({
+      name: row.querySelector('.s-name').value.trim(),
+      label: row.querySelector('.s-label').value.trim(),
+      mqtt_topic: row.querySelector('.s-topic').value.trim(),
+      mqtt_field: row.querySelector('.s-field').value.trim(),
+      targets: {
+        history: row.querySelector('.s-history').checked,
+        mqtt_publish: row.querySelector('.s-mqtt').checked,
+        tuya_virtual_device: row.querySelector('.s-tuya').checked,
+        tuya_dp: row.querySelector('.s-dp').value.trim(),
+      },
+    }))
+    .filter(s => s.name && s.mqtt_topic);
+}
+
+async function loadSensors() {
+  const sensors = await (await fetch('/api/plugins/ebus/sensors')).json();
+  (sensors || []).forEach(s => addSensorRow(s));
+}
+loadSensors();
+
+document.getElementById('saveSensorsBtn').addEventListener('click', async () => {
+  try {
+    const resp = await authorizedFetch('/api/plugins/ebus/sensors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(collectSensors()),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('sensorsMsg', false, data.error || 'Błąd zapisu');
+    } else {
+      showMsg('sensorsMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('sensorsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+
+let pollTimer = null;
+
+function renderDiscoverStatus(status) {
+  const el = document.getElementById('discoverStatus');
+  const topicsEl = document.getElementById('discoveredTopics');
+  const startBtn = document.getElementById('discoverStartBtn');
+  const stopBtn = document.getElementById('discoverStopBtn');
+  if (status.running) {
+    el.textContent = `Nasłuchuję... (${Math.round(status.elapsed_seconds || 0)}s / ${Math.round(status.duration_seconds || 0)}s)`;
+    startBtn.style.display = 'none';
+    stopBtn.style.display = '';
+  } else {
+    el.textContent = status.topics && status.topics.length ? 'Zakończono.' : '';
+    startBtn.style.display = '';
+    stopBtn.style.display = 'none';
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+  topicsEl.textContent = (status.topics || []).length ? 'Wykryte tematy: ' + status.topics.join(', ') : '';
+}
+
+async function pollDiscoverStatus() {
+  const resp = await fetch('/api/plugins/ebus/discover/status');
+  renderDiscoverStatus(await resp.json());
+}
+
+document.getElementById('discoverStartBtn').addEventListener('click', async () => {
+  try {
+    const resp = await fetch('/api/plugins/ebus/discover/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      document.getElementById('discoverStatus').textContent = '❌ ' + (data.error || 'Błąd uruchamiania nasłuchu');
+      return;
+    }
+    renderDiscoverStatus(data);
+    pollTimer = setInterval(pollDiscoverStatus, 3000);
+  } catch (e) {
+    document.getElementById('discoverStatus').textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  }
+});
+
+document.getElementById('discoverStopBtn').addEventListener('click', async () => {
+  const resp = await fetch('/api/plugins/ebus/discover/stop', { method: 'POST' });
+  renderDiscoverStatus(await resp.json());
+});
+
+pollDiscoverStatus();
+</script>
+</body>
+</html>

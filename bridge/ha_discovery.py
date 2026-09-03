@@ -1,21 +1,3 @@
-"""Budowanie encji Home Assistant przez MQTT Discovery.
-
-Home Assistant nasłuchuje na `<discovery_prefix>/<component>/<object_id>/config`
-- publikacja retained wiadomości JSON na taki temat automatycznie tworzy
-encję w HA, bez ręcznego pisania configuration.yaml po stronie HA.
-
-Świadomie NIE publikujemy `alarm_control_panel` dla stref Satela - to
-ominęłoby autoryzację panelu webowego (MQTT nie ma wbudowanego mechanizmu
-hasła per-żądanie jak nasz `/api/satel/arm`). Strefy trafiają do HA jako
-`binary_sensor` (tylko odczyt - "uzbrojona: tak/nie"). Jeśli chcesz
-uzbrajać z poziomu Home Assistant, użyj integracji `rest_command` w HA,
-żeby wywoływała nasz UWIERZYTELNIONY endpoint `/api/satel/arm` - patrz
-README, sekcja "Home Assistant".
-
-Wszystkie encje grupowane są pod jednym urządzeniem w HA (ten sam blok
-`device` w każdym payloadzie) - dzięki temu w interfejsie HA widać je
-razem, nie jako rozproszoną listę.
-"""
 from __future__ import annotations
 
 
@@ -29,8 +11,6 @@ def _device_block(cfg: dict) -> dict:
 
 
 def build_boiler_sensor_entities(sensors_cfg: list[dict], ha_cfg: dict, boiler_topic_prefix: str) -> list[dict]:
-    """Jeden sensor HA per czujnik eBUS z targets.mqtt_publish=true (bo
-    tylko takie faktycznie trafiają na MQTT - patrz boiler_output.py)."""
     prefix = ha_cfg.get("discovery_prefix", "homeassistant")
     entities = []
     for sensor in sensors_cfg:
@@ -62,9 +42,6 @@ def build_boiler_sensor_entities(sensors_cfg: list[dict], ha_cfg: dict, boiler_t
 
 
 def build_tuya_switch_entities(tuya_devices_cfg: dict, ha_cfg: dict, topic_prefix: str) -> list[dict]:
-    """Jeden switch HA per urządzenie Tuya - Z możliwością sterowania
-    (command_topic), bo to ten sam poziom ryzyka co fizyczne kliknięcie
-    włącznika, nie funkcja bezpieczeństwa jak uzbrojenie alarmu."""
     prefix = ha_cfg.get("discovery_prefix", "homeassistant")
     entities = []
     for name in tuya_devices_cfg:
@@ -90,8 +67,6 @@ def build_tuya_switch_entities(tuya_devices_cfg: dict, ha_cfg: dict, topic_prefi
 
 
 def build_satel_input_entities(monitored_zones: dict, ha_cfg: dict, topic_prefix: str) -> list[dict]:
-    """Wejścia (czujki) jako binary_sensor - tylko odczyt, sensowne
-    (fizyczna czujka nie da się "włączyć" zdalnie)."""
     prefix = ha_cfg.get("discovery_prefix", "homeassistant")
     entities = []
     for name, number in monitored_zones.items():
@@ -116,8 +91,6 @@ def build_satel_input_entities(monitored_zones: dict, ha_cfg: dict, topic_prefix
 
 
 def build_satel_output_entities(monitored_outputs: dict, ha_cfg: dict, topic_prefix: str) -> list[dict]:
-    """Wyjścia Satela jako switch - sterowalne (to przekaźnik, nie funkcja
-    bezpieczeństwa - podobny poziom ryzyka co włącznik Tuya)."""
     prefix = ha_cfg.get("discovery_prefix", "homeassistant")
     entities = []
     for name, number in monitored_outputs.items():
@@ -143,8 +116,6 @@ def build_satel_output_entities(monitored_outputs: dict, ha_cfg: dict, topic_pre
 
 
 def build_satel_partition_entities(partitions: dict, ha_cfg: dict, topic_prefix: str) -> list[dict]:
-    """Strefy jako binary_sensor - CELOWO tylko odczyt (uzasadnienie w
-    docstringu modułu). Sterowanie -> patrz README, sekcja Home Assistant."""
     prefix = ha_cfg.get("discovery_prefix", "homeassistant")
     entities = []
     for name, number in partitions.items():
@@ -169,7 +140,6 @@ def build_satel_partition_entities(partitions: dict, ha_cfg: dict, topic_prefix:
 
 
 def build_all_entities(config, boiler_topic_prefix: str) -> list[dict]:
-    """Zbiera wszystkie encje na podstawie pełnej konfiguracji bridge'a."""
     ha_cfg = config.raw.get("home_assistant", {})
     topic_prefix = ha_cfg.get("state_topic_prefix", "home/bridge")
 

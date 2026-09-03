@@ -1,20 +1,3 @@
-"""Lokalna baza danych historycznych (SQLite).
-
-Wybór SQLite (a nie InfluxDB) jest celowy: RPi Zero W ma procesor ARMv6
-(ARM11), dla którego większość nowoczesnych baz szeregów czasowych
-(InfluxDB, Prometheus - obie w Go) NIE ma oficjalnych binarek - tylko od
-ARMv7 wzwyż. SQLite to czysty kod C wbudowany w Pythona - działa wszędzie,
-zero dodatkowej usługi do administrowania, a dla domowej skali danych
-(kilka czujników, odczyty co kilkadziesiąt sekund) jego wydajność jest
-zupełnie wystarczająca.
-
-Baza trzyma dwie tabele:
-  - readings: znormalizowane odczyty liczbowe (temperatury z kotła, ale
-    też można tu wrzucać inne wartości liczbowe)
-  - events: zdarzenia dyskretne (ruch, włączenie światła, alarm, wpis
-    systemowy) - do przeglądania w logu i filtrowania w panelu
-  - alerts: aktywne/rozwiązane alarmy progowe (patrz alarms.py)
-"""
 from __future__ import annotations
 
 import json
@@ -71,7 +54,22 @@ CREATE TABLE IF NOT EXISTS commands (
     done_ts REAL
 );
 CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status);
+
+CREATE TABLE IF NOT EXISTS logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    component TEXT NOT NULL,   -- 'bridge' | 'dashboard' - który proces
+    logger TEXT NOT NULL,      -- np. 'bridge.satel'
+    level TEXT NOT NULL,       -- DEBUG | INFO | WARNING | ERROR | CRITICAL
+    message TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
 """
+
+_LOG_LEVEL_ORDER = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+LOG_LEVELS_AT_OR_ABOVE = {
+    level: _LOG_LEVEL_ORDER[i:] for i, level in enumerate(_LOG_LEVEL_ORDER)
+}
 
 
 @dataclass
@@ -84,7 +82,6 @@ class HistoryStore:
         self._conn.executescript(SCHEMA)
         self._conn.commit()
 
-    # -- zapisy --------------------------------------------------------
     def write_reading(self, sensor: str, value: float, ts: float | None = None) -> None:
         ts = ts if ts is not None else time.time()
         with self._lock:
@@ -121,7 +118,6 @@ class HistoryStore:
             )
             self._conn.commit()
 
-    # -- statusy na żywo (Tuya, wejścia/wyjścia Satela, kocioł) ---------
     def set_status(self, key: str, category: str, value, label: str | None = None,
                    ts: float | None = None) -> None:
         ts = ts if ts is not None else time.time()
@@ -133,6 +129,11 @@ class HistoryStore:
                 (key, category, label, str(value), ts),
             )
             self._conn.commit()
+
+    def get_status_value(self, key: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM status WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
 
     def get_status(self, category: str | None = None) -> list[dict]:
         query = "SELECT key, category, label, value, ts FROM status"
@@ -148,13 +149,20 @@ class HistoryStore:
             for r in rows
         ]
 
-    # -- kolejka komend (panel webowy -> proces bridge'a) ---------------
-    # Panel webowy i główny proces bridge'a to DWA OSOBNE procesy - panel
-    # nie ma bezpośredniego dostępu do żywego połączenia z Satelem. Zamiast
-    # dodawać drugi serwer HTTP w procesie bridge'a (więcej ruchomych
-    # części, więcej powierzchni do zabezpieczenia), panel zapisuje komendę
-    # do tej tabeli, a bridge odpytuje ją cyklicznie (patrz
-    # rules_engine.py: _command_poll_loop) i wykonuje.
+    def prune_status(self, category: str, keep_keys) -> int:
+        keep_keys = list(keep_keys)
+        with self._lock:
+            if not keep_keys:
+                cur = self._conn.execute("DELETE FROM status WHERE category = ?", (category,))
+            else:
+                placeholders = ",".join("?" * len(keep_keys))
+                cur = self._conn.execute(
+                    f"DELETE FROM status WHERE category = ? AND key NOT IN ({placeholders})",
+                    (category, *keep_keys),
+                )
+            self._conn.commit()
+            return cur.rowcount
+
     def enqueue_command(self, command: str, params: dict) -> int:
         ts = time.time()
         with self._lock:
@@ -201,7 +209,6 @@ class HistoryStore:
             "status": row[4], "result": json.loads(row[5]) if row[5] else None, "done_ts": row[6],
         }
 
-    # -- odczyty (używane przez panel webowy) ---------------------------
     def get_history(self, sensor: str, ts_from: float, ts_to: float) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
@@ -254,3 +261,60 @@ class HistoryStore:
             }
             for r in rows
         ]
+
+    def write_log(self, component: str, logger_name: str, level: str, message: str,
+                   ts: float | None = None) -> None:
+        ts = ts if ts is not None else time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO logs (ts, component, logger, level, message) VALUES (?, ?, ?, ?, ?)",
+                (ts, component, logger_name, level, message),
+            )
+            self._conn.commit()
+
+    def get_logs(self, component: str | None = None, logger_name: str | None = None,
+                  level: str | None = None, ts_from: float | None = None, limit: int = 300) -> list[dict]:
+        query = "SELECT id, ts, component, logger, level, message FROM logs WHERE 1=1"
+        params: list = []
+        if component:
+            query += " AND component = ?"
+            params.append(component)
+        if logger_name:
+            query += " AND logger = ?"
+            params.append(logger_name)
+        if level:
+            allowed = LOG_LEVELS_AT_OR_ABOVE.get(level.upper())
+            if allowed:
+                placeholders = ",".join("?" * len(allowed))
+                query += f" AND level IN ({placeholders})"
+                params.extend(allowed)
+        if ts_from is not None:
+            query += " AND ts >= ?"
+            params.append(ts_from)
+        query += " ORDER BY ts DESC LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [
+            {"id": r[0], "ts": r[1], "component": r[2], "logger": r[3], "level": r[4], "message": r[5]}
+            for r in rows
+        ]
+
+    def get_log_loggers(self, component: str | None = None) -> list[str]:
+        query = "SELECT DISTINCT logger FROM logs WHERE 1=1"
+        params: list = []
+        if component:
+            query += " AND component = ?"
+            params.append(component)
+        query += " ORDER BY logger"
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [r[0] for r in rows]
+
+    def prune_logs(self, keep: int = 10000) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY ts DESC LIMIT ?)",
+                (keep,),
+            )
+            self._conn.commit()

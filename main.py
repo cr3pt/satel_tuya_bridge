@@ -1,8 +1,3 @@
-"""Punkt wejścia bridge'a Satel <-> Tuya <-> eBUS.
-
-Uruchomienie:
-    python main.py [--config config.yaml]
-"""
 from __future__ import annotations
 
 import argparse
@@ -11,6 +6,8 @@ import logging
 import sys
 
 from bridge.config import BridgeConfig
+from bridge.log_capture import attach_log_capture
+from bridge.logging_config import apply_log_levels
 from bridge.rules_engine import RulesEngine
 
 logging.basicConfig(
@@ -22,7 +19,7 @@ logger = logging.getLogger("bridge.main")
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--config", default="config.db")
     args = parser.parse_args()
 
     try:
@@ -31,11 +28,12 @@ async def main() -> None:
         logger.error(str(exc))
         sys.exit(1)
 
+    apply_log_levels(config.raw)
+
     engine = RulesEngine(config)
+    attach_log_capture(engine.history, "bridge")
     await engine.start()
 
-    # Utrzymuj proces przy życiu - cała logika działa w zarejestrowanych
-    # callbackach i zadaniach w tle.
     await asyncio.Event().wait()
 
 

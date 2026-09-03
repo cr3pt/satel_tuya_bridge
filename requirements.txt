@@ -1,19 +1,21 @@
-PyYAML>=6.0
-aiohttp>=3.9
-tinytuya>=1.14
-# UWAGA: przypięte < 1.0.0 CELOWO. satel-integra 1.0.0+ (używane przez
-# aktualną integrację Home Assistant) to kompletnie przepisane API -
-# inny konstruktor AsyncSatel (bez `loop`, integration_key na starcie),
-# brak monitor_status()/keep_alive()/generate_query(), publiczne
-# register_callbacks()/start(). Nasz kod (satel_client.py) jest napisany
-# pod starsze, prywatne API 0.3.x - bez tego górnego ograniczenia `pip
-# install` po prostu wybrałby najnowszą wersję i całość Satela padłaby
-# z AttributeError przy starcie.
-satel-integra>=0.3.7,<1.0.0
-paho-mqtt>=1.6
-uiprotect>=6.0
+PyYAML>=6.0.3
+aiohttp>=3.14
+tinytuya>=1.20
+# satel-integra >=1.0.0 to kompletnie przepisane API względem 0.3.x
+# (rejestrowanie przez register_callbacks()+start() zamiast blokującego
+# monitor_status(), wbudowany keepalive/reconnect/wykrywanie "centrala
+# zajęta", kolejka komend) - bridge/satel_client.py jest napisany pod TO
+# nowe API (patrz obszerny docstring tamtego modułu). Wymaga Python
+# >=3.12 (patrz Dockerfile). Górne ograniczenie <2.0.0 celowo - biblioteka
+# już RAZ przeszła "major bump = całkowicie inne API" (0.3.x -> 1.0.0),
+# więc nie chcemy, żeby przyszła 2.0.0 zepsuła integrację bez świadomej
+# aktualizacji tego pliku.
+satel-integra>=1.4.0,<2.0.0
+paho-mqtt>=2.1,<3.0
+uiprotect>=16.6
 tuya-connector-python>=0.1.2
-Flask>=3.0
-waitress>=3.0
+Quart>=0.20
+itsdangerous>=2.1
+hypercorn>=0.17
 
 astral>=3.2
