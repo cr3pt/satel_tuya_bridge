@@ -206,11 +206,10 @@ class TestEbusMqttListenerParsePayload:
         )
         assert received == [("a", 21.3)]
 
-    async def test_multi_field_json_without_mqtt_field_is_skipped(self, monkeypatch, caplog):
+    async def test_multi_field_json_without_mqtt_field_is_joined_readable(self, monkeypatch):
         listener, received = self._make_listener(monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/hc1"}])
         self._deliver(listener, "ebusd/hc1", '{"MixerStatus": {"value": "on"}, "TempFloor": {"value": 21.3}}')
-        assert received == []
-        assert "mqtt_field" in caplog.text
+        assert received == [("a", "MixerStatus: on | TempFloor: 21.3")]
 
     async def test_multi_field_json_with_unknown_mqtt_field_is_skipped(self, monkeypatch, caplog):
         listener, received = self._make_listener(
@@ -246,6 +245,17 @@ class TestEbusMqttListenerParsePayload:
             '{ "0": {"name": "N_A", "value": 5.000}, "1": {"name": "N_A", "value": 6.000}}',
         )
         assert received == []
+
+    async def test_field_keyed_value_bundle_without_names_uses_field_names_as_labels(self, monkeypatch):
+        listener, received = self._make_listener(
+            monkeypatch, [{"name": "a", "mqtt_topic": "ebusd/fha/BK100_BK101_BK102_BK103"}],
+        )
+        self._deliver(
+            listener, "ebusd/fha/BK100_BK101_BK102_BK103",
+            '{ "T1": {"value": 68.000}, "TempOutdoor": {"value": 17.699}, '
+            '"TempAirSupply": {"value": 0.500}, "TempDHWset": {"value": 10.000}}',
+        )
+        assert received == [("a", "T1: 68.0 | TempOutdoor: 17.699 | TempAirSupply: 0.5 | TempDHWset: 10.0")]
 
 
 class FakeMqttClientBg:
