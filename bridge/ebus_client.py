@@ -108,15 +108,17 @@ class BackgroundTopicDiscovery:
 
 def _is_named_value_bundle(parsed: dict) -> bool:
     return bool(parsed) and all(
-        isinstance(v, dict) and "name" in v and "value" in v for v in parsed.values()
+        isinstance(v, dict) and "value" in v for v in parsed.values()
     )
 
 
 def _format_named_value_bundle(parsed: dict) -> str:
-    parts = [
-        f"{v['name']}: {v['value']}" for v in parsed.values()
-        if str(v.get("name", "")).strip() != "N_A"
-    ]
+    parts = []
+    for key, v in parsed.items():
+        label = str(v.get("name") or key).strip()
+        if label == "N_A":
+            continue
+        parts.append(f"{label}: {v['value']}")
     return " | ".join(parts)
 
 
