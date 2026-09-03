@@ -32,16 +32,21 @@ def _patch_satel_integra_variable_length_bitmasks() -> None:
     if getattr(SatelReadMessage.get_active_bits, "_bridge_patched", False):
         return
 
+    warned_lengths: set[int] = set()
+
     def get_active_bits(self, expected_length: int) -> list[int]:
         actual_length = len(self.msg_data)
         if actual_length != expected_length:
-            logger.warning(
-                "Satel: centrala przysłała bitmaskę o długości %s B zamiast "
-                "zakładanych przez bibliotekę %s B (najpewniej ten model centrali "
-                "obsługuje mniej stref/wyjść niż 256) - używam faktycznej długości "
-                "zamiast zgłaszać błąd",
-                actual_length, expected_length,
-            )
+            if actual_length not in warned_lengths:
+                warned_lengths.add(actual_length)
+                logger.warning(
+                    "Satel: centrala przysłała bitmaskę o długości %s B zamiast "
+                    "zakładanych przez bibliotekę %s B (najpewniej ten model centrali "
+                    "obsługuje mniej stref/wyjść niż 256) - używam faktycznej długości "
+                    "zamiast zgłaszać błąd (kolejne wystąpienia tej samej długości nie "
+                    "będą już logowane, żeby nie zalewać logów)",
+                    actual_length, expected_length,
+                )
             expected_length = actual_length
         return decode_bitmask_le(self.msg_data, expected_length)
 

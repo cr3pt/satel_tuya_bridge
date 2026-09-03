@@ -540,6 +540,23 @@ class TestPatchSatelIntegraVariableLengthBitmasks:
         _patch_satel_integra_variable_length_bitmasks()
         _patch_satel_integra_variable_length_bitmasks()
 
+    def test_repeated_same_length_mismatch_warns_only_once(self, caplog):
+        from bridge.satel_client import _patch_satel_integra_variable_length_bitmasks
+        from satel_integra.commands import SatelReadCommand
+        from satel_integra.messages import SatelReadMessage
+
+        _patch_satel_integra_variable_length_bitmasks()
+
+        msg_data = bytearray(20)
+        msg = SatelReadMessage(SatelReadCommand.ZONES_VIOLATED, msg_data)
+
+        with caplog.at_level("WARNING", logger="bridge.satel"):
+            for _ in range(5):
+                msg.get_active_bits(32)
+
+        warnings = [r for r in caplog.records if "centrala przysłała bitmaskę" in r.message]
+        assert len(warnings) == 1
+
 
 class TestIsConnected:
     def test_false_before_connect(self):
