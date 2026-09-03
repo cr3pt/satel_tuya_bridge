@@ -329,7 +329,7 @@ class TestTuyaLocalPluginPage:
         data = await (await client.get("/api/plugins/tuya/devices", headers=_basic_auth_header("test_haslo_123"))).get_json()
         assert {
             "name": "lampka_zigbee", "id": "sub1", "gateway": "brama_salon", "cid": "node1",
-            "type": "socket", "ip": "", "local_key": "", "dimmer_dp": "",
+            "type": "socket", "ip": "", "local_key": "", "dimmer_dp": "", "dp_schema": {},
         } in data["devices"]
         assert {"name": "brama_salon", "id": "gw1", "ip": "1.2.3.9", "local_key": "gwkey", "version": 3.4} \
             in data["zigbee_gateways"]
@@ -388,6 +388,81 @@ class TestTuyaLocalPluginPage:
         ))
         assert resp.status_code == 200
         assert (await resp.get_json())["devices"][0]["name"] == "Nowe"
+
+    async def test_refresh_dp_schema_requires_auth(self, client):
+        resp = await client.post("/api/plugins/tuya/devices/refresh-dp-schema")
+        assert resp.status_code == 401
+
+    async def test_refresh_dp_schema_without_cloud_credentials_returns_400(self, client):
+        resp = await client.post(
+            "/api/plugins/tuya/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+        assert "Tuya Cloud" in (await resp.get_json())["error"]
+
+    async def test_refresh_dp_schema_saves_fetched_schema(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def fake_fetch(api_region, access_id, access_key, device_ids):
+            assert device_ids == ["d1"]
+            return {"d1": {"1": {"code": "switch_1", "type": "Boolean", "values": "{}"}}}, {}
+
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_dp_schemas_for_devices", fake_fetch)
+
+        resp = await client.post(
+            "/api/plugins/tuya/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data["updated"] == ["gniazdko"]
+        assert data["failed"] == []
+
+        devices = await (await client.get(
+            "/api/plugins/tuya/devices", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        gniazdko = next(d for d in devices["devices"] if d["name"] == "gniazdko")
+        assert gniazdko["dp_schema"] == {"1": {"code": "switch_1", "type": "Boolean", "values": "{}"}}
+
+    async def test_refresh_dp_schema_reports_per_device_failures(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def fake_fetch(api_region, access_id, access_key, device_ids):
+            return {}, {"d1": "nie znaleziono urządzenia"}
+
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_dp_schemas_for_devices", fake_fetch)
+
+        resp = await client.post(
+            "/api/plugins/tuya/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data["updated"] == []
+        assert data["failed"] == ["gniazdko"]
+
+    async def test_refresh_dp_schema_connection_error_returns_502(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def fake_fetch(api_region, access_id, access_key, device_ids):
+            raise ConnectionError("Błąd logowania do Tuya Cloud: bad credentials")
+
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_dp_schemas_for_devices", fake_fetch)
+
+        resp = await client.post(
+            "/api/plugins/tuya/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 502
 
     async def test_settings_get_requires_auth(self, client):
         assert (await client.get("/api/plugins/tuya_local/settings")).status_code == 401

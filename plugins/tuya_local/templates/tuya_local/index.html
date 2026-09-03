@@ -135,6 +135,16 @@
     <button type="button" class="add-row-btn" id="addDeviceBtn">+ Dodaj urządzenie</button>
   </div>
 
+  <div class="section-hint" style="margin-top:0;">
+    Urządzenia inne niż zwykły włącznik (czujniki, liczniki, kamery...) pokazują
+    tylko surowe numery pól, dopóki nie pobierzesz ich opisu z Tuya Cloud - wymaga
+    zapisanych poświadczeń w zakładce <a href="/plugins/tuya_cloud">☁ Tuya Cloud</a>.
+  </div>
+  <div class="discover-row">
+    <button type="button" class="secondary" id="refreshDpSchemaBtn">🔍 Pobierz opisy pól (Tuya Cloud)</button>
+    <span class="discover-status" id="refreshDpSchemaStatus"></span>
+  </div>
+
   <div class="actions-bar">
     <button id="saveDevicesBtn" type="button">Zapisz urządzenia</button>
   </div>
@@ -267,6 +277,7 @@ function addDeviceRow(initial) {
     </select>
     <input type="text" placeholder="DP jasności (tylko ściemniacz)" class="dev-dp" style="max-width: 140px; display:none;">
     <input type="text" placeholder="bramka Zigbee (opcjonalnie)" class="dev-gateway">
+    <input type="hidden" class="dev-schema">
     <button type="button" class="row-remove">✕</button>`;
   const typeSelect = row.querySelector('.dev-type');
   const dpInput = row.querySelector('.dev-dp');
@@ -282,6 +293,7 @@ function addDeviceRow(initial) {
     dpInput.value = initial.dimmer_dp || '';
     dpInput.style.display = typeSelect.value === 'dimmer' ? '' : 'none';
     row.querySelector('.dev-gateway').value = initial.gateway ?? '';
+    row.querySelector('.dev-schema').value = JSON.stringify(initial.dp_schema || {});
   }
   row.querySelector('.row-remove').addEventListener('click', () => row.remove());
   container.appendChild(row);
@@ -290,15 +302,20 @@ document.getElementById('addDeviceBtn').addEventListener('click', () => addDevic
 
 function collectDevices() {
   return Array.from(document.querySelectorAll('#devicesRows .repeatable-row'))
-    .map(row => ({
-      name: row.querySelector('.dev-name').value.trim(),
-      id: row.querySelector('.dev-id').value.trim(),
-      ip: row.querySelector('.dev-ip').value.trim(),
-      local_key: row.querySelector('.dev-key').value.trim(),
-      type: row.querySelector('.dev-type').value,
-      gateway: row.querySelector('.dev-gateway').value.trim(),
-      dimmer_dp: row.querySelector('.dev-dp').value.trim() || '1',
-    }))
+    .map(row => {
+      let dp_schema = {};
+      try { dp_schema = JSON.parse(row.querySelector('.dev-schema').value || '{}'); } catch (e) {  }
+      return {
+        name: row.querySelector('.dev-name').value.trim(),
+        id: row.querySelector('.dev-id').value.trim(),
+        ip: row.querySelector('.dev-ip').value.trim(),
+        local_key: row.querySelector('.dev-key').value.trim(),
+        type: row.querySelector('.dev-type').value,
+        gateway: row.querySelector('.dev-gateway').value.trim(),
+        dimmer_dp: row.querySelector('.dev-dp').value.trim() || '1',
+        dp_schema,
+      };
+    })
     .filter(d => d.name);
 }
 
@@ -331,6 +348,29 @@ document.getElementById('scanLanBtn').addEventListener('click', async () => {
     status.textContent = added
       ? `Znaleziono ${added} nowych urządzeń - local_key NIE jest rozgłaszany, uzupełnij go ręcznie albo zaimportuj z Tuya Cloud (zakładka ☁ Tuya Cloud).`
       : 'Nie znaleziono nowych urządzeń w sieci.';
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('refreshDpSchemaBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('refreshDpSchemaBtn');
+  const status = document.getElementById('refreshDpSchemaStatus');
+  btn.disabled = true;
+  status.textContent = 'Pobieram opisy pól...';
+  try {
+    const resp = await authorizedFetch('/api/plugins/tuya/devices/refresh-dp-schema', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = '❌ ' + (data.error || 'Błąd pobierania opisów pól');
+      return;
+    }
+    status.textContent = data.message + (data.failed.length ? ` Nie udało się dla: ${data.failed.join(', ')}.` : '');
+    document.getElementById('gatewaysRows').innerHTML = '';
+    document.getElementById('devicesRows').innerHTML = '';
+    await loadTuyaDevices();
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
   } finally {

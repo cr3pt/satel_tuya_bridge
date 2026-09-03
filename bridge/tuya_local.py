@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import tinytuya
 
 logger = logging.getLogger("bridge.tuya_local")
+
+DP_LABEL_TRANSLATIONS = {
+    "switch": "włącznik", "switch_1": "włącznik",
+    "va_temperature": "temperatura", "temp_current": "temperatura",
+    "va_humidity": "wilgotność", "humidity_value": "wilgotność",
+    "co2_value": "CO2", "pm25_value": "PM2.5", "ch4_sensor_value": "metan",
+    "watersensor_state": "czujnik zalania", "doorcontact_state": "kontaktron",
+    "pir": "ruch", "battery_percentage": "bateria", "battery_state": "stan baterii",
+    "cur_power": "moc", "cur_voltage": "napięcie", "cur_current": "prąd",
+    "bright_value": "jasność", "gas_sensor_state": "czujnik gazu",
+    "smoke_sensor_status": "czujnik dymu", "alarm_switch": "alarm",
+}
 
 
 def scan_network(maxretry: int = 1) -> list[dict]:
@@ -31,15 +44,19 @@ TUYA_CLOUD_REGIONS = {
 }
 
 
-def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> list[dict]:
+def _login_cloud(api_region: str, access_id: str, access_key: str) -> tinytuya.Cloud:
     try:
         cloud = tinytuya.Cloud(apiRegion=api_region, apiKey=access_id, apiSecret=access_key)
     except Exception as exc:
         raise ConnectionError(f"Błąd logowania do Tuya Cloud: {exc}") from exc
-
     if getattr(cloud, "error", None):
         message = cloud.error.get("Error") if isinstance(cloud.error, dict) else str(cloud.error)
         raise ConnectionError(f"Błąd logowania do Tuya Cloud: {message}")
+    return cloud
+
+
+def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> list[dict]:
+    cloud = _login_cloud(api_region, access_id, access_key)
 
     try:
         result = cloud.getdevices()
@@ -74,6 +91,16 @@ def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> lis
     for d in result:
         dev_id = d.get("id", "")
         lan_match = lan_devices.get(dev_id, {})
+        dp_schema = {}
+        if dev_id:
+            try:
+                dp_schema = _parse_dp_schema_result(cloud.getdps(dev_id))
+            except Exception:
+                logger.warning(
+                    "Nie udało się pobrać opisu pól DP dla urządzenia '%s' - status pokaże "
+                    "surowe wartości zamiast czytelnych etykiet",
+                    d.get("name", dev_id), exc_info=True,
+                )
         devices.append({
             "id": dev_id,
             "name": d.get("name", ""),
@@ -83,8 +110,101 @@ def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> lis
             "category": d.get("category", ""),
             "gateway_id": d.get("gateway_id", ""),
             "node_id": d.get("node_id", ""),
+            "dp_schema": dp_schema,
         })
     return devices
+
+
+def _parse_dp_schema_result(result: object) -> dict:
+    if not isinstance(result, dict) or not result.get("success"):
+        message = result.get("msg", "nieznany błąd") if isinstance(result, dict) else "brak odpowiedzi"
+        raise ConnectionError(f"Błąd pobierania opisu pól z Tuya Cloud: {message}")
+    data = result.get("result") or {}
+    schema: dict[str, dict] = {}
+    for group in ("status", "functions"):
+        for entry in data.get(group) or []:
+            dp_id = entry.get("dp_id")
+            if dp_id is None:
+                continue
+            schema.setdefault(str(dp_id), {
+                "code": entry.get("code", ""),
+                "type": entry.get("type", ""),
+                "values": entry.get("values", ""),
+            })
+    return schema
+
+
+def fetch_device_dp_schema(api_region: str, access_id: str, access_key: str, device_id: str) -> dict:
+    cloud = _login_cloud(api_region, access_id, access_key)
+    try:
+        result = cloud.getdps(device_id)
+    except Exception as exc:
+        raise ConnectionError(f"Błąd pobierania opisu pól z Tuya Cloud: {exc}") from exc
+    return _parse_dp_schema_result(result)
+
+
+def fetch_dp_schemas_for_devices(
+    api_region: str, access_id: str, access_key: str, device_ids: list[str],
+) -> tuple[dict[str, dict], dict[str, str]]:
+    cloud = _login_cloud(api_region, access_id, access_key)
+    schemas: dict[str, dict] = {}
+    errors: dict[str, str] = {}
+    for device_id in device_ids:
+        try:
+            schemas[device_id] = _parse_dp_schema_result(cloud.getdps(device_id))
+        except Exception as exc:
+            errors[device_id] = str(exc)
+    return schemas, errors
+
+
+def _dp_label(key: str, spec: dict | None) -> str:
+    code = (spec or {}).get("code") or key
+    return DP_LABEL_TRANSLATIONS.get(code, code.replace("_", " "))
+
+
+def _dp_format_value(value: object, spec: dict | None) -> object:
+    spec = spec or {}
+    if isinstance(value, bool):
+        return "tak" if value else "nie"
+    if spec.get("type") == "Value" and isinstance(value, (int, float)):
+        try:
+            meta = json.loads(spec.get("values") or "{}")
+        except (ValueError, TypeError):
+            meta = {}
+        scale = meta.get("scale")
+        unit = meta.get("unit", "")
+        if scale:
+            value = round(value / (10 ** scale), 2)
+            if isinstance(value, float) and value.is_integer():
+                value = int(value)
+        return f"{value}{unit}"
+    return value
+
+
+def find_tuya_switch_key(dps: dict, schema: dict | None = None, preferred: str | None = None) -> str | None:
+    if preferred and preferred in dps:
+        return preferred
+    schema = schema or {}
+    for key, spec in schema.items():
+        if key in dps and spec.get("type") == "Boolean" and str(spec.get("code") or key).startswith("switch"):
+            return key
+    for key in dps:
+        if str(key).startswith("switch"):
+            return key
+    return "1" if "1" in dps else None
+
+
+def format_tuya_dps(dps: dict, schema: dict | None = None, preferred_switch_key: str | None = None) -> tuple[object, str]:
+    schema = schema or {}
+    switch_key = find_tuya_switch_key(dps, schema, preferred=preferred_switch_key)
+    parts = []
+    for key, value in dps.items():
+        if key == switch_key or value is None:
+            continue
+        spec = schema.get(key)
+        parts.append(f"{_dp_label(key, spec)}: {_dp_format_value(value, spec)}")
+    is_on = dps.get(switch_key) if switch_key else None
+    return is_on, " | ".join(parts)
 
 
 class TuyaLocalController:

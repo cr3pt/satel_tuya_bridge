@@ -508,6 +508,8 @@ def _build_tuya_devices(form: dict) -> dict:
         if d.get("type") == "dimmer":
             entry["dimmer_dp"] = d["dimmer_dp"]
             entry["dimmer_range"] = [10, 1000]
+        if d.get("dp_schema"):
+            entry["dp_schema"] = d["dp_schema"]
         devices[d["name"]] = entry
     return devices
 
@@ -1000,6 +1002,7 @@ def tuya_devices_to_rows(devices: dict) -> list[dict]:
             "local_key": cfg.get("local_key", ""), "type": cfg.get("type", "socket"),
             "dimmer_dp": cfg.get("dimmer_dp", ""),
             "gateway": cfg.get("gateway", ""), "cid": cfg.get("cid", ""),
+            "dp_schema": cfg.get("dp_schema") or {},
         }
         for name, cfg in devices.items()
     ]

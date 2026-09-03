@@ -106,17 +106,17 @@ async def test_raises_connection_error_after_exhausting_retries(controller):
         await controller.turn_on("lampa_taras")
 
 
-async def test_get_status_normalizes_to_key_1_like_local_controller(controller):
+async def test_get_status_returns_all_fields_keyed_by_code(controller):
     fake = FakeTinytuyaCloud()
     fake.status_by_device["cloud1"] = [{"code": "switch_1", "value": True}, {"code": "other", "value": 5}]
     controller._cloud = fake
     status = await controller.get_status("lampa_taras")
-    assert status == {"1": True}
+    assert status == {"switch_1": True, "other": 5}
 
 
-async def test_get_status_empty_when_switch_code_not_present(controller):
+async def test_get_status_empty_when_no_fields_reported(controller):
     fake = FakeTinytuyaCloud()
-    fake.status_by_device["cloud1"] = [{"code": "other", "value": 5}]
+    fake.status_by_device["cloud1"] = []
     controller._cloud = fake
     status = await controller.get_status("lampa_taras")
     assert status == {}
@@ -128,7 +128,7 @@ async def test_get_all_statuses_queries_all_devices(controller):
     fake.status_by_device["cloud2"] = [{"code": "switch", "value": False}]
     controller._cloud = fake
     statuses = await controller.get_all_statuses()
-    assert statuses == {"lampa_taras": {"1": True}, "wentylator": {"1": False}}
+    assert statuses == {"lampa_taras": {"switch_1": True}, "wentylator": {"switch": False}}
 
 
 async def test_get_all_statuses_marks_failed_device_as_none(controller):

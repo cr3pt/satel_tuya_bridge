@@ -68,11 +68,7 @@ class TuyaCloudController:
         client = self._client()
         result = await self._call_with_retry(device_name, client.getstatus, cfg["id"])
         items = result.get("result", []) if isinstance(result, dict) else []
-        switch_code = cfg.get("switch_code") or "switch_1"
-        for item in items:
-            if item.get("code") == switch_code:
-                return {"1": item.get("value")}
-        return {}
+        return {item["code"]: item.get("value") for item in items if item.get("code")}
 
     async def get_all_statuses(self) -> dict[str, dict | None]:
         names = list(self.devices_cfg)

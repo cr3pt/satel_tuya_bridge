@@ -9,7 +9,7 @@ from datetime import datetime
 from .config import BridgeConfig
 from .logging_config import apply_log_levels
 from .satel_client import SatelIntegraClient, SatelVirtualInputTrigger
-from .tuya_local import TuyaLocalController
+from .tuya_local import TuyaLocalController, format_tuya_dps
 from .tuya_cloud import TuyaCloudController
 from .tuya_dispatch import TuyaController
 from .tuya_cloud_events import TuyaCameraMotionListener
@@ -530,10 +530,12 @@ class RulesEngine:
                 name = cmd["params"]["name"]
                 await self.tuya.turn_on(name)
                 self.history.mark_command_done(cmd["id"], {"message": f"Włączono '{name}'"})
+                self._schedule_tuya_status_refresh(name)
             elif cmd["command"] == "tuya_off":
                 name = cmd["params"]["name"]
                 await self.tuya.turn_off(name)
                 self.history.mark_command_done(cmd["id"], {"message": f"Wyłączono '{name}'"})
+                self._schedule_tuya_status_refresh(name)
             elif cmd["command"] == "reload_config":
                 result = await self.reload_config()
                 self.history.mark_command_done(cmd["id"], result)
@@ -608,6 +610,55 @@ class RulesEngine:
                        "klucze/brokery MQTT, zakładka 🔌 Połączenia) wciąż wymagają pełnego restartu.",
         }
 
+    async def _apply_tuya_device_status(self, device_name: str, dps: dict | None) -> None:
+        if dps is None:
+            self.history.set_status(f"tuya:{device_name}", "tuya", "niedostępne", label=device_name)
+            await self.handle_device_state("tuya_state", device_name, "niedostępne")
+            return
+        local_cfg = self.config.tuya.get("devices", {}).get(device_name)
+        cloud_cfg = self.config.tuya.get("cloud_devices", {}).get(device_name)
+        schema = (local_cfg or {}).get("dp_schema") or {}
+        preferred_switch_key = (cloud_cfg or {}).get("switch_code")
+        is_on, extra_status = format_tuya_dps(dps, schema=schema, preferred_switch_key=preferred_switch_key)
+        if is_on:
+            tuya_value = "włączone"
+        elif is_on is not None:
+            tuya_value = "wyłączone"
+        else:
+            tuya_value = extra_status or "?"
+        self.history.set_status(f"tuya:{device_name}", "tuya", tuya_value, label=device_name)
+        await self.handle_device_state("tuya_state", device_name, tuya_value)
+        if self.ha_mqtt and is_on is not None:
+            self.ha_mqtt.publish_state(
+                f"{self._ha_topic_prefix}/tuya/{device_name}/state",
+                "ON" if is_on else "OFF",
+            )
+        if self.state_mqtt and is_on is not None:
+            self.state_mqtt.publish_state(
+                f"{self._tuya_mqtt_topic}/{device_name}/state",
+                "ON" if is_on else "OFF",
+            )
+        if local_cfg and local_cfg.get("type") == "dimmer" and local_cfg.get("dimmer_dp") in dps:
+            lo, hi = local_cfg.get("dimmer_range", [10, 1000])
+            raw = dps[local_cfg["dimmer_dp"]]
+            percent = round((raw - lo) / (hi - lo) * 100) if hi > lo else 0
+            self.history.set_status(
+                f"tuya:{device_name}:brightness", "tuya", f"{percent}%",
+                label=f"{device_name} (jasność)",
+            )
+
+    def _schedule_tuya_status_refresh(self, device_name: str, delay_seconds: float = 1.5) -> None:
+        async def _refresh() -> None:
+            await asyncio.sleep(delay_seconds)
+            try:
+                dps = await self.tuya.get_status(device_name)
+            except Exception:
+                logger.exception("Nie udało się odświeżyć statusu Tuya '%s' po komendzie", device_name)
+                return
+            await self._apply_tuya_device_status(device_name, dps)
+
+        asyncio.ensure_future(_refresh())
+
     async def _tuya_status_poll_loop(self) -> None:
         self._tuya_health = HealthReporter(
             "tuya_local", history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
@@ -622,35 +673,7 @@ class RulesEngine:
                     f"niedostępne: {', '.join(unreachable)}" if unreachable else "",
                 )
                 for device_name, dps in statuses.items():
-                    if dps is None:
-                        self.history.set_status(
-                            f"tuya:{device_name}", "tuya", "niedostępne", label=device_name,
-                        )
-                        await self.handle_device_state("tuya_state", device_name, "niedostępne")
-                        continue
-                    is_on = dps.get("1")
-                    tuya_value = "włączone" if is_on else "wyłączone" if is_on is not None else "?"
-                    self.history.set_status(f"tuya:{device_name}", "tuya", tuya_value, label=device_name)
-                    await self.handle_device_state("tuya_state", device_name, tuya_value)
-                    if self.ha_mqtt and is_on is not None:
-                        self.ha_mqtt.publish_state(
-                            f"{self._ha_topic_prefix}/tuya/{device_name}/state",
-                            "ON" if is_on else "OFF",
-                        )
-                    if self.state_mqtt and is_on is not None:
-                        self.state_mqtt.publish_state(
-                            f"{self._tuya_mqtt_topic}/{device_name}/state",
-                            "ON" if is_on else "OFF",
-                        )
-                    cfg = self.config.tuya["devices"].get(device_name)
-                    if cfg and cfg.get("type") == "dimmer" and cfg.get("dimmer_dp") in dps:
-                        lo, hi = cfg.get("dimmer_range", [10, 1000])
-                        raw = dps[cfg["dimmer_dp"]]
-                        percent = round((raw - lo) / (hi - lo) * 100) if hi > lo else 0
-                        self.history.set_status(
-                            f"tuya:{device_name}:brightness", "tuya", f"{percent}%",
-                            label=f"{device_name} (jasność)",
-                        )
+                    await self._apply_tuya_device_status(device_name, dps)
             except Exception:
                 logger.exception("Błąd w pętli odpytywania statusów Tuya")
             await asyncio.sleep(self.config.tuya.get("status_poll_interval_seconds", 15))
