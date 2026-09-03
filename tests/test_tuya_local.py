@@ -413,6 +413,27 @@ class TestFormatTuyaDps:
         is_on, extra = format_tuya_dps({"1": True, "4": None})
         assert extra == ""
 
+    def test_phase_raw_code_decoded_to_voltage_current_power(self):
+        is_on, extra = format_tuya_dps({"switch_1": True, "phase_b": "CW4ABMUAAFQ="})
+        assert extra == "faza B: 241.4V 1.221A 84W"
+
+    def test_phase_raw_code_with_bad_data_falls_back_to_raw_value(self):
+        is_on, extra = format_tuya_dps({"switch_1": True, "phase_b": "not-base64!!"})
+        assert extra.startswith("faza B: ")
+
+    def test_known_energy_code_scaled_even_without_schema(self):
+        is_on, extra = format_tuya_dps({"switch_1": True, "forward_energy_total": 486706})
+        assert extra == "energia pobrana (całkowita): 4867.06 kWh"
+
+    def test_long_string_value_shown_as_binary_data_placeholder(self):
+        blob = "A" * 200
+        is_on, extra = format_tuya_dps({"switch_1": True, "alarm_message": blob})
+        assert extra == f"wiadomość alarmowa: (dane binarne, {len(blob)} znaków)"
+
+    def test_short_string_value_shown_verbatim(self):
+        is_on, extra = format_tuya_dps({"switch_1": True, "breaker_number": "gom25010001"})
+        assert extra == "numer licznika: gom25010001"
+
 
 class TestZigbeeGateways:
 

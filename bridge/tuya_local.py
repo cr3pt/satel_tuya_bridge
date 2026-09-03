@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 
@@ -18,7 +19,48 @@ DP_LABEL_TRANSLATIONS = {
     "cur_power": "moc", "cur_voltage": "napięcie", "cur_current": "prąd",
     "bright_value": "jasność", "gas_sensor_state": "czujnik gazu",
     "smoke_sensor_status": "czujnik dymu", "alarm_switch": "alarm",
+    "forward_energy_total": "energia pobrana (całkowita)",
+    "reverse_energy_total": "energia oddana (całkowita)",
+    "phase_a": "faza A", "phase_b": "faza B", "phase_c": "faza C",
+    "fault": "kod awarii", "energy_reset": "reset licznika energii",
+    "alarm_set_1": "próg alarmowy 1", "alarm_set_2": "próg alarmowy 2",
+    "breaker_number": "numer licznika", "supply_frequency": "częstotliwość zasilania",
+    "online_state": "stan online",
+    "basic_flip": "obrót obrazu", "basic_osd": "znacznik czasu na obrazie",
+    "basic_private": "tryb prywatności", "basic_nightvision": "noktowizja",
+    "motion_sensitivity": "czułość detekcji ruchu", "motion_switch": "detekcja ruchu",
+    "motion_tracking": "śledzenie ruchu", "motion_area_switch": "strefy detekcji ruchu",
+    "motion_area": "obszar detekcji ruchu", "humanoid_filter": "filtr sylwetki",
+    "sd_storge": "karta SD (całość|wolne|użyte, KB)", "sd_status": "stan karty SD",
+    "sd_format": "formatowanie karty SD", "sd_format_state": "stan formatowania karty SD",
+    "movement_detect_pic": "zdjęcie z detekcji ruchu",
+    "alarm_message": "wiadomość alarmowa",
+    "ptz_stop": "PTZ: zatrzymano", "ptz_control": "PTZ: sterowanie",
+    "ptz_calibration": "PTZ: kalibracja",
+    "decibel_switch": "detekcja dźwięku", "decibel_sensitivity": "czułość detekcji dźwięku",
+    "record_switch": "nagrywanie", "record_mode": "tryb nagrywania",
+    "siren_switch": "syrena",
 }
+
+_PHASE_RAW_CODES = {"phase_a", "phase_b", "phase_c"}
+_KNOWN_VALUE_SCALES = {
+    "forward_energy_total": (2, " kWh"),
+    "reverse_energy_total": (2, " kWh"),
+}
+_MAX_INLINE_VALUE_LENGTH = 60
+
+
+def _decode_phase_raw(value: str) -> str | None:
+    try:
+        raw = base64.b64decode(value)
+    except Exception:
+        return None
+    if len(raw) != 8:
+        return None
+    voltage = int.from_bytes(raw[0:2], "big") / 10
+    current = int.from_bytes(raw[2:5], "big") / 1000
+    power = int.from_bytes(raw[5:8], "big")
+    return f"{voltage:g}V {current:g}A {power}W"
 
 
 def scan_network(maxretry: int = 1) -> list[dict]:
@@ -157,27 +199,40 @@ def fetch_dp_schemas_for_devices(
     return schemas, errors
 
 
-def _dp_label(key: str, spec: dict | None) -> str:
-    code = (spec or {}).get("code") or key
+def _dp_code(key: str, spec: dict | None) -> str:
+    return (spec or {}).get("code") or key
+
+
+def _dp_label(code: str) -> str:
     return DP_LABEL_TRANSLATIONS.get(code, code.replace("_", " "))
 
 
-def _dp_format_value(value: object, spec: dict | None) -> object:
+def _dp_format_value(value: object, spec: dict | None, code: str) -> object:
     spec = spec or {}
+    if code in _PHASE_RAW_CODES and isinstance(value, str):
+        decoded = _decode_phase_raw(value)
+        if decoded is not None:
+            return decoded
     if isinstance(value, bool):
         return "tak" if value else "nie"
-    if spec.get("type") == "Value" and isinstance(value, (int, float)):
-        try:
-            meta = json.loads(spec.get("values") or "{}")
-        except (ValueError, TypeError):
-            meta = {}
-        scale = meta.get("scale")
-        unit = meta.get("unit", "")
+    if isinstance(value, (int, float)):
+        scale, unit = None, ""
+        if spec.get("type") == "Value":
+            try:
+                meta = json.loads(spec.get("values") or "{}")
+            except (ValueError, TypeError):
+                meta = {}
+            scale = meta.get("scale")
+            unit = meta.get("unit", "")
+        if scale is None and code in _KNOWN_VALUE_SCALES:
+            scale, unit = _KNOWN_VALUE_SCALES[code]
         if scale:
             value = round(value / (10 ** scale), 2)
             if isinstance(value, float) and value.is_integer():
                 value = int(value)
         return f"{value}{unit}"
+    if isinstance(value, str) and len(value) > _MAX_INLINE_VALUE_LENGTH:
+        return f"(dane binarne, {len(value)} znaków)"
     return value
 
 
@@ -202,7 +257,8 @@ def format_tuya_dps(dps: dict, schema: dict | None = None, preferred_switch_key:
         if key == switch_key or value is None:
             continue
         spec = schema.get(key)
-        parts.append(f"{_dp_label(key, spec)}: {_dp_format_value(value, spec)}")
+        code = _dp_code(key, spec)
+        parts.append(f"{_dp_label(code)}: {_dp_format_value(value, spec, code)}")
     is_on = dps.get(switch_key) if switch_key else None
     return is_on, " | ".join(parts)
 
