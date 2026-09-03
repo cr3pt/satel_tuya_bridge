@@ -413,6 +413,29 @@ class TestFormatTuyaDps:
         is_on, extra = format_tuya_dps({"1": True, "4": None})
         assert extra == ""
 
+    def test_camera_device_collapses_to_simple_status(self):
+        dps = {
+            "basic_indicator": False, "basic_flip": False, "basic_osd": True,
+            "basic_private": False, "motion_sensitivity": 0, "basic_nightvision": 0,
+            "sd_storge": "33554432|6401024|27153408", "sd_status": 1, "sd_format": False,
+            "sd_format_state": 0, "ipc_auto_siren": False, "ipc_sharp": 62,
+            "motion_switch": True, "decibel_switch": True, "decibel_sensitivity": 0,
+            "record_switch": True, "record_mode": 1, "siren_switch": False,
+            "motion_area_switch": False, "humanoid_filter": True,
+        }
+        is_on, extra = format_tuya_dps(dps)
+        assert is_on is None
+        assert extra == "działa"
+
+    def test_camera_with_ipc_code_alone_is_detected(self):
+        is_on, extra = format_tuya_dps({"ipc_bright": 50})
+        assert extra == "działa"
+
+    def test_device_with_only_two_camera_indicators_is_not_treated_as_camera(self):
+        is_on, extra = format_tuya_dps({"basic_flip": False, "basic_osd": True})
+        assert extra != "działa"
+        assert "obrót obrazu" in extra
+
     def test_phase_raw_code_decoded_to_voltage_current_power(self):
         is_on, extra = format_tuya_dps({"switch_1": True, "phase_b": "CW4ABMUAAFQ="})
         assert extra == "faza B: 241.4V 1.221A 84W"

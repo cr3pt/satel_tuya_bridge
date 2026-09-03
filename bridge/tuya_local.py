@@ -49,6 +49,20 @@ _KNOWN_VALUE_SCALES = {
 }
 _MAX_INLINE_VALUE_LENGTH = 60
 
+_CAMERA_INDICATOR_CODES = {
+    "sd_status", "sd_storge", "sd_format", "sd_format_state",
+    "basic_osd", "basic_flip", "basic_private", "basic_nightvision",
+    "basic_indicator", "basic_anti_flicker", "basic_device_volume",
+    "motion_area", "motion_area_switch", "humanoid_filter",
+    "ptz_stop", "ptz_control", "ptz_calibration",
+}
+
+
+def _looks_like_camera(codes: set[str]) -> bool:
+    if any(code.startswith("ipc_") for code in codes):
+        return True
+    return len(codes & _CAMERA_INDICATOR_CODES) >= 3
+
 
 def _decode_phase_raw(value: str) -> str | None:
     try:
@@ -252,6 +266,10 @@ def find_tuya_switch_key(dps: dict, schema: dict | None = None, preferred: str |
 def format_tuya_dps(dps: dict, schema: dict | None = None, preferred_switch_key: str | None = None) -> tuple[object, str]:
     schema = schema or {}
     switch_key = find_tuya_switch_key(dps, schema, preferred=preferred_switch_key)
+    if switch_key is None:
+        codes = {_dp_code(key, schema.get(key)) for key in dps}
+        if _looks_like_camera(codes):
+            return None, "działa"
     parts = []
     for key, value in dps.items():
         if key == switch_key or value is None:
