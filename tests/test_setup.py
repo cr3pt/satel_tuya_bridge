@@ -7,7 +7,7 @@ import yaml
 from dashboard.setup import (
     build_config_dict, validate, build_automations_dict, validate_automations,
     build_satel_fields_dict, build_tuya_devices_dict, validate_satel_fields, validate_tuya_devices,
-    validate_cloud_devices, cloud_devices_to_rows,
+    validate_cloud_devices, cloud_devices_to_rows, tuya_devices_to_rows,
     build_connections_patch, validate_connections, connections_to_form, list_plugins,
     satel_connection_to_form, build_satel_connection_patch, validate_satel_connection,
     ebus_connection_to_form, build_ebus_connection_patch, validate_ebus_connection,
@@ -323,6 +323,30 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
 
     def test_build_tuya_devices_empty_form(self):
         assert build_tuya_devices_dict({}) == {"devices": {}, "zigbee_gateways": {}, "cloud_devices": {}}
+
+    def test_build_tuya_devices_preserves_submitted_dp_schema(self):
+        schema = {"1": {"code": "switch_1", "type": "Boolean", "values": "{}"}}
+        form = {"tuya_devices": [
+            {"name": "d", "id": "x", "ip": "1.2.3.4", "local_key": "k", "type": "socket", "dp_schema": schema},
+        ]}
+        devices = build_tuya_devices_dict(form)
+        assert devices["devices"]["d"]["dp_schema"] == schema
+
+    def test_build_tuya_devices_omits_dp_schema_when_absent(self):
+        form = {"tuya_devices": [
+            {"name": "d", "id": "x", "ip": "1.2.3.4", "local_key": "k", "type": "socket", "dp_schema": {}},
+        ]}
+        devices = build_tuya_devices_dict(form)
+        assert "dp_schema" not in devices["devices"]["d"]
+
+    def test_tuya_devices_to_rows_includes_dp_schema(self):
+        schema = {"1": {"code": "switch_1", "type": "Boolean", "values": "{}"}}
+        rows = tuya_devices_to_rows({"d": {"id": "x", "dp_schema": schema}})
+        assert rows[0]["dp_schema"] == schema
+
+    def test_tuya_devices_to_rows_defaults_dp_schema_to_empty_dict(self):
+        rows = tuya_devices_to_rows({"d": {"id": "x"}})
+        assert rows[0]["dp_schema"] == {}
 
     def test_validate_tuya_devices_no_errors_when_complete(self):
         form = {"tuya_devices": [{"name": "x", "id": "i", "ip": "1.2.3.4", "local_key": "k"}]}

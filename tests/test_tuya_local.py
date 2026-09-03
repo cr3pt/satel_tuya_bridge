@@ -1,6 +1,9 @@
 import pytest
 
-from bridge.tuya_local import TuyaLocalController, scan_network, fetch_cloud_devices
+from bridge.tuya_local import (
+    TuyaLocalController, scan_network, fetch_cloud_devices, fetch_device_dp_schema,
+    fetch_dp_schemas_for_devices, find_tuya_switch_key, format_tuya_dps,
+)
 
 DEVICES_CFG = {
     "gniazdko_salon": {"id": "dev1", "ip": "192.168.1.50", "local_key": "key1", "type": "socket"},
@@ -133,16 +136,24 @@ class TestScanNetwork:
 
 class FakeCloud:
 
-    def __init__(self, devices=None, error=None, getdevices_raises=None, getdevices_raw=None, **kwargs):
+    def __init__(self, devices=None, error=None, getdevices_raises=None, getdevices_raw=None,
+                 dps_by_device=None, getdps_raises=None, **kwargs):
         self.error = error
         self._devices = devices if devices is not None else []
         self._raises = getdevices_raises
         self.getdevices_raw = getdevices_raw
+        self._dps_by_device = dps_by_device or {}
+        self._getdps_raises = getdps_raises
 
     def getdevices(self, *args, **kwargs):
         if self._raises:
             raise self._raises
         return self._devices
+
+    def getdps(self, device_id):
+        if self._getdps_raises:
+            raise self._getdps_raises
+        return self._dps_by_device.get(device_id, {"success": True, "result": {"status": [], "functions": []}})
 
 
 class TestFetchCloudDevices:
@@ -155,7 +166,7 @@ class TestFetchCloudDevices:
         devices = fetch_cloud_devices("eu", "access_id", "access_secret")
         assert devices == [{
             "id": "d1", "name": "Gniazdko", "local_key": "localkey1", "ip": "", "version": "", "category": "",
-            "gateway_id": "", "node_id": "",
+            "gateway_id": "", "node_id": "", "dp_schema": {},
         }]
 
     def test_surfaces_gateway_id_and_node_id_for_zigbee_sub_devices(self, monkeypatch):
@@ -249,6 +260,158 @@ class TestFetchCloudDevices:
         monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: cloud)
         monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
         assert fetch_cloud_devices("eu", "access_id", "access_secret") == []
+
+    def test_includes_dp_schema_for_each_device(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(
+            devices=[{"id": "d1", "name": "Czujnik CO2", "key": "k1"}],
+            dps_by_device={"d1": {"success": True, "result": {
+                "status": [{"code": "co2_value", "dp_id": 2, "type": "Value", "values": "{}"}],
+                "functions": [{"code": "switch_1", "dp_id": 1, "type": "Boolean", "values": "{}"}],
+            }}},
+        ))
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
+        devices = fetch_cloud_devices("eu", "access_id", "access_secret")
+        assert devices[0]["dp_schema"] == {
+            "2": {"code": "co2_value", "type": "Value", "values": "{}"},
+            "1": {"code": "switch_1", "type": "Boolean", "values": "{}"},
+        }
+
+    def test_dp_schema_fetch_failure_for_one_device_does_not_break_import(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(
+            devices=[{"id": "d1", "name": "Gniazdko", "key": "k1"}], getdps_raises=RuntimeError("boom"),
+        ))
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
+        devices = fetch_cloud_devices("eu", "access_id", "access_secret")
+        assert devices[0]["dp_schema"] == {}
+
+
+class TestFetchDeviceDpSchema:
+
+    def test_merges_status_and_functions_by_dp_id(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(dps_by_device={
+            "d1": {"success": True, "result": {
+                "status": [{"code": "va_temperature", "dp_id": 4, "type": "Value", "values": '{"scale":1,"unit":"C"}'}],
+                "functions": [{"code": "switch_1", "dp_id": 1, "type": "Boolean", "values": "{}"}],
+            }},
+        }))
+        schema = fetch_device_dp_schema("eu", "id", "secret", "d1")
+        assert schema == {
+            "4": {"code": "va_temperature", "type": "Value", "values": '{"scale":1,"unit":"C"}'},
+            "1": {"code": "switch_1", "type": "Boolean", "values": "{}"},
+        }
+
+    def test_login_error_raises_connection_error(self, monkeypatch):
+        monkeypatch.setattr(
+            "bridge.tuya_local.tinytuya.Cloud",
+            lambda **kw: FakeCloud(error={"Error": "bad credentials"}),
+        )
+        with pytest.raises(ConnectionError):
+            fetch_device_dp_schema("eu", "bad", "bad", "d1")
+
+    def test_unsuccessful_response_raises_connection_error(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(dps_by_device={
+            "d1": {"success": False, "msg": "device not found"},
+        }))
+        with pytest.raises(ConnectionError, match="device not found"):
+            fetch_device_dp_schema("eu", "id", "secret", "d1")
+
+    def test_getdps_exception_raises_connection_error(self, monkeypatch):
+        monkeypatch.setattr(
+            "bridge.tuya_local.tinytuya.Cloud",
+            lambda **kw: FakeCloud(getdps_raises=RuntimeError("network down")),
+        )
+        with pytest.raises(ConnectionError):
+            fetch_device_dp_schema("eu", "id", "secret", "d1")
+
+
+class TestFetchDpSchemasForDevices:
+
+    def test_fetches_all_with_single_login(self, monkeypatch):
+        logins = []
+
+        def fake_ctor(**kw):
+            logins.append(kw)
+            return FakeCloud(dps_by_device={
+                "d1": {"success": True, "result": {"status": [{"code": "switch_1", "dp_id": 1, "type": "Boolean", "values": "{}"}], "functions": []}},
+                "d2": {"success": True, "result": {"status": [{"code": "co2_value", "dp_id": 2, "type": "Value", "values": "{}"}], "functions": []}},
+            })
+
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", fake_ctor)
+        schemas, errors = fetch_dp_schemas_for_devices("eu", "id", "secret", ["d1", "d2"])
+        assert len(logins) == 1
+        assert schemas["d1"] == {"1": {"code": "switch_1", "type": "Boolean", "values": "{}"}}
+        assert schemas["d2"] == {"2": {"code": "co2_value", "type": "Value", "values": "{}"}}
+        assert errors == {}
+
+    def test_one_device_failure_does_not_block_others(self, monkeypatch):
+        class SelectiveCloud(FakeCloud):
+            def getdps(self, device_id):
+                if device_id == "bad":
+                    raise RuntimeError("nie znaleziono urządzenia")
+                return super().getdps(device_id)
+
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: SelectiveCloud(dps_by_device={
+            "good": {"success": True, "result": {"status": [{"code": "switch_1", "dp_id": 1, "type": "Boolean", "values": "{}"}], "functions": []}},
+        }))
+        schemas, errors = fetch_dp_schemas_for_devices("eu", "id", "secret", ["good", "bad"])
+        assert "good" in schemas
+        assert "bad" not in schemas
+        assert "bad" in errors
+
+
+class TestFindTuyaSwitchKey:
+
+    def test_falls_back_to_raw_key_1_without_schema(self):
+        assert find_tuya_switch_key({"1": True, "4": 20}) == "1"
+
+    def test_none_when_no_switch_and_no_schema(self):
+        assert find_tuya_switch_key({"4": 20, "9": "auto"}) is None
+
+    def test_schema_driven_boolean_switch_code(self):
+        dps = {"1": True, "4": 20}
+        schema = {"1": {"code": "switch_1", "type": "Boolean"}, "4": {"code": "va_temperature", "type": "Value"}}
+        assert find_tuya_switch_key(dps, schema) == "1"
+
+    def test_code_keyed_dps_recognized_without_schema(self):
+        assert find_tuya_switch_key({"switch_1": True, "va_temperature": 20}) == "switch_1"
+
+    def test_preferred_key_wins_when_present(self):
+        assert find_tuya_switch_key({"power_toggle": True, "switch_1": False}, preferred="power_toggle") == "power_toggle"
+
+    def test_preferred_key_ignored_when_absent(self):
+        assert find_tuya_switch_key({"switch_1": True}, preferred="power_toggle") == "switch_1"
+
+
+class TestFormatTuyaDps:
+
+    def test_switch_only_device_has_no_extra_fields(self):
+        is_on, extra = format_tuya_dps({"1": True})
+        assert is_on is True
+        assert extra == ""
+
+    def test_sensor_device_without_schema_uses_raw_keys(self):
+        is_on, extra = format_tuya_dps({"4": 235, "9": "auto"})
+        assert is_on is None
+        assert "4: 235" in extra
+        assert "9: auto" in extra
+
+    def test_schema_driven_labels_and_scaling(self):
+        schema = {
+            "1": {"code": "switch_1", "type": "Boolean"},
+            "4": {"code": "va_temperature", "type": "Value", "values": '{"scale":1,"unit":"C"}'},
+        }
+        is_on, extra = format_tuya_dps({"1": False, "4": 235}, schema=schema)
+        assert is_on is False
+        assert extra == "temperatura: 23.5C"
+
+    def test_boolean_extra_field_formatted_as_tak_nie(self):
+        schema = {"1": {"code": "switch_1", "type": "Boolean"}, "2": {"code": "pir", "type": "Boolean"}}
+        is_on, extra = format_tuya_dps({"1": True, "2": True}, schema=schema)
+        assert extra == "ruch: tak"
+
+    def test_none_values_are_skipped(self):
+        is_on, extra = format_tuya_dps({"1": True, "4": None})
+        assert extra == ""
 
 
 class TestZigbeeGateways:

@@ -1655,7 +1655,31 @@ tak samo jak wirtualne wejścia wyżej: przycisk idzie przez kolejkę komend w
 bazie (`POST /api/tuya/<nazwa>/on` albo `/off` ->
 `history.enqueue_command("tuya_on"/"tuya_off", ...)` -> bridge wykonuje w
 `RulesEngine._execute_command`), wymaga zalogowania, pokazuje "⏳..." w
-trakcie oczekiwania.
+trakcie oczekiwania. Po wykonaniu komendy bridge sam dopytuje o świeży stan
+tego jednego urządzenia (`RulesEngine._schedule_tuya_status_refresh`, ok.
+1,5s później) zamiast czekać na kolejny pełny cykl odpytywania (domyślnie co
+15s) - karta pokazuje więc poprawny przycisk "Wyłącz"/"Włącz" praktycznie od
+razu po kliknięciu, a nie dopiero po przeładowaniu statusu.
+
+### Czytelne statusy urządzeń Tuya innych niż włącznik (czujniki, liczniki...)
+
+Urządzenia Tuya, które nie są zwykłym gniazdkiem/przełącznikiem (czujniki
+CO2/zalania/wilgotności, kamery, liczniki, sterowniki nawodnienia...) nie
+mają jednego pola "włączone/wyłączone" - `RulesEngine._apply_tuya_device_status`
+pokazuje wtedy wszystkie pola raportowane przez urządzenie jako czytelny
+tekst (`etykieta: wartość | etykieta: wartość`) zamiast samego "?".
+
+- Urządzenia sterowane przez **Tuya Cloud** (zakładka ☁ Tuya Cloud) dostają
+  to za darmo - chmura sama zwraca pola z nazwą (`code`, np. `va_temperature`,
+  `co2_value`).
+- Urządzenia **lokalne** (LAN/Zigbee) znają tylko surowe numery pól (DP) bez
+  nazw - dopóki nie pobierzesz ich opisu, karta pokaże surowe
+  `numer_pola: wartość`. Przycisk **"🔍 Pobierz opisy pól (Tuya Cloud)"** na
+  stronie 🧩 Wtyczki → Tuya (LAN) pobiera dla wszystkich skonfigurowanych
+  urządzeń ich opis pól z Tuya Cloud (`devices/{id}/specifications`, wymaga
+  zapisanych poświadczeń w zakładce ☁ Tuya Cloud) i zapisuje go trwale przy
+  urządzeniu (`dp_schema`) - odtąd karta pokazuje nazwane, przeskalowane
+  wartości (np. `temperatura: 23.5C`) zamiast numerów.
 
 ### Eskalacja przy powtarzających się naruszeniach
 

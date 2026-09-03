@@ -912,6 +912,45 @@ class TestExecuteCommandTuya:
         assert result["status"] == "error"
         assert "symulowana awaria" in result["result"]["error"]
 
+    async def test_tuya_on_schedules_status_refresh(self, engine, fake_tuya, monkeypatch):
+        scheduled = []
+        monkeypatch.setattr(engine, "_schedule_tuya_status_refresh", lambda name: scheduled.append(name))
+        cmd_id = engine.history.enqueue_command("tuya_on", {"name": "gniazdko_salon"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        assert scheduled == ["gniazdko_salon"]
+
+    async def test_tuya_off_schedules_status_refresh(self, engine, fake_tuya, monkeypatch):
+        scheduled = []
+        monkeypatch.setattr(engine, "_schedule_tuya_status_refresh", lambda name: scheduled.append(name))
+        cmd_id = engine.history.enqueue_command("tuya_off", {"name": "gniazdko_salon"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        assert scheduled == ["gniazdko_salon"]
+
+
+class TestScheduleTuyaStatusRefresh:
+
+    async def test_refreshes_status_in_history_after_delay(self, engine, fake_tuya):
+        engine._schedule_tuya_status_refresh("gniazdko_salon", delay_seconds=0)
+        await asyncio.sleep(0.05)
+
+        statuses = engine.history.get_status("tuya")
+        assert any(s["key"] == "tuya:gniazdko_salon" and s["value"] == "włączone" for s in statuses)
+
+    async def test_get_status_error_is_logged_not_raised(self, engine, fake_tuya, monkeypatch, caplog):
+        async def boom(device):
+            raise ConnectionError("symulowana awaria odczytu")
+
+        monkeypatch.setattr(fake_tuya, "get_status", boom)
+        with caplog.at_level("ERROR"):
+            engine._schedule_tuya_status_refresh("gniazdko_salon", delay_seconds=0)
+            await asyncio.sleep(0.05)
+
+        assert "odświeżyć statusu" in caplog.text
+
 
 class TestBuildTuyaController:
 
@@ -1244,6 +1283,48 @@ class TestHomeWhizStateCallback:
         await engine._on_homewhiz_state("Zmywarka", "finished")
         await asyncio.sleep(0)
         assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+
+class TestApplyTuyaDeviceStatus:
+
+    async def test_local_device_without_schema_still_uses_raw_key_1(self, engine):
+        await engine._apply_tuya_device_status("gniazdko_salon", {"1": True})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon"] == "włączone"
+
+    async def test_sensor_device_without_schema_shows_raw_dp_values_instead_of_question_mark(self, engine):
+        await engine._apply_tuya_device_status("gniazdko_salon", {"4": 235, "9": "auto"})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon"] != "?"
+        assert "4: 235" in statuses["tuya:gniazdko_salon"]
+
+    async def test_local_device_with_schema_shows_readable_labels(self, engine):
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "1": {"code": "switch_1", "type": "Boolean", "values": "{}"},
+            "4": {"code": "va_temperature", "type": "Value", "values": '{"scale":1,"unit":"C"}'},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"1": False, "4": 235})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon"] == "wyłączone"
+
+    async def test_pure_sensor_device_with_schema_has_no_toggle_state(self, engine):
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "2": {"code": "co2_value", "type": "Value", "values": "{}"},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"2": 420})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon"] == "CO2: 420"
+
+    async def test_cloud_device_uses_configured_switch_code(self, engine):
+        engine.config.tuya.setdefault("cloud_devices", {})["kamera"] = {"id": "c1", "switch_code": "power_toggle"}
+        await engine._apply_tuya_device_status("kamera", {"power_toggle": True, "other_field": 5})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:kamera"] == "włączone"
+
+    async def test_unreachable_device_still_marked_niedostepne(self, engine):
+        await engine._apply_tuya_device_status("gniazdko_salon", None)
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon"] == "niedostępne"
 
 
 class TestTuyaStatusPollLoop:

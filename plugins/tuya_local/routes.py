@@ -4,7 +4,11 @@ import asyncio
 
 from quart import Quart, jsonify, render_template, request
 
-from bridge.tuya_local import scan_network as scan_tuya_network, fetch_cloud_devices as fetch_tuya_cloud_devices
+from bridge.tuya_local import (
+    scan_network as scan_tuya_network,
+    fetch_cloud_devices as fetch_tuya_cloud_devices,
+    fetch_dp_schemas_for_devices,
+)
 from dashboard.setup import (
     build_tuya_devices_dict, validate_tuya_devices, tuya_devices_to_rows, zigbee_gateways_to_rows,
 )
@@ -96,6 +100,50 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         except Exception as exc:
             return jsonify({"error": f"Błąd importu z Tuya Cloud: {exc}"}), 502
         return jsonify({"devices": devices})
+
+    @app.route("/api/plugins/tuya/devices/refresh-dp-schema", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_tuya_refresh_dp_schema():
+        cloud_cfg = get_config_raw().get("tuya", {}).get("cloud", {}) or {}
+        api_region = cloud_cfg.get("api_region", "")
+        access_id = cloud_cfg.get("access_id", "")
+        access_key = cloud_cfg.get("access_key", "")
+        if not api_region or not access_id or not access_key:
+            return jsonify({
+                "error": "Najpierw zapisz poświadczenia w zakładce ☁ Tuya Cloud (region, Access ID, Access Secret).",
+            }), 400
+
+        devices = {name: dict(cfg) for name, cfg in get_config_raw().get("tuya", {}).get("devices", {}).items()}
+        device_ids = {name: cfg["id"] for name, cfg in devices.items() if cfg.get("id")}
+        if not device_ids:
+            return jsonify({"error": "Brak skonfigurowanych urządzeń z ID do opisania"}), 400
+
+        try:
+            schemas, fetch_errors = await asyncio.get_event_loop().run_in_executor(
+                None, fetch_dp_schemas_for_devices, api_region, access_id, access_key, list(device_ids.values()),
+            )
+        except ConnectionError as exc:
+            return jsonify({"error": str(exc)}), 502
+        except Exception as exc:
+            return jsonify({"error": f"Błąd komunikacji z Tuya Cloud: {exc}"}), 502
+
+        updated, failed = [], []
+        for name, dev_id in device_ids.items():
+            if dev_id in schemas and schemas[dev_id]:
+                devices[name]["dp_schema"] = schemas[dev_id]
+                updated.append(name)
+            else:
+                failed.append(name)
+        existing = get_config_store().get("tuya_devices")
+        existing["devices"] = devices
+        get_config_store().set("tuya_devices", existing)
+        reload_bridge_config()
+        enqueue_bridge_reload()
+
+        return jsonify({
+            "updated": updated, "failed": failed,
+            "message": f"Zaktualizowano opisy pól dla {len(updated)}/{len(device_ids)} urządzeń.",
+        })
 
     def _get_tuya_section() -> dict:
         return get_config_store().get("config").get("tuya", {})

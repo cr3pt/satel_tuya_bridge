@@ -809,6 +809,7 @@ function addTuyaDeviceRow(initial) {
       <option value="dimmer">ściemniacz</option>
     </select>
     <input type="text" placeholder="DP jasności (tylko ściemniacz)" class="td-dp" style="display:none;">
+    <input type="hidden" class="td-schema">
     <button type="button" class="row-remove">✕</button>`;
   row.querySelector('.row-remove').addEventListener('click', () => { row.remove(); refreshRuleDropdowns(); });
   row.querySelector('.td-type').addEventListener('change', (e) => {
@@ -823,20 +824,26 @@ function addTuyaDeviceRow(initial) {
     row.querySelector('.td-type').value = initial.type || 'socket';
     row.querySelector('.td-dp').value = initial.dimmer_dp || '';
     row.querySelector('.td-dp').style.display = initial.type === 'dimmer' ? '' : 'none';
+    row.querySelector('.td-schema').value = JSON.stringify(initial.dp_schema || {});
   }
   container.appendChild(row);
 }
 document.getElementById('addTuyaDeviceBtn').addEventListener('click', () => addTuyaDeviceRow());
 
 function collectTuyaDevices() {
-  return Array.from(document.querySelectorAll('#tuyaDevicesRows .repeatable-row')).map(row => ({
-    name: row.querySelector('.td-name').value.trim(),
-    id: row.querySelector('.td-id').value.trim(),
-    ip: row.querySelector('.td-ip').value.trim(),
-    local_key: row.querySelector('.td-key').value.trim(),
-    type: row.querySelector('.td-type').value,
-    dimmer_dp: row.querySelector('.td-dp').value.trim(),
-  })).filter(d => d.name || d.id || d.ip || d.local_key);
+  return Array.from(document.querySelectorAll('#tuyaDevicesRows .repeatable-row')).map(row => {
+    let dp_schema = {};
+    try { dp_schema = JSON.parse(row.querySelector('.td-schema').value || '{}'); } catch (e) {  }
+    return {
+      name: row.querySelector('.td-name').value.trim(),
+      id: row.querySelector('.td-id').value.trim(),
+      ip: row.querySelector('.td-ip').value.trim(),
+      local_key: row.querySelector('.td-key').value.trim(),
+      type: row.querySelector('.td-type').value,
+      dimmer_dp: row.querySelector('.td-dp').value.trim(),
+      dp_schema,
+    };
+  }).filter(d => d.name || d.id || d.ip || d.local_key);
 }
 
 
@@ -850,6 +857,7 @@ function upsertTuyaDeviceRow(device) {
     }
     if (device.ip) existingRow.querySelector('.td-ip').value = device.ip;
     if (device.local_key) existingRow.querySelector('.td-key').value = device.local_key;
+    if (device.dp_schema) existingRow.querySelector('.td-schema').value = JSON.stringify(device.dp_schema);
     return false;
   }
   addTuyaDeviceRow(device);
@@ -911,7 +919,7 @@ document.getElementById('fetchTuyaCloudBtn').addEventListener('click', async () 
     if (!resp.ok) { status.textContent = '❌ ' + (data.error || 'Błąd importu'); return; }
     let added = 0, updated = 0;
     (data.devices || []).forEach(dev => {
-      if (upsertTuyaDeviceRow({ id: dev.id, name: dev.name, local_key: dev.local_key, ip: dev.ip, type: 'socket' })) added++;
+      if (upsertTuyaDeviceRow({ id: dev.id, name: dev.name, local_key: dev.local_key, ip: dev.ip, type: 'socket', dp_schema: dev.dp_schema })) added++;
       else updated++;
     });
     status.textContent = `Pobrano ${data.devices.length} urządzeń (${added} nowych, ${updated} uzupełnionych o nazwę/local_key) - sprawdź typ (gniazdko/ściemniacz) przed zapisem.`;
