@@ -453,3 +453,91 @@ class TestHomeWhizClientMessageHandling:
         client = hw.HomeWhizClient({"username": "u", "password": "p", "appliances": {}}, on_state)
         await client.run_forever()
         assert calls == []
+
+
+class TestConfigDescriptorRetry:
+
+    def _make_client(self, appliance_ids=("a1",)):
+        calls = []
+
+        async def on_state(name, state):
+            calls.append((name, state))
+
+        appliances_cfg = {f"App{i}": {"appliance_id": aid} for i, aid in enumerate(appliance_ids)}
+        cfg = {"username": "u", "password": "p", "appliances": appliances_cfg}
+        client = hw.HomeWhizClient(cfg, on_state)
+        client._session = hw.HomeWhizSession(access_key="AK", secret_key="SK", session_token="ST")
+        return client
+
+    async def test_fetch_missing_only_targets_appliances_without_descriptor(self, monkeypatch):
+        client = self._make_client(("a1", "a2"))
+        names = list(client._appliances)
+        client._appliances[names[0]].config_descriptor = {"already": "set"}
+
+        fetched_ids = []
+
+        async def fake_fetch(session, appliance_id, language="en", region=hw.DEFAULT_REGION):
+            fetched_ids.append(appliance_id)
+            return {"deviceStates": {}}
+
+        monkeypatch.setattr(hw, "fetch_config_descriptor", fake_fetch)
+        await client._fetch_missing_config_descriptors()
+
+        assert fetched_ids == ["a2"]
+        assert client._appliances[names[0]].config_descriptor == {"already": "set"}
+        assert client._appliances[names[1]].config_descriptor == {"deviceStates": {}}
+
+    async def test_fetch_missing_logs_and_leaves_none_on_failure(self, monkeypatch, caplog):
+        client = self._make_client(("a1",))
+
+        async def fake_fetch(*a, **kw):
+            raise hw.HomeWhizError("boom")
+
+        monkeypatch.setattr(hw, "fetch_config_descriptor", fake_fetch)
+        with caplog.at_level("ERROR"):
+            await client._fetch_missing_config_descriptors()
+
+        name = next(iter(client._appliances))
+        assert client._appliances[name].config_descriptor is None
+        assert any("deskryptora konfiguracji" in r.message for r in caplog.records)
+
+    async def test_retry_loop_eventually_recovers_missing_descriptor(self, monkeypatch):
+        client = self._make_client(("a1",))
+
+        attempts = []
+
+        async def fake_fetch(session, appliance_id, language="en", region=hw.DEFAULT_REGION):
+            attempts.append(appliance_id)
+            return {"deviceStates": {}}
+
+        monkeypatch.setattr(hw, "fetch_config_descriptor", fake_fetch)
+
+        sleep_calls = []
+
+        async def fake_sleep(seconds):
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr(hw.asyncio, "sleep", fake_sleep)
+
+        await client._retry_missing_config_descriptors_loop()
+
+        assert attempts == ["a1"]
+        assert sleep_calls == [hw._CONFIG_DESCRIPTOR_RETRY_SECONDS, hw._CONFIG_DESCRIPTOR_RETRY_SECONDS]
+        name = next(iter(client._appliances))
+        assert client._appliances[name].config_descriptor == {"deviceStates": {}}
+
+    async def test_retry_loop_returns_immediately_when_nothing_missing(self, monkeypatch):
+        client = self._make_client(("a1",))
+        name = next(iter(client._appliances))
+        client._appliances[name].config_descriptor = {"already": "set"}
+
+        sleep_calls = []
+
+        async def fake_sleep(seconds):
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr(hw.asyncio, "sleep", fake_sleep)
+
+        await client._retry_missing_config_descriptors_loop()
+
+        assert sleep_calls == [hw._CONFIG_DESCRIPTOR_RETRY_SECONDS]

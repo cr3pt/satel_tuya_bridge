@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import hashlib
 import hmac
@@ -21,6 +22,7 @@ IOT_ENDPOINT = "ajf7v9dcoe69w-ats.iot.eu-west-1.amazonaws.com"
 DEFAULT_REGION = "eu-west-1"
 _APPLIANCE_TYPE_DISHWASHER = 3
 _BLUETOOTH_ONLY_CONNECTIVITY = {"BT", "BASICBT"}
+_CONFIG_DESCRIPTOR_RETRY_SECONDS = 300
 
 
 class HomeWhizError(Exception):
@@ -323,14 +325,7 @@ class HomeWhizClient:
         import paho.mqtt.client as mqtt
 
         self._session = await login(self.cfg["username"], self.cfg["password"])
-        for watch in self._appliances.values():
-            if watch.config_descriptor is None:
-                try:
-                    watch.config_descriptor = await fetch_config_descriptor(
-                        self._session, watch.appliance_id, language=self.cfg.get("language", "en"),
-                    )
-                except HomeWhizError:
-                    logger.exception("HomeWhiz: nie udało się pobrać deskryptora konfiguracji dla '%s'", watch.name)
+        await self._fetch_missing_config_descriptors()
 
         url = presign_iot_websocket_url(
             endpoint=IOT_ENDPOINT, region=self.cfg.get("region", DEFAULT_REGION),
@@ -388,13 +383,38 @@ class HomeWhizClient:
             logger.info("HomeWhiz: połączono, monitoruję %d urządzeń", len(self._appliances))
             await on_connected()
 
-            await disconnected_future
+            retry_task = asyncio.ensure_future(self._retry_missing_config_descriptors_loop())
+            try:
+                await disconnected_future
+            finally:
+                retry_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await retry_task
         finally:
             client.loop_stop()
             try:
                 client.disconnect()
             except Exception:
                 pass
+
+    async def _fetch_missing_config_descriptors(self) -> None:
+        for watch in self._appliances.values():
+            if watch.config_descriptor is not None:
+                continue
+            try:
+                watch.config_descriptor = await fetch_config_descriptor(
+                    self._session, watch.appliance_id, language=self.cfg.get("language", "en"),
+                )
+            except HomeWhizError:
+                logger.exception("HomeWhiz: nie udało się pobrać deskryptora konfiguracji dla '%s'", watch.name)
+
+    async def _retry_missing_config_descriptors_loop(self) -> None:
+        while True:
+            await asyncio.sleep(_CONFIG_DESCRIPTOR_RETRY_SECONDS)
+            if not any(w.config_descriptor is None for w in self._appliances.values()):
+                return
+            logger.info("HomeWhiz: ponawiam pobieranie brakujących deskryptorów konfiguracji")
+            await self._fetch_missing_config_descriptors()
 
     async def _handle_message(self, topic: str, payload: bytes) -> None:
         import json
