@@ -348,6 +348,7 @@ class HomeWhizClient:
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             transport="websockets", reconnect_on_failure=False,
         )
+        client.enable_logger(logger)
         client.tls_set()
         client.ws_set_options(path=f"{parsed.path}?{parsed.query}", headers={"Host": parsed.hostname})
 
@@ -376,10 +377,18 @@ class HomeWhizClient:
             else:
                 logger.info("HomeWhiz: subskrypcja %s potwierdzona przez broker (kody: %s)", topic, codes)
 
+        pending_publishes: dict[int, str] = {}
+
+        def _on_publish(_client, _userdata, mid, reason_code, _properties) -> None:
+            topic = pending_publishes.pop(mid, "?")
+            logger.info("HomeWhiz: broker potwierdził odebranie publikacji na %s (PUBACK, kod: %s)",
+                        topic, getattr(reason_code, "value", reason_code))
+
         client.on_connect = _on_connect
         client.on_disconnect = _on_disconnect
         client.on_message = _on_message
         client.on_subscribe = _on_subscribe
+        client.on_publish = _on_publish
         self._client = client
 
         client.connect_async(parsed.hostname, 443, keepalive=60)
@@ -397,7 +406,9 @@ class HomeWhizClient:
                 ):
                     _, mid = client.subscribe(topic)
                     pending_subscriptions[mid] = topic
-                client.publish(f"{topic_prefix}/get", payload="{}")
+                get_topic = f"{topic_prefix}/get"
+                publish_info = client.publish(get_topic, payload="{}", qos=1)
+                pending_publishes[publish_info.mid] = get_topic
             logger.info("HomeWhiz: połączono, monitoruję %d urządzeń", len(self._appliances))
             await on_connected()
 
