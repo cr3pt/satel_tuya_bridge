@@ -418,23 +418,29 @@ class TestHomeWhizClientMessageHandling:
         await client._handle_message("$aws/things/other-device/shadow/update/accepted", payload)
         assert calls == []
 
-    async def test_malformed_payload_does_not_raise(self):
+    async def test_malformed_payload_does_not_raise(self, caplog):
         client, calls = self._make_client()
-        await client._handle_message("$aws/things/abc123/shadow/update/accepted", b"not json")
+        with caplog.at_level("INFO"):
+            await client._handle_message("$aws/things/abc123/shadow/update/accepted", b"not json")
         assert calls == []
+        assert any("nieoczekiwana struktura wiadomości" in r.message for r in caplog.records)
 
-    async def test_missing_config_descriptor_ignored(self):
+    async def test_missing_config_descriptor_ignored(self, caplog):
         client, calls = self._make_client()
         client._appliances["Zmywarka"].config_descriptor = None
         payload = json.dumps({"state": {"reported": {"wfa": [1], "wfaStartOffset": 0}}}).encode()
-        await client._handle_message("$aws/things/abc123/shadow/update/accepted", payload)
+        with caplog.at_level("INFO"):
+            await client._handle_message("$aws/things/abc123/shadow/update/accepted", payload)
         assert calls == []
+        assert any("brak jeszcze deskryptora konfiguracji" in r.message for r in caplog.records)
 
-    async def test_unresolved_state_value_does_not_call_on_state(self):
+    async def test_unresolved_state_value_does_not_call_on_state(self, caplog):
         client, calls = self._make_client()
         payload = json.dumps({"state": {"reported": {"wfa": [99], "wfaStartOffset": 0}}}).encode()
-        await client._handle_message("$aws/things/abc123/shadow/update/accepted", payload)
+        with caplog.at_level("INFO"):
+            await client._handle_message("$aws/things/abc123/shadow/update/accepted", payload)
         assert calls == []
+        assert any("brak dopasowanego stanu" in r.message for r in caplog.records)
 
     async def test_decode_error_is_caught_and_logged_not_raised(self, caplog):
         client, calls = self._make_client()

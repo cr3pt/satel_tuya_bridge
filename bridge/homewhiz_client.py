@@ -421,7 +421,12 @@ class HomeWhizClient:
 
         appliance_id = topic.split("/")[2] if topic.startswith("$aws/things/") else None
         watch = next((w for w in self._appliances.values() if w.appliance_id == appliance_id), None)
-        if watch is None or watch.config_descriptor is None:
+        if watch is None:
+            logger.debug("HomeWhiz: wiadomość na %s nie pasuje do żadnego skonfigurowanego urządzenia", topic)
+            return
+        if watch.config_descriptor is None:
+            logger.info("HomeWhiz '%s': pominięto wiadomość na %s - brak jeszcze deskryptora konfiguracji",
+                        watch.name, topic)
             return
         try:
             data = json.loads(payload)
@@ -429,12 +434,18 @@ class HomeWhizClient:
             wfa = reported["wfa"]
             offset = reported.get("wfaStartOffset", 26)
         except (ValueError, KeyError, TypeError):
-            logger.debug("HomeWhiz: pominięto nieoczekiwaną wiadomość na %s", topic)
+            logger.info("HomeWhiz '%s': nieoczekiwana struktura wiadomości na %s: %s",
+                        watch.name, topic, payload.decode("utf-8", "replace")[:500])
             return
 
         try:
             state_name = decode_state(watch.config_descriptor, offset, wfa)
             if state_name is None:
+                logger.info(
+                    "HomeWhiz '%s': brak dopasowanego stanu w deskryptorze konfiguracji "
+                    "(offset=%s, wfa=%s) - deskryptor może nie pasować do tego urządzenia",
+                    watch.name, offset, wfa,
+                )
                 return
             logger.info("HomeWhiz '%s': stan -> %s", watch.name, state_name)
             await self.on_state(watch.name, state_name)
