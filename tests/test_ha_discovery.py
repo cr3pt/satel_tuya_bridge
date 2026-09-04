@@ -1,6 +1,7 @@
 from bridge.ha_discovery import (
     build_all_entities,
     build_boiler_sensor_entities,
+    build_homewhiz_sensor_entities,
     build_satel_input_entities,
     build_satel_output_entities,
     build_satel_partition_entities,
@@ -95,6 +96,23 @@ class TestSatelPartitionEntities:
         assert entities[0]["payload"]["device_class"] == "safety"
 
 
+class TestHomewhizSensorEntities:
+    def test_creates_read_only_sensor(self):
+        appliances = {"zmywarka": {"appliance_id": "abc123"}}
+        entities = build_homewhiz_sensor_entities(appliances, HA_CFG, "home/bridge")
+        assert len(entities) == 1
+        assert entities[0]["command_topic"] is None
+        assert entities[0]["state_topic"] == "home/bridge/homewhiz/zmywarka/state"
+        assert "/sensor/" in entities[0]["discovery_topic"]
+
+    def test_multiple_appliances(self):
+        appliances = {"zmywarka": {}, "pralka": {}}
+        entities = build_homewhiz_sensor_entities(appliances, HA_CFG, "home/bridge")
+        assert len(entities) == 2
+        ids = [e["payload"]["unique_id"] for e in entities]
+        assert len(ids) == len(set(ids))
+
+
 class TestBuildAllEntities:
     def test_aggregates_all_sources(self):
         class FakeConfig:
@@ -120,3 +138,25 @@ class TestBuildAllEntities:
         entities = build_all_entities(FakeConfig(), "home/boiler")
         topics = [e["discovery_topic"] for e in entities]
         assert len(topics) == len(set(topics))
+
+    def test_includes_homewhiz_appliances_when_configured(self):
+        class FakeConfig:
+            raw = {"home_assistant": HA_CFG}
+            ebus = {"sensors": []}
+            tuya = {"devices": {}}
+            satel = {"monitored_zones": {}, "monitored_outputs": {}, "partitions": {}}
+            homewhiz = {"appliances": {"zmywarka": {}}}
+
+        entities = build_all_entities(FakeConfig(), "home/boiler")
+        assert len(entities) == 1
+        assert "/sensor/" in entities[0]["discovery_topic"]
+
+    def test_missing_homewhiz_attribute_is_tolerated(self):
+        class FakeConfig:
+            raw = {"home_assistant": HA_CFG}
+            ebus = {"sensors": []}
+            tuya = {"devices": {}}
+            satel = {"monitored_zones": {}, "monitored_outputs": {}, "partitions": {}}
+
+        entities = build_all_entities(FakeConfig(), "home/boiler")
+        assert entities == []

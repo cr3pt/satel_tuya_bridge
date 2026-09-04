@@ -978,13 +978,13 @@ ostatnich 10 000 wpisów (patrz `KEEP_LOGS` w `bridge/log_capture.py`), co
 
 ### Publikacja stanu do MQTT (niezależnie od Home Assistant)
 
-Stan wejść/wyjść/stref Satela i urządzeń Tuya jest publikowany na
-skonfigurowany broker MQTT pod osobnym tematem per integracja -
-**niezależnie od tego, czy Home Assistant jest włączony** (dotychczas
-publikacja bez HA działała tylko dla danych z kotła eBUS, przez
-`boiler_output.mqtt.topic_prefix`). Domyślne tematy: `satel/...` i
-`tuya/...`, konfigurowalne na stronie `/plugins/mqtt_publish` albo wprost
-w `config.yaml`:
+Stan wejść/wyjść/stref Satela, urządzeń Tuya i urządzeń HomeWhiz (zmywarki,
+pralki itp.) jest publikowany na skonfigurowany broker MQTT pod osobnym
+tematem per integracja - **niezależnie od tego, czy Home Assistant jest
+włączony** (dotychczas publikacja bez HA działała tylko dla danych z kotła
+eBUS, przez `boiler_output.mqtt.topic_prefix`). Domyślne tematy: `satel/...`,
+`tuya/...` i `homewhiz/...`, konfigurowalne na stronie
+`/plugins/mqtt_publish` albo wprost w `config.yaml`:
 
 ```yaml
 mqtt_publish:
@@ -992,7 +992,12 @@ mqtt_publish:
   topics:
     satel: satel      # -> satel/input/<numer>/state, satel/output/<numer>/state, satel/partition/<numer>/state
     tuya: tuya         # -> tuya/<nazwa_urządzenia>/state
+    homewhiz: homewhiz # -> homewhiz/<nazwa_urządzenia>/state
 ```
+
+Każde urządzenie HomeWhiz z `homewhiz.appliances` jest też automatycznie
+udostępniane jako encja `sensor` w Home Assistant Discovery (zakładka
+`/plugins/home_assistant`), analogicznie do czujników kotła.
 
 Temat MQTT dla danych z kotła eBUS (dotychczasowy `boiler_output.mqtt.
 topic_prefix`, domyślnie `home/boiler`) jest teraz też edytowalny z tej
