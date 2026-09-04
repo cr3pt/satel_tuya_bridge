@@ -393,7 +393,7 @@ class HomeWhizClient:
                 topic_prefix = f"$aws/things/{watch.appliance_id}/shadow"
                 for topic in (
                     f"{topic_prefix}/update/accepted", f"{topic_prefix}/get/accepted",
-                    f"{topic_prefix}/get/rejected",
+                    f"{topic_prefix}/get/rejected", f"$aws/things/{watch.appliance_id}/#",
                 ):
                     _, mid = client.subscribe(topic)
                     pending_subscriptions[mid] = topic
