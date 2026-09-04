@@ -402,7 +402,7 @@ class HomeWhizClient:
                 topic_prefix = f"$aws/things/{watch.appliance_id}/shadow"
                 for topic in (
                     f"{topic_prefix}/update/accepted", f"{topic_prefix}/get/accepted",
-                    f"{topic_prefix}/get/rejected", f"$aws/things/{watch.appliance_id}/#",
+                    f"{topic_prefix}/get/rejected",
                 ):
                     _, mid = client.subscribe(topic)
                     pending_subscriptions[mid] = topic
@@ -461,7 +461,7 @@ class HomeWhizClient:
             data = json.loads(payload)
             reported = data["state"]["reported"]
             wfa = reported["wfa"]
-            offset = reported.get("wfaStartOffset", 26)
+            offset = int(reported.get("wfaStartOffset", 26))
         except (ValueError, KeyError, TypeError):
             logger.info("HomeWhiz '%s': nieoczekiwana struktura wiadomości na %s: %s",
                         watch.name, topic, payload.decode("utf-8", "replace")[:500])
