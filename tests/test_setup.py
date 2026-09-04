@@ -498,15 +498,20 @@ class TestConnectionsBuilder:
     def test_mqtt_publish_topics_default_to_satel_and_tuya(self):
         form = {"satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"}}
         patched = build_connections_patch(form, self.EXISTING)
-        assert patched["mqtt_publish"] == {"enabled": True, "topics": {"satel": "satel", "tuya": "tuya"}}
+        assert patched["mqtt_publish"] == {
+            "enabled": True, "topics": {"satel": "satel", "tuya": "tuya", "homewhiz": "homewhiz"},
+        }
 
     def test_mqtt_publish_topics_configurable(self):
         form = {
             "satel": {"host": "192.168.1.10"}, "ebus": {"mqtt_host": "127.0.0.1"},
-            "mqtt_publish": {"enabled": True, "satel_topic": "alarm", "tuya_topic": "smart_home"},
+            "mqtt_publish": {
+                "enabled": True, "satel_topic": "alarm", "tuya_topic": "smart_home",
+                "homewhiz_topic": "agd",
+            },
         }
         patched = build_connections_patch(form, self.EXISTING)
-        assert patched["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home"}
+        assert patched["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home", "homewhiz": "agd"}
 
     def test_mqtt_publish_can_be_disabled(self):
         form = {
@@ -590,7 +595,7 @@ class TestConnectionsBuilder:
         }
         patched = build_connections_patch(form, existing)
         assert patched["mqtt_publish"]["log_level"] == "DEBUG"
-        assert patched["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home"}
+        assert patched["mqtt_publish"]["topics"] == {"satel": "alarm", "tuya": "smart_home", "homewhiz": "homewhiz"}
 
     def test_tuya_cloud_preserves_log_level_and_real_enabled_flag(self):
         existing = {**self.EXISTING, "tuya": {**self.EXISTING["tuya"], "cloud": {

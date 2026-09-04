@@ -116,6 +116,7 @@ class RulesEngine:
         mqtt_publish_cfg = config.raw.get("mqtt_publish", {})
         self._satel_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("satel", "satel")
         self._tuya_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("tuya", "tuya")
+        self._homewhiz_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("homewhiz", "homewhiz")
         if mqtt_publish_cfg.get("enabled", True) and config.ebus.get("mqtt_host"):
             self.state_mqtt = HomeAssistantMqttBridge(
                 {"mqtt_host": config.ebus["mqtt_host"], "mqtt_port": config.ebus.get("mqtt_port", 1883)},
@@ -402,6 +403,10 @@ class RulesEngine:
     async def _on_homewhiz_state(self, appliance_name: str, state_name: str) -> None:
         self.history.set_status(f"homewhiz:{appliance_name}", "homewhiz", state_name, label=appliance_name)
         await self.handle_device_state("homewhiz_state", appliance_name, state_name)
+        if self.ha_mqtt:
+            self.ha_mqtt.publish_state(f"{self._ha_topic_prefix}/homewhiz/{appliance_name}/state", state_name)
+        if self.state_mqtt:
+            self.state_mqtt.publish_state(f"{self._homewhiz_mqtt_topic}/{appliance_name}/state", state_name)
 
     async def handle_camera_motion(self, source: str, camera_id: str) -> None:
         now = datetime.now()

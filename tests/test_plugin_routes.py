@@ -982,7 +982,9 @@ class TestMqttPublishPluginPage:
         assert (await client.get("/api/plugins/mqtt_publish/topics")).status_code == 401
         resp = (await client.get("/api/plugins/mqtt_publish/topics", headers=_basic_auth_header("test_haslo_123")))
         assert resp.status_code == 200
-        assert await resp.get_json() == {"satel_topic": "satel", "tuya_topic": "tuya"}
+        assert await resp.get_json() == {
+            "satel_topic": "satel", "tuya_topic": "tuya", "homewhiz_topic": "homewhiz",
+        }
 
     async def test_topics_post_without_auth_returns_401(self, client):
         assert (await client.post("/api/plugins/mqtt_publish/topics", json={})).status_code == 401
@@ -991,7 +993,8 @@ class TestMqttPublishPluginPage:
         import dashboard.app as app_module
 
         (await client.post(
-            "/api/plugins/mqtt_publish/topics", json={"satel_topic": "moj_satel", "tuya_topic": "moje_tuya"},
+            "/api/plugins/mqtt_publish/topics",
+            json={"satel_topic": "moj_satel", "tuya_topic": "moje_tuya", "homewhiz_topic": "moj_homewhiz"},
             headers=_basic_auth_header("test_haslo_123"),
         ))
         (await client.post(
@@ -999,7 +1002,7 @@ class TestMqttPublishPluginPage:
             headers=_basic_auth_header("test_haslo_123"),
         ))
         saved = app_module.config_store.get("config")["mqtt_publish"]
-        assert saved["topics"] == {"satel": "moj_satel", "tuya": "moje_tuya"}
+        assert saved["topics"] == {"satel": "moj_satel", "tuya": "moje_tuya", "homewhiz": "moj_homewhiz"}
         assert saved["log_level"] == "WARNING"
 
 

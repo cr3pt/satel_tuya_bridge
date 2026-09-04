@@ -629,6 +629,7 @@ def build_connections_patch(form: dict, existing: dict) -> dict:
         "topics": {
             "satel": (mqtt_publish_form.get("satel_topic") or "satel").strip(),
             "tuya": (mqtt_publish_form.get("tuya_topic") or "tuya").strip(),
+            "homewhiz": (mqtt_publish_form.get("homewhiz_topic") or "homewhiz").strip(),
         },
     }
     if existing_mqtt_publish.get("log_level"):
@@ -718,6 +719,7 @@ def connections_to_form(existing: dict) -> dict:
             "enabled": mqtt_publish.get("enabled", True),
             "satel_topic": mqtt_publish.get("topics", {}).get("satel", "satel"),
             "tuya_topic": mqtt_publish.get("topics", {}).get("tuya", "tuya"),
+            "homewhiz_topic": mqtt_publish.get("topics", {}).get("homewhiz", "homewhiz"),
         },
         "tuya_cloud": {
             "enabled": bool(tuya_cloud),

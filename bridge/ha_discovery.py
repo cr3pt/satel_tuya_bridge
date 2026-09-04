@@ -115,6 +115,27 @@ def build_satel_output_entities(monitored_outputs: dict, ha_cfg: dict, topic_pre
     return entities
 
 
+def build_homewhiz_sensor_entities(appliances_cfg: dict, ha_cfg: dict, topic_prefix: str) -> list[dict]:
+    prefix = ha_cfg.get("discovery_prefix", "homeassistant")
+    entities = []
+    for name in appliances_cfg:
+        object_id = f"homewhiz_{name}"
+        state_topic = f"{topic_prefix}/homewhiz/{name}/state"
+        payload = {
+            "name": f"Stan: {name}",
+            "unique_id": f"satel_tuya_bridge_{object_id}",
+            "state_topic": state_topic,
+            "device": _device_block(ha_cfg),
+        }
+        entities.append({
+            "discovery_topic": f"{prefix}/sensor/satel_tuya_bridge/{object_id}/config",
+            "payload": payload,
+            "state_topic": state_topic,
+            "command_topic": None,
+        })
+    return entities
+
+
 def build_satel_partition_entities(partitions: dict, ha_cfg: dict, topic_prefix: str) -> list[dict]:
     prefix = ha_cfg.get("discovery_prefix", "homeassistant")
     entities = []
@@ -149,4 +170,6 @@ def build_all_entities(config, boiler_topic_prefix: str) -> list[dict]:
     entities += build_satel_input_entities(config.satel.get("monitored_zones", {}), ha_cfg, topic_prefix)
     entities += build_satel_output_entities(config.satel.get("monitored_outputs", {}), ha_cfg, topic_prefix)
     entities += build_satel_partition_entities(config.satel.get("partitions", {}), ha_cfg, topic_prefix)
+    homewhiz_cfg = getattr(config, "homewhiz", None) or {}
+    entities += build_homewhiz_sensor_entities(homewhiz_cfg.get("appliances", {}), ha_cfg, topic_prefix)
     return entities

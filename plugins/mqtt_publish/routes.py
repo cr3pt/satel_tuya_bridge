@@ -35,6 +35,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store,
         return jsonify({
             "satel_topic": topics.get("satel", "satel"),
             "tuya_topic": topics.get("tuya", "tuya"),
+            "homewhiz_topic": topics.get("homewhiz", "homewhiz"),
         })
 
     @app.route("/api/plugins/mqtt_publish/topics", methods=["POST"])
@@ -49,6 +50,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store,
         section["topics"] = {
             "satel": (form.get("satel_topic") or "").strip() or "satel",
             "tuya": (form.get("tuya_topic") or "").strip() or "tuya",
+            "homewhiz": (form.get("homewhiz_topic") or "").strip() or "homewhiz",
         }
         _save_mqtt_publish_section(section)
         reload_bridge_config()
