@@ -412,6 +412,12 @@ class TestHomeWhizClientMessageHandling:
         await client._handle_message("$aws/things/abc123/shadow/update/accepted", payload)
         assert calls == [("Zmywarka", "running")]
 
+    async def test_string_wfa_start_offset_is_coerced_to_int(self):
+        client, calls = self._make_client()
+        payload = json.dumps({"state": {"reported": {"wfa": [1], "wfaStartOffset": "0"}}}).encode()
+        await client._handle_message("$aws/things/abc123/shadow/update/accepted", payload)
+        assert calls == [("Zmywarka", "running")]
+
     async def test_unknown_appliance_id_ignored(self):
         client, calls = self._make_client()
         payload = json.dumps({"state": {"reported": {"wfa": [1], "wfaStartOffset": 0}}}).encode()
