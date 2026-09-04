@@ -363,9 +363,23 @@ class HomeWhizClient:
         def _on_message(_client, _userdata, msg) -> None:
             asyncio.run_coroutine_threadsafe(self._handle_message(msg.topic, msg.payload), self._loop)
 
+        pending_subscriptions: dict[int, str] = {}
+
+        def _on_subscribe(_client, _userdata, mid, reason_code_list, _properties) -> None:
+            topic = pending_subscriptions.pop(mid, "?")
+            codes = [rc.value for rc in reason_code_list]
+            if any(rc.is_failure for rc in reason_code_list):
+                logger.warning(
+                    "HomeWhiz: broker odrzucił subskrypcję %s (kody: %s) - sprawdź uprawnienia "
+                    "polityki IoT dla tego urządzenia", topic, codes,
+                )
+            else:
+                logger.info("HomeWhiz: subskrypcja %s potwierdzona przez broker (kody: %s)", topic, codes)
+
         client.on_connect = _on_connect
         client.on_disconnect = _on_disconnect
         client.on_message = _on_message
+        client.on_subscribe = _on_subscribe
         self._client = client
 
         client.connect_async(parsed.hostname, 443, keepalive=60)
@@ -377,8 +391,9 @@ class HomeWhizClient:
 
             for watch in self._appliances.values():
                 topic_prefix = f"$aws/things/{watch.appliance_id}/shadow"
-                client.subscribe(f"{topic_prefix}/update/accepted")
-                client.subscribe(f"{topic_prefix}/get/accepted")
+                for topic in (f"{topic_prefix}/update/accepted", f"{topic_prefix}/get/accepted"):
+                    _, mid = client.subscribe(topic)
+                    pending_subscriptions[mid] = topic
                 client.publish(f"{topic_prefix}/get", payload="{}")
             logger.info("HomeWhiz: połączono, monitoruję %d urządzeń", len(self._appliances))
             await on_connected()
