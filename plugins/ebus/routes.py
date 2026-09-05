@@ -11,12 +11,24 @@ from dashboard.setup import (
 )
 from plugins import PluginMeta, register_settings_route
 
+def describe_state(config_raw: dict) -> dict:
+    ebus = config_raw.get("ebus", {}) or {}
+    ebus_sensors = ebus.get("sensors", []) or []
+    return {
+        "enabled": ebus.get("enabled", True) and bool(ebus.get("mqtt_host")),
+        "configured": bool(ebus.get("mqtt_host")),
+        "detail": f"{len(ebus_sensors)} czujników" if ebus.get("mqtt_host") else "brak brokera MQTT",
+    }
+
+
 META = PluginMeta(
     id="ebus",
     name="eBUS / kocioł (dane grzewcze)",
     icon="🔥",
-    description="Lista czujników kotła (ebusd) oraz wykrywanie tematów MQTT.",
+    description="Odczyt czujników kotła (ebusd) przez MQTT - historia, alarmy progowe, automatyka.",
     config_url="/plugins/ebus",
+    config_key="ebus",
+    describe_state=describe_state,
 )
 
 _background_discovery = BackgroundTopicDiscovery()

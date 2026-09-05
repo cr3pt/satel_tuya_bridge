@@ -10,12 +10,31 @@ from dashboard.setup import (
 )
 from plugins import PluginMeta, register_settings_route
 
+
+def describe_state(config_raw: dict) -> dict:
+    satel = config_raw.get("satel", {}) or {}
+    return {
+        "enabled": satel.get("enabled", True) and bool(satel.get("host")),
+        "configured": bool(satel.get("host")),
+        "detail": (
+            f"{satel.get('host', '?')}:{satel.get('port', '?')}"
+            + ("" if satel.get("integration_key") else " (tylko odczyt - brak klucza integracji)")
+        ) if satel.get("host") else "nieskonfigurowana",
+        "poll_interval_seconds": satel.get("status_poll_interval_seconds", 3),
+    }
+
+
 META = PluginMeta(
     id="satel",
     name="Centrala Satel Integra",
     icon="🔒",
-    description="Strefy/wyjścia/wejścia IP/partycje oraz wykrywanie aktywnych stref przez nasłuch.",
+    description="Odczyt wejść/wyjść/stref i sterowanie (uzbrajanie, wyjścia).",
     config_url="/plugins/satel",
+    config_key="satel",
+    has_poll_interval=True,
+    min_poll_interval_seconds=2,
+    toggle_route="toggle_prereq_connections_live",
+    describe_state=describe_state,
 )
 
 _background_scan = BackgroundZoneOutputScan()

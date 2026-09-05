@@ -14,13 +14,62 @@ from dashboard.setup import (
 )
 from plugins import PluginMeta, register_settings_route
 
+
+def _zigbee_devices(config_raw: dict) -> dict:
+    tuya_devices = (config_raw.get("tuya", {}) or {}).get("devices", {}) or {}
+    return {name: cfg for name, cfg in tuya_devices.items() if cfg.get("gateway")}
+
+
+def describe_state(config_raw: dict) -> dict:
+    tuya = config_raw.get("tuya", {}) or {}
+    tuya_devices = tuya.get("devices", {}) or {}
+    zigbee_devices = _zigbee_devices(config_raw)
+    return {
+        "enabled": tuya.get("enabled", True) and len(tuya_devices) > len(zigbee_devices),
+        "configured": len(tuya_devices) > len(zigbee_devices),
+        "detail": f"{len(tuya_devices) - len(zigbee_devices)} urządzeń WiFi",
+        "poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
+    }
+
+
+def describe_zigbee_state(config_raw: dict) -> dict:
+    tuya = config_raw.get("tuya", {}) or {}
+    zigbee_devices = _zigbee_devices(config_raw)
+    zigbee_gateways = tuya.get("zigbee_gateways", {}) or {}
+    return {
+        "enabled": tuya.get("enabled", True) and bool(zigbee_gateways),
+        "configured": bool(zigbee_gateways),
+        "detail": f"{len(zigbee_gateways)} bramek, {len(zigbee_devices)} urządzeń",
+    }
+
+
 META = PluginMeta(
     id="tuya_local",
-    name="Urządzenia Tuya (LAN)",
+    name="Tuya - urządzenia lokalne (WiFi)",
     icon="🔌",
-    description="Urządzenia Tuya lokalne + bramki Zigbee, skan sieci LAN i import z Tuya Cloud.",
+    description="Sterowanie gniazdkami/przełącznikami/ściemniaczami Tuya bezpośrednio w LAN, bez chmury "
+                "(tinytuya) - obejmuje też podurządzenia Zigbee.",
     config_url="/plugins/tuya",
+    config_key="tuya",
+    has_poll_interval=True,
+    min_poll_interval_seconds=3,
+    toggle_route="toggle_prereq_connections_live",
+    describe_state=describe_state,
 )
+
+ZIGBEE_META = PluginMeta(
+    id="tuya_zigbee",
+    name="Tuya - bramki Zigbee",
+    icon="🐝",
+    description="Czujniki/przełączniki Zigbee podpięte pod bramkę Tuya (Tuya Zigbee Gateway/Hub) - dzieli "
+                "połączenie z 'Tuya lokalnie' wyżej, brak osobnego przełącznika.",
+    config_url="/plugins/tuya",
+    toggleable=False,
+    restart_required=False,
+    describe_state=describe_zigbee_state,
+)
+
+METAS = [META, ZIGBEE_META]
 
 
 def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_config_store,

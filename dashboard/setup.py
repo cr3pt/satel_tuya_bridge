@@ -6,6 +6,8 @@ import pathlib
 
 from werkzeug.security import generate_password_hash
 
+import plugins
+
 DRAFT_FILENAME = ".setup_draft.json"
 
 SCENE_ACTION_REQUIRED_FIELDS = {
@@ -853,150 +855,34 @@ def build_location_patch(form: dict, existing: dict) -> dict:
     return config
 
 
-PLUGIN_DEFS = [
-    {"id": "satel", "name": "Centrala Satel Integra", "icon": "🔒", "toggleable": True, "restart_required": True,
-     "has_poll_interval": True, "min_poll_interval_seconds": 2, "has_log_level": True,
-     "description": "Odczyt wejść/wyjść/stref i sterowanie (uzbrajanie, wyjścia)."},
-    {"id": "tuya_local", "name": "Tuya - urządzenia lokalne (WiFi)", "icon": "🔌", "toggleable": True, "restart_required": True,
-     "has_poll_interval": True, "min_poll_interval_seconds": 3, "has_log_level": True,
-     "description": "Sterowanie gniazdkami/przełącznikami/ściemniaczami Tuya bezpośrednio w LAN, bez chmury (tinytuya) - obejmuje też podurządzenia Zigbee."},
-    {"id": "tuya_zigbee", "name": "Tuya - bramki Zigbee", "icon": "🐝", "toggleable": False, "restart_required": False,
-     "has_log_level": True,
-     "description": "Czujniki/przełączniki Zigbee podpięte pod bramkę Tuya (Tuya Zigbee Gateway/Hub) - dzieli połączenie z 'Tuya lokalnie' wyżej, brak osobnego przełącznika."},
-    {"id": "tuya_cloud", "name": "Tuya Cloud (kamery + import urządzeń)", "icon": "☁️", "toggleable": True, "restart_required": True,
-     "has_log_level": True,
-     "description": "Detekcja ruchu z kamer Tuya oraz import urządzeń z konta Tuya Cloud - wymaga projektu na developer.tuya.com."},
-    {"id": "ebus", "name": "eBUS / kocioł (dane grzewcze)", "icon": "🔥", "toggleable": True, "restart_required": True,
-     "has_log_level": True,
-     "description": "Odczyt czujników kotła (ebusd) przez MQTT - historia, alarmy progowe, automatyka."},
-    {"id": "home_assistant", "name": "Home Assistant (MQTT Discovery)", "icon": "🏠", "toggleable": True, "restart_required": True,
-     "has_log_level": True,
-     "description": "Automatyczne udostępnienie encji (wejścia/wyjścia Satela, urządzenia Tuya, czujniki kotła) w Home Assistant."},
-    {"id": "mqtt_publish", "name": "Publikacja stanu do MQTT", "icon": "📡", "toggleable": True, "restart_required": True,
-     "has_log_level": True,
-     "description": "Stan Satela/Tuya na osobnym temacie MQTT, niezależnie od Home Assistant."},
-    {"id": "unifi_protect", "name": "Kamery UniFi Protect", "icon": "📹", "toggleable": True, "restart_required": True,
-     "has_log_level": True,
-     "description": "Detekcja ruchu z kamer UniFi Protect jako alternatywa/uzupełnienie kamer Tuya."},
-    {"id": "homewhiz", "name": "Zmywarki/AGD HomeWhiz", "icon": "🍽", "toggleable": True, "restart_required": True,
-     "has_log_level": True,
-     "description": "Stan zmywarek (i innego AGD) BEQ/Arcelik sterowanych przez chmurę HomeWhiz - dostępny jako warunek 'stan' w automatyzacjach."},
-    {"id": "presence_simulation", "name": "Symulacja obecności", "icon": "🎭", "toggleable": True, "restart_required": False,
-     "has_log_level": True,
-     "description": "Losowe włączanie/wyłączanie wskazanych urządzeń Tuya pod nieobecność domowników."},
-    {"id": "notifications", "name": "Powiadomienia push (ntfy)", "icon": "🔔", "toggleable": True, "restart_required": True,
-     "has_log_level": True,
-     "description": "Push przy utracie/przywróceniu połączenia z centralą/MQTT/Tuya/kamerami oraz przy alarmach progowych."},
-    {"id": "mcp_server", "name": "Serwer MCP (Model Context Protocol)", "icon": "🤖", "toggleable": True, "restart_required": False,
-     "has_log_level": True,
-     "description": "Udostępnia sterowanie systemem jako narzędzia MCP dla asystentów AI (Claude Desktop, Claude Code itp.) - wymaga tokenu API."},
-    {"id": "homekit", "name": "Most HomeKit (Apple)", "icon": "🏡", "toggleable": True, "restart_required": True,
-     "has_log_level": True,
-     "description": "Natywny most HomeKit (Apple Home) - centrala Satel jako system alarmowy, urządzenia Tuya, sceny."},
-]
-
-
 def list_plugins(config_raw: dict) -> list[dict]:
-    satel = config_raw.get("satel", {})
-    tuya = config_raw.get("tuya", {})
-    ebus = config_raw.get("ebus", {})
-    ha = config_raw.get("home_assistant", {})
-    mqtt_publish = config_raw.get("mqtt_publish", {})
-    presence = config_raw.get("presence_simulation", {})
-    notifications = config_raw.get("notifications", {})
-    mcp_server = config_raw.get("mcp_server", {})
-    homekit = config_raw.get("homekit", {})
-
-    tuya_devices = tuya.get("devices", {}) or {}
-    zigbee_devices = {n: d for n, d in tuya_devices.items() if d.get("gateway")}
-    zigbee_gateways = tuya.get("zigbee_gateways", {}) or {}
-    ebus_sensors = config_raw.get("ebus", {}).get("sensors", []) or []
-
-    unifi_protect_cfg = config_raw.get("unifi_protect") or {}
-    homewhiz_cfg = config_raw.get("homewhiz") or {}
-
-    state = {
-        "satel": {
-            "enabled": satel.get("enabled", True) and bool(satel.get("host")),
-            "configured": bool(satel.get("host")),
-            "detail": (
-                f"{satel.get('host', '?')}:{satel.get('port', '?')}"
-                + ("" if satel.get("integration_key") else " (tylko odczyt - brak klucza integracji)")
-            ) if satel.get("host") else "nieskonfigurowana",
-            "poll_interval_seconds": satel.get("status_poll_interval_seconds", 3),
-        },
-        "tuya_local": {
-            "enabled": tuya.get("enabled", True) and len(tuya_devices) > len(zigbee_devices),
-            "configured": len(tuya_devices) > len(zigbee_devices),
-            "detail": f"{len(tuya_devices) - len(zigbee_devices)} urządzeń WiFi",
-            "poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
-        },
-        "tuya_zigbee": {
-            "enabled": tuya.get("enabled", True) and bool(zigbee_gateways),
-            "configured": bool(zigbee_gateways),
-            "detail": f"{len(zigbee_gateways)} bramek, {len(zigbee_devices)} urządzeń",
-        },
-        "tuya_cloud": {
-            "enabled": tuya.get("cloud", {}).get("enabled", True) and bool(tuya.get("cloud", {}).get("access_id")),
-            "configured": bool(tuya.get("cloud", {}).get("access_id")),
-            "detail": "skonfigurowana" if tuya.get("cloud", {}).get("access_id") else "brak poświadczeń",
-        },
-        "ebus": {
-            "enabled": ebus.get("enabled", True) and bool(ebus.get("mqtt_host")),
-            "configured": bool(ebus.get("mqtt_host")),
-            "detail": f"{len(ebus_sensors)} czujników" if ebus.get("mqtt_host") else "brak brokera MQTT",
-        },
-        "home_assistant": {
-            "enabled": bool(ha.get("enabled")),
-            "configured": bool(ha.get("mqtt_host") or ebus.get("mqtt_host")),
-            "detail": ha.get("mqtt_host") or ebus.get("mqtt_host") or "brak brokera MQTT",
-        },
-        "mqtt_publish": {
-            "enabled": bool(mqtt_publish.get("enabled", True)) and bool(ebus.get("mqtt_host")),
-            "configured": bool(ebus.get("mqtt_host")),
-            "detail": "używa brokera eBUS" if ebus.get("mqtt_host") else "brak brokera MQTT",
-        },
-        "unifi_protect": {
-            "enabled": unifi_protect_cfg.get("enabled", True) and config_raw.get("unifi_protect") is not None,
-            "configured": config_raw.get("unifi_protect") is not None,
-            "detail": "skonfigurowane" if config_raw.get("unifi_protect") is not None else "nieskonfigurowane",
-        },
-        "homewhiz": {
-            "enabled": homewhiz_cfg.get("enabled", True) and bool(homewhiz_cfg.get("username") and homewhiz_cfg.get("appliances")),
-            "configured": bool(homewhiz_cfg.get("username") and homewhiz_cfg.get("appliances")),
-            "detail": f"{len(homewhiz_cfg.get('appliances', {}))} urządzeń" if homewhiz_cfg.get("appliances") else "brak poświadczeń/urządzeń",
-        },
-        "presence_simulation": {
-            "enabled": bool(presence.get("enabled")),
-            "configured": bool(presence.get("devices")),
-            "detail": f"{len(presence.get('devices', []))} urządzeń" if presence.get("devices") else "brak urządzeń",
-        },
-        "notifications": {
-            "enabled": notifications.get("enabled", True) and bool(notifications.get("ntfy_topic_url")),
-            "configured": bool(notifications.get("ntfy_topic_url")),
-            "detail": "skonfigurowane" if notifications.get("ntfy_topic_url") else "nieskonfigurowane",
-        },
-        "mcp_server": {
-            "enabled": bool(mcp_server.get("enabled")),
-            "configured": True,
-            "detail": "aktywny (POST /api/mcp) - wymaga tokenu API" if mcp_server.get("enabled") else "wyłączony",
-        },
-        "homekit": {
-            "enabled": bool(homekit.get("enabled")),
-            "configured": True,
-            "detail": f"port {homekit.get('port', 51826)}" if homekit.get("enabled") else "wyłączony",
-        },
-    }
-
     from bridge.logging_config import plugin_config_section
 
-    return [
-        {
-            "has_poll_interval": False, **plugin_def, **state[plugin_def["id"]],
-            "log_level": plugin_config_section(config_raw, plugin_def["id"]).get("log_level") or "",
-        }
-        for plugin_def in PLUGIN_DEFS
-    ]
+    metas, _errors = plugins.discover_plugin_metas()
+
+    result = []
+    for meta in metas:
+        state = meta.describe_state(config_raw) if meta.describe_state else {"enabled": False, "configured": False, "detail": ""}
+        result.append({
+            "id": meta.id,
+            "name": meta.name,
+            "icon": meta.icon,
+            "description": meta.description,
+            "config_url": meta.config_url,
+            "toggleable": meta.toggleable,
+            "restart_required": meta.restart_required,
+            "has_log_level": meta.has_log_level,
+            "has_poll_interval": meta.has_poll_interval,
+            "min_poll_interval_seconds": meta.min_poll_interval_seconds,
+            "log_level": plugin_config_section(config_raw, meta.id).get("log_level") or "",
+            **state,
+        })
+    return result
+
+
+def list_plugin_load_errors() -> list[dict]:
+    _metas, errors = plugins.discover_plugin_metas()
+    return [{"plugin_dir": e.plugin_dir, "error": e.error} for e in errors]
 
 
 def dict_to_name_number_rows(d: dict) -> list[dict]:

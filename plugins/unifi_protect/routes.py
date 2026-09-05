@@ -6,12 +6,24 @@ from quart import Quart, jsonify, render_template, request, send_file
 
 from plugins import PluginMeta, register_settings_route
 
+def describe_state(config_raw: dict) -> dict:
+    cfg = config_raw.get("unifi_protect") or {}
+    configured = config_raw.get("unifi_protect") is not None
+    return {
+        "enabled": cfg.get("enabled", True) and configured,
+        "configured": configured,
+        "detail": "skonfigurowane" if configured else "nieskonfigurowane",
+    }
+
+
 META = PluginMeta(
     id="unifi_protect",
     name="Kamery UniFi Protect",
     icon="📹",
-    description="Zrzuty z kamer UniFi Protect przy alarmie/zdarzeniach, podgląd na żywo.",
+    description="Detekcja ruchu z kamer UniFi Protect jako alternatywa/uzupełnienie kamer Tuya.",
     config_url="/plugins/unifi_protect",
+    config_key="unifi_protect",
+    describe_state=describe_state,
 )
 
 _client_cache: dict[tuple, object] = {}

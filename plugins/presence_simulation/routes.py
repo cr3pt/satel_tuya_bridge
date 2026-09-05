@@ -4,12 +4,25 @@ from quart import Quart, jsonify, render_template
 
 from plugins import PluginMeta, register_settings_route
 
+def describe_state(config_raw: dict) -> dict:
+    presence = config_raw.get("presence_simulation", {}) or {}
+    devices = presence.get("devices") or []
+    return {
+        "enabled": bool(presence.get("enabled")),
+        "configured": bool(devices),
+        "detail": f"{len(devices)} urządzeń" if devices else "brak urządzeń",
+    }
+
+
 META = PluginMeta(
     id="presence_simulation",
     name="Symulacja obecności",
     icon="🎭",
-    description="Losowe załączanie wybranych urządzeń Tuya, gdy nikogo nie ma w domu.",
+    description="Losowe włączanie/wyłączanie wskazanych urządzeń Tuya pod nieobecność domowników.",
     config_url="/plugins/presence_simulation",
+    restart_required=False,
+    toggle_route="automations",
+    describe_state=describe_state,
 )
 
 

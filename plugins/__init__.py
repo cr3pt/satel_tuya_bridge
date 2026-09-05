@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import importlib
+import pathlib
 from dataclasses import dataclass
 from typing import Callable
 
 from quart import Quart, jsonify, request
 
 from bridge.logging_config import VALID_LEVELS
+
+_PACKAGE_DIR = pathlib.Path(__file__).resolve().parent
 
 
 @dataclass(frozen=True)
@@ -15,6 +19,20 @@ class PluginMeta:
     icon: str
     description: str
     config_url: str | None = None
+    config_key: str | None = None
+    toggleable: bool = True
+    restart_required: bool = True
+    has_log_level: bool = True
+    has_poll_interval: bool = False
+    min_poll_interval_seconds: int | None = None
+    toggle_route: str = "toggle_prereq"
+    describe_state: Callable[[dict], dict] | None = None
+
+
+@dataclass(frozen=True)
+class PluginLoadError:
+    plugin_dir: str
+    error: str
 
 
 def register_settings_route(
@@ -74,25 +92,54 @@ def register_settings_route(
         return jsonify({"message": message})
 
 
-def register_all(app: Quart, **deps) -> list[PluginMeta]:
-    from plugins.satel import routes as satel_routes
-    from plugins.tuya_local import routes as tuya_routes
-    from plugins.ebus import routes as ebus_routes
-    from plugins.tuya_cloud import routes as tuya_cloud_routes
-    from plugins.home_assistant import routes as home_assistant_routes
-    from plugins.mqtt_publish import routes as mqtt_publish_routes
-    from plugins.unifi_protect import routes as unifi_protect_routes
-    from plugins.homewhiz import routes as homewhiz_routes
-    from plugins.notifications import routes as notifications_routes
-    from plugins.presence_simulation import routes as presence_simulation_routes
-    from plugins.mcp_server import routes as mcp_server_routes
-    from plugins.homekit import routes as homekit_routes
+def _iter_plugin_dir_names() -> list[str]:
+    return sorted(
+        entry.name for entry in _PACKAGE_DIR.iterdir()
+        if entry.is_dir() and not entry.name.startswith("_") and (entry / "routes.py").is_file()
+    )
 
-    metas = []
-    for routes_module in (
-        satel_routes, tuya_routes, ebus_routes, tuya_cloud_routes, home_assistant_routes,
-        mqtt_publish_routes, unifi_protect_routes, homewhiz_routes, notifications_routes,
-        presence_simulation_routes, mcp_server_routes, homekit_routes,
-    ):
-        metas.append(routes_module.register(app, **deps))
-    return metas
+
+def _discover_modules() -> tuple[list[tuple[str, object, list[PluginMeta]]], list[PluginLoadError]]:
+    modules: list[tuple[str, object, list[PluginMeta]]] = []
+    errors: list[PluginLoadError] = []
+    for dir_name in _iter_plugin_dir_names():
+        module_name = f"plugins.{dir_name}.routes"
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:
+            errors.append(PluginLoadError(dir_name, f"błąd importu: {exc}"))
+            continue
+
+        if not callable(getattr(module, "register", None)):
+            errors.append(PluginLoadError(dir_name, "brak funkcji register(app, **deps)"))
+            continue
+
+        raw_metas = getattr(module, "METAS", None)
+        if raw_metas is None:
+            single = getattr(module, "META", None)
+            raw_metas = [single] if single is not None else []
+        if not raw_metas or not all(isinstance(meta, PluginMeta) for meta in raw_metas):
+            errors.append(PluginLoadError(dir_name, "brak poprawnego META/METAS (obiekt PluginMeta)"))
+            continue
+
+        modules.append((dir_name, module, list(raw_metas)))
+    return modules, errors
+
+
+def discover_plugin_metas() -> tuple[list[PluginMeta], list[PluginLoadError]]:
+    modules, errors = _discover_modules()
+    metas = [meta for _, _, module_metas in modules for meta in module_metas]
+    return metas, errors
+
+
+def register_all(app: Quart, **deps) -> tuple[list[PluginMeta], list[PluginLoadError]]:
+    modules, errors = _discover_modules()
+    metas: list[PluginMeta] = []
+    for dir_name, module, module_metas in modules:
+        try:
+            module.register(app, **deps)
+        except Exception as exc:
+            errors.append(PluginLoadError(dir_name, f"błąd rejestracji: {exc}"))
+            continue
+        metas.extend(module_metas)
+    return metas, errors

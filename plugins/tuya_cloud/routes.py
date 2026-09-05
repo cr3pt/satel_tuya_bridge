@@ -8,12 +8,24 @@ from bridge.tuya_local import TUYA_CLOUD_REGIONS, fetch_cloud_devices as fetch_t
 from dashboard.setup import build_tuya_devices_dict, cloud_devices_to_rows, validate_cloud_devices
 from plugins import PluginMeta, register_settings_route
 
+def describe_state(config_raw: dict) -> dict:
+    cloud = (config_raw.get("tuya", {}) or {}).get("cloud", {}) or {}
+    return {
+        "enabled": cloud.get("enabled", True) and bool(cloud.get("access_id")),
+        "configured": bool(cloud.get("access_id")),
+        "detail": "skonfigurowana" if cloud.get("access_id") else "brak poświadczeń",
+    }
+
+
 META = PluginMeta(
     id="tuya_cloud",
-    name="Tuya Cloud (API)",
-    icon="☁",
-    description="Poświadczenia Tuya Cloud API, urządzenia sterowane przez chmurę i import kamer.",
+    name="Tuya Cloud (kamery + import urządzeń)",
+    icon="☁️",
+    description="Detekcja ruchu z kamer Tuya oraz import urządzeń z konta Tuya Cloud - wymaga projektu "
+                "na developer.tuya.com.",
     config_url="/plugins/tuya_cloud",
+    toggle_route="connections_restart",
+    describe_state=describe_state,
 )
 
 
