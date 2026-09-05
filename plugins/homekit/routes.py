@@ -6,6 +6,7 @@ import pathlib
 from pyhap.util import generate_pincode
 from quart import Quart, jsonify, render_template, request
 
+from bridge.homekit_bridge import TUYA_ACCESSORY_TYPES, resolve_homekit_config
 from plugins import PluginMeta, register_settings_route
 
 META = PluginMeta(
@@ -110,6 +111,85 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         return jsonify({
             "message": "Usunięto stan parowania - wszystkie dotąd sparowane urządzenia (w tym Home app) "
                        "będą wymagały ponownego dodania mostu. Wymagany pełny restart procesu bridge'a.",
+        })
+
+    @app.route("/api/plugins/homekit/entities", methods=["GET"])
+    async def api_plugin_homekit_entities_get():
+        resolved = resolve_homekit_config(get_config_raw())
+        return jsonify({
+            "rooms": resolved["rooms"],
+            "partitions": [
+                {"name": name, "enabled": info["enabled"]}
+                for name, info in resolved["partitions"].items()
+            ],
+            "devices": [
+                {"name": name, "type": info["type"], "room": info["room"], "is_dimmer": info["is_dimmer"]}
+                for name, info in resolved["devices"].items()
+            ],
+            "scenes": [
+                {"name": name, "enabled": info["enabled"]}
+                for name, info in resolved["scenes"].items()
+            ],
+            "type_choices": [
+                {"id": type_id, "label": type_def["label"]}
+                for type_id, type_def in TUYA_ACCESSORY_TYPES.items()
+            ],
+        })
+
+    @app.route("/api/plugins/homekit/entities", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_homekit_entities_post():
+        form = await request.get_json(silent=True)
+        if not isinstance(form, dict):
+            return jsonify({"error": "Nieprawidłowe dane"}), 400
+
+        resolved = resolve_homekit_config(get_config_raw())
+        known_partitions = set(resolved["partitions"])
+        known_devices = set(resolved["devices"])
+        known_scenes = set(resolved["scenes"])
+
+        rooms = [str(r).strip() for r in (form.get("rooms") or []) if str(r).strip()]
+        seen_rooms = []
+        for room in rooms:
+            if room not in seen_rooms:
+                seen_rooms.append(room)
+        rooms = seen_rooms
+
+        partitions = {}
+        for name, patch in (form.get("partitions") or {}).items():
+            if name not in known_partitions:
+                return jsonify({"error": f"Nieznana partycja: '{name}'"}), 400
+            partitions[name] = {"enabled": bool((patch or {}).get("enabled"))}
+
+        devices = {}
+        for name, patch in (form.get("devices") or {}).items():
+            if name not in known_devices:
+                return jsonify({"error": f"Nieznane urządzenie Tuya: '{name}'"}), 400
+            type_id = (patch or {}).get("type") or ""
+            if type_id and type_id not in TUYA_ACCESSORY_TYPES:
+                return jsonify({"error": f"Nieznany rodzaj urządzenia: '{type_id}'"}), 400
+            room = ((patch or {}).get("room") or "").strip()
+            devices[name] = {"type": type_id, "room": room}
+
+        scenes = {}
+        for name, patch in (form.get("scenes") or {}).items():
+            if name not in known_scenes:
+                return jsonify({"error": f"Nieznana scena: '{name}'"}), 400
+            scenes[name] = {"enabled": bool((patch or {}).get("enabled"))}
+
+        section = dict(_get_homekit_section())
+        section["rooms"] = rooms
+        section["partitions"] = partitions
+        section["devices"] = devices
+        section["scenes"] = scenes
+        _save_homekit_section(section)
+        reload_bridge_config()
+        enqueue_bridge_reload()
+
+        return jsonify({
+            "message": "Zapisano. Zmiana listy udostępnionych urządzeń/partycji/scen wymaga "
+                       "pełnego restartu procesu bridge'a (zakładka ⚙ Ustawienia ogólne -> "
+                       "\"Zrestartuj bridge i panel teraz\").",
         })
 
     register_settings_route(

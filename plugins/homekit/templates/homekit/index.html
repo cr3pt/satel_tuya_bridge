@@ -49,6 +49,17 @@
   .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; }
   .badge.paired { background: #16281f; color: var(--ok); }
   .badge.unpaired { background: #262a32; color: var(--muted); }
+  textarea {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 100%; font-family: inherit;
+    resize: vertical; min-height: 44px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; }
+  td.name-cell { font-family: monospace; word-break: break-all; }
+  td.select-cell { min-width: 160px; }
+  input[type=checkbox] { width: 16px; height: 16px; }
 </style>
 </head>
 <body>
@@ -109,6 +120,61 @@
     <button id="saveConfigBtn" type="button">Zapisz</button>
   </div>
   <div id="configMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="entitiesSection">
+  <h2>Urządzenia i pomieszczenia</h2>
+  <div class="section-hint">
+    Wybierz, co ma być widoczne w aplikacji Dom. Partycje Satela są
+    widoczne domyślnie (alarm to główny powód tej integracji) - resztę
+    świadomie włączasz. "Pomieszczenie" to tylko dopisek do nazwy
+    akcesorium (np. "Salon Lampka") - HomeKit nie ma protokołowego
+    przypisania do pomieszczeń, to Ty rozkładasz akcesoria po
+    pomieszczeniach w samej aplikacji Dom przy parowaniu; ta lista tylko
+    ułatwia rozpoznanie, które jest które.
+  </div>
+
+  <div class="field-group">
+    <label>Lista pomieszczeń (jedno na linię albo oddzielone przecinkami)</label>
+    <textarea id="roomsTextarea" placeholder="Salon
+Sypialnia
+Kuchnia"></textarea>
+  </div>
+
+  <div class="field-group">
+    <label>Partycje Satela</label>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th style="width:40px;"></th><th>Nazwa</th></tr></thead>
+        <tbody id="partitionsTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="field-group">
+    <label>Urządzenia Tuya</label>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>Nazwa</th><th class="select-cell">Rodzaj</th><th class="select-cell">Pomieszczenie</th></tr></thead>
+        <tbody id="devicesTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="field-group">
+    <label>Sceny</label>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th style="width:40px;"></th><th>Nazwa</th></tr></thead>
+        <tbody id="scenesTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="actions-bar">
+    <button id="saveEntitiesBtn" type="button">Zapisz</button>
+  </div>
+  <div id="entitiesMsg" class="msg-box"></div>
 </div>
 
 <div class="section" id="pairingSection">
@@ -278,6 +344,147 @@ document.getElementById('resetPairingsBtn').addEventListener('click', async () =
     }
   } catch (e) {
     showMsg('pairingMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function parseRooms(text) {
+  return text.split(/[\n,]/).map(r => r.trim()).filter(Boolean);
+}
+
+function currentRoomsList() {
+  return parseRooms(document.getElementById('roomsTextarea').value);
+}
+
+let entityTypeChoices = [];
+let devicesData = [];
+
+function roomOptionsHtml(selected) {
+  const rooms = currentRoomsList();
+  let html = '<option value="">(brak)</option>';
+  for (const room of rooms) {
+    html += `<option value="${escapeHtml(room)}" ${room === selected ? 'selected' : ''}>${escapeHtml(room)}</option>`;
+  }
+  if (selected && !rooms.includes(selected)) {
+    html += `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}</option>`;
+  }
+  return html;
+}
+
+function typeOptionsHtml(selected) {
+  let html = '<option value="">-- nie eksportuj --</option>';
+  for (const choice of entityTypeChoices) {
+    html += `<option value="${escapeHtml(choice.id)}" ${choice.id === selected ? 'selected' : ''}>${escapeHtml(choice.label)}</option>`;
+  }
+  return html;
+}
+
+function currentDeviceSelections() {
+  const selections = {};
+  document.querySelectorAll('#devicesTableBody select[data-device]').forEach(sel => {
+    const name = sel.dataset.device;
+    selections[name] = selections[name] || {};
+    selections[name].type = sel.value;
+  });
+  document.querySelectorAll('#devicesTableBody select[data-device-room]').forEach(sel => {
+    const name = sel.dataset.deviceRoom;
+    selections[name] = selections[name] || {};
+    selections[name].room = sel.value;
+  });
+  return selections;
+}
+
+function renderDevicesTable() {
+  const current = currentDeviceSelections();
+  const tbody = document.getElementById('devicesTableBody');
+  tbody.innerHTML = devicesData.map(d => {
+    const sel = current[d.name] || {};
+    const type = 'type' in sel ? sel.type : d.type;
+    const room = 'room' in sel ? sel.room : d.room;
+    return `
+      <tr>
+        <td class="name-cell">${escapeHtml(d.name)}</td>
+        <td class="select-cell"><select data-device="${escapeHtml(d.name)}">${typeOptionsHtml(type)}</select></td>
+        <td class="select-cell"><select data-device-room="${escapeHtml(d.name)}">${roomOptionsHtml(room)}</select></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+document.getElementById('roomsTextarea').addEventListener('input', renderDevicesTable);
+
+async function loadEntities() {
+  const data = await (await fetch('/api/plugins/homekit/entities')).json();
+  entityTypeChoices = data.type_choices || [];
+  document.getElementById('roomsTextarea').value = (data.rooms || []).join('\n');
+
+  const partitionsBody = document.getElementById('partitionsTableBody');
+  partitionsBody.innerHTML = (data.partitions || []).map(p => `
+    <tr>
+      <td><input type="checkbox" data-partition="${escapeHtml(p.name)}" ${p.enabled ? 'checked' : ''}></td>
+      <td>${escapeHtml(p.name)}</td>
+    </tr>
+  `).join('');
+
+  const scenesBody = document.getElementById('scenesTableBody');
+  scenesBody.innerHTML = (data.scenes || []).map(s => `
+    <tr>
+      <td><input type="checkbox" data-scene="${escapeHtml(s.name)}" ${s.enabled ? 'checked' : ''}></td>
+      <td>${escapeHtml(s.name)}</td>
+    </tr>
+  `).join('');
+
+  devicesData = data.devices || [];
+  renderDevicesTable();
+}
+loadEntities();
+
+document.getElementById('saveEntitiesBtn').addEventListener('click', async () => {
+  const rooms = currentRoomsList();
+
+  const partitions = {};
+  document.querySelectorAll('#partitionsTableBody input[data-partition]').forEach(cb => {
+    partitions[cb.dataset.partition] = { enabled: cb.checked };
+  });
+
+  const scenes = {};
+  document.querySelectorAll('#scenesTableBody input[data-scene]').forEach(cb => {
+    scenes[cb.dataset.scene] = { enabled: cb.checked };
+  });
+
+  const devices = {};
+  document.querySelectorAll('#devicesTableBody select[data-device]').forEach(sel => {
+    const name = sel.dataset.device;
+    devices[name] = devices[name] || {};
+    devices[name].type = sel.value;
+  });
+  document.querySelectorAll('#devicesTableBody select[data-device-room]').forEach(sel => {
+    const name = sel.dataset.deviceRoom;
+    devices[name] = devices[name] || {};
+    devices[name].room = sel.value;
+  });
+
+  try {
+    const resp = await authorizedFetch('/api/plugins/homekit/entities', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rooms, partitions, devices, scenes }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('entitiesMsg', false, data.error || 'Błąd zapisu');
+    } else {
+      showMsg('entitiesMsg', true, data.message);
+      await loadEntities();
+    }
+  } catch (e) {
+    showMsg('entitiesMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
 </script>

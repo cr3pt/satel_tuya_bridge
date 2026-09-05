@@ -28,7 +28,7 @@ from .boiler_automation import BoilerAutomation
 from .maintenance import run_maintenance
 from .ha_discovery import build_all_entities
 from .ha_mqtt import HomeAssistantMqttBridge
-from .homekit_bridge import HomeKitBridge
+from .homekit_bridge import HomeKitBridge, resolve_homekit_config
 
 logger = logging.getLogger("bridge.rules")
 
@@ -127,9 +127,15 @@ class RulesEngine:
         self.homekit: HomeKitBridge | None = None
         homekit_cfg = config.raw.get("homekit", {})
         if homekit_cfg.get("enabled"):
+            resolved = resolve_homekit_config(config.raw)
+            enabled_partitions = {
+                name: info["number"] for name, info in resolved["partitions"].items() if info["enabled"]
+            }
+            exposed_devices = {name: info for name, info in resolved["devices"].items() if info["type"]}
+            exposed_scene_names = {name for name, info in resolved["scenes"].items() if info["enabled"]}
             self.homekit = HomeKitBridge(
                 homekit_cfg, self.satel, self.tuya, self.scenes,
-                config.satel.get("partitions", {}), self.tuya.devices_cfg,
+                enabled_partitions, exposed_devices, exposed_scene_names,
                 persist_path=config.db_path.parent / "homekit_state.json",
                 loop=self._loop, history=self.history,
             )
@@ -675,8 +681,7 @@ class RulesEngine:
                 f"{self._tuya_mqtt_topic}/{device_name}/state",
                 "ON" if is_on else "OFF",
             )
-        if self.homekit and is_on is not None:
-            self.homekit.update_tuya_on(device_name, is_on)
+        percent = None
         if local_cfg and local_cfg.get("type") == "dimmer" and local_cfg.get("dimmer_dp") in dps:
             lo, hi = local_cfg.get("dimmer_range", [10, 1000])
             raw = dps[local_cfg["dimmer_dp"]]
@@ -685,8 +690,8 @@ class RulesEngine:
                 f"tuya:{device_name}:brightness", "tuya", f"{percent}%",
                 label=f"{device_name} (jasność)",
             )
-            if self.homekit:
-                self.homekit.update_tuya_brightness(device_name, percent)
+        if self.homekit and is_on is not None:
+            self.homekit.update_tuya_state(device_name, is_on, percent)
 
     def _schedule_tuya_status_refresh(self, device_name: str, delay_seconds: float = 1.5) -> None:
         async def _refresh() -> None:

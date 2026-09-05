@@ -1445,25 +1445,60 @@ sterowania systemem alarmowym.
    "Satel-Tuya-eBUS") i port TCP (domyślnie `51826`, zmień tylko jeśli
    coś innego w sieci już go zajmuje). Też wymaga restartu bridge'a po
    zapisaniu.
-4. **Odczytaj kod parowania.** Sekcja "Parowanie" na tej samej stronie
+4. **Wybierz, co ma być widoczne w HomeKit.** Sekcja "Udostępnione
+   urządzenia" na stronie wtyczki:
+   - **Pomieszczenia** - lista wpisywana ręcznie (jedno na linię albo po
+     przecinku), np. `Salon, Kuchnia, Sypialnia`. To tylko nazwy do
+     prefiksowania nazw akcesoriów (np. "Salon lampka") - HAP-python nie
+     ma natywnej koncepcji przypisania akcesorium do pomieszczenia po
+     stronie mostu, więc docelowy podział na pomieszczenia w aplikacji
+     Dom i tak trzeba poukładać tam (przeciągnięcie akcesorium do
+     pokoju), ale nazwa z prefiksem od razu podpowiada, gdzie co
+     przypisać.
+   - **Partycje Satela** - checkbox włącz/wyłącz przy każdej partycji,
+     **domyślnie zaznaczone** (uzbrajanie/rozbrajanie to sztandarowa
+     funkcja mostu).
+   - **Urządzenia Tuya** - przy każdym urządzeniu lista rozwijana
+     "Rodzaj urządzenia" (patrz niżej pełna lista 8 rodzajów) oraz lista
+     rozwijana "Pomieszczenie" (z listy wpisanej wyżej). **Domyślnie
+     żadne urządzenie nie jest udostępnione** ("-- nie eksportuj --") -
+     trzeba świadomie wybrać rodzaj dla każdego urządzenia, które ma się
+     pojawić w Home App.
+   - **Sceny** - checkbox włącz/wyłącz przy każdej scenie, **domyślnie
+     odznaczone**.
+   Przycisk "Zapisz" na dole tej sekcji - wymaga pełnego restartu
+   bridge'a, tak jak reszta ustawień mostu.
+5. **Odczytaj kod parowania.** Sekcja "Parowanie" na tej samej stronie
    pokazuje kod w formacie `XXX-XX-XXX`, wygenerowany automatycznie przy
    pierwszym zapisaniu ustawień.
-5. **Dodaj most w aplikacji Dom (iPhone/iPad, ta sama sieć Wi-Fi co
+6. **Dodaj most w aplikacji Dom (iPhone/iPad, ta sama sieć Wi-Fi co
    bridge).** Aplikacja Dom -> "+" -> "Dodaj akcesorium" -> "Nie masz
    kodu ani nie możesz zeskanować?" -> wybierz most z listy (nazwa z
-   kroku 3) -> wpisz kod z kroku 4 ręcznie. Po chwili pojawią się
-   wszystkie partycje Satela, urządzenia Tuya i włączone sceny jako
-   osobne akcesoria w jednym pomieszczeniu/moście.
-6. **Gdyby trzeba było sparować od nowa** (np. po zmianie sieci albo
+   kroku 3) -> wpisz kod z kroku 5 ręcznie. Po chwili pojawią się
+   wszystkie włączone partycje Satela, udostępnione urządzenia Tuya i
+   włączone sceny jako osobne akcesoria w jednym pomieszczeniu/moście.
+7. **Gdyby trzeba było sparować od nowa** (np. po zmianie sieci albo
    usunięciu mostu z aplikacji Dom przez pomyłkę) - przycisk "Resetuj
    parowanie" na stronie wtyczki, potem restart bridge'a i parowanie od
-   kroku 5.
+   kroku 6.
 
 **Co się pojawia:**
-- Każda skonfigurowana partycja Satela - jako akcesorium "System
+- Każda **włączona** partycja Satela - jako akcesorium "System
   alarmowy" (uzbrojenie/rozbrojenie + stan "alarm wyzwolony", patrz niżej).
-- Każde urządzenie Tuya (`tuya.devices` + `tuya.cloud_devices`) - jako
-  Przełącznik (on/off) albo Żarówka z jasnością (`type: dimmer`).
+- Każde **udostępnione** urządzenie Tuya - jako jeden z 8 rodzajów
+  akcesoriów HomeKit, wybrany osobno dla każdego urządzenia w sekcji
+  "Udostępnione urządzenia":
+  - Włącznik (`Switch`), Gniazdko (`Outlet`)
+  - Światło (`Lightbulb`, z jasnością gdy urządzenie ma `type: dimmer`)
+  - Wentylator (`Fan`, z prędkością obrotów gdy `type: dimmer`)
+  - Brama garażowa (`GarageDoorOpener`)
+  - Roleta / markiza (`WindowCovering`, pozycja 0-100% przy `type: dimmer`)
+  - Zawór/nawadnianie (`Valve`)
+  - Zamek (`LockMechanism`)
+  Wszystkie te rodzaje sterują tym samym urządzeniem Tuya przez
+  `turn_on`/`turn_off` (i `dimmer_level_percent` dla wariantów z
+  poziomem) - wybór rodzaju to tylko to, jak akcesorium wygląda i jak
+  się nim steruje w aplikacji Dom/Siri, nie zmienia sterownika.
 - Każda **włączona** scena - jako Przełącznik, który po włączeniu
   uruchamia scenę i sam wraca do stanu "wyłączony" po ok. 1 sekundzie
   (typowy wzorzec "scena jako przycisk" w mostach HomeKit, bo HAP nie ma

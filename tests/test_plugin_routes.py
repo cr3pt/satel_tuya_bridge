@@ -1765,3 +1765,76 @@ class TestHomekitPluginPage:
             "/api/plugins/homekit/reset-pairings", headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 200
+
+    async def test_entities_get_lists_candidates_with_defaults(self, client):
+        resp = (await client.get("/api/plugins/homekit/entities", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data["rooms"] == []
+        assert {"name": "Dom", "enabled": True} in data["partitions"]
+        assert {"name": "gniazdko", "type": "", "room": "", "is_dimmer": False} in data["devices"]
+        assert data["scenes"] == []
+        type_ids = {choice["id"] for choice in data["type_choices"]}
+        assert type_ids == {
+            "switch", "outlet", "lightbulb", "fan", "garage_door", "window_covering", "valve", "lock",
+        }
+
+    async def test_entities_post_without_auth_returns_401(self, client):
+        resp = (await client.post("/api/plugins/homekit/entities", json={}))
+        assert resp.status_code == 401
+
+    async def test_entities_post_rejects_unknown_partition(self, client):
+        resp = (await client.post(
+            "/api/plugins/homekit/entities", json={"partitions": {"Brak": {"enabled": True}}},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_entities_post_rejects_unknown_device(self, client):
+        resp = (await client.post(
+            "/api/plugins/homekit/entities", json={"devices": {"brak": {"type": "switch"}}},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_entities_post_rejects_unknown_device_type(self, client):
+        resp = (await client.post(
+            "/api/plugins/homekit/entities", json={"devices": {"gniazdko": {"type": "nie_taki"}}},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_entities_post_persists_rooms_and_selections(self, client):
+        import dashboard.app as app_module
+
+        payload = {
+            "rooms": ["Salon", "Salon", "Kuchnia", ""],
+            "partitions": {"Dom": {"enabled": False}},
+            "devices": {"gniazdko": {"type": "outlet", "room": "Kuchnia"}},
+            "scenes": {},
+        }
+        resp = (await client.post(
+            "/api/plugins/homekit/entities", json=payload, headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+
+        saved = app_module.config_store.get("config")["homekit"]
+        assert saved["rooms"] == ["Salon", "Kuchnia"]
+        assert saved["partitions"] == {"Dom": {"enabled": False}}
+        assert saved["devices"] == {"gniazdko": {"type": "outlet", "room": "Kuchnia"}}
+
+        after = await (await client.get(
+            "/api/plugins/homekit/entities", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert after["rooms"] == ["Salon", "Kuchnia"]
+        assert {"name": "Dom", "enabled": False} in after["partitions"]
+        assert {"name": "gniazdko", "type": "outlet", "room": "Kuchnia", "is_dimmer": False} in after["devices"]
+
+    async def test_entities_post_enqueues_bridge_reload(self, client):
+        import dashboard.app as app_module
+
+        (await client.post(
+            "/api/plugins/homekit/entities", json={}, headers=_basic_auth_header("test_haslo_123"),
+        ))
+        pending = app_module.history.get_pending_commands()
+        assert any(c["command"] == "reload_config" for c in pending)
