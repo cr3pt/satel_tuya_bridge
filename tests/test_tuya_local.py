@@ -4,6 +4,7 @@ from bridge.tuya_local import (
     TuyaLocalController, scan_network, fetch_cloud_devices, fetch_device_dp_schema,
     fetch_dp_schemas_for_devices, find_tuya_switch_key, format_tuya_dps,
     extract_tuya_sensor_readings, detect_tuya_sensor_type,
+    is_switch_code, find_switch_keys_from_schema,
 )
 
 DEVICES_CFG = {
@@ -44,6 +45,38 @@ class FlakyDevice:
 
     def set_value(self, dp, value):
         return {"dps": {dp: value}}
+
+
+class FakeMultiDPDevice:
+
+    def __init__(self):
+        self.calls = []
+        self.dps = {}
+
+    def turn_on(self):
+        self.calls.append(("turn_on",))
+        self.dps["1"] = True
+        return {"dps": dict(self.dps)}
+
+    def turn_off(self):
+        self.calls.append(("turn_off",))
+        self.dps["1"] = False
+        return {"dps": dict(self.dps)}
+
+    def set_status(self, value, dp):
+        self.calls.append(("set_status", dp, value))
+        self.dps[dp] = value
+        return {"dps": dict(self.dps)}
+
+    def set_value(self, dp, value):
+        self.calls.append(("set_value", dp, value))
+        self.dps[dp] = value
+        return {"dps": dict(self.dps)}
+
+    def set_multiple_values(self, data):
+        self.calls.append(("set_multiple_values", dict(data)))
+        self.dps.update(data)
+        return {"dps": dict(self.dps)}
 
 
 @pytest.fixture
@@ -570,6 +603,118 @@ class TestDetectTuyaSensorType:
     def test_dp_schema_takes_priority_over_category(self):
         device_cfg = {"category": "sj", "dp_schema": {"1": {"code": "va_temperature", "type": "Value"}}}
         assert detect_tuya_sensor_type(device_cfg) == "temperature_sensor"
+
+
+class TestIsSwitchCode:
+
+    def test_plain_switch(self):
+        assert is_switch_code("switch") is True
+
+    def test_numbered_switch(self):
+        assert is_switch_code("switch_1") is True
+        assert is_switch_code("switch_2") is True
+
+    def test_switch_led(self):
+        assert is_switch_code("switch_led") is True
+
+    def test_unrelated_code_is_not_a_switch(self):
+        assert is_switch_code("bright_value") is False
+        assert is_switch_code("countdown_1") is False
+        assert is_switch_code("switch_backlight") is False
+
+
+class TestFindSwitchKeysFromSchema:
+
+    def test_finds_all_boolean_switch_codes(self):
+        schema = {
+            "1": {"code": "switch_1", "type": "Boolean"},
+            "2": {"code": "switch_2", "type": "Boolean"},
+            "9": {"code": "countdown_1", "type": "Value"},
+        }
+        assert find_switch_keys_from_schema(schema) == ["1", "2"]
+
+    def test_ignores_non_boolean_dps_even_if_named_like_a_switch(self):
+        schema = {"1": {"code": "switch_1", "type": "Value"}}
+        assert find_switch_keys_from_schema(schema) == []
+
+    def test_empty_schema_returns_empty_list(self):
+        assert find_switch_keys_from_schema({}) == []
+
+
+class TestSwitchKeyControl:
+
+    def _controller_with_schema(self, schema, extra_cfg=None):
+        cfg = {
+            "urzadzenie": {
+                "id": "devX", "ip": "192.168.1.99", "local_key": "keyX",
+                "dp_schema": schema,
+                **(extra_cfg or {}),
+            },
+        }
+        ctrl = TuyaLocalController(cfg, retries=2, retry_delay=0.01)
+        fake = FakeMultiDPDevice()
+        ctrl._devices["urzadzenie"] = fake
+        return ctrl, fake
+
+    async def test_turn_on_two_gang_switch_sets_both_dps_together(self):
+        schema = {
+            "1": {"code": "switch_1", "type": "Boolean"},
+            "2": {"code": "switch_2", "type": "Boolean"},
+        }
+        ctrl, fake = self._controller_with_schema(schema)
+        await ctrl.turn_on("urzadzenie")
+        assert fake.calls == [("set_multiple_values", {"1": True, "2": True})]
+
+    async def test_turn_off_two_gang_switch_sets_both_dps_together(self):
+        schema = {
+            "1": {"code": "switch_1", "type": "Boolean"},
+            "2": {"code": "switch_2", "type": "Boolean"},
+        }
+        ctrl, fake = self._controller_with_schema(schema)
+        await ctrl.turn_off("urzadzenie")
+        assert fake.calls == [("set_multiple_values", {"1": False, "2": False})]
+
+    async def test_single_switch_key_from_schema_uses_set_status(self):
+        schema = {"5": {"code": "switch_led", "type": "Boolean"}}
+        ctrl, fake = self._controller_with_schema(schema)
+        await ctrl.turn_on("urzadzenie")
+        assert fake.calls == [("set_status", "5", True)]
+
+    async def test_dimmer_on_off_uses_detected_switch_led_dp(self):
+        schema = {
+            "5": {"code": "switch_led", "type": "Boolean"},
+            "6": {"code": "bright_value", "type": "Value"},
+        }
+        ctrl, fake = self._controller_with_schema(schema, extra_cfg={
+            "type": "dimmer", "dimmer_dp": "6", "dimmer_range": [10, 1000],
+        })
+        await ctrl.turn_on("urzadzenie")
+        assert fake.calls == [("set_status", "5", True)]
+
+    async def test_dimmer_with_level_sets_detected_switch_dp_and_brightness(self):
+        schema = {
+            "5": {"code": "switch_led", "type": "Boolean"},
+            "6": {"code": "bright_value", "type": "Value"},
+        }
+        ctrl, fake = self._controller_with_schema(schema, extra_cfg={
+            "type": "dimmer", "dimmer_dp": "6", "dimmer_range": [10, 1000],
+        })
+        await ctrl.turn_on("urzadzenie", dimmer_level_percent=50)
+        assert fake.calls == [("set_status", "5", True), ("set_value", "6", 505)]
+
+    async def test_no_schema_falls_back_to_plain_turn_on_off(self, controller):
+        fake = FlakyDevice(fail_times=0)
+        controller._devices["gniazdko_salon"] = fake
+        await controller.turn_on("gniazdko_salon")
+        assert fake.turned_on is True
+        await controller.turn_off("gniazdko_salon")
+        assert fake.turned_on is False
+
+    async def test_dimmer_without_schema_still_uses_dp1_default(self, controller):
+        fake = FakeMultiDPDevice()
+        controller._devices["swiatlo_korytarz"] = fake
+        await controller.turn_on("swiatlo_korytarz", dimmer_level_percent=50)
+        assert fake.calls[0] == ("set_status", "1", True)
 
 
 class TestZigbeeGateways:

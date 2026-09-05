@@ -5,7 +5,11 @@ import logging
 
 import tinytuya
 
+from .tuya_local import is_switch_code
+
 logger = logging.getLogger("bridge.tuya_cloud")
+
+_FALLBACK_SWITCH_CODES = ["switch_1"]
 
 
 class TuyaCloudController:
@@ -15,6 +19,7 @@ class TuyaCloudController:
         self.retries = retries
         self.retry_delay = retry_delay
         self._cloud: tinytuya.Cloud | None = None
+        self._switch_codes_cache: dict[str, list[str]] = {}
 
     def _client(self) -> tinytuya.Cloud:
         if self._cloud is None:
@@ -49,19 +54,37 @@ class TuyaCloudController:
         )
         raise ConnectionError(f"Nie udało się wysłać komendy do Tuya Cloud dla '{device_name}': {last_error}")
 
+    async def _switch_codes(self, device_name: str) -> list[str]:
+        cfg = self.devices_cfg[device_name]
+        explicit = (cfg.get("switch_code") or "").strip()
+        if explicit:
+            return [explicit]
+        if device_name in self._switch_codes_cache:
+            return self._switch_codes_cache[device_name]
+        try:
+            status = await self.get_status(device_name)
+        except ConnectionError:
+            return _FALLBACK_SWITCH_CODES
+        codes = [code for code in status if is_switch_code(code)]
+        codes = codes or _FALLBACK_SWITCH_CODES
+        self._switch_codes_cache[device_name] = codes
+        return codes
+
     async def turn_on(self, device_name: str, dimmer_level_percent: int | None = None) -> None:
         cfg = self.devices_cfg[device_name]
         client = self._client()
-        commands = {"commands": [{"code": cfg.get("switch_code") or "switch_1", "value": True}]}
+        codes = await self._switch_codes(device_name)
+        commands = {"commands": [{"code": code, "value": True} for code in codes]}
         await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
-        logger.info("Włączono '%s' przez Tuya Cloud", device_name)
+        logger.info("Włączono '%s' przez Tuya Cloud (%s)", device_name, ", ".join(codes))
 
     async def turn_off(self, device_name: str) -> None:
         cfg = self.devices_cfg[device_name]
         client = self._client()
-        commands = {"commands": [{"code": cfg.get("switch_code") or "switch_1", "value": False}]}
+        codes = await self._switch_codes(device_name)
+        commands = {"commands": [{"code": code, "value": False} for code in codes]}
         await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
-        logger.info("Wyłączono '%s' przez Tuya Cloud", device_name)
+        logger.info("Wyłączono '%s' przez Tuya Cloud (%s)", device_name, ", ".join(codes))
 
     async def get_status(self, device_name: str) -> dict:
         cfg = self.devices_cfg[device_name]

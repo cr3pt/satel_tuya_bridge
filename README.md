@@ -362,10 +362,19 @@ Import rozdziela urządzenia automatycznie:
   wtedy lokalne automatycznie przejmuje sterowanie.
 
 Sterowanie chmurowe jest na start ograniczone do prostych przełączników
-on/off (bez ściemniania) - "kod przełącznika" (domyślnie `switch_1`,
-pasuje do większości gniazdek/przełączników) można zmienić per urządzenie,
-jeśli sterowanie nie działa (sprawdź faktyczny kod w zakładce
-**Cloud Debugging** na developer.tuya.com, wybierając swoje urządzenie).
+on/off (bez ściemniania). **"Kod przełącznika" jest wykrywany automatycznie**,
+jeśli pole "Switch code" zostawisz puste - przy pierwszym sterowaniu danym
+urządzeniem bridge odpytuje jego bieżący stan i sam odnajduje wszystkie
+kody pasujące do wzorca przełącznika (`switch`, `switch_1`, `switch_2`, ...,
+`switch_led`), po czym steruje nimi **wszystkimi naraz** w jednej komendzie -
+dotyczy to zwłaszcza przełączników wielobwodowych (np. włącznik 2-gniazdowy
+sterujący dwiema żarówkami pod jednym ID urządzenia), gdzie ręcznie podany,
+pojedynczy kod (`switch_1`) sterowałby tylko jednym obwodem. Wynik
+wykrywania jest zapamiętywany (nie odpytuje ponownie przy każdym
+sterowaniu). Pole "Switch code" nadal można ustawić ręcznie, żeby
+wymusić dokładnie jeden konkretny kod (np. gdy zależy Ci na sterowaniu
+tylko JEDNYM z kilku obwodów) - sprawdź faktyczne kody w zakładce
+**Cloud Debugging** na developer.tuya.com, wybierając swoje urządzenie.
 
 Skan sieci LAN (zakładka Tuya (LAN)) dopasowuje też odwrotnie - jeśli
 skanowane urządzenie ma ID znane z wcześniejszego importu Tuya Cloud,
@@ -1962,6 +1971,31 @@ tego jednego urządzenia (`RulesEngine._schedule_tuya_status_refresh`, ok.
 1,5s później) zamiast czekać na kolejny pełny cykl odpytywania (domyślnie co
 15s) - karta pokazuje więc poprawny przycisk "Wyłącz"/"Włącz" praktycznie od
 razu po kliknięciu, a nie dopiero po przeładowaniu statusu.
+
+### Przełączniki wielobwodowe i ściemniacze z nietypowym DP (urządzenia lokalne)
+
+Dla urządzeń **lokalnych** (`tuya.devices`, sterowanych bez chmury) domyślne
+sterowanie zakłada, że włącznik/wyłącznik to DP `"1"` - to działa dla
+zdecydowanej większości gniazdek i pojedynczych przełączników, ale zawodzi
+dla: (1) przełączników **wielobwodowych** (np. włącznik 2-gniazdowy
+sterujący dwiema żarówkami pod jednym `id`/`ip`), gdzie sterowanie tylko
+DP `"1"` rusza jeden obwód, a drugi zostaje bez zmian; (2) niektórych
+modułów **ściemniaczy**, których włącznik/wyłącznik wcale nie siedzi pod
+DP `"1"` (częste dla kategorii "Dimmer switch" - realny kod to np.
+`switch_led`), więc próba wysłania `{"1": true}` trafia w nieistniejący
+DP i jest po cichu ignorowana - urządzenie "nie włącza się" mimo braku
+błędu w logach.
+
+**Rozwiązanie: pobierz opis pól (`dp_schema`)** dla takiego urządzenia -
+przycisk "🔍 Pobierz opisy pól (Tuya Cloud)" na stronie 🧩 Wtyczki → Tuya
+(LAN) (wymaga zapisanych poświadczeń Tuya Cloud, patrz wyżej "Konto Tuya
+Cloud") - odtąd bridge zna realne kody DP tego urządzenia i **sam
+odnajduje wszystkie DP pasujące do wzorca przełącznika** (`switch_N`,
+`switch_led`), sterując nimi **wszystkimi naraz** w jednej komendzie
+(`set_multiple_values`) zamiast zgadywać DP `"1"`. Bez pobranego opisu
+pól zachowanie zostaje bez zmian (DP `"1"`, tak jak dotychczas) - to
+czysto opcjonalne doprecyzowanie, nie wymaga żadnej ręcznej konfiguracji
+poza jednym kliknięciem tego przycisku.
 
 ### Czytelne statusy urządzeń Tuya innych niż włącznik (czujniki, liczniki...)
 
