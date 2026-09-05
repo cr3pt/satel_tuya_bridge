@@ -1428,13 +1428,13 @@ sterowania systemem alarmowym.
 
 ### Jak skonfigurować krok po kroku
 
-1. **Włącz sieć hosta w Dockerze (Linux).** W `docker-compose.yml`
-   odkomentuj `network_mode: host` przy usłudze `bridge` (linia jest już
-   tam, tylko zakomentowana - patrz komentarz w pliku) i uruchom
-   `docker compose up -d bridge`, żeby zmiana weszła w życie. Bez tego
-   parowanie z aplikacją Dom nie zadziała (ogłoszenia mDNS/Bonjour nie
-   przechodzą przez domyślną sieć mostkowaną Dockera) - to jedyny krok
-   wymagający ręcznej edycji pliku, reszta dzieje się w panelu.
+1. **Sieć hosta w Dockerze - domyślnie już włączona (Linux).**
+   `docker-compose.yml` ma `network_mode: host` przy usłudze `bridge`
+   ustawione od razu (wymagane przez parowanie HomeKit - ogłoszenia
+   mDNS/Bonjour nie przechodzą przez domyślną sieć mostkowaną Dockera).
+   Nic nie trzeba zmieniać - chyba że uruchamiasz na Mac/Windows (Docker
+   Desktop nie obsługuje `network_mode: host`), wtedy zakomentuj tę linię
+   w pliku i pamiętaj, że sparowanie mostu HomeKit nie będzie możliwe.
 2. **Włącz wtyczkę.** Zakładka 🧩 Wtyczki -> "🏡 Most HomeKit" ->
    zaznacz "Wtyczka włączona" -> Zapisz. Zmiana wymaga pełnego restartu
    procesu bridge'a (przycisk "Zrestartuj bridge i panel teraz" w
@@ -1503,14 +1503,16 @@ deterministyczny numer AID wyliczony z haszu jego klucza (np.
 albo usunięcie jednego urządzenia NIE przesuwa numerów pozostałych i nie
 wymusza ponownego parowania całego mostu w aplikacji Dom.
 
-**Wymaga Docker `network_mode: host` (Linux).** Parowanie i wykrywanie
-mostu w aplikacji Dom opiera się na ogłoszeniach mDNS/Bonjour w sieci
-LAN, które nie przechodzą przez domyślną sieć mostkowaną Dockera -
-odkomentuj `network_mode: host` przy usłudze `bridge` w
-`docker-compose.yml` (patrz komentarz w tym pliku), inaczej parowanie
-się nie powiedzie mimo poprawnej konfiguracji wtyczki. Zmiana portu,
-nazwy mostu, oraz włączenie/wyłączenie wtyczki wymagają pełnego
-restartu procesu bridge'a (jak reszta zmian sieciowych).
+**Wymaga Docker `network_mode: host` (Linux) - domyślnie już włączone.**
+Parowanie i wykrywanie mostu w aplikacji Dom opiera się na ogłoszeniach
+mDNS/Bonjour w sieci LAN, które nie przechodzą przez domyślną sieć
+mostkowaną Dockera - dlatego usługa `bridge` w `docker-compose.yml` ma
+`network_mode: host` ustawione od razu, bez potrzeby ręcznej edycji. Na
+Mac/Windows (Docker Desktop nie obsługuje tego trybu) trzeba tę linię
+zakomentować - wtedy reszta integracji działa normalnie, ale most
+HomeKit nie da się sparować. Zmiana portu, nazwy mostu, oraz
+włączenie/wyłączenie wtyczki wymagają pełnego restartu procesu bridge'a
+(jak reszta zmian sieciowych).
 
 ## Automatyzacje: sceny, harmonogramy, eskalacja, warunki, łańcuchy, symulacja obecności
 
@@ -2409,14 +2411,18 @@ konfiguracji).
   docker compose --profile broker up -d
   ```
 
-### Sieć LAN (Satel, Tuya)
+### Sieć LAN (Satel, Tuya, HomeKit)
 
-Domyślnie kontenery używają zwykłej sieci mostkowanej Dockera -
-połączenia WYCHODZĄCE do centrali Satel i urządzeń Tuya (skonfigurowanych
-po adresie IP w panelu) działają bez dodatkowej konfiguracji. Jeśli
-coś w Twojej sieci tego wymaga (np. discovery po multicaście), w
-`docker-compose.yml` przy usłudze `bridge` odkomentuj `network_mode: host`
-(tylko Linux).
+Usługa `bridge` w `docker-compose.yml` domyślnie działa w sieci hosta
+(`network_mode: host`, tylko Linux) - wymagane przez wtyczkę "Most
+HomeKit" (parowanie z aplikacją Dom opiera się na ogłoszeniach
+mDNS/Bonjour, które nie przechodzą przez zwykłą sieć mostkowaną
+Dockera), a przy okazji upraszcza discovery po multicaście dla innych
+integracji. Połączenia WYCHODZĄCE do centrali Satel i urządzeń Tuya
+(skonfigurowanych po adresie IP w panelu) działają tak samo w obu
+trybach sieci. Na Mac/Windows (Docker Desktop nie obsługuje
+`network_mode: host`) zakomentuj tę linię - reszta integracji nadal
+zadziała, tylko mostu HomeKit nie da się sparować.
 
 ### Bezpieczeństwo obrazu
 
