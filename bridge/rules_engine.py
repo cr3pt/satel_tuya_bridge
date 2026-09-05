@@ -9,7 +9,7 @@ from datetime import datetime
 from .config import BridgeConfig
 from .logging_config import apply_log_levels
 from .satel_client import SatelIntegraClient, SatelVirtualInputTrigger
-from .tuya_local import TuyaLocalController, format_tuya_dps
+from .tuya_local import TuyaLocalController, format_tuya_dps, extract_tuya_sensor_readings
 from .tuya_cloud import TuyaCloudController
 from .tuya_dispatch import TuyaController
 from .tuya_cloud_events import TuyaCameraMotionListener
@@ -692,6 +692,10 @@ class RulesEngine:
             )
         if self.homekit and is_on is not None:
             self.homekit.update_tuya_state(device_name, is_on, percent)
+        if self.homekit:
+            sensor_readings = extract_tuya_sensor_readings(dps, schema)
+            if sensor_readings:
+                self.homekit.update_tuya_sensor_state(device_name, sensor_readings)
 
     def _schedule_tuya_status_refresh(self, device_name: str, delay_seconds: float = 1.5) -> None:
         async def _refresh() -> None:

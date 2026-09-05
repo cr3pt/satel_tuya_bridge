@@ -138,7 +138,10 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
                 for name, info in resolved["partitions"].items()
             ],
             "devices": [
-                {"name": name, "type": info["type"], "room": info["room"], "is_dimmer": info["is_dimmer"]}
+                {
+                    "name": name, "type": info["type"], "room": info["room"],
+                    "is_dimmer": info["is_dimmer"], "detected_type": info["detected_type"],
+                }
                 for name, info in resolved["devices"].items()
             ],
             "scenes": [

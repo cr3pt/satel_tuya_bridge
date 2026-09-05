@@ -1482,11 +1482,20 @@ sterowania systemem alarmowym.
      **domyślnie zaznaczone** (uzbrajanie/rozbrajanie to sztandarowa
      funkcja mostu).
    - **Urządzenia Tuya** - przy każdym urządzeniu lista rozwijana
-     "Rodzaj urządzenia" (patrz niżej pełna lista 8 rodzajów) oraz lista
+     "Rodzaj urządzenia" (patrz niżej pełna lista 13 rodzajów) oraz lista
      rozwijana "Pomieszczenie" (z listy wpisanej wyżej). **Domyślnie
      żadne urządzenie nie jest udostępnione** ("-- nie eksportuj --") -
      trzeba świadomie wybrać rodzaj dla każdego urządzenia, które ma się
-     pojawić w Home App.
+     pojawić w Home App - **z jednym wyjątkiem: czujniki (temperatura,
+     wilgotność, zalanie, kontaktron) wykrywane są automatycznie** na
+     podstawie tego, co faktycznie zgłasza urządzenie Tuya (opis pól DP
+     dla urządzeń lokalnych - przycisk "🔍 Pobierz opisy pól" na stronie
+     🧩 Wtyczki -> Tuya (LAN); kategoria urządzenia dla urządzeń Tuya
+     Cloud) - taki wykryty rodzaj jest od razu preselekcjonowany w liście
+     (widać podpowiedź "🔍 wykryto: ..." pod polem) i urządzenie jest od
+     razu udostępnione, bez klikania czegokolwiek. Można to w każdej
+     chwili ręcznie nadpisać (inny rodzaj, albo "-- nie eksportuj --",
+     żeby jawnie ukryć wykryty czujnik).
    - **Sceny** - checkbox włącz/wyłącz przy każdej scenie, **domyślnie
      odznaczone**.
    Przycisk "Zapisz" na dole tej sekcji - wymaga pełnego restartu
@@ -1508,9 +1517,10 @@ sterowania systemem alarmowym.
 **Co się pojawia:**
 - Każda **włączona** partycja Satela - jako akcesorium "System
   alarmowy" (uzbrojenie/rozbrojenie + stan "alarm wyzwolony", patrz niżej).
-- Każde **udostępnione** urządzenie Tuya - jako jeden z 8 rodzajów
+- Każde **udostępnione** urządzenie Tuya - jako jeden z 13 rodzajów
   akcesoriów HomeKit, wybrany osobno dla każdego urządzenia w sekcji
-  "Udostępnione urządzenia":
+  "Udostępnione urządzenia". Sterowalne (dwukierunkowe, `turn_on`/
+  `turn_off`/`dimmer_level_percent`):
   - Włącznik (`Switch`), Gniazdko (`Outlet`)
   - Światło (`Lightbulb`, z jasnością gdy urządzenie ma `type: dimmer`)
   - Wentylator (`Fan`, z prędkością obrotów gdy `type: dimmer`)
@@ -1518,14 +1528,45 @@ sterowania systemem alarmowym.
   - Roleta / markiza (`WindowCovering`, pozycja 0-100% przy `type: dimmer`)
   - Zawór/nawadnianie (`Valve`)
   - Zamek (`LockMechanism`)
-  Wszystkie te rodzaje sterują tym samym urządzeniem Tuya przez
+
+  Wszystkie powyższe sterują tym samym urządzeniem Tuya przez
   `turn_on`/`turn_off` (i `dimmer_level_percent` dla wariantów z
   poziomem) - wybór rodzaju to tylko to, jak akcesorium wygląda i jak
   się nim steruje w aplikacji Dom/Siri, nie zmienia sterownika.
+
+  Czujniki (jednokierunkowe, tylko odczyt - **wykrywane automatycznie**,
+  patrz krok 4 wyżej):
+  - Czujnik temperatury (`TemperatureSensor`)
+  - Czujnik wilgotności (`HumiditySensor`)
+  - Czujnik temperatury i wilgotności (jedno akcesorium, dwie usługi
+    HAP naraz - `TemperatureSensor` + `HumiditySensor`, jak np. Eve Degree)
+  - Czujnik zalania (`LeakSensor`)
+  - Kontaktron drzwi/okna (`ContactSensor`)
+
+  Każdy z tych pięciu, jeśli urządzenie zgłasza też poziom baterii
+  (`battery_percentage`), dostaje dodatkowo ikonę "słaba bateria" w
+  aplikacji Dom poniżej 20%.
 - Każda **włączona** scena - jako Przełącznik, który po włączeniu
   uruchamia scenę i sam wraca do stanu "wyłączony" po ok. 1 sekundzie
   (typowy wzorzec "scena jako przycisk" w mostach HomeKit, bo HAP nie ma
   natywnej koncepcji jednorazowego wyzwalacza).
+
+**Jak działa auto-detekcja czujników.** `bridge/tuya_local.py:
+detect_tuya_sensor_type()` sprawdza, jakie kody DP (data point) zgłasza
+urządzenie: dla urządzeń lokalnych - z zapisanego opisu pól (`dp_schema`,
+patrz "🔍 Pobierz opisy pól" na stronie Tuya (LAN)); dla urządzeń Tuya
+Cloud - z kategorii urządzenia (np. `wsdcg` = czujnik temperatury i
+wilgotności, `sj` = czujnik zalania, `mcs` = kontaktron), bez potrzeby
+żadnego dodatkowego kroku. Rozpoznawane kody: `va_temperature`/
+`temp_current` (temperatura), `va_humidity`/`humidity_value`
+(wilgotność), `watersensor_state` (zalanie - wartość `"alarm"` albo
+`true` = wykryto), `doorcontact_state` (kontaktron - `true` = otwarte,
+zgodnie ze standardową konwencją Tuya), `battery_percentage` (bateria).
+Wartość temperatury bez opisu pól zakłada domyślnie skalę "w dziesiątych
+stopnia" (najczęstsza konwencja Tuya dla tego DP) i honoruje
+`temp_unit_convert` (konwersja z Fahrenheita, jeśli urządzenie tak
+zgłasza) - HomeKit zawsze dostaje wartość w stopniach Celsjusza,
+niezależnie od jednostki wyświetlanej w aplikacji producenta.
 
 **Uzbrajanie z aplikacji Dom - dlaczego bezpieczne (w przeciwieństwie do
 MQTT).** HomeKit ma wbudowane, obowiązkowe parowanie i szyfrowanie

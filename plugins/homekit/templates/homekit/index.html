@@ -60,6 +60,7 @@
   td.name-cell { font-family: monospace; word-break: break-all; }
   td.select-cell { min-width: 160px; }
   input[type=checkbox] { width: 16px; height: 16px; }
+  .detected-hint { color: var(--muted); font-size: 11px; margin-top: 3px; }
 </style>
 </head>
 <body>
@@ -385,6 +386,11 @@ function typeOptionsHtml(selected) {
   return html;
 }
 
+function typeLabel(typeId) {
+  const choice = entityTypeChoices.find(c => c.id === typeId);
+  return choice ? choice.label : typeId;
+}
+
 function currentDeviceSelections() {
   const selections = {};
   document.querySelectorAll('#devicesTableBody select[data-device]').forEach(sel => {
@@ -407,10 +413,16 @@ function renderDevicesTable() {
     const sel = current[d.name] || {};
     const type = 'type' in sel ? sel.type : d.type;
     const room = 'room' in sel ? sel.room : d.room;
+    const detectedHint = d.detected_type
+      ? `<div class="detected-hint">🔍 wykryto: ${escapeHtml(typeLabel(d.detected_type))}</div>`
+      : '';
     return `
       <tr>
         <td class="name-cell">${escapeHtml(d.name)}</td>
-        <td class="select-cell"><select data-device="${escapeHtml(d.name)}">${typeOptionsHtml(type)}</select></td>
+        <td class="select-cell">
+          <select data-device="${escapeHtml(d.name)}">${typeOptionsHtml(type)}</select>
+          ${detectedHint}
+        </td>
         <td class="select-cell"><select data-device-room="${escapeHtml(d.name)}">${roomOptionsHtml(room)}</select></td>
       </tr>
     `;
