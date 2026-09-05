@@ -1527,3 +1527,99 @@ class TestPresenceSimulationPluginPage:
         assert resp.status_code == 200
         saved = app_module.config_store.get("automations")["presence_simulation"]
         assert saved["log_level"] == "WARNING"
+
+
+class TestHomekitPluginPage:
+    async def test_page_redirects_to_login_without_auth(self, client):
+        resp = (await client.get("/plugins/homekit", follow_redirects=False))
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    async def test_settings_default_enabled_false(self, client):
+        resp = (await client.get("/api/plugins/homekit/settings", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert (await resp.get_json())["enabled"] is False
+
+    async def test_config_get_requires_auth_and_defaults(self, client):
+        assert (await client.get("/api/plugins/homekit/config")).status_code == 401
+        resp = (await client.get("/api/plugins/homekit/config", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data == {
+            "port": 51826, "bridge_name": "Satel-Tuya-eBUS", "pincode": None, "paired": False,
+        }
+
+    async def test_config_post_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/homekit/config", json={})).status_code == 401
+
+    async def test_config_post_rejects_out_of_range_port(self, client):
+        resp = (await client.post(
+            "/api/plugins/homekit/config", json={"port": 70000},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_config_post_rejects_non_numeric_port(self, client):
+        resp = (await client.post(
+            "/api/plugins/homekit/config", json={"port": "abc"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_config_post_persists_and_generates_pincode(self, client):
+        import dashboard.app as app_module
+
+        resp = (await client.post(
+            "/api/plugins/homekit/config", json={"port": 51900, "bridge_name": "Mój most"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["homekit"]
+        assert saved["port"] == 51900
+        assert saved["bridge_name"] == "Mój most"
+        assert saved["pincode"]
+
+        config_resp = await (await client.get(
+            "/api/plugins/homekit/config", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert config_resp["port"] == 51900
+        assert config_resp["bridge_name"] == "Mój most"
+        assert config_resp["pincode"] == saved["pincode"]
+
+    async def test_regenerate_pincode_requires_auth_and_changes_value(self, client):
+        assert (await client.post("/api/plugins/homekit/regenerate-pincode")).status_code == 401
+
+        first = await (await client.post(
+            "/api/plugins/homekit/regenerate-pincode", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        second = await (await client.post(
+            "/api/plugins/homekit/regenerate-pincode", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert first["pincode"] != second["pincode"]
+
+    async def test_reset_pairings_requires_auth_and_clears_paired_flag(self, client, tmp_path):
+        assert (await client.post("/api/plugins/homekit/reset-pairings")).status_code == 401
+
+        persist_path = tmp_path / "homekit_state.json"
+        persist_path.write_text('{"paired_clients": {"abc": "def"}}', encoding="utf-8")
+        paired_before = await (await client.get(
+            "/api/plugins/homekit/config", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert paired_before["paired"] is True
+
+        resp = (await client.post(
+            "/api/plugins/homekit/reset-pairings", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        assert not persist_path.exists()
+
+        paired_after = await (await client.get(
+            "/api/plugins/homekit/config", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert paired_after["paired"] is False
+
+    async def test_reset_pairings_is_idempotent_when_no_state_file(self, client):
+        resp = (await client.post(
+            "/api/plugins/homekit/reset-pairings", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200

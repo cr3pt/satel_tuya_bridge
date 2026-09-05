@@ -1773,7 +1773,7 @@ class TestListPlugins:
     def test_empty_config_does_not_crash_and_all_unconfigured(self):
         plugins = list_plugins({})
         by_id = {p["id"]: p for p in plugins}
-        assert len(plugins) == len(by_id) == 12
+        assert len(plugins) == len(by_id) == 13
         for plugin_id in (
             "satel", "tuya_local", "tuya_zigbee", "tuya_cloud", "ebus", "home_assistant",
             "mqtt_publish", "unifi_protect", "homewhiz", "presence_simulation", "notifications",
@@ -1782,6 +1782,8 @@ class TestListPlugins:
             assert by_id[plugin_id]["configured"] is False, plugin_id
         assert by_id["mcp_server"]["enabled"] is False
         assert by_id["mcp_server"]["configured"] is True
+        assert by_id["homekit"]["enabled"] is False
+        assert by_id["homekit"]["configured"] is True
 
     def test_satel_configured_when_host_and_key_present(self):
         by_id = {p["id"]: p for p in list_plugins({
@@ -1841,7 +1843,7 @@ class TestListPlugins:
         assert toggleable == {
             "satel", "tuya_local", "tuya_cloud", "ebus", "home_assistant",
             "mqtt_publish", "unifi_protect", "homewhiz", "presence_simulation", "notifications",
-            "mcp_server",
+            "mcp_server", "homekit",
         }
 
     def test_poll_interval_ids_match_expected_set(self):

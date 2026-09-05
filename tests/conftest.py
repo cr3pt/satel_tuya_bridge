@@ -51,6 +51,7 @@ class FakeSatel:
         self.monitored_outputs: dict = {}
         self.virtual_inputs: dict = {}
         self.armed_partition_numbers: set[int] = set()
+        self.triggered_partition_numbers: set[int] = set()
         self._zone_cb = None
         self._output_cb = None
         self._alarm_status_cb = None

@@ -28,6 +28,7 @@ from .boiler_automation import BoilerAutomation
 from .maintenance import run_maintenance
 from .ha_discovery import build_all_entities
 from .ha_mqtt import HomeAssistantMqttBridge
+from .homekit_bridge import HomeKitBridge
 
 logger = logging.getLogger("bridge.rules")
 
@@ -121,6 +122,16 @@ class RulesEngine:
             self.state_mqtt = HomeAssistantMqttBridge(
                 {"mqtt_host": config.ebus["mqtt_host"], "mqtt_port": config.ebus.get("mqtt_port", 1883)},
                 entities=[], history=self.history, notify_cfg=notify_cfg, grace_seconds=grace_seconds,
+            )
+
+        self.homekit: HomeKitBridge | None = None
+        homekit_cfg = config.raw.get("homekit", {})
+        if homekit_cfg.get("enabled"):
+            self.homekit = HomeKitBridge(
+                homekit_cfg, self.satel, self.tuya, self.scenes,
+                config.satel.get("partitions", {}), self.tuya.devices_cfg,
+                persist_path=config.db_path.parent / "homekit_state.json",
+                loop=self._loop, history=self.history,
             )
 
     def _build_rule_name_index(self) -> dict[str, int]:
@@ -664,6 +675,8 @@ class RulesEngine:
                 f"{self._tuya_mqtt_topic}/{device_name}/state",
                 "ON" if is_on else "OFF",
             )
+        if self.homekit and is_on is not None:
+            self.homekit.update_tuya_on(device_name, is_on)
         if local_cfg and local_cfg.get("type") == "dimmer" and local_cfg.get("dimmer_dp") in dps:
             lo, hi = local_cfg.get("dimmer_range", [10, 1000])
             raw = dps[local_cfg["dimmer_dp"]]
@@ -672,6 +685,8 @@ class RulesEngine:
                 f"tuya:{device_name}:brightness", "tuya", f"{percent}%",
                 label=f"{device_name} (jasność)",
             )
+            if self.homekit:
+                self.homekit.update_tuya_brightness(device_name, percent)
 
     def _schedule_tuya_status_refresh(self, device_name: str, delay_seconds: float = 1.5) -> None:
         async def _refresh() -> None:
@@ -792,6 +807,7 @@ class RulesEngine:
 
     async def _handle_alarm_status_change(self) -> None:
         armed_numbers = self.satel.armed_partition_numbers
+        triggered_numbers = self.satel.triggered_partition_numbers
         partition_name_by_number = {v: k for k, v in self.config.satel.get("partitions", {}).items()}
         for partition_number in self.config.satel.get("partitions", {}).values():
             armed = partition_number in armed_numbers
@@ -809,6 +825,10 @@ class RulesEngine:
                 self.state_mqtt.publish_state(
                     f"{self._satel_mqtt_topic}/partition/{partition_number}/state",
                     "ON" if armed else "OFF",
+                )
+            if self.homekit:
+                self.homekit.update_partition_state(
+                    partition_number, armed, triggered=partition_number in triggered_numbers,
                 )
 
     async def start(self) -> None:
@@ -944,5 +964,8 @@ class RulesEngine:
 
         if self.state_mqtt:
             self.state_mqtt.start()
+
+        if self.homekit:
+            await self.homekit.async_start()
 
         logger.info("Silnik reguł uruchomiony i gotowy")

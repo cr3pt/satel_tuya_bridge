@@ -17,6 +17,7 @@ PLUGIN_LOGGERS: dict[str, list[str]] = {
     "presence_simulation": ["bridge.presence_simulation"],
     "notifications": ["bridge.notifier"],
     "mcp_server": ["bridge.mcp_server"],
+    "homekit": ["bridge.homekit"],
 }
 
 
@@ -35,6 +36,7 @@ def plugin_config_section(config_raw: dict, plugin_id: str) -> dict:
         "presence_simulation": config_raw.get("presence_simulation", {}) or {},
         "notifications": config_raw.get("notifications", {}) or {},
         "mcp_server": config_raw.get("mcp_server", {}) or {},
+        "homekit": config_raw.get("homekit", {}) or {},
     }.get(plugin_id, {})
 
 

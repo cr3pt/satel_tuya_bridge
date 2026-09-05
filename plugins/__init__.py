@@ -86,12 +86,13 @@ def register_all(app: Quart, **deps) -> list[PluginMeta]:
     from plugins.notifications import routes as notifications_routes
     from plugins.presence_simulation import routes as presence_simulation_routes
     from plugins.mcp_server import routes as mcp_server_routes
+    from plugins.homekit import routes as homekit_routes
 
     metas = []
     for routes_module in (
         satel_routes, tuya_routes, ebus_routes, tuya_cloud_routes, home_assistant_routes,
         mqtt_publish_routes, unifi_protect_routes, homewhiz_routes, notifications_routes,
-        presence_simulation_routes, mcp_server_routes,
+        presence_simulation_routes, mcp_server_routes, homekit_routes,
     ):
         metas.append(routes_module.register(app, **deps))
     return metas

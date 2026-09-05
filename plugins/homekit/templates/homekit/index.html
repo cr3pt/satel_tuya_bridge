@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Most HomeKit - Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<style>
+  :root {
+    --bg: #14161a; --card: #1d2026; --border: #2c3038;
+    --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
+    --danger: #e5484d; --ok: #3dd68c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 20px; max-width: 900px; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  .nav { margin-bottom: 16px; }
+  .nav a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
+  .section-hint { color: var(--muted); font-size: 13px; margin: 4px 0 14px; line-height: 1.5; }
+  .card, .section {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px; margin-bottom: 18px;
+  }
+  input[type=text], input[type=number] {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 100%;
+  }
+  select { background: #262a32; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; width: 100%; font-size: 13px; }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 8px 16px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button.danger { background: var(--danger); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .actions-bar { display: flex; gap: 10px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+  .msg-box { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; display: none; }
+  .msg-box.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  .msg-box.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
+  .field-group { margin-bottom: 18px; }
+  .field-group:last-child { margin-bottom: 0; }
+  .field-group > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .pincode-display { font-family: monospace; font-size: 22px; letter-spacing: 2px; padding: 10px 14px; background: #262a32; border: 1px solid var(--border); border-radius: 8px; display: inline-block; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+  .badge.paired { background: #16281f; color: var(--ok); }
+  .badge.unpaired { background: #262a32; color: var(--muted); }
+</style>
+</head>
+<body>
+{% include "_nav.html" %}
+
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🏡 Most HomeKit</h1>
+<div class="hint">
+  Udostępnia system alarmowy Satel (uzbrajanie/rozbrajanie), urządzenia Tuya
+  i włączone sceny bezpośrednio w aplikacji Dom (Apple Home) - bez
+  pośrednictwa Home Assistant. Działa jako natywny most HomeKit (biblioteka
+  <code>pyhap</code>) uruchomiony wewnątrz procesu bridge'a.
+  <strong>Wymagane zalogowanie administratora panelu</strong> do zmiany
+  ustawień - sam most, po sparowaniu, ma własne, niezależne uwierzytelnianie
+  HomeKit (parowanie + szyfrowanie end-to-end), zgodnie ze specyfikacją Apple.
+</div>
+
+<div class="section" id="pluginSettingsSection">
+  <h2>⚙ Ustawienia wtyczki</h2>
+  <div class="section-hint">
+    Domyślnie wyłączony. Włączenie/wyłączenie oraz zmiana portu/nazwy mostu
+    wymagają pełnego restartu procesu bridge'a - w przeciwieństwie do
+    większości innych wtyczek.
+  </div>
+  <div class="field-group">
+    <label style="display:flex; align-items:center; gap:8px; margin:0;">
+      <input type="checkbox" id="pluginEnabledCheckbox">
+      Wtyczka włączona
+    </label>
+  </div>
+  <div class="field-group">
+    <label>Poziom logowania zdarzeń</label>
+    <select id="pluginLogLevelSelect">
+      <option value="">(domyślny globalny)</option>
+      <option value="DEBUG">DEBUG</option>
+      <option value="INFO">INFO</option>
+      <option value="WARNING">WARNING</option>
+      <option value="ERROR">ERROR</option>
+      <option value="CRITICAL">CRITICAL</option>
+    </select>
+  </div>
+  <div class="actions-bar">
+    <button id="savePluginSettingsBtn" type="button">Zapisz ustawienia wtyczki</button>
+  </div>
+  <div id="pluginSettingsMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="configSection">
+  <h2>Konfiguracja mostu</h2>
+  <div class="field-group">
+    <label>Nazwa mostu (widoczna w aplikacji Dom)</label>
+    <input type="text" id="bridgeNameInput" placeholder="Satel-Tuya-eBUS">
+  </div>
+  <div class="field-group">
+    <label>Port TCP</label>
+    <input type="number" id="portInput" min="1" max="65535" placeholder="51826">
+  </div>
+  <div class="actions-bar">
+    <button id="saveConfigBtn" type="button">Zapisz</button>
+  </div>
+  <div id="configMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="pairingSection">
+  <h2>Parowanie</h2>
+  <div class="section-hint">
+    W aplikacji Dom: "Dodaj akcesorium" -> "Nie masz kodu ani nie możesz
+    zeskanować?" -> wpisz kod ręcznie. Upewnij się, że urządzenie z Home App
+    jest w tej samej sieci LAN co bridge (parowanie wymaga multicastu/mDNS -
+    patrz README, sekcja "Most HomeKit", jeśli bridge działa w Dockerze).
+  </div>
+  <div class="field-group">
+    <label>Kod parowania</label>
+    <div class="pincode-display" id="pincodeDisplay">----&#8209;--&#8209;----</div>
+  </div>
+  <div class="field-group">
+    <label>Status</label>
+    <span class="badge" id="pairedBadge">?</span>
+  </div>
+  <div class="actions-bar">
+    <button id="regeneratePincodeBtn" type="button">Wygeneruj nowy kod</button>
+    <button id="resetPairingsBtn" type="button" class="danger">Resetuj parowanie</button>
+  </div>
+  <div id="pairingMsg" class="msg-box"></div>
+</div>
+
+<script>
+async function authorizedFetch(url, options = {}) {
+  const resp = await fetch(url, options);
+  if (resp.status === 401) {
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname);
+    throw new Error('Wymagane zalogowanie - przekierowuję na /login...');
+  }
+  return resp;
+}
+
+async function refreshAuthNav() {
+  const link = document.getElementById('authNavLink');
+  try {
+    const status = await (await fetch('/api/auth/status')).json();
+    if (status.logged_in) {
+      link.textContent = '🔓 Wyloguj';
+      link.href = '#';
+      link.onclick = async (e) => {
+        e.preventDefault();
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.reload();
+      };
+    } else {
+      link.textContent = '🔒 Zaloguj';
+      link.href = '/login?next=' + encodeURIComponent(location.pathname);
+      link.onclick = null;
+    }
+  } catch (e) {
+
+  }
+}
+refreshAuthNav();
+
+function showMsg(elId, ok, text) {
+  const el = document.getElementById(elId);
+  el.className = 'msg-box ' + (ok ? 'ok' : 'error');
+  el.style.display = '';
+  el.textContent = (ok ? '✅ ' : '❌ ') + text;
+}
+
+
+const PLUGIN_ID = 'homekit';
+
+async function loadPluginSettings() {
+  const data = await (await fetch(`/api/plugins/${PLUGIN_ID}/settings`)).json();
+  document.getElementById('pluginEnabledCheckbox').checked = !!data.enabled;
+  document.getElementById('pluginLogLevelSelect').value = data.log_level || '';
+}
+loadPluginSettings();
+
+document.getElementById('savePluginSettingsBtn').addEventListener('click', async () => {
+  const payload = {
+    enabled: document.getElementById('pluginEnabledCheckbox').checked,
+    log_level: document.getElementById('pluginLogLevelSelect').value,
+  };
+  try {
+    const resp = await authorizedFetch(`/api/plugins/${PLUGIN_ID}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('pluginSettingsMsg', false, data.error || 'Błąd zapisu');
+    } else {
+      showMsg('pluginSettingsMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('pluginSettingsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+
+function renderConfig(data) {
+  document.getElementById('bridgeNameInput').value = data.bridge_name || 'Satel-Tuya-eBUS';
+  document.getElementById('portInput').value = data.port || 51826;
+  document.getElementById('pincodeDisplay').textContent = data.pincode || '----‑--‑----';
+  const badge = document.getElementById('pairedBadge');
+  badge.textContent = data.paired ? 'Sparowano' : 'Nie sparowano';
+  badge.className = 'badge ' + (data.paired ? 'paired' : 'unpaired');
+}
+
+async function loadConfig() {
+  const data = await (await fetch('/api/plugins/homekit/config')).json();
+  renderConfig(data);
+}
+loadConfig();
+
+document.getElementById('saveConfigBtn').addEventListener('click', async () => {
+  const payload = {
+    bridge_name: document.getElementById('bridgeNameInput').value,
+    port: document.getElementById('portInput').value,
+  };
+  try {
+    const resp = await authorizedFetch('/api/plugins/homekit/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('configMsg', false, data.error || 'Błąd zapisu');
+    } else {
+      showMsg('configMsg', true, data.message);
+      await loadConfig();
+    }
+  } catch (e) {
+    showMsg('configMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+document.getElementById('regeneratePincodeBtn').addEventListener('click', async () => {
+  if (!confirm('Wygenerować nowy kod parowania? Dotychczasowy przestanie działać dla NOWYCH parowań po restarcie bridge\'a (już sparowane urządzenia zostają sparowane).')) {
+    return;
+  }
+  try {
+    const resp = await authorizedFetch('/api/plugins/homekit/regenerate-pincode', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('pairingMsg', false, data.error || 'Błąd');
+    } else {
+      showMsg('pairingMsg', true, data.message);
+      await loadConfig();
+    }
+  } catch (e) {
+    showMsg('pairingMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+document.getElementById('resetPairingsBtn').addEventListener('click', async () => {
+  if (!confirm('Na pewno zresetować parowanie? Wszystkie urządzenia (w tym aplikacja Dom) będą musiały dodać ten most ponownie.')) {
+    return;
+  }
+  try {
+    const resp = await authorizedFetch('/api/plugins/homekit/reset-pairings', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('pairingMsg', false, data.error || 'Błąd');
+    } else {
+      showMsg('pairingMsg', true, data.message);
+      await loadConfig();
+    }
+  } catch (e) {
+    showMsg('pairingMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+</script>
+</body>
+</html>

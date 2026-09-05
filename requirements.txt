@@ -19,3 +19,7 @@ itsdangerous>=2.1
 hypercorn>=0.17
 
 astral>=3.2
+# HomeKit Accessory Protocol (moduł "pyhap") - wersja przypięta celowo,
+# bo format pliku stanu parowania (bridge/homekit_bridge.py) jest
+# zależny od konkretnej wersji biblioteki.
+HAP-python==5.0.0

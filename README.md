@@ -1397,6 +1397,69 @@ Nieznana nazwa sceny/urządzenia/wejścia albo błąd wykonania komendy
 wraca jako `isError: true` z czytelnym komunikatem - LLM po drugiej
 stronie dostaje treść błędu zamiast pustej odpowiedzi.
 
+## Most HomeKit (Apple Home)
+
+Opcjonalna wtyczka (zakładka 🧩 Wtyczki -> "🏡 Most HomeKit") - natywny
+most [HomeKit](https://developer.apple.com/homekit/) uruchamiany
+wewnątrz procesu `bridge` (biblioteka `pyhap`/`HAP-python`,
+`bridge/homekit_bridge.py`), bez pośrednictwa Home Assistant. Po
+sparowaniu widoczny bezpośrednio w aplikacji Dom (i przez to sterowalny
+przez Siri) - **domyślnie wyłączony**, bo to pełnoprawny kanał
+sterowania systemem alarmowym.
+
+**Co się pojawia:**
+- Każda skonfigurowana partycja Satela - jako akcesorium "System
+  alarmowy" (uzbrojenie/rozbrojenie + stan "alarm wyzwolony", patrz niżej).
+- Każde urządzenie Tuya (`tuya.devices` + `tuya.cloud_devices`) - jako
+  Przełącznik (on/off) albo Żarówka z jasnością (`type: dimmer`).
+- Każda **włączona** scena - jako Przełącznik, który po włączeniu
+  uruchamia scenę i sam wraca do stanu "wyłączony" po ok. 1 sekundzie
+  (typowy wzorzec "scena jako przycisk" w mostach HomeKit, bo HAP nie ma
+  natywnej koncepcji jednorazowego wyzwalacza).
+
+**Uzbrajanie z aplikacji Dom - dlaczego bezpieczne (w przeciwieństwie do
+MQTT).** HomeKit ma wbudowane, obowiązkowe parowanie i szyfrowanie
+end-to-end na poziomie protokołu (Apple Authentication Coprocessor /
+SRP) - stąd, w odróżnieniu od integracji MQTT (patrz wyżej "Dlaczego nie
+da się uzbroić/rozbroić z Home Assistant przez MQTT"), świadomie
+udostępniamy tu PEŁNE sterowanie alarmem, nie tylko odczyt.
+
+**Mapowanie trybów uzbrojenia - uproszczone celowo.** HomeKit rozróżnia
+"W domu"/"Poza domem"/"Nocny" tryb uzbrojenia (typowe dla amerykańskich
+central z wieloma strefami czuwania), ale centrale Satel nie mają
+natywnego odpowiednika tego rozróżnienia - każda partycja to po prostu
+zestaw stref, uzbrajany/rozbrajany jako całość. Dlatego wszystkie trzy
+tryby uzbrojenia w Home App wywołują to samo: pełne uzbrojenie partycji
+(`mode: 0`) - rozróżnienie trybów służy tu tylko wygodzie UI Apple, nie
+ma żadnego efektu w centrali. Stan "alarm wyzwolony" (czerwona ikona w
+Home App) odzwierciedla realny stan `triggered_partition_numbers`
+centrali (naruszenie podczas uzbrojenia), nie jest tylko kosmetyczny.
+
+**Parowanie.** Strona ustawień wtyczki pokazuje kod parowania (format
+`XXX-XX-XXX`) do ręcznego wpisania w aplikacji Dom ("Dodaj akcesorium" ->
+"Nie masz kodu ani nie możesz zeskanować?") - kod jest generowany raz i
+zapisany w konfiguracji (nie regenerowany losowo przy każdym restarcie
+bridge'a, żeby nie wygasał niespodziewanie), z przyciskiem "Wygeneruj
+nowy kod" gdy trzeba. Stan parowania (klucze, lista sparowanych klientów)
+jest trwały - plik `homekit_state.json` obok `config.db` w katalogu
+danych - i przyciskiem "Resetuj parowanie" na tej samej stronie, gdyby
+trzeba było sparować most od nowa.
+
+**Stabilność identyfikatorów (AID).** Każde akcesorium dostaje
+deterministyczny numer AID wyliczony z haszu jego klucza (np.
+`tuya:gniazdko_salon`), a nie kolejny wolny numer - dzięki temu dodanie
+albo usunięcie jednego urządzenia NIE przesuwa numerów pozostałych i nie
+wymusza ponownego parowania całego mostu w aplikacji Dom.
+
+**Wymaga Docker `network_mode: host` (Linux).** Parowanie i wykrywanie
+mostu w aplikacji Dom opiera się na ogłoszeniach mDNS/Bonjour w sieci
+LAN, które nie przechodzą przez domyślną sieć mostkowaną Dockera -
+odkomentuj `network_mode: host` przy usłudze `bridge` w
+`docker-compose.yml` (patrz komentarz w tym pliku), inaczej parowanie
+się nie powiedzie mimo poprawnej konfiguracji wtyczki. Zmiana portu,
+nazwy mostu, oraz włączenie/wyłączenie wtyczki wymagają pełnego
+restartu procesu bridge'a (jak reszta zmian sieciowych).
+
 ## Automatyzacje: sceny, harmonogramy, eskalacja, warunki, łańcuchy, symulacja obecności
 
 Oprócz prostych reguł "ruch -> włącz urządzenie", bridge wspiera bardziej

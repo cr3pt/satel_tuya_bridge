@@ -890,6 +890,9 @@ PLUGIN_DEFS = [
     {"id": "mcp_server", "name": "Serwer MCP (Model Context Protocol)", "icon": "🤖", "toggleable": True, "restart_required": False,
      "has_log_level": True,
      "description": "Udostępnia sterowanie systemem jako narzędzia MCP dla asystentów AI (Claude Desktop, Claude Code itp.) - wymaga tokenu API."},
+    {"id": "homekit", "name": "Most HomeKit (Apple)", "icon": "🏡", "toggleable": True, "restart_required": True,
+     "has_log_level": True,
+     "description": "Natywny most HomeKit (Apple Home) - centrala Satel jako system alarmowy, urządzenia Tuya, sceny."},
 ]
 
 
@@ -902,6 +905,7 @@ def list_plugins(config_raw: dict) -> list[dict]:
     presence = config_raw.get("presence_simulation", {})
     notifications = config_raw.get("notifications", {})
     mcp_server = config_raw.get("mcp_server", {})
+    homekit = config_raw.get("homekit", {})
 
     tuya_devices = tuya.get("devices", {}) or {}
     zigbee_devices = {n: d for n, d in tuya_devices.items() if d.get("gateway")}
@@ -976,6 +980,11 @@ def list_plugins(config_raw: dict) -> list[dict]:
             "enabled": bool(mcp_server.get("enabled")),
             "configured": True,
             "detail": "aktywny (POST /api/mcp) - wymaga tokenu API" if mcp_server.get("enabled") else "wyłączony",
+        },
+        "homekit": {
+            "enabled": bool(homekit.get("enabled")),
+            "configured": True,
+            "detail": f"port {homekit.get('port', 51826)}" if homekit.get("enabled") else "wyłączony",
         },
     }
 
