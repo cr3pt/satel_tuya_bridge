@@ -953,6 +953,30 @@ async def api_system_user_delete(user_id: int):
     return jsonify({"message": "Konto usunięte"})
 
 
+@app.route("/api/system/api-tokens", methods=["GET"])
+@require_auth()
+async def api_system_api_tokens_get():
+    return jsonify(config_store.list_api_tokens())
+
+
+@app.route("/api/system/api-tokens", methods=["POST"])
+@require_auth()
+async def api_system_api_tokens_post():
+    payload = await request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Nazwa tokenu jest wymagana"}), 400
+    token_id, token = config_store.create_api_token(name)
+    return jsonify({"id": token_id, "name": name, "token": token})
+
+
+@app.route("/api/system/api-tokens/<int:token_id>", methods=["DELETE"])
+@require_auth()
+async def api_system_api_token_delete(token_id: int):
+    config_store.delete_api_token(token_id)
+    return jsonify({"message": "Token usunięty"})
+
+
 @app.route("/api/system/settings", methods=["GET"])
 @require_auth()
 async def api_system_settings_get():

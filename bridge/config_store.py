@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import secrets
@@ -29,6 +30,14 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS auth_secret (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     secret TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_ts REAL NOT NULL,
+    last_used_ts REAL
 );
 """
 
@@ -153,6 +162,43 @@ class ConfigStore:
             self._conn.execute("INSERT INTO auth_secret (id, secret) VALUES (1, ?)", (secret,))
             self._conn.commit()
             return secret
+
+    def create_api_token(self, name: str) -> tuple[int, str]:
+        token = secrets.token_hex(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO api_tokens (name, token_hash, created_ts) VALUES (?, ?, ?)",
+                (name, token_hash, time.time()),
+            )
+            self._conn.commit()
+            return cur.lastrowid, token
+
+    def list_api_tokens(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, name, created_ts, last_used_ts FROM api_tokens ORDER BY id"
+            ).fetchall()
+        return [{"id": r[0], "name": r[1], "created_ts": r[2], "last_used_ts": r[3]} for r in rows]
+
+    def delete_api_token(self, token_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM api_tokens WHERE id = ?", (token_id,))
+            self._conn.commit()
+
+    def verify_api_token(self, token: str) -> dict | None:
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, name FROM api_tokens WHERE token_hash = ?", (token_hash,)
+            ).fetchone()
+            if row is None:
+                return None
+            self._conn.execute(
+                "UPDATE api_tokens SET last_used_ts = ? WHERE id = ?", (time.time(), row[0]),
+            )
+            self._conn.commit()
+        return {"id": row[0], "name": row[1]}
 
     def export_yaml_bundle(self) -> dict[str, str]:
         bundle = {}

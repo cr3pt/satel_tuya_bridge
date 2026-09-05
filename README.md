@@ -952,6 +952,19 @@ się na tę tabelę automatycznie i jednorazowo przy starcie (patrz
   endpoincie (przydatne do skryptów/curl) - wyłącz, jeśli chcesz wymusić
   logowanie WYŁĄCZNIE przez `/login`.
 
+**Tokeny API.** Trwały mechanizm dostępu dla integracji skryptowych
+(Home Assistant, curl, serwer MCP - patrz "Serwer MCP" niżej), niezależny
+od sesji przeglądarki i od Basic Auth - wysyłany jako nagłówek
+`Authorization: Bearer <token>` na każdym zapisującym/odczytującym
+endpoincie panelu. Token generowany jest jako 32 losowe bajty
+(`secrets.token_hex(32)`), a w bazie (tabela `api_tokens`) zapisywany jest
+wyłącznie jego hash SHA-256 - **surowy token pokazywany jest tylko raz**,
+zaraz po utworzeniu w sekcji "Tokeny API"; jeśli go nie skopiujesz, jedyne
+wyjście to usunięcie tokenu i utworzenie nowego. Usunięcie tokenu
+unieważnia go natychmiast dla wszystkiego, co go używało. Tokeny nie mają
+osobnych ról - działają jak zalogowane konto (pełny dostęp do zapisu),
+tak samo jak sesja czy Basic Auth.
+
 Czas trwania sesji (`session_ttl_seconds`) i bieżący czas serwera/strefa
 czasowa (`TZ`) są tu pokazane **wyłącznie informacyjnie** - synchronizacja
 zegara dzieje się na hoście, nie w kontenerze (patrz "Synchronizacja
