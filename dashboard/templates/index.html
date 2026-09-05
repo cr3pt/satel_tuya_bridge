@@ -43,6 +43,15 @@
     background: var(--card); border: 1px solid var(--border);
     border-radius: 8px; padding: 16px; margin-bottom: 16px;
   }
+  .card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer; user-select: none; margin: 0 0 12px;
+  }
+  .card-header h2 { margin: 0; }
+  .card-header .chevron { color: var(--muted); font-size: 11px; transition: transform 0.15s; }
+  .card.collapsed .card-header { margin-bottom: 0; }
+  .card.collapsed .chevron { transform: rotate(-90deg); }
+  .card.collapsed .card-body { display: none; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 500; }
@@ -134,40 +143,54 @@
   <div id="armMessage" style="font-size: 13px; margin-top: 10px; display: none;"></div>
 </div>
 
-<div class="card">
-  <h2>Zdrowie połączeń</h2>
-  <div id="statusHealth" class="status-grid"></div>
+<div class="card" data-collapse-key="statusHealth">
+  <div class="card-header"><h2>Zdrowie połączeń</h2><span class="chevron">▾</span></div>
+  <div class="card-body">
+    <div id="statusHealth" class="status-grid"></div>
+  </div>
 </div>
 
-<div class="card">
-  <h2>Urządzenia Tuya</h2>
-  <div id="statusTuya" class="status-grid"></div>
+<div class="card" data-collapse-key="statusTuya">
+  <div class="card-header"><h2>Urządzenia Tuya</h2><span class="chevron">▾</span></div>
+  <div class="card-body">
+    <div id="statusTuya" class="status-grid"></div>
+  </div>
 </div>
 
-<div class="card">
-  <h2>Wejścia Satel (czujki)</h2>
-  <div id="statusSatelInputs" class="status-grid"></div>
+<div class="card" data-collapse-key="statusSatelInputs">
+  <div class="card-header"><h2>Wejścia Satel (czujki)</h2><span class="chevron">▾</span></div>
+  <div class="card-body">
+    <div id="statusSatelInputs" class="status-grid"></div>
+  </div>
 </div>
 
-<div class="card">
-  <h2>Wyjścia Satel</h2>
-  <div id="statusSatelOutputs" class="status-grid"></div>
+<div class="card" data-collapse-key="statusSatelOutputs">
+  <div class="card-header"><h2>Wyjścia Satel</h2><span class="chevron">▾</span></div>
+  <div class="card-body">
+    <div id="statusSatelOutputs" class="status-grid"></div>
+  </div>
 </div>
 
-<div class="card">
-  <h2>Wirtualne wejścia IP (Satel)</h2>
-  <div id="virtualInputsSection" class="status-grid"></div>
-  <div id="virtualInputMessage" style="font-size: 13px; margin-top: 10px; display: none;"></div>
+<div class="card" data-collapse-key="virtualInputsSection">
+  <div class="card-header"><h2>Wirtualne wejścia IP (Satel)</h2><span class="chevron">▾</span></div>
+  <div class="card-body">
+    <div id="virtualInputsSection" class="status-grid"></div>
+    <div id="virtualInputMessage" style="font-size: 13px; margin-top: 10px; display: none;"></div>
+  </div>
 </div>
 
-<div class="card">
-  <h2>Kocioł Wolf</h2>
-  <div id="statusBoiler" class="status-grid"></div>
+<div class="card" data-collapse-key="statusBoiler">
+  <div class="card-header"><h2>Kocioł Wolf</h2><span class="chevron">▾</span></div>
+  <div class="card-body">
+    <div id="statusBoiler" class="status-grid"></div>
+  </div>
 </div>
 
-<div class="card">
-  <h2>Zmywarki/AGD HomeWhiz</h2>
-  <div id="statusHomewhiz" class="status-grid"></div>
+<div class="card" data-collapse-key="statusHomewhiz">
+  <div class="card-header"><h2>Zmywarki/AGD HomeWhiz</h2><span class="chevron">▾</span></div>
+  <div class="card-body">
+    <div id="statusHomewhiz" class="status-grid"></div>
+  </div>
 </div>
 
 <div class="controls">
@@ -813,6 +836,28 @@ function showVirtualInputMessage(kind, text) {
 }
 
 
+function initCollapsibleCards() {
+  document.querySelectorAll('.card[data-collapse-key]').forEach(card => {
+    const key = 'collapsed_' + card.dataset.collapseKey;
+    let collapsed = false;
+    try {
+      collapsed = localStorage.getItem(key) === '1';
+    } catch (e) {
+
+    }
+    card.classList.toggle('collapsed', collapsed);
+    card.querySelector('.card-header').addEventListener('click', () => {
+      const nowCollapsed = !card.classList.contains('collapsed');
+      card.classList.toggle('collapsed', nowCollapsed);
+      try {
+        localStorage.setItem(key, nowCollapsed ? '1' : '0');
+      } catch (e) {
+
+      }
+    });
+  });
+}
+
 let eventsVisible = false;
 
 document.getElementById('toggleEventsBtn').addEventListener('click', async () => {
@@ -837,6 +882,7 @@ document.getElementById('rangeSelect').addEventListener('change', refreshAll);
 document.getElementById('eventTypeSelect').addEventListener('change', () => { if (eventsVisible) loadEvents(); });
 
 (async () => {
+  initCollapsibleCards();
   await refreshAuthNav();
   await loadSensors();
   await loadSatelFieldTypes();
