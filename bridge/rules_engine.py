@@ -548,6 +548,20 @@ class RulesEngine:
                 else:
                     await self.scenes.run(name)
                     self.history.mark_command_done(cmd["id"], {"message": f"Uruchomiono scenę '{name}'"})
+            elif cmd["command"] == "mqtt_publish":
+                topic = cmd["params"]["topic"]
+                payload = cmd["params"].get("payload", "")
+                retain = cmd["params"].get("retain", False)
+                publisher = self.state_mqtt or self.ha_mqtt or self.boiler_publishers.get("mqtt")
+                if publisher is None:
+                    self.history.mark_command_error(
+                        cmd["id"],
+                        "Brak aktywnego połączenia MQTT (włącz 'Publikacja stanu do MQTT', "
+                        "Home Assistant, albo powiąż czujnik kotła z MQTT)",
+                    )
+                else:
+                    publisher.publish_raw(topic, payload, retain=retain)
+                    self.history.mark_command_done(cmd["id"], {"message": f"Opublikowano na '{topic}'"})
             elif cmd["command"] == "reload_config":
                 result = await self.reload_config()
                 self.history.mark_command_done(cmd["id"], result)

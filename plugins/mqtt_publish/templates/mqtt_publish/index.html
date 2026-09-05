@@ -44,6 +44,18 @@
   .field-group { margin-bottom: 18px; }
   .field-group:last-child { margin-bottom: 0; }
   .field-group > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  textarea {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 100%; font-family: monospace;
+    resize: vertical; min-height: 60px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  td.topic-cell { font-family: monospace; word-break: break-all; }
+  td.payload-cell { font-family: monospace; word-break: break-all; max-width: 320px; }
+  td.ts-cell { color: var(--muted); white-space: nowrap; }
+  .empty-hint { color: var(--muted); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -109,6 +121,54 @@
     <button id="saveTopicsBtn" type="button">Zapisz</button>
   </div>
   <div id="topicsMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="explorerSection">
+  <h2>🔍 Explorer - podgląd tematów</h2>
+  <div class="section-hint">
+    Ostatnia znana wartość każdego tematu, na którym bridge coś opublikował
+    albo odebrał (własne tematy - HA Discovery, stan Satela/Tuya/HomeWhiz,
+    czujniki kotła) - odświeżane co 3s. To NIE jest podgląd całego brokera
+    MQTT, tylko naszych integracji.
+  </div>
+  <div style="overflow-x:auto;">
+    <table>
+      <thead><tr><th>Temat</th><th>Wartość</th><th>Ostatnio</th></tr></thead>
+      <tbody id="explorerTableBody"></tbody>
+    </table>
+  </div>
+  <div id="explorerEmptyHint" class="empty-hint" style="display:none;">
+    Jeszcze żaden temat nie został zaobserwowany - włącz Home Assistant,
+    tę wtyczkę albo publikację danych kotła, żeby coś się tu pojawiło.
+  </div>
+</div>
+
+<div class="section" id="publishSection">
+  <h2>Ręczna publikacja</h2>
+  <div class="section-hint">
+    Publikuje na dowolny temat, ale WYŁĄCZNIE w obrębie własnych prefixów
+    bridge'a (widocznych też jako podpowiedzi) - przydatne do testowania
+    reguł/integracji bez czekania na prawdziwą zmianę stanu.
+  </div>
+  <div class="field-group">
+    <label>Temat</label>
+    <input type="text" id="publishTopicInput" list="knownPrefixesList" placeholder="np. tuya/gniazdko/state">
+    <datalist id="knownPrefixesList"></datalist>
+  </div>
+  <div class="field-group">
+    <label>Treść (payload)</label>
+    <textarea id="publishPayloadInput" placeholder="ON"></textarea>
+  </div>
+  <div class="field-group">
+    <label style="display:flex; align-items:center; gap:8px; margin:0;">
+      <input type="checkbox" id="publishRetainCheckbox">
+      Retain (broker zapamiętuje ostatnią wartość dla nowych subskrybentów)
+    </label>
+  </div>
+  <div class="actions-bar">
+    <button id="publishBtn" type="button">Publikuj</button>
+  </div>
+  <div id="publishMsg" class="msg-box"></div>
 </div>
 
 <script>
@@ -213,6 +273,65 @@ document.getElementById('saveTopicsBtn').addEventListener('click', async () => {
     }
   } catch (e) {
     showMsg('topicsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function formatTs(ts) {
+  if (!ts) return '';
+  return new Date(ts * 1000).toLocaleString('pl-PL');
+}
+
+let knownPrefixes = [];
+
+async function loadExplorer() {
+  const data = await (await fetch('/api/plugins/mqtt_publish/explorer')).json();
+  knownPrefixes = data.known_prefixes || [];
+
+  const datalist = document.getElementById('knownPrefixesList');
+  datalist.innerHTML = knownPrefixes.map(p => `<option value="${escapeHtml(p)}/">`).join('');
+
+  const topics = (data.topics || []).slice().sort((a, b) => a.topic.localeCompare(b.topic));
+  const tbody = document.getElementById('explorerTableBody');
+  document.getElementById('explorerEmptyHint').style.display = topics.length ? 'none' : '';
+  tbody.innerHTML = topics.map(t => `
+    <tr>
+      <td class="topic-cell">${escapeHtml(t.topic)}</td>
+      <td class="payload-cell">${escapeHtml(t.payload)}</td>
+      <td class="ts-cell">${escapeHtml(formatTs(t.ts))}</td>
+    </tr>
+  `).join('');
+}
+loadExplorer();
+setInterval(loadExplorer, 3000);
+
+document.getElementById('publishBtn').addEventListener('click', async () => {
+  const payload = {
+    topic: document.getElementById('publishTopicInput').value.trim(),
+    payload: document.getElementById('publishPayloadInput').value,
+    retain: document.getElementById('publishRetainCheckbox').checked,
+  };
+  try {
+    const resp = await authorizedFetch('/api/plugins/mqtt_publish/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('publishMsg', false, data.error || 'Błąd publikacji');
+    } else {
+      showMsg('publishMsg', true, data.message);
+      await loadExplorer();
+    }
+  } catch (e) {
+    showMsg('publishMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
 </script>

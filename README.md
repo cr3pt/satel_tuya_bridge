@@ -1016,6 +1016,31 @@ Temat MQTT dla danych z kotła eBUS (dotychczasowy `boiler_output.mqtt.
 topic_prefix`, domyślnie `home/boiler`) jest teraz też edytowalny z tej
 samej zakładki, jako "Temat MQTT dla stanu eBUS".
 
+#### Explorer - podgląd i ręczna publikacja własnych tematów
+
+Ta sama zakładka `/plugins/mqtt_publish` ma sekcję "🔍 Explorer" -
+odświeżaną co 3s tabelę ostatniej znanej wartości każdego tematu, na
+którym bridge coś opublikował albo odebrał: Home Assistant Discovery,
+tematy `mqtt_publish` (satel/tuya/homewhiz), temat komend HA dla
+sterowalnych encji, oraz dane z kotła eBUS. **To celowo NIE jest podgląd
+całego brokera** (jak samodzielny MQTT Explorer) - żeby nie trzymać w
+pamięci stanu setek tematów niezwiązanych z tym projektem, zwłaszcza na
+Raspberry Pi Zero. Dane trafiają do tabeli `status` (`bridge_history.db`,
+kategoria `mqtt_topic`) w momencie publikacji/odbioru - bez dodatkowego
+połączenia z brokerem.
+
+Sekcja "Ręczna publikacja" pozwala opublikować dowolny payload, ale
+**wyłącznie w obrębie własnych prefixów** bridge'a (te same, które widać w
+Explorerze - `home_assistant.discovery_prefix`/`state_topic_prefix`,
+`mqtt_publish.topics.*`, `boiler_output.mqtt.topic_prefix`) - próba
+publikacji poza nimi kończy się błędem 400 zamiast wysłania czegokolwiek.
+Przydatne do testowania automatyzacji/integracji bez czekania na
+prawdziwą zmianę stanu (np. ręcznie ustaw `tuya/gniazdko/state` na `ON`,
+żeby sprawdzić regułę reagującą na ten temat). Publikacja - jak każda
+zmiana stanu - przechodzi przez tę samą kolejkę komend co reszta panelu
+(`history.enqueue_command("mqtt_publish", ...)`, wykonywana przez proces
+`bridge`), więc wymaga zalogowania.
+
 ### Alarmy progowe
 
 Reguły w `config.yaml` -> `alarm_rules` pozwalają zdefiniować progi (np.

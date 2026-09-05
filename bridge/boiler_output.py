@@ -13,6 +13,7 @@ logger = logging.getLogger("bridge.boiler_output")
 class MqttBoilerPublisher:
     def __init__(self, mqtt_cfg: dict, history=None, notify_cfg: dict | None = None, grace_seconds: float = 120):
         self.topic_prefix = mqtt_cfg.get("topic_prefix", "home/boiler")
+        self.history = history
         self._health = HealthReporter(
             "mqtt_publish", history=history, notify_cfg=notify_cfg,
             grace_seconds=grace_seconds, loop=asyncio.get_event_loop(),
@@ -34,6 +35,15 @@ class MqttBoilerPublisher:
         topic = f"{self.topic_prefix}/{name}"
         self._client.publish(topic, payload=str(value), retain=True)
         logger.debug("Opublikowano %s = %s", topic, value)
+        self._record_topic(topic, str(value))
+
+    def publish_raw(self, topic: str, payload: str, qos: int = 0, retain: bool = False) -> None:
+        self._client.publish(topic, payload=payload, qos=qos, retain=retain)
+        self._record_topic(topic, payload)
+
+    def _record_topic(self, topic: str, payload: str) -> None:
+        if self.history is not None:
+            self.history.set_status(f"mqtt:{topic}", "mqtt_topic", payload, label=topic)
 
 
 class TuyaVirtualDevicePublisher:

@@ -1005,6 +1005,64 @@ class TestMqttPublishPluginPage:
         assert saved["topics"] == {"satel": "moj_satel", "tuya": "moje_tuya", "homewhiz": "moj_homewhiz"}
         assert saved["log_level"] == "WARNING"
 
+    async def test_explorer_get_requires_auth(self, client):
+        assert (await client.get("/api/plugins/mqtt_publish/explorer")).status_code == 401
+
+    async def test_explorer_get_default_prefixes_and_empty_topics(self, client):
+        resp = await client.get("/api/plugins/mqtt_publish/explorer", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data["topics"] == []
+        assert set(data["known_prefixes"]) == {
+            "homeassistant", "home/bridge", "satel", "tuya", "homewhiz", "home/boiler",
+        }
+
+    async def test_explorer_get_shows_recorded_topics(self, client):
+        import dashboard.app as app_module
+        app_module.history.set_status("mqtt:tuya/gniazdko/state", "mqtt_topic", "ON", label="tuya/gniazdko/state")
+        resp = await client.get("/api/plugins/mqtt_publish/explorer", headers=_basic_auth_header("test_haslo_123"))
+        data = await resp.get_json()
+        assert data["topics"] == [{"topic": "tuya/gniazdko/state", "payload": "ON", "ts": data["topics"][0]["ts"]}]
+
+    async def test_publish_requires_auth(self, client):
+        assert (await client.post("/api/plugins/mqtt_publish/publish", json={"topic": "tuya/x"})).status_code == 401
+
+    async def test_publish_rejects_topic_outside_known_prefixes(self, client):
+        resp = await client.post(
+            "/api/plugins/mqtt_publish/publish", json={"topic": "nie/nasz/temat", "payload": "x"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+        data = await resp.get_json()
+        assert "prefix" in data["error"]
+
+    async def test_publish_rejects_missing_topic(self, client):
+        resp = await client.post(
+            "/api/plugins/mqtt_publish/publish", json={}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    async def test_publish_accepts_known_prefix_and_enqueues_command(self, client):
+        import dashboard.app as app_module
+        resp = await client.post(
+            "/api/plugins/mqtt_publish/publish",
+            json={"topic": "tuya/gniazdko/test", "payload": "ON", "retain": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert "command_id" in data
+        pending = app_module.history.get_pending_commands()
+        mqtt_cmds = [c for c in pending if c["command"] == "mqtt_publish"]
+        assert mqtt_cmds[0]["params"] == {"topic": "tuya/gniazdko/test", "payload": "ON", "retain": True}
+
+    async def test_publish_accepts_bare_prefix_without_trailing_segment(self, client):
+        resp = await client.post(
+            "/api/plugins/mqtt_publish/publish", json={"topic": "satel", "payload": "x"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+
 
 class TestUnifiProtectPluginPage:
     async def test_page_redirects_to_login_without_auth(self, client):
