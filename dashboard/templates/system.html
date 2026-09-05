@@ -95,6 +95,26 @@
   <div id="usersMsg" class="msg-box"></div>
 </div>
 
+<div class="section" id="apiTokensSection">
+  <h2>Tokeny API</h2>
+  <div class="section-hint">
+    Trwały token do integracji skryptowych (Home Assistant, curl, MCP) -
+    niezależny od sesji przeglądarki. Wysyłaj jako nagłówek
+    <code>Authorization: Bearer &lt;token&gt;</code>. Token pokazywany jest
+    tylko raz, zaraz po utworzeniu - zapisz go od razu, panel przechowuje
+    wyłącznie jego hash.
+  </div>
+  <table>
+    <thead><tr><th>Nazwa</th><th>Utworzone</th><th>Ostatnio użyty</th><th style="width:60px;"></th></tr></thead>
+    <tbody id="apiTokensTableBody"></tbody>
+  </table>
+  <div class="user-row-new">
+    <input type="text" id="newApiTokenName" placeholder="nazwa (np. home_assistant)">
+    <button type="button" id="addApiTokenBtn">+ Utwórz token</button>
+  </div>
+  <div id="apiTokensMsg" class="msg-box"></div>
+</div>
+
 <div class="section" id="settingsSection">
   <h2>Tryb logowania i poziom logów</h2>
   <div class="conn-grid">
@@ -323,6 +343,49 @@ document.getElementById('addUserBtn').addEventListener('click', async () => {
   document.getElementById('newPassword').value = '';
   showMsg('usersMsg', true, `Dodano konto "${data.username}"`);
   loadUsers();
+});
+
+
+async function loadApiTokens() {
+  const resp = await authorizedFetch('/api/system/api-tokens');
+  const tokens = await resp.json();
+  const tbody = document.getElementById('apiTokensTableBody');
+  tbody.innerHTML = tokens.map(t => `
+    <tr data-id="${t.id}">
+      <td>${escapeHtml(t.name)}</td>
+      <td>${new Date(t.created_ts * 1000).toLocaleDateString()}</td>
+      <td>${t.last_used_ts ? new Date(t.last_used_ts * 1000).toLocaleString() : 'nigdy'}</td>
+      <td><button type="button" class="row-remove" data-id="${t.id}">✕</button></td>
+    </tr>`).join('');
+
+  tbody.querySelectorAll('.row-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Usunąć ten token? Wszystko, co go używa, straci dostęp natychmiast.')) return;
+      const resp = await authorizedFetch(`/api/system/api-tokens/${btn.dataset.id}`, { method: 'DELETE' });
+      const data = await resp.json();
+      if (!resp.ok) { showMsg('apiTokensMsg', false, data.error || 'Błąd'); return; }
+      loadApiTokens();
+    });
+  });
+}
+loadApiTokens();
+
+document.getElementById('addApiTokenBtn').addEventListener('click', async () => {
+  const name = document.getElementById('newApiTokenName').value.trim();
+  if (!name) { showMsg('apiTokensMsg', false, 'Nazwa tokenu jest wymagana'); return; }
+  const resp = await authorizedFetch('/api/system/api-tokens', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { showMsg('apiTokensMsg', false, data.error || 'Błąd'); return; }
+  document.getElementById('newApiTokenName').value = '';
+  const el = document.getElementById('apiTokensMsg');
+  el.className = 'msg-box ok';
+  el.style.display = '';
+  el.innerHTML = `✅ Token "${escapeHtml(data.name)}" utworzony - zapisz go teraz, nie zobaczysz go ponownie:<br>`
+    + `<code style="user-select:all; word-break:break-all;">${escapeHtml(data.token)}</code>`;
+  loadApiTokens();
 });
 
 

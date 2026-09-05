@@ -116,8 +116,20 @@ class AuthGuard:
         data = self._decode_session(token)
         return data["username"] if data else None
 
+    def _check_bearer_token(self) -> bool:
+        header = request.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            return False
+        token = header[len("Bearer "):].strip()
+        if not token:
+            return False
+        return self.config_store.verify_api_token(token) is not None
+
     def check(self) -> tuple[bool, str]:
         if self.check_session(request.cookies.get(SESSION_COOKIE_NAME)):
+            return True, ""
+
+        if self._check_bearer_token():
             return True, ""
 
         if not self.configured:

@@ -1005,6 +1005,64 @@ class TestMqttPublishPluginPage:
         assert saved["topics"] == {"satel": "moj_satel", "tuya": "moje_tuya", "homewhiz": "moj_homewhiz"}
         assert saved["log_level"] == "WARNING"
 
+    async def test_explorer_get_requires_auth(self, client):
+        assert (await client.get("/api/plugins/mqtt_publish/explorer")).status_code == 401
+
+    async def test_explorer_get_default_prefixes_and_empty_topics(self, client):
+        resp = await client.get("/api/plugins/mqtt_publish/explorer", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data["topics"] == []
+        assert set(data["known_prefixes"]) == {
+            "homeassistant", "home/bridge", "satel", "tuya", "homewhiz", "home/boiler",
+        }
+
+    async def test_explorer_get_shows_recorded_topics(self, client):
+        import dashboard.app as app_module
+        app_module.history.set_status("mqtt:tuya/gniazdko/state", "mqtt_topic", "ON", label="tuya/gniazdko/state")
+        resp = await client.get("/api/plugins/mqtt_publish/explorer", headers=_basic_auth_header("test_haslo_123"))
+        data = await resp.get_json()
+        assert data["topics"] == [{"topic": "tuya/gniazdko/state", "payload": "ON", "ts": data["topics"][0]["ts"]}]
+
+    async def test_publish_requires_auth(self, client):
+        assert (await client.post("/api/plugins/mqtt_publish/publish", json={"topic": "tuya/x"})).status_code == 401
+
+    async def test_publish_rejects_topic_outside_known_prefixes(self, client):
+        resp = await client.post(
+            "/api/plugins/mqtt_publish/publish", json={"topic": "nie/nasz/temat", "payload": "x"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+        data = await resp.get_json()
+        assert "prefix" in data["error"]
+
+    async def test_publish_rejects_missing_topic(self, client):
+        resp = await client.post(
+            "/api/plugins/mqtt_publish/publish", json={}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    async def test_publish_accepts_known_prefix_and_enqueues_command(self, client):
+        import dashboard.app as app_module
+        resp = await client.post(
+            "/api/plugins/mqtt_publish/publish",
+            json={"topic": "tuya/gniazdko/test", "payload": "ON", "retain": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert "command_id" in data
+        pending = app_module.history.get_pending_commands()
+        mqtt_cmds = [c for c in pending if c["command"] == "mqtt_publish"]
+        assert mqtt_cmds[0]["params"] == {"topic": "tuya/gniazdko/test", "payload": "ON", "retain": True}
+
+    async def test_publish_accepts_bare_prefix_without_trailing_segment(self, client):
+        resp = await client.post(
+            "/api/plugins/mqtt_publish/publish", json={"topic": "satel", "payload": "x"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+
 
 class TestUnifiProtectPluginPage:
     async def test_page_redirects_to_login_without_auth(self, client):
@@ -1071,6 +1129,148 @@ class TestUnifiProtectPluginPage:
         assert saved["enabled"] is True
         assert saved["log_level"] == "ERROR"
         assert saved["host"] == "192.168.1.1"
+
+    async def test_cameras_get_without_config_returns_400(self, client):
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_cameras_get_requires_auth(self, client):
+        assert (await client.get("/api/plugins/unifi_protect/cameras")).status_code == 401
+
+    async def test_cameras_get_lists_cameras(self, client, monkeypatch):
+        import dashboard.app as app_module
+        import plugins.unifi_protect.routes as unifi_routes
+
+        (await client.post(
+            "/api/plugins/unifi_protect/credentials", json={"host": "192.168.1.1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        class FakeCamera:
+            def __init__(self, id, name):
+                self.id = id
+                self.name = name
+
+        class FakeClient:
+            async def get_cameras(self):
+                return [FakeCamera("cam1", "Wejście")]
+
+        async def _fake_get_client(section):
+            return FakeClient()
+
+        monkeypatch.setattr(unifi_routes, "_get_client", _fake_get_client)
+
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        assert (await resp.get_json())["cameras"] == [{"id": "cam1", "name": "Wejście"}]
+
+    async def test_cameras_get_connection_error_returns_502(self, client, monkeypatch):
+        import plugins.unifi_protect.routes as unifi_routes
+
+        (await client.post(
+            "/api/plugins/unifi_protect/credentials", json={"host": "192.168.1.1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        async def _fake_get_client(section):
+            raise ConnectionError("nie udało się połączyć")
+
+        monkeypatch.setattr(unifi_routes, "_get_client", _fake_get_client)
+
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 502
+
+    async def test_snapshot_get_without_config_returns_400(self, client):
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras/cam1/snapshot", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_snapshot_get_requires_auth(self, client):
+        assert (await client.get("/api/plugins/unifi_protect/cameras/cam1/snapshot")).status_code == 401
+
+    async def test_snapshot_get_returns_jpeg_bytes(self, client, monkeypatch):
+        import plugins.unifi_protect.routes as unifi_routes
+
+        (await client.post(
+            "/api/plugins/unifi_protect/credentials", json={"host": "192.168.1.1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        class FakeClient:
+            async def get_camera_snapshot(self, camera_id):
+                assert camera_id == "cam1"
+                return b"\xff\xd8\xff\xe0fakejpeg"
+
+        async def _fake_get_client(section):
+            return FakeClient()
+
+        monkeypatch.setattr(unifi_routes, "_get_client", _fake_get_client)
+
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras/cam1/snapshot", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        assert resp.headers["Content-Type"] == "image/jpeg"
+        assert resp.headers["Cache-Control"] == "no-store"
+        assert (await resp.get_data()) == b"\xff\xd8\xff\xe0fakejpeg"
+
+    async def test_snapshot_get_returns_404_when_camera_offline(self, client, monkeypatch):
+        import plugins.unifi_protect.routes as unifi_routes
+
+        (await client.post(
+            "/api/plugins/unifi_protect/credentials", json={"host": "192.168.1.1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        class FakeClient:
+            async def get_camera_snapshot(self, camera_id):
+                return None
+
+        async def _fake_get_client(section):
+            return FakeClient()
+
+        monkeypatch.setattr(unifi_routes, "_get_client", _fake_get_client)
+
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras/cam1/snapshot", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 404
+
+    async def test_call_with_retry_retries_once_with_fresh_client(self, monkeypatch):
+        import plugins.unifi_protect.routes as unifi_routes
+
+        unifi_routes._client_cache.clear()
+        section = {"host": "192.168.1.1", "username": "u", "password": "p", "verify_ssl": False}
+        get_client_calls = {"n": 0}
+
+        async def _fake_get_client(sect):
+            get_client_calls["n"] += 1
+            key = unifi_routes._client_cache_key(sect)
+            client = object()
+            unifi_routes._client_cache[key] = client
+            return client
+
+        monkeypatch.setattr(unifi_routes, "_get_client", _fake_get_client)
+
+        action_calls = {"n": 0}
+
+        async def action(client):
+            action_calls["n"] += 1
+            if action_calls["n"] == 1:
+                raise RuntimeError("stale session")
+            return "ok"
+
+        result = await unifi_routes._call_with_retry(section, action)
+        assert result == "ok"
+        assert get_client_calls["n"] == 2
+        assert action_calls["n"] == 2
 
 
 class TestHomeWhizPluginPage:
@@ -1469,3 +1669,99 @@ class TestPresenceSimulationPluginPage:
         assert resp.status_code == 200
         saved = app_module.config_store.get("automations")["presence_simulation"]
         assert saved["log_level"] == "WARNING"
+
+
+class TestHomekitPluginPage:
+    async def test_page_redirects_to_login_without_auth(self, client):
+        resp = (await client.get("/plugins/homekit", follow_redirects=False))
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    async def test_settings_default_enabled_false(self, client):
+        resp = (await client.get("/api/plugins/homekit/settings", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert (await resp.get_json())["enabled"] is False
+
+    async def test_config_get_requires_auth_and_defaults(self, client):
+        assert (await client.get("/api/plugins/homekit/config")).status_code == 401
+        resp = (await client.get("/api/plugins/homekit/config", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data == {
+            "port": 51826, "bridge_name": "Satel-Tuya-eBUS", "pincode": None, "paired": False,
+        }
+
+    async def test_config_post_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/homekit/config", json={})).status_code == 401
+
+    async def test_config_post_rejects_out_of_range_port(self, client):
+        resp = (await client.post(
+            "/api/plugins/homekit/config", json={"port": 70000},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_config_post_rejects_non_numeric_port(self, client):
+        resp = (await client.post(
+            "/api/plugins/homekit/config", json={"port": "abc"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_config_post_persists_and_generates_pincode(self, client):
+        import dashboard.app as app_module
+
+        resp = (await client.post(
+            "/api/plugins/homekit/config", json={"port": 51900, "bridge_name": "Mój most"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["homekit"]
+        assert saved["port"] == 51900
+        assert saved["bridge_name"] == "Mój most"
+        assert saved["pincode"]
+
+        config_resp = await (await client.get(
+            "/api/plugins/homekit/config", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert config_resp["port"] == 51900
+        assert config_resp["bridge_name"] == "Mój most"
+        assert config_resp["pincode"] == saved["pincode"]
+
+    async def test_regenerate_pincode_requires_auth_and_changes_value(self, client):
+        assert (await client.post("/api/plugins/homekit/regenerate-pincode")).status_code == 401
+
+        first = await (await client.post(
+            "/api/plugins/homekit/regenerate-pincode", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        second = await (await client.post(
+            "/api/plugins/homekit/regenerate-pincode", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert first["pincode"] != second["pincode"]
+
+    async def test_reset_pairings_requires_auth_and_clears_paired_flag(self, client, tmp_path):
+        assert (await client.post("/api/plugins/homekit/reset-pairings")).status_code == 401
+
+        persist_path = tmp_path / "homekit_state.json"
+        persist_path.write_text('{"paired_clients": {"abc": "def"}}', encoding="utf-8")
+        paired_before = await (await client.get(
+            "/api/plugins/homekit/config", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert paired_before["paired"] is True
+
+        resp = (await client.post(
+            "/api/plugins/homekit/reset-pairings", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        assert not persist_path.exists()
+
+        paired_after = await (await client.get(
+            "/api/plugins/homekit/config", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert paired_after["paired"] is False
+
+    async def test_reset_pairings_is_idempotent_when_no_state_file(self, client):
+        resp = (await client.post(
+            "/api/plugins/homekit/reset-pairings", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200

@@ -127,6 +127,8 @@ _plugin_metas = _plugins.register_all(
     get_config_path=lambda: config_path,
     reload_bridge_config=_reload_bridge_config_from_disk,
     enqueue_bridge_reload=_enqueue_bridge_reload,
+    get_history=lambda: history,
+    get_satel_partitions=lambda: satel_partitions_cfg,
 )
 app.jinja_loader = ChoiceLoader([
     app.jinja_loader,
@@ -758,6 +760,16 @@ async def api_config_automations_post():
     })
 
 
+@app.route("/api/automation/scenes/<name>/run", methods=["POST"])
+@require_auth()
+async def api_automation_scene_run(name):
+    scene_names = {s["name"] for s in config_raw.get("scenes", [])}
+    if name not in scene_names:
+        return jsonify({"error": f"Nieznana scena: '{name}'"}), 404
+    command_id = history.enqueue_command("run_scene", {"name": name})
+    return jsonify({"command_id": command_id, "message": f"Zlecono uruchomienie sceny '{name}'"})
+
+
 @app.route("/api/sensors")
 async def api_sensors():
     return jsonify(history.get_sensors())
@@ -951,6 +963,30 @@ async def api_system_user_delete(user_id: int):
         return jsonify({"error": "Nie można usunąć ostatniego konta - panel zostałby bez żadnego dostępu"}), 400
     config_store.delete_user(user_id)
     return jsonify({"message": "Konto usunięte"})
+
+
+@app.route("/api/system/api-tokens", methods=["GET"])
+@require_auth()
+async def api_system_api_tokens_get():
+    return jsonify(config_store.list_api_tokens())
+
+
+@app.route("/api/system/api-tokens", methods=["POST"])
+@require_auth()
+async def api_system_api_tokens_post():
+    payload = await request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Nazwa tokenu jest wymagana"}), 400
+    token_id, token = config_store.create_api_token(name)
+    return jsonify({"id": token_id, "name": name, "token": token})
+
+
+@app.route("/api/system/api-tokens/<int:token_id>", methods=["DELETE"])
+@require_auth()
+async def api_system_api_token_delete(token_id: int):
+    config_store.delete_api_token(token_id)
+    return jsonify({"message": "Token usunięty"})
 
 
 @app.route("/api/system/settings", methods=["GET"])

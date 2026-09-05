@@ -9,10 +9,11 @@ from dashboard.auth import AuthGuard, SESSION_COOKIE_NAME
 
 
 def _fake_request(password: str | None, ip: str = "127.0.0.1", session_token: str | None = None,
-                   username: str = "admin"):
+                   username: str = "admin", bearer_token: str | None = None):
     req = MagicMock()
     req.remote_addr = ip
     req.cookies = {SESSION_COOKIE_NAME: session_token} if session_token else {}
+    req.headers = {"Authorization": f"Bearer {bearer_token}"} if bearer_token else {}
     if password is None:
         req.authorization = None
     else:
@@ -267,6 +268,54 @@ class TestSessionLogin:
         with patch("dashboard.auth.request", _fake_request(None, session_token="podrobiony-token")):
             ok, _ = guard.check()
         assert ok is False
+
+
+class TestApiTokenAuth:
+
+    def test_valid_bearer_token_succeeds(self, store):
+        _id, token = store.create_api_token("home_assistant")
+        guard = AuthGuard(store, None)
+        with patch("dashboard.auth.request", _fake_request(None, bearer_token=token)):
+            ok, _ = guard.check()
+        assert ok is True
+
+    def test_unknown_bearer_token_fails(self, store):
+        guard = AuthGuard(store, None)
+        with patch("dashboard.auth.request", _fake_request(None, bearer_token="nieznany-token")):
+            ok, _ = guard.check()
+        assert ok is False
+
+    def test_no_authorization_header_falls_through_to_basic_auth_required(self, store):
+        guard = AuthGuard(store, None)
+        with patch("dashboard.auth.request", _fake_request(None)):
+            ok, msg = guard.check()
+        assert ok is False
+        assert "Wymagana autoryzacja" in msg
+
+    def test_revoked_token_stops_working(self, store):
+        token_id, token = store.create_api_token("skrypt")
+        guard = AuthGuard(store, None)
+        with patch("dashboard.auth.request", _fake_request(None, bearer_token=token)):
+            assert guard.check()[0] is True
+        store.delete_api_token(token_id)
+        with patch("dashboard.auth.request", _fake_request(None, bearer_token=token)):
+            assert guard.check()[0] is False
+
+    def test_bearer_token_ignores_lockout(self, store):
+        guard = AuthGuard(store, {"max_failed_attempts": 1, "lockout_seconds": 300})
+        with patch("dashboard.auth.request", _fake_request("złe")):
+            guard.check()
+        _id, token = store.create_api_token("skrypt")
+        with patch("dashboard.auth.request", _fake_request(None, bearer_token=token)):
+            ok, _ = guard.check()
+        assert ok is True
+
+    def test_bearer_token_works_even_when_basic_auth_disabled(self, store):
+        guard = AuthGuard(store, {"allow_basic_auth": False})
+        _id, token = store.create_api_token("skrypt")
+        with patch("dashboard.auth.request", _fake_request(None, bearer_token=token)):
+            ok, _ = guard.check()
+        assert ok is True
 
 
 class TestUpdateConfig:

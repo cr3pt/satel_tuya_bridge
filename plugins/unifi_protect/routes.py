@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from quart import Quart, jsonify, render_template, request
+import io
+
+from quart import Quart, jsonify, render_template, request, send_file
 
 from plugins import PluginMeta, register_settings_route
 
@@ -8,9 +10,43 @@ META = PluginMeta(
     id="unifi_protect",
     name="Kamery UniFi Protect",
     icon="📹",
-    description="Zrzuty z kamer UniFi Protect przy alarmie/zdarzeniach.",
+    description="Zrzuty z kamer UniFi Protect przy alarmie/zdarzeniach, podgląd na żywo.",
     config_url="/plugins/unifi_protect",
 )
+
+_client_cache: dict[tuple, object] = {}
+
+
+def _client_cache_key(section: dict) -> tuple:
+    return (
+        section.get("host"), section.get("username"), section.get("password"),
+        bool(section.get("verify_ssl", False)),
+    )
+
+
+async def _get_client(section: dict):
+    from uiprotect import ProtectApiClient
+
+    key = _client_cache_key(section)
+    client = _client_cache.get(key)
+    if client is None:
+        client = ProtectApiClient(
+            section["host"], 443, section.get("username", ""), section.get("password", ""),
+            verify_ssl=section.get("verify_ssl", False),
+        )
+        await client.update()
+        _client_cache[key] = client
+    return client
+
+
+async def _call_with_retry(section: dict, action):
+    client = await _get_client(section)
+    try:
+        return await action(client)
+    except Exception:
+        _client_cache.pop(_client_cache_key(section), None)
+        client = await _get_client(section)
+        return await action(client)
 
 
 def register(app: Quart, *, require_auth, get_auth_guard, get_config_store,
@@ -62,6 +98,32 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store,
         enqueue_bridge_reload()
 
         return jsonify({"message": "Zapisano. Włączenie/wyłączenie integracji wciąż wymaga pełnego restartu procesu bridge'a."})
+
+    @app.route("/api/plugins/unifi_protect/cameras", methods=["GET"])
+    async def api_plugin_unifi_protect_cameras_get():
+        section = _get_unifi_section()
+        if not section.get("host"):
+            return jsonify({"error": "Integracja UniFi Protect nie jest skonfigurowana"}), 400
+        try:
+            cameras = await _call_with_retry(section, lambda client: client.get_cameras())
+        except Exception as exc:
+            return jsonify({"error": f"Nie udało się połączyć z kontrolerem UniFi Protect: {exc}"}), 502
+        return jsonify({"cameras": [{"id": c.id, "name": c.name} for c in cameras]})
+
+    @app.route("/api/plugins/unifi_protect/cameras/<camera_id>/snapshot", methods=["GET"])
+    async def api_plugin_unifi_protect_snapshot_get(camera_id):
+        section = _get_unifi_section()
+        if not section.get("host"):
+            return jsonify({"error": "Integracja UniFi Protect nie jest skonfigurowana"}), 400
+        try:
+            snapshot = await _call_with_retry(section, lambda client: client.get_camera_snapshot(camera_id))
+        except Exception as exc:
+            return jsonify({"error": f"Nie udało się pobrać zrzutu: {exc}"}), 502
+        if snapshot is None:
+            return jsonify({"error": "Brak zrzutu dla tej kamery (offline?)"}), 404
+        response = await send_file(io.BytesIO(snapshot), mimetype="image/jpeg")
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     def _validate_enable() -> str | None:
         if not _get_unifi_section().get("host"):

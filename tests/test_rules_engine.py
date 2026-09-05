@@ -884,6 +884,60 @@ class TestExecuteCommandRestartProcess:
         assert exit_calls == [0]
 
 
+class TestExecuteCommandRunScene:
+
+    async def test_runs_enabled_scene_and_marks_done(self, engine, fake_tuya):
+        cmd_id = engine.history.enqueue_command("run_scene", {"name": "wykryto_intruza"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        assert ("on", "gniazdko_salon", None) in fake_tuya.calls
+        assert engine.history.get_command(cmd_id)["status"] == "done"
+
+    async def test_disabled_scene_marks_done_but_does_not_run_actions(self, engine, fake_tuya):
+        cmd_id = engine.history.enqueue_command("run_scene", {"name": "scena_wylaczona"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        assert fake_tuya.calls == []
+        assert engine.history.get_command(cmd_id)["status"] == "done"
+
+    async def test_unknown_scene_marks_command_error(self, engine):
+        cmd_id = engine.history.enqueue_command("run_scene", {"name": "nie_istnieje"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        result = engine.history.get_command(cmd_id)
+        assert result["status"] == "error"
+        assert "nie_istnieje" in result["result"]["error"]
+
+
+class TestExecuteCommandMqttPublish:
+
+    async def test_publishes_and_marks_done(self, engine):
+        assert engine.state_mqtt is not None
+        cmd_id = engine.history.enqueue_command(
+            "mqtt_publish", {"topic": "satel/manual_test", "payload": "1", "retain": True},
+        )
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        assert engine.history.get_command(cmd_id)["status"] == "done"
+        entries = {e["label"]: e["value"] for e in engine.history.get_status("mqtt_topic")}
+        assert entries["satel/manual_test"] == "1"
+
+    async def test_no_publisher_available_marks_command_error(self, engine):
+        engine.state_mqtt = None
+        engine.ha_mqtt = None
+        engine.boiler_publishers.pop("mqtt", None)
+        cmd_id = engine.history.enqueue_command("mqtt_publish", {"topic": "satel/x", "payload": "1"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        result = engine.history.get_command(cmd_id)
+        assert result["status"] == "error"
+
+
 class TestExecuteCommandTuya:
 
     async def test_tuya_on_calls_turn_on_and_marks_done(self, engine, fake_tuya):

@@ -952,6 +952,19 @@ się na tę tabelę automatycznie i jednorazowo przy starcie (patrz
   endpoincie (przydatne do skryptów/curl) - wyłącz, jeśli chcesz wymusić
   logowanie WYŁĄCZNIE przez `/login`.
 
+**Tokeny API.** Trwały mechanizm dostępu dla integracji skryptowych
+(Home Assistant, curl, serwer MCP - patrz "Serwer MCP" niżej), niezależny
+od sesji przeglądarki i od Basic Auth - wysyłany jako nagłówek
+`Authorization: Bearer <token>` na każdym zapisującym/odczytującym
+endpoincie panelu. Token generowany jest jako 32 losowe bajty
+(`secrets.token_hex(32)`), a w bazie (tabela `api_tokens`) zapisywany jest
+wyłącznie jego hash SHA-256 - **surowy token pokazywany jest tylko raz**,
+zaraz po utworzeniu w sekcji "Tokeny API"; jeśli go nie skopiujesz, jedyne
+wyjście to usunięcie tokenu i utworzenie nowego. Usunięcie tokenu
+unieważnia go natychmiast dla wszystkiego, co go używało. Tokeny nie mają
+osobnych ról - działają jak zalogowane konto (pełny dostęp do zapisu),
+tak samo jak sesja czy Basic Auth.
+
 Czas trwania sesji (`session_ttl_seconds`) i bieżący czas serwera/strefa
 czasowa (`TZ`) są tu pokazane **wyłącznie informacyjnie** - synchronizacja
 zegara dzieje się na hoście, nie w kontenerze (patrz "Synchronizacja
@@ -1002,6 +1015,31 @@ udostępniane jako encja `sensor` w Home Assistant Discovery (zakładka
 Temat MQTT dla danych z kotła eBUS (dotychczasowy `boiler_output.mqtt.
 topic_prefix`, domyślnie `home/boiler`) jest teraz też edytowalny z tej
 samej zakładki, jako "Temat MQTT dla stanu eBUS".
+
+#### Explorer - podgląd i ręczna publikacja własnych tematów
+
+Ta sama zakładka `/plugins/mqtt_publish` ma sekcję "🔍 Explorer" -
+odświeżaną co 3s tabelę ostatniej znanej wartości każdego tematu, na
+którym bridge coś opublikował albo odebrał: Home Assistant Discovery,
+tematy `mqtt_publish` (satel/tuya/homewhiz), temat komend HA dla
+sterowalnych encji, oraz dane z kotła eBUS. **To celowo NIE jest podgląd
+całego brokera** (jak samodzielny MQTT Explorer) - żeby nie trzymać w
+pamięci stanu setek tematów niezwiązanych z tym projektem, zwłaszcza na
+Raspberry Pi Zero. Dane trafiają do tabeli `status` (`bridge_history.db`,
+kategoria `mqtt_topic`) w momencie publikacji/odbioru - bez dodatkowego
+połączenia z brokerem.
+
+Sekcja "Ręczna publikacja" pozwala opublikować dowolny payload, ale
+**wyłącznie w obrębie własnych prefixów** bridge'a (te same, które widać w
+Explorerze - `home_assistant.discovery_prefix`/`state_topic_prefix`,
+`mqtt_publish.topics.*`, `boiler_output.mqtt.topic_prefix`) - próba
+publikacji poza nimi kończy się błędem 400 zamiast wysłania czegokolwiek.
+Przydatne do testowania automatyzacji/integracji bez czekania na
+prawdziwą zmianę stanu (np. ręcznie ustaw `tuya/gniazdko/state` na `ON`,
+żeby sprawdzić regułę reagującą na ten temat). Publikacja - jak każda
+zmiana stanu - przechodzi przez tę samą kolejkę komend co reszta panelu
+(`history.enqueue_command("mqtt_publish", ...)`, wykonywana przez proces
+`bridge`), więc wymaga zalogowania.
 
 ### Alarmy progowe
 
@@ -1231,6 +1269,25 @@ Wszystkie te komponenty raportują swój status do panelu webowego - sekcja
 (z czasem ostatniej zmiany). Zdarzenia zmiany stanu (utrata/przywrócenie
 połączenia) trafiają też do dziennika zdarzeń jako typ `system`.
 
+### Podgląd na żywo z kamer UniFi Protect
+
+Zakładka `/plugins/unifi_protect` ma sekcję "📷 Podgląd na żywo" - wybór
+kamery (lista pobierana z kontrolera przez `uiprotect`) i odświeżany co
+ok. 1,5s zrzut (`ProtectApiClient.get_camera_snapshot`). To **celowo NIE
+jest pełny strumień wideo** (RTSP/WebRTC) - seria zdjęć JPEG wystarcza do
+szybkiego podglądu "co się dzieje teraz", bez FFmpeg, dodatkowych portów
+czy zależności do transkodowania wideo w przeglądarce. Odświeżanie
+pauzuje się automatycznie, gdy karta przeglądarki jest w tle
+(`document.visibilityState`), żeby nie obciążać kontrolera niepotrzebnie,
+kiedy nikt nie patrzy.
+
+Połączenie z kontrolerem UniFi Protect na potrzeby podglądu jest osobne od
+połączenia procesu `bridge` (używanego do wykrywania ruchu,
+`bridge/unifi_protect_events.py`) - dashboard łączy się bezpośrednio,
+tymi samymi poświadczeniami z zakładki wyżej, z własnym, leniwie
+tworzonym i buforowanym klientem (jedna próba ponowienia ze świeżym
+klientem przy błędzie, np. wygasłej sesji).
+
 ### Powiadomienia push o utracie/przywróceniu połączenia
 
 Oprócz samego panelu, bridge wysyła **powiadomienie push (ntfy)**, gdy
@@ -1315,6 +1372,112 @@ rest_command:
 Dzięki temu autoryzacja zostaje jedna, spójna, i w jednym miejscu -
 zamiast dwóch równoległych ścieżek sterowania o różnym poziomie
 zabezpieczeń.
+
+## Serwer MCP (Model Context Protocol)
+
+Opcjonalna wtyczka (zakładka 🧩 Wtyczki -> "🤖 Serwer MCP"), która
+udostępnia sterowanie systemem jako zestaw narzędzi
+[MCP](https://modelcontextprotocol.io/) dla asystentów AI (Claude
+Desktop, Claude Code, inne klienty MCP obsługujące zdalny serwer przez
+HTTP) - jeden endpoint, `POST /api/mcp`, protokół JSON-RPC 2.0
+("Streamable HTTP", bez zależności od pakietu `mcp` - obsługa napisana
+ręcznie w `plugins/mcp_server/routes.py`, żeby nie ciągnąć do projektu
+Starlette/uvicorn/anyio obok już używanego Quarta/Hypercorna).
+
+**Domyślnie wyłączony** - to pełnoprawny kanał sterowania (uzbrajanie,
+urządzenia Tuya, sceny), więc świadomie włącz go w ustawieniach wtyczki,
+gdy chcesz podłączyć klienta MCP.
+
+**Autoryzacja - tylko token API.** Endpoint jest chroniony tak samo jak
+reszta panelu (sesja/Basic Auth/token - patrz "Zakładka ⚙ Ustawienia
+ogólne" wyżej), ale w praktyce klient MCP nie ma przeglądarki ani hasła
+pod ręką - użyj **tokenu API** (`Authorization: Bearer <token>`,
+wygenerowanego w sekcji "Tokeny API"). Strona ustawień wtyczki pokazuje
+gotowy adres endpointu oraz przykładową konfigurację klienta.
+
+**Dostępne narzędzia** - każde wywołanie trafia do tej samej kolejki
+komend co REST API (`history.enqueue_command`, wykonywane przez proces
+`bridge`, patrz sekcja "Bezpieczeństwo panelu" o architekturze
+komend) - MCP nie omija żadnej walidacji ani logiki, jakiej nie miałyby
+istniejące endpointy:
+- `get_status(category?)` - aktualny stan czujników/wejść/wyjść/urządzeń.
+- `list_scenes()` - lista zdefiniowanych scen (nazwa, czy włączona, liczba akcji).
+- `run_scene(name)` - uruchamia scenę o podanej nazwie.
+- `satel_arm(partitions?, mode?)` / `satel_disarm(partitions?)` -
+  uzbraja/rozbraja strefy (domyślnie wszystkie skonfigurowane).
+- `trigger_virtual_input(name)` - aktywuje wirtualne wejście Satela.
+- `tuya_on(name)` / `tuya_off(name)` - włącza/wyłącza urządzenie Tuya.
+
+Wywołanie narzędzia czeka do 5 sekund na wykonanie komendy przez proces
+`bridge` (odpytując `commands.status` co 0,2s) - jeśli bridge nie zdąży w
+tym czasie (np. jest właśnie przeładowywany), narzędzie zwraca
+`status: "pending"` z `command_id`, zamiast wisieć w nieskończoność.
+Nieznana nazwa sceny/urządzenia/wejścia albo błąd wykonania komendy
+wraca jako `isError: true` z czytelnym komunikatem - LLM po drugiej
+stronie dostaje treść błędu zamiast pustej odpowiedzi.
+
+## Most HomeKit (Apple Home)
+
+Opcjonalna wtyczka (zakładka 🧩 Wtyczki -> "🏡 Most HomeKit") - natywny
+most [HomeKit](https://developer.apple.com/homekit/) uruchamiany
+wewnątrz procesu `bridge` (biblioteka `pyhap`/`HAP-python`,
+`bridge/homekit_bridge.py`), bez pośrednictwa Home Assistant. Po
+sparowaniu widoczny bezpośrednio w aplikacji Dom (i przez to sterowalny
+przez Siri) - **domyślnie wyłączony**, bo to pełnoprawny kanał
+sterowania systemem alarmowym.
+
+**Co się pojawia:**
+- Każda skonfigurowana partycja Satela - jako akcesorium "System
+  alarmowy" (uzbrojenie/rozbrojenie + stan "alarm wyzwolony", patrz niżej).
+- Każde urządzenie Tuya (`tuya.devices` + `tuya.cloud_devices`) - jako
+  Przełącznik (on/off) albo Żarówka z jasnością (`type: dimmer`).
+- Każda **włączona** scena - jako Przełącznik, który po włączeniu
+  uruchamia scenę i sam wraca do stanu "wyłączony" po ok. 1 sekundzie
+  (typowy wzorzec "scena jako przycisk" w mostach HomeKit, bo HAP nie ma
+  natywnej koncepcji jednorazowego wyzwalacza).
+
+**Uzbrajanie z aplikacji Dom - dlaczego bezpieczne (w przeciwieństwie do
+MQTT).** HomeKit ma wbudowane, obowiązkowe parowanie i szyfrowanie
+end-to-end na poziomie protokołu (Apple Authentication Coprocessor /
+SRP) - stąd, w odróżnieniu od integracji MQTT (patrz wyżej "Dlaczego nie
+da się uzbroić/rozbroić z Home Assistant przez MQTT"), świadomie
+udostępniamy tu PEŁNE sterowanie alarmem, nie tylko odczyt.
+
+**Mapowanie trybów uzbrojenia - uproszczone celowo.** HomeKit rozróżnia
+"W domu"/"Poza domem"/"Nocny" tryb uzbrojenia (typowe dla amerykańskich
+central z wieloma strefami czuwania), ale centrale Satel nie mają
+natywnego odpowiednika tego rozróżnienia - każda partycja to po prostu
+zestaw stref, uzbrajany/rozbrajany jako całość. Dlatego wszystkie trzy
+tryby uzbrojenia w Home App wywołują to samo: pełne uzbrojenie partycji
+(`mode: 0`) - rozróżnienie trybów służy tu tylko wygodzie UI Apple, nie
+ma żadnego efektu w centrali. Stan "alarm wyzwolony" (czerwona ikona w
+Home App) odzwierciedla realny stan `triggered_partition_numbers`
+centrali (naruszenie podczas uzbrojenia), nie jest tylko kosmetyczny.
+
+**Parowanie.** Strona ustawień wtyczki pokazuje kod parowania (format
+`XXX-XX-XXX`) do ręcznego wpisania w aplikacji Dom ("Dodaj akcesorium" ->
+"Nie masz kodu ani nie możesz zeskanować?") - kod jest generowany raz i
+zapisany w konfiguracji (nie regenerowany losowo przy każdym restarcie
+bridge'a, żeby nie wygasał niespodziewanie), z przyciskiem "Wygeneruj
+nowy kod" gdy trzeba. Stan parowania (klucze, lista sparowanych klientów)
+jest trwały - plik `homekit_state.json` obok `config.db` w katalogu
+danych - i przyciskiem "Resetuj parowanie" na tej samej stronie, gdyby
+trzeba było sparować most od nowa.
+
+**Stabilność identyfikatorów (AID).** Każde akcesorium dostaje
+deterministyczny numer AID wyliczony z haszu jego klucza (np.
+`tuya:gniazdko_salon`), a nie kolejny wolny numer - dzięki temu dodanie
+albo usunięcie jednego urządzenia NIE przesuwa numerów pozostałych i nie
+wymusza ponownego parowania całego mostu w aplikacji Dom.
+
+**Wymaga Docker `network_mode: host` (Linux).** Parowanie i wykrywanie
+mostu w aplikacji Dom opiera się na ogłoszeniach mDNS/Bonjour w sieci
+LAN, które nie przechodzą przez domyślną sieć mostkowaną Dockera -
+odkomentuj `network_mode: host` przy usłudze `bridge` w
+`docker-compose.yml` (patrz komentarz w tym pliku), inaczej parowanie
+się nie powiedzie mimo poprawnej konfiguracji wtyczki. Zmiana portu,
+nazwy mostu, oraz włączenie/wyłączenie wtyczki wymagają pełnego
+restartu procesu bridge'a (jak reszta zmian sieciowych).
 
 ## Automatyzacje: sceny, harmonogramy, eskalacja, warunki, łańcuchy, symulacja obecności
 

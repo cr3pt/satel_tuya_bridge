@@ -22,6 +22,7 @@ def register_settings_route(
     get_section: Callable[[], dict], save_section: Callable[[dict], None],
     reload_bridge_config: Callable, enqueue_bridge_reload: Callable,
     supports_enabled: bool = True,
+    default_enabled: bool = True,
     validate_enable: Callable[[], str | None] | None = None,
 ) -> None:
 
@@ -31,7 +32,7 @@ def register_settings_route(
         section = get_section() or {}
         result = {"log_level": section.get("log_level") or ""}
         if supports_enabled:
-            result["enabled"] = bool(section.get("enabled", True))
+            result["enabled"] = bool(section.get("enabled", default_enabled))
         return jsonify(result)
 
     @app.route(f"/api/plugins/{plugin_id}/settings", methods=["POST"],
@@ -50,7 +51,7 @@ def register_settings_route(
                 error = validate_enable()
                 if error:
                     return jsonify({"error": error}), 400
-            enabled_changed = bool(section.get("enabled", True)) != new_enabled
+            enabled_changed = bool(section.get("enabled", default_enabled)) != new_enabled
             section["enabled"] = new_enabled
         if "log_level" in body:
             level = (body.get("log_level") or "").strip().upper()
@@ -84,12 +85,14 @@ def register_all(app: Quart, **deps) -> list[PluginMeta]:
     from plugins.homewhiz import routes as homewhiz_routes
     from plugins.notifications import routes as notifications_routes
     from plugins.presence_simulation import routes as presence_simulation_routes
+    from plugins.mcp_server import routes as mcp_server_routes
+    from plugins.homekit import routes as homekit_routes
 
     metas = []
     for routes_module in (
         satel_routes, tuya_routes, ebus_routes, tuya_cloud_routes, home_assistant_routes,
         mqtt_publish_routes, unifi_protect_routes, homewhiz_routes, notifications_routes,
-        presence_simulation_routes,
+        presence_simulation_routes, mcp_server_routes, homekit_routes,
     ):
         metas.append(routes_module.register(app, **deps))
     return metas

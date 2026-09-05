@@ -17,6 +17,7 @@ class HomeAssistantMqttBridge:
                  notify_cfg: dict | None = None, grace_seconds: float = 120):
         self.cfg = cfg
         self.entities = entities
+        self.history = history
         self._command_handlers: dict[str, Callable[[str], Awaitable[None]]] = {}
         self._loop = asyncio.get_event_loop()
         self._health = HealthReporter(
@@ -43,6 +44,15 @@ class HomeAssistantMqttBridge:
 
     def publish_state(self, topic: str, value: str) -> None:
         self._client.publish(topic, payload=value, retain=True)
+        self._record_topic(topic, value)
+
+    def publish_raw(self, topic: str, payload: str, qos: int = 0, retain: bool = False) -> None:
+        self._client.publish(topic, payload=payload, qos=qos, retain=retain)
+        self._record_topic(topic, payload)
+
+    def _record_topic(self, topic: str, payload) -> None:
+        if self.history is not None:
+            self.history.set_status(f"mqtt:{topic}", "mqtt_topic", payload, label=topic)
 
     def _on_connect(self, client, userdata, connect_flags, reason_code, properties) -> None:
         if reason_code != 0:
@@ -52,7 +62,9 @@ class HomeAssistantMqttBridge:
         self._health.report(True)
 
         for entity in self.entities:
-            client.publish(entity["discovery_topic"], payload=json.dumps(entity["payload"]), retain=True)
+            payload = json.dumps(entity["payload"])
+            client.publish(entity["discovery_topic"], payload=payload, retain=True)
+            self._record_topic(entity["discovery_topic"], payload)
         logger.info("Opublikowano %d encji Home Assistant Discovery", len(self.entities))
 
         for topic in self._command_handlers:
@@ -63,9 +75,10 @@ class HomeAssistantMqttBridge:
         self._health.report(False, f"kod {reason_code}" if reason_code != 0 else "")
 
     def _on_message(self, client, userdata, msg) -> None:
+        payload = msg.payload.decode().strip()
+        self._record_topic(msg.topic, payload)
         handler = self._command_handlers.get(msg.topic)
         if handler is None:
             return
-        payload = msg.payload.decode().strip()
         logger.info("Komenda z Home Assistant: %s = %s", msg.topic, payload)
         asyncio.run_coroutine_threadsafe(handler(payload), self._loop)
