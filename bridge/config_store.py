@@ -14,8 +14,8 @@ import yaml
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents (
-    name TEXT PRIMARY KEY,      -- 'config' | 'satel_fields' | 'tuya_devices' | 'automations' | 'sensors'
-    data TEXT NOT NULL,         -- JSON
+    name TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
     updated_ts REAL NOT NULL
 );
 
@@ -26,13 +26,6 @@ CREATE TABLE IF NOT EXISTS users (
     created_ts REAL NOT NULL
 );
 
--- Sekret do podpisywania ciasteczek sesji panelu (dashboard/auth.py) -
--- WYGENEROWANY RAZ i trzymany trwale w tej samej bazie co reszta configu
--- (przetrwa restart procesu, w odróżnieniu od dawnego trzymania sesji
--- wyłącznie w pamięci procesu). Jeden wiersz (id=1), CELOWO OSOBNA tabela
--- od `documents` - nie ma trafiać do eksportu/importu ZIP (patrz
--- KNOWN_DOCUMENTS niżej), żeby kopia zapasowa configu nie roznosiła
--- klucza podpisującego sesje.
 CREATE TABLE IF NOT EXISTS auth_secret (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     secret TEXT NOT NULL
