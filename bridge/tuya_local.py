@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 
 import tinytuya
 
@@ -211,6 +212,20 @@ def fetch_dp_schemas_for_devices(
         except Exception as exc:
             errors[device_id] = str(exc)
     return schemas, errors
+
+
+_SWITCH_CODE_PATTERN = re.compile(r"^switch(_\d+)?$")
+
+
+def is_switch_code(code: str) -> bool:
+    return code == "switch_led" or bool(_SWITCH_CODE_PATTERN.match(code))
+
+
+def find_switch_keys_from_schema(schema: dict) -> list[str]:
+    return [
+        dp_id for dp_id, spec in schema.items()
+        if spec.get("type") == "Boolean" and is_switch_code(spec.get("code") or "")
+    ]
 
 
 def _dp_code(key: str, spec: dict | None) -> str:
@@ -446,25 +461,47 @@ class TuyaLocalController:
         logger.error("Tuya '%s': wyczerpano próby (%s), ostatni błąd: %s", device_name, self.retries + 1, last_error)
         raise ConnectionError(f"Nie udało się skomunikować z urządzeniem Tuya '{device_name}': {last_error}")
 
+    def _switch_keys(self, device_name: str) -> list[str]:
+        schema = self.devices_cfg.get(device_name, {}).get("dp_schema") or {}
+        return find_switch_keys_from_schema(schema)
+
+    async def _set_switch_value(self, device_name: str, dev, keys: list[str], value: bool) -> None:
+        if len(keys) > 1:
+            await self._call_with_retry(device_name, dev.set_multiple_values, {k: value for k in keys})
+        else:
+            await self._call_with_retry(device_name, dev.set_status, value, keys[0])
+
     async def turn_on(self, device_name: str, dimmer_level_percent: int | None = None) -> None:
         cfg = self.devices_cfg[device_name]
         dev = self._devices[device_name]
+        switch_keys = self._switch_keys(device_name)
 
         if cfg.get("type") == "dimmer" and dimmer_level_percent is not None:
             dp = cfg["dimmer_dp"]
             lo, hi = cfg.get("dimmer_range", [10, 1000])
             value = int(lo + (hi - lo) * (dimmer_level_percent / 100))
-            await self._call_with_retry(device_name, dev.set_status, True, "1")
+            if switch_keys:
+                await self._set_switch_value(device_name, dev, switch_keys, True)
+            else:
+                await self._call_with_retry(device_name, dev.set_status, True, "1")
             await self._call_with_retry(device_name, dev.set_value, dp, value)
             logger.info("Ustawiono '%s' na %s%% jasności (DP=%s)", device_name, dimmer_level_percent, value)
+        elif switch_keys:
+            await self._set_switch_value(device_name, dev, switch_keys, True)
+            logger.info("Włączono '%s' (DP: %s)", device_name, ", ".join(switch_keys))
         else:
             await self._call_with_retry(device_name, dev.turn_on)
             logger.info("Włączono '%s'", device_name)
 
     async def turn_off(self, device_name: str) -> None:
         dev = self._devices[device_name]
-        await self._call_with_retry(device_name, dev.turn_off)
-        logger.info("Wyłączono '%s'", device_name)
+        switch_keys = self._switch_keys(device_name)
+        if switch_keys:
+            await self._set_switch_value(device_name, dev, switch_keys, False)
+            logger.info("Wyłączono '%s' (DP: %s)", device_name, ", ".join(switch_keys))
+        else:
+            await self._call_with_retry(device_name, dev.turn_off)
+            logger.info("Wyłączono '%s'", device_name)
 
     async def get_status(self, device_name: str) -> dict:
         dev = self._devices[device_name]

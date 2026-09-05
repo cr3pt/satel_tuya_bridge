@@ -146,6 +146,88 @@ async def test_turn_on_for_duration_turns_off_after_delay(controller):
     assert codes == [True, False]
 
 
+class TestAutoDetectedSwitchCodes:
+
+    DEVICES_CFG_NO_SWITCH_CODE = {
+        "kuchnia_2obwody": {"id": "cloud3"},
+    }
+
+    async def test_turns_on_all_detected_switch_codes_together(self):
+        controller = TuyaCloudController(self.DEVICES_CFG_NO_SWITCH_CODE, CREDENTIALS, retries=2, retry_delay=0.01)
+        fake = FakeTinytuyaCloud()
+        fake.status_by_device["cloud3"] = [
+            {"code": "switch_1", "value": False}, {"code": "switch_2", "value": False},
+            {"code": "countdown_1", "value": 0},
+        ]
+        controller._cloud = fake
+        await controller.turn_on("kuchnia_2obwody")
+        assert fake.sent_commands == [
+            ("cloud3", {"commands": [{"code": "switch_1", "value": True}, {"code": "switch_2", "value": True}]}),
+        ]
+
+    async def test_turns_off_all_detected_switch_codes_together(self):
+        controller = TuyaCloudController(self.DEVICES_CFG_NO_SWITCH_CODE, CREDENTIALS, retries=2, retry_delay=0.01)
+        fake = FakeTinytuyaCloud()
+        fake.status_by_device["cloud3"] = [
+            {"code": "switch_1", "value": True}, {"code": "switch_2", "value": True},
+        ]
+        controller._cloud = fake
+        await controller.turn_off("kuchnia_2obwody")
+        assert fake.sent_commands == [
+            ("cloud3", {"commands": [{"code": "switch_1", "value": False}, {"code": "switch_2", "value": False}]}),
+        ]
+
+    async def test_detects_switch_led_for_dimmer_switch(self):
+        controller = TuyaCloudController(self.DEVICES_CFG_NO_SWITCH_CODE, CREDENTIALS, retries=2, retry_delay=0.01)
+        fake = FakeTinytuyaCloud()
+        fake.status_by_device["cloud3"] = [
+            {"code": "switch_led", "value": False}, {"code": "bright_value", "value": 500},
+        ]
+        controller._cloud = fake
+        await controller.turn_on("kuchnia_2obwody")
+        assert fake.sent_commands == [("cloud3", {"commands": [{"code": "switch_led", "value": True}]})]
+
+    async def test_detected_codes_are_cached_across_calls(self):
+        controller = TuyaCloudController(self.DEVICES_CFG_NO_SWITCH_CODE, CREDENTIALS, retries=2, retry_delay=0.01)
+        fake = FakeTinytuyaCloud()
+        fake.status_by_device["cloud3"] = [{"code": "switch_1", "value": False}]
+        controller._cloud = fake
+        await controller.turn_on("kuchnia_2obwody")
+        await controller.turn_off("kuchnia_2obwody")
+        assert controller._switch_codes_cache["kuchnia_2obwody"] == ["switch_1"]
+        assert [cmd for _dev, cmd in fake.sent_commands] == [
+            {"commands": [{"code": "switch_1", "value": True}]},
+            {"commands": [{"code": "switch_1", "value": False}]},
+        ]
+
+    async def test_falls_back_to_switch_1_when_no_switch_like_code_found(self):
+        controller = TuyaCloudController(self.DEVICES_CFG_NO_SWITCH_CODE, CREDENTIALS, retries=2, retry_delay=0.01)
+        fake = FakeTinytuyaCloud()
+        fake.status_by_device["cloud3"] = [{"code": "bright_value", "value": 500}]
+        controller._cloud = fake
+        await controller.turn_on("kuchnia_2obwody")
+        assert fake.sent_commands == [("cloud3", {"commands": [{"code": "switch_1", "value": True}]})]
+
+    async def test_falls_back_to_switch_1_when_status_query_fails(self):
+        class GetstatusAlwaysFails(FakeTinytuyaCloud):
+            def getstatus(self, deviceid=None):
+                return {"Error": "Timeout", "Err": "1", "Payload": None}
+
+        controller = TuyaCloudController(self.DEVICES_CFG_NO_SWITCH_CODE, CREDENTIALS, retries=0, retry_delay=0.01)
+        fake = GetstatusAlwaysFails()
+        controller._cloud = fake
+        await controller.turn_on("kuchnia_2obwody")
+        assert fake.sent_commands == [("cloud3", {"commands": [{"code": "switch_1", "value": True}]})]
+
+    async def test_explicit_switch_code_skips_auto_detection(self):
+        controller = TuyaCloudController(DEVICES_CFG, CREDENTIALS, retries=2, retry_delay=0.01)
+        fake = FakeTinytuyaCloud()
+        controller._cloud = fake
+        await controller.turn_on("lampa_taras")
+        assert fake.sent_commands == [("cloud1", {"commands": [{"code": "switch_1", "value": True}]})]
+        assert "lampa_taras" not in controller._switch_codes_cache
+
+
 def test_client_created_lazily_with_credentials(monkeypatch):
     created_with = {}
 
