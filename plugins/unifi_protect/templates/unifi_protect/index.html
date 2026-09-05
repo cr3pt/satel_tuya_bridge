@@ -120,6 +120,24 @@
   <div id="credentialsMsg" class="msg-box"></div>
 </div>
 
+<div class="section" id="liveViewSection">
+  <h2>📷 Podgląd na żywo</h2>
+  <div class="section-hint">
+    Odświeżany zrzut z kamery (ok. co 1,5s) - nie jest to pełny strumień
+    wideo (RTSP/WebRTC), tylko seria zdjęć, ale wystarcza do szybkiego
+    podglądu bez dodatkowych zależności/portów. Odświeżanie pauzuje się
+    automatycznie, gdy ta karta przeglądarki jest w tle.
+  </div>
+  <div class="field-group">
+    <label>Kamera</label>
+    <select id="cameraSelect"><option value="">Wczytywanie...</option></select>
+  </div>
+  <div id="liveViewImageWrap" style="display:none;">
+    <img id="liveViewImage" alt="Podgląd kamery" style="width:100%; border-radius:8px; border:1px solid var(--border); background:#000;">
+  </div>
+  <div id="liveViewMsg" class="msg-box"></div>
+</div>
+
 <script>
 async function authorizedFetch(url, options = {}) {
   const resp = await fetch(url, options);
@@ -226,6 +244,69 @@ document.getElementById('saveCredentialsBtn').addEventListener('click', async ()
   } catch (e) {
     showMsg('credentialsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
+});
+
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+let liveViewTimer = null;
+let selectedCameraId = null;
+
+function scheduleNextSnapshot() {
+  if (liveViewTimer) clearTimeout(liveViewTimer);
+  liveViewTimer = setTimeout(refreshSnapshot, 1500);
+}
+
+function refreshSnapshot() {
+  if (!selectedCameraId || document.visibilityState !== 'visible') {
+    scheduleNextSnapshot();
+    return;
+  }
+  const img = document.getElementById('liveViewImage');
+  img.src = `/api/plugins/unifi_protect/cameras/${encodeURIComponent(selectedCameraId)}/snapshot?t=${Date.now()}`;
+  scheduleNextSnapshot();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    refreshSnapshot();
+  }
+});
+
+async function loadCameras() {
+  const select = document.getElementById('cameraSelect');
+  try {
+    const resp = await authorizedFetch('/api/plugins/unifi_protect/cameras');
+    const data = await resp.json();
+    if (!resp.ok) {
+      select.innerHTML = '<option value="">(błąd)</option>';
+      showMsg('liveViewMsg', false, data.error || 'Nie udało się pobrać listy kamer');
+      return;
+    }
+    const cameras = data.cameras || [];
+    if (!cameras.length) {
+      select.innerHTML = '<option value="">(brak kamer)</option>';
+      return;
+    }
+    select.innerHTML = cameras.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+    selectedCameraId = cameras[0].id;
+    document.getElementById('liveViewImageWrap').style.display = '';
+    refreshSnapshot();
+  } catch (e) {
+    select.innerHTML = '<option value="">(błąd)</option>';
+    showMsg('liveViewMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+}
+loadCameras();
+
+document.getElementById('cameraSelect').addEventListener('change', (e) => {
+  selectedCameraId = e.target.value || null;
+  document.getElementById('liveViewImageWrap').style.display = selectedCameraId ? '' : 'none';
+  if (selectedCameraId) refreshSnapshot();
 });
 </script>
 </body>

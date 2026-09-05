@@ -1130,6 +1130,148 @@ class TestUnifiProtectPluginPage:
         assert saved["log_level"] == "ERROR"
         assert saved["host"] == "192.168.1.1"
 
+    async def test_cameras_get_without_config_returns_400(self, client):
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_cameras_get_requires_auth(self, client):
+        assert (await client.get("/api/plugins/unifi_protect/cameras")).status_code == 401
+
+    async def test_cameras_get_lists_cameras(self, client, monkeypatch):
+        import dashboard.app as app_module
+        import plugins.unifi_protect.routes as unifi_routes
+
+        (await client.post(
+            "/api/plugins/unifi_protect/credentials", json={"host": "192.168.1.1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        class FakeCamera:
+            def __init__(self, id, name):
+                self.id = id
+                self.name = name
+
+        class FakeClient:
+            async def get_cameras(self):
+                return [FakeCamera("cam1", "Wejście")]
+
+        async def _fake_get_client(section):
+            return FakeClient()
+
+        monkeypatch.setattr(unifi_routes, "_get_client", _fake_get_client)
+
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        assert (await resp.get_json())["cameras"] == [{"id": "cam1", "name": "Wejście"}]
+
+    async def test_cameras_get_connection_error_returns_502(self, client, monkeypatch):
+        import plugins.unifi_protect.routes as unifi_routes
+
+        (await client.post(
+            "/api/plugins/unifi_protect/credentials", json={"host": "192.168.1.1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        async def _fake_get_client(section):
+            raise ConnectionError("nie udało się połączyć")
+
+        monkeypatch.setattr(unifi_routes, "_get_client", _fake_get_client)
+
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 502
+
+    async def test_snapshot_get_without_config_returns_400(self, client):
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras/cam1/snapshot", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_snapshot_get_requires_auth(self, client):
+        assert (await client.get("/api/plugins/unifi_protect/cameras/cam1/snapshot")).status_code == 401
+
+    async def test_snapshot_get_returns_jpeg_bytes(self, client, monkeypatch):
+        import plugins.unifi_protect.routes as unifi_routes
+
+        (await client.post(
+            "/api/plugins/unifi_protect/credentials", json={"host": "192.168.1.1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        class FakeClient:
+            async def get_camera_snapshot(self, camera_id):
+                assert camera_id == "cam1"
+                return b"\xff\xd8\xff\xe0fakejpeg"
+
+        async def _fake_get_client(section):
+            return FakeClient()
+
+        monkeypatch.setattr(unifi_routes, "_get_client", _fake_get_client)
+
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras/cam1/snapshot", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        assert resp.headers["Content-Type"] == "image/jpeg"
+        assert resp.headers["Cache-Control"] == "no-store"
+        assert (await resp.get_data()) == b"\xff\xd8\xff\xe0fakejpeg"
+
+    async def test_snapshot_get_returns_404_when_camera_offline(self, client, monkeypatch):
+        import plugins.unifi_protect.routes as unifi_routes
+
+        (await client.post(
+            "/api/plugins/unifi_protect/credentials", json={"host": "192.168.1.1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        class FakeClient:
+            async def get_camera_snapshot(self, camera_id):
+                return None
+
+        async def _fake_get_client(section):
+            return FakeClient()
+
+        monkeypatch.setattr(unifi_routes, "_get_client", _fake_get_client)
+
+        resp = (await client.get(
+            "/api/plugins/unifi_protect/cameras/cam1/snapshot", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 404
+
+    async def test_call_with_retry_retries_once_with_fresh_client(self, monkeypatch):
+        import plugins.unifi_protect.routes as unifi_routes
+
+        unifi_routes._client_cache.clear()
+        section = {"host": "192.168.1.1", "username": "u", "password": "p", "verify_ssl": False}
+        get_client_calls = {"n": 0}
+
+        async def _fake_get_client(sect):
+            get_client_calls["n"] += 1
+            key = unifi_routes._client_cache_key(sect)
+            client = object()
+            unifi_routes._client_cache[key] = client
+            return client
+
+        monkeypatch.setattr(unifi_routes, "_get_client", _fake_get_client)
+
+        action_calls = {"n": 0}
+
+        async def action(client):
+            action_calls["n"] += 1
+            if action_calls["n"] == 1:
+                raise RuntimeError("stale session")
+            return "ok"
+
+        result = await unifi_routes._call_with_retry(section, action)
+        assert result == "ok"
+        assert get_client_calls["n"] == 2
+        assert action_calls["n"] == 2
+
 
 class TestHomeWhizPluginPage:
     async def test_page_redirects_to_login_without_auth(self, client):

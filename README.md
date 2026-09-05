@@ -1269,6 +1269,25 @@ Wszystkie te komponenty raportują swój status do panelu webowego - sekcja
 (z czasem ostatniej zmiany). Zdarzenia zmiany stanu (utrata/przywrócenie
 połączenia) trafiają też do dziennika zdarzeń jako typ `system`.
 
+### Podgląd na żywo z kamer UniFi Protect
+
+Zakładka `/plugins/unifi_protect` ma sekcję "📷 Podgląd na żywo" - wybór
+kamery (lista pobierana z kontrolera przez `uiprotect`) i odświeżany co
+ok. 1,5s zrzut (`ProtectApiClient.get_camera_snapshot`). To **celowo NIE
+jest pełny strumień wideo** (RTSP/WebRTC) - seria zdjęć JPEG wystarcza do
+szybkiego podglądu "co się dzieje teraz", bez FFmpeg, dodatkowych portów
+czy zależności do transkodowania wideo w przeglądarce. Odświeżanie
+pauzuje się automatycznie, gdy karta przeglądarki jest w tle
+(`document.visibilityState`), żeby nie obciążać kontrolera niepotrzebnie,
+kiedy nikt nie patrzy.
+
+Połączenie z kontrolerem UniFi Protect na potrzeby podglądu jest osobne od
+połączenia procesu `bridge` (używanego do wykrywania ruchu,
+`bridge/unifi_protect_events.py`) - dashboard łączy się bezpośrednio,
+tymi samymi poświadczeniami z zakładki wyżej, z własnym, leniwie
+tworzonym i buforowanym klientem (jedna próba ponowienia ze świeżym
+klientem przy błędzie, np. wygasłej sesji).
+
 ### Powiadomienia push o utracie/przywróceniu połączenia
 
 Oprócz samego panelu, bridge wysyła **powiadomienie push (ntfy)**, gdy
