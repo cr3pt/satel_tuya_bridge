@@ -1426,6 +1426,39 @@ sparowaniu widoczny bezpośrednio w aplikacji Dom (i przez to sterowalny
 przez Siri) - **domyślnie wyłączony**, bo to pełnoprawny kanał
 sterowania systemem alarmowym.
 
+### Jak skonfigurować krok po kroku
+
+1. **Włącz sieć hosta w Dockerze (Linux).** W `docker-compose.yml`
+   odkomentuj `network_mode: host` przy usłudze `bridge` (linia jest już
+   tam, tylko zakomentowana - patrz komentarz w pliku) i uruchom
+   `docker compose up -d bridge`, żeby zmiana weszła w życie. Bez tego
+   parowanie z aplikacją Dom nie zadziała (ogłoszenia mDNS/Bonjour nie
+   przechodzą przez domyślną sieć mostkowaną Dockera) - to jedyny krok
+   wymagający ręcznej edycji pliku, reszta dzieje się w panelu.
+2. **Włącz wtyczkę.** Zakładka 🧩 Wtyczki -> "🏡 Most HomeKit" ->
+   zaznacz "Wtyczka włączona" -> Zapisz. Zmiana wymaga pełnego restartu
+   procesu bridge'a (przycisk "Zrestartuj bridge i panel teraz" w
+   zakładce ⚙ Ustawienia ogólne -> Połączenia, albo
+   `docker compose restart bridge`).
+3. **Opcjonalnie dostosuj nazwę/port mostu.** Ta sama strona wtyczki -
+   sekcja "Konfiguracja mostu": nazwa widoczna w aplikacji Dom (domyślnie
+   "Satel-Tuya-eBUS") i port TCP (domyślnie `51826`, zmień tylko jeśli
+   coś innego w sieci już go zajmuje). Też wymaga restartu bridge'a po
+   zapisaniu.
+4. **Odczytaj kod parowania.** Sekcja "Parowanie" na tej samej stronie
+   pokazuje kod w formacie `XXX-XX-XXX`, wygenerowany automatycznie przy
+   pierwszym zapisaniu ustawień.
+5. **Dodaj most w aplikacji Dom (iPhone/iPad, ta sama sieć Wi-Fi co
+   bridge).** Aplikacja Dom -> "+" -> "Dodaj akcesorium" -> "Nie masz
+   kodu ani nie możesz zeskanować?" -> wybierz most z listy (nazwa z
+   kroku 3) -> wpisz kod z kroku 4 ręcznie. Po chwili pojawią się
+   wszystkie partycje Satela, urządzenia Tuya i włączone sceny jako
+   osobne akcesoria w jednym pomieszczeniu/moście.
+6. **Gdyby trzeba było sparować od nowa** (np. po zmianie sieci albo
+   usunięciu mostu z aplikacji Dom przez pomyłkę) - przycisk "Resetuj
+   parowanie" na stronie wtyczki, potem restart bridge'a i parowanie od
+   kroku 5.
+
 **Co się pojawia:**
 - Każda skonfigurowana partycja Satela - jako akcesorium "System
   alarmowy" (uzbrojenie/rozbrojenie + stan "alarm wyzwolony", patrz niżej).
