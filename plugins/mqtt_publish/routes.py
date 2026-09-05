@@ -4,12 +4,24 @@ from quart import Quart, jsonify, render_template, request
 
 from plugins import PluginMeta, register_settings_route
 
+def describe_state(config_raw: dict) -> dict:
+    mqtt_publish = config_raw.get("mqtt_publish", {}) or {}
+    ebus = config_raw.get("ebus", {}) or {}
+    return {
+        "enabled": bool(mqtt_publish.get("enabled", True)) and bool(ebus.get("mqtt_host")),
+        "configured": bool(ebus.get("mqtt_host")),
+        "detail": "używa brokera eBUS" if ebus.get("mqtt_host") else "brak brokera MQTT",
+    }
+
+
 META = PluginMeta(
     id="mqtt_publish",
-    name="Publikacja stanu MQTT",
+    name="Publikacja stanu do MQTT",
     icon="📡",
-    description="Generyczna publikacja stanu Satela i Tuya po MQTT (osobno od Home Assistant Discovery).",
+    description="Stan Satela/Tuya na osobnym temacie MQTT, niezależnie od Home Assistant.",
     config_url="/plugins/mqtt_publish",
+    toggle_route="connections_restart",
+    describe_state=describe_state,
 )
 
 

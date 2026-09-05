@@ -31,7 +31,7 @@ from dashboard.auth import AuthGuard, require_auth, SESSION_COOKIE_NAME, SESSION
 from dashboard.setup import (
     build_config_dict, validate, build_automations_dict, validate_automations,
     build_satel_fields_dict, build_tuya_devices_dict,
-    build_connections_patch, validate_connections, connections_to_form, list_plugins,
+    build_connections_patch, validate_connections, connections_to_form, list_plugins, list_plugin_load_errors,
     build_location_patch, validate_location,
     draft_path_for, load_draft, save_draft, delete_draft,
 )
@@ -118,7 +118,7 @@ def _reload_bridge_config_from_disk() -> None:
 from jinja2 import ChoiceLoader, FileSystemLoader
 import plugins as _plugins
 
-_plugin_metas = _plugins.register_all(
+_plugin_metas, _plugin_load_errors = _plugins.register_all(
     app,
     require_auth=require_auth,
     get_auth_guard=lambda: auth_guard,
@@ -130,6 +130,9 @@ _plugin_metas = _plugins.register_all(
     get_history=lambda: history,
     get_satel_partitions=lambda: satel_partitions_cfg,
 )
+if _plugin_load_errors:
+    for _err in _plugin_load_errors:
+        logger.warning("Wtyczka '%s' pominięta: %s", _err.plugin_dir, _err.error)
 app.jinja_loader = ChoiceLoader([
     app.jinja_loader,
     FileSystemLoader([str(pathlib.Path(__file__).resolve().parent.parent / "plugins" / meta.id / "templates")
@@ -574,21 +577,27 @@ async def api_config_import_zip():
     })
 
 
-_CONNECTIONS_PLUGIN_IDS_RESTART = {"tuya_cloud", "home_assistant", "mqtt_publish"}
-_CONNECTIONS_PLUGIN_IDS_LIVE = {"satel", "tuya_local"}
+# Każda wtyczka deklaruje swój `toggle_route` w META (plugins/<id>/routes.py) - poniższe
+# zestawy są z niego wyprowadzone, zamiast być osobno utrzymywaną listą id w tym pliku.
+_CONNECTIONS_PLUGIN_IDS_RESTART = {
+    m.id for m in _plugin_metas if m.toggle_route == "connections_restart"
+}
+_CONNECTIONS_PLUGIN_IDS_LIVE = {
+    m.id for m in _plugin_metas if m.toggle_route == "toggle_prereq_connections_live"
+}
 _CONNECTIONS_PLUGIN_IDS = _CONNECTIONS_PLUGIN_IDS_RESTART | _CONNECTIONS_PLUGIN_IDS_LIVE
-_AUTOMATIONS_PLUGIN_IDS = {"presence_simulation"}
+_AUTOMATIONS_PLUGIN_IDS = {m.id for m in _plugin_metas if m.toggle_route == "automations"}
 
 _TOGGLE_ONLY_PLUGIN_IDS = {
-    "satel", "tuya_local", "ebus", "unifi_protect", "homewhiz", "notifications",
-    "mcp_server", "homekit",
+    m.id for m in _plugin_metas
+    if m.toggle_route in ("toggle_no_prereq", "toggle_prereq", "toggle_prereq_connections_live")
 }
 _TOGGLE_ONLY_CONFIG_KEY = {
-    "satel": "satel", "tuya_local": "tuya", "ebus": "ebus",
-    "unifi_protect": "unifi_protect", "homewhiz": "homewhiz", "notifications": "notifications",
-    "mcp_server": "mcp_server", "homekit": "homekit",
+    m.id: m.config_key for m in _plugin_metas if m.id in _TOGGLE_ONLY_PLUGIN_IDS
 }
-_TOGGLE_ONLY_NO_PREREQ_IDS = {"mcp_server", "homekit"}
+_TOGGLE_ONLY_NO_PREREQ_IDS = {
+    m.id for m in _plugin_metas if m.toggle_route == "toggle_no_prereq"
+}
 
 
 @app.route("/plugins")
@@ -599,6 +608,11 @@ async def plugins_page():
 @app.route("/api/plugins", methods=["GET"])
 async def api_plugins_get():
     return jsonify(list_plugins(config_raw))
+
+
+@app.route("/api/plugins/load-errors", methods=["GET"])
+async def api_plugins_load_errors_get():
+    return jsonify(list_plugin_load_errors())
 
 
 @app.route("/api/plugins", methods=["POST"])

@@ -833,6 +833,20 @@ class TestPluginsEndpoint:
         assert '"x"' not in text
         assert '"k"' not in text
 
+    async def test_get_includes_config_url_per_plugin(self, client):
+        by_id = {p["id"]: p for p in await (await client.get("/api/plugins", headers=_basic_auth_header("test_haslo_123"))).get_json()}
+        assert by_id["satel"]["config_url"] == "/plugins/satel"
+        assert by_id["homekit"]["config_url"] == "/plugins/homekit"
+        assert by_id["tuya_zigbee"]["config_url"] == "/plugins/tuya"
+
+    async def test_load_errors_endpoint_requires_auth(self, client):
+        assert (await client.get("/api/plugins/load-errors")).status_code == 401
+
+    async def test_load_errors_endpoint_empty_for_healthy_install(self, client):
+        resp = (await client.get("/api/plugins/load-errors", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert await resp.get_json() == []
+
     async def test_post_without_auth_returns_401(self, client):
         resp = (await client.post("/api/plugins", json={"home_assistant": {"enabled": True}}))
         assert resp.status_code == 401

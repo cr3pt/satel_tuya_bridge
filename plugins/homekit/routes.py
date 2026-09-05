@@ -9,12 +9,27 @@ from quart import Quart, jsonify, render_template, request
 from bridge.homekit_bridge import TUYA_ACCESSORY_TYPES, resolve_homekit_config
 from plugins import PluginMeta, register_settings_route
 
+
+def describe_state(config_raw: dict) -> dict:
+    cfg = config_raw.get("homekit", {}) or {}
+    enabled = bool(cfg.get("enabled"))
+    return {
+        "enabled": enabled,
+        "configured": True,
+        "detail": f"port {cfg.get('port', _DEFAULT_PORT)}" if enabled else "wyłączony",
+    }
+
+
 META = PluginMeta(
     id="homekit",
     name="Most HomeKit (Apple)",
     icon="🏡",
-    description="Natywny most HomeKit (Apple Home) - centrala Satel jako system alarmowy, urządzenia Tuya, sceny.",
+    description="Natywny most HomeKit (Apple Home) - centrala Satel jako system alarmowy, urządzenia "
+                "Tuya, sceny.",
     config_url="/plugins/homekit",
+    config_key="homekit",
+    toggle_route="toggle_no_prereq",
+    describe_state=describe_state,
 )
 
 _DEFAULT_PORT = 51826

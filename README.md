@@ -896,6 +896,29 @@ MQTT, Tuya Cloud Pulsar) startuje tylko raz, przy starcie procesu (patrz
 żyje w dokumencie `automations` i włącza/wyłącza się na żywo w ciągu ok.
 1-2s, bez restartu (patrz "Zmiany działają od razu" wyżej).
 
+### Jak wtyczki są wykrywane (auto-discovery)
+
+Lista wtyczek na `/plugins` **nie jest hardkodowana** - każdy podkatalog
+`plugins/<id>/` z plikiem `routes.py` eksportującym `META` (obiekt
+`PluginMeta`: nazwa, ikona, opis, link do konfiguracji, czy przełączalna,
+czy wymaga restartu, funkcja `describe_state(config_raw)` zwracająca
+stan włączenia/skonfigurowania) oraz funkcję `register(app, **deps)` jest
+automatycznie traktowany jako wtyczka (`plugins/__init__.py:
+discover_plugin_metas()`/`register_all()`) - dodanie nowej integracji w
+przyszłości nie wymaga już dopisywania jej do osobnej listy w
+`dashboard/setup.py` czy `dashboard/app.py`, wystarczy sam katalog z
+poprawną strukturą.
+
+**Zabezpieczenie: katalog o niepoprawnej strukturze NIE staje się
+wtyczką.** Jeśli import `routes.py` się wywali, brakuje w nim `register`
+albo `META` nie jest obiektem `PluginMeta` - taki katalog jest pomijany
+(nie jest rejestrowany, nie pojawia się na liście, na pewno się sam nie
+włączy), a na stronie `/plugins` pojawia się żółty baner z nazwą katalogu
+i treścią błędu (endpoint `GET /api/plugins/load-errors`) - widoczny
+sygnał, że coś "podszywa się" pod wtyczkę, zamiast cichego pominięcia.
+Katalogi zaczynające się od `_` (np. `__pycache__`) są ignorowane bez
+ostrzeżenia - to konwencja "wyłącz z automatycznego wykrywania".
+
 ### Poziom logowania per wtyczka
 
 Każda wtyczka (na swojej dedykowanej stronie, sekcja "⚙ Ustawienia

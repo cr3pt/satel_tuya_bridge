@@ -11,12 +11,28 @@ from plugins import PluginMeta, register_settings_route
 
 logger = logging.getLogger("bridge.mcp_server")
 
+
+def describe_state(config_raw: dict) -> dict:
+    cfg = config_raw.get("mcp_server", {}) or {}
+    enabled = bool(cfg.get("enabled"))
+    return {
+        "enabled": enabled,
+        "configured": True,
+        "detail": "aktywny (POST /api/mcp) - wymaga tokenu API" if enabled else "wyłączony",
+    }
+
+
 META = PluginMeta(
     id="mcp_server",
     name="Serwer MCP (Model Context Protocol)",
     icon="🤖",
-    description="Udostępnia sterowanie systemem jako narzędzia MCP dla asystentów AI (Claude Desktop, Claude Code itp.) przez HTTP.",
+    description="Udostępnia sterowanie systemem jako narzędzia MCP dla asystentów AI (Claude Desktop, "
+                "Claude Code itp.) - wymaga tokenu API.",
     config_url="/plugins/mcp_server",
+    config_key="mcp_server",
+    restart_required=False,
+    toggle_route="toggle_no_prereq",
+    describe_state=describe_state,
 )
 
 PROTOCOL_VERSION = "2024-11-05"

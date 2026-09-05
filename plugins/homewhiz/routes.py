@@ -9,12 +9,27 @@ from bridge.homewhiz_client import (
 )
 from plugins import PluginMeta, register_settings_route
 
+def describe_state(config_raw: dict) -> dict:
+    cfg = config_raw.get("homewhiz") or {}
+    return {
+        "enabled": cfg.get("enabled", True) and bool(cfg.get("username") and cfg.get("appliances")),
+        "configured": bool(cfg.get("username") and cfg.get("appliances")),
+        "detail": (
+            f"{len(cfg.get('appliances', {}))} urządzeń" if cfg.get("appliances")
+            else "brak poświadczeń/urządzeń"
+        ),
+    }
+
+
 META = PluginMeta(
     id="homewhiz",
     name="Zmywarki/AGD HomeWhiz",
     icon="🍽",
-    description="Stan zmywarek (i innego AGD) BEQ/Arcelik sterowanych przez chmurę HomeWhiz.",
+    description="Stan zmywarek (i innego AGD) BEQ/Arcelik sterowanych przez chmurę HomeWhiz - dostępny "
+                "jako warunek 'stan' w automatyzacjach.",
     config_url="/plugins/homewhiz",
+    config_key="homewhiz",
+    describe_state=describe_state,
 )
 
 

@@ -4,12 +4,24 @@ from quart import Quart, jsonify, render_template, request
 
 from plugins import PluginMeta, register_settings_route
 
+def describe_state(config_raw: dict) -> dict:
+    notifications = config_raw.get("notifications", {}) or {}
+    return {
+        "enabled": notifications.get("enabled", True) and bool(notifications.get("ntfy_topic_url")),
+        "configured": bool(notifications.get("ntfy_topic_url")),
+        "detail": "skonfigurowane" if notifications.get("ntfy_topic_url") else "nieskonfigurowane",
+    }
+
+
 META = PluginMeta(
     id="notifications",
-    name="Powiadomienia (ntfy)",
+    name="Powiadomienia push (ntfy)",
     icon="🔔",
-    description="Powiadomienia push o alarmach/zdarzeniach przez ntfy.sh (albo własny serwer ntfy).",
+    description="Push przy utracie/przywróceniu połączenia z centralą/MQTT/Tuya/kamerami oraz przy "
+                "alarmach progowych.",
     config_url="/plugins/notifications",
+    config_key="notifications",
+    describe_state=describe_state,
 )
 
 

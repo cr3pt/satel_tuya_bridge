@@ -4,12 +4,25 @@ from quart import Quart, jsonify, render_template, request
 
 from plugins import PluginMeta, register_settings_route
 
+def describe_state(config_raw: dict) -> dict:
+    ha = config_raw.get("home_assistant", {}) or {}
+    ebus = config_raw.get("ebus", {}) or {}
+    return {
+        "enabled": bool(ha.get("enabled")),
+        "configured": bool(ha.get("mqtt_host") or ebus.get("mqtt_host")),
+        "detail": ha.get("mqtt_host") or ebus.get("mqtt_host") or "brak brokera MQTT",
+    }
+
+
 META = PluginMeta(
     id="home_assistant",
     name="Home Assistant (MQTT Discovery)",
     icon="🏠",
-    description="Publikacja encji do Home Assistant przez MQTT Discovery.",
+    description="Automatyczne udostępnienie encji (wejścia/wyjścia Satela, urządzenia Tuya, czujniki "
+                "kotła) w Home Assistant.",
     config_url="/plugins/home_assistant",
+    toggle_route="connections_restart",
+    describe_state=describe_state,
 )
 
 
