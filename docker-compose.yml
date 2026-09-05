@@ -28,15 +28,15 @@ services:
     environment:
       - TZ=Europe/Warsaw
     restart: unless-stopped
-    # Centrala Satel i urządzenia Tuya są lokalnymi urządzeniami LAN, do
-    # których bridge łączy się WYCHODZĄCO (adres skonfigurowany w
-    # config.db) - domyślna sieć mostkowana Dockera to obsługuje bez
-    # dodatkowej konfiguracji. Jeśli w Twojej sieci coś tego wymaga (np.
-    # discovery po multicaście) ALBO włączasz wtyczkę "Most HomeKit"
-    # (zakładka 🧩 Wtyczki -> 🏡 Most HomeKit - parowanie z aplikacją Dom
-    # wymaga ogłoszeń mDNS/Bonjour, które nie przechodzą przez domyślną
-    # sieć mostkowaną Dockera), odkomentuj poniższą linię (tylko Linux):
-    # network_mode: host
+    # Domyślnie sieć hosta (tylko Linux) - wymagane przez wtyczkę "Most
+    # HomeKit" (parowanie z aplikacją Dom opiera się na ogłoszeniach
+    # mDNS/Bonjour, które nie przechodzą przez domyślną sieć mostkowaną
+    # Dockera), a przy okazji upraszcza discovery po multicaście dla
+    # innych integracji. Na Mac/Windows (Docker Desktop nie obsługuje
+    # network_mode: host) zakomentuj poniższą linię - bridge nadal
+    # zadziała ze zwykłą siecią mostkowaną, tylko bez możliwości
+    # sparowania mostu HomeKit.
+    network_mode: host
 
   dashboard:
     build: .
