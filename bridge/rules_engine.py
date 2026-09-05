@@ -541,6 +541,13 @@ class RulesEngine:
                 await self.tuya.turn_off(name)
                 self.history.mark_command_done(cmd["id"], {"message": f"Wyłączono '{name}'"})
                 self._schedule_tuya_status_refresh(name)
+            elif cmd["command"] == "run_scene":
+                name = cmd["params"]["name"]
+                if not self.scenes.exists(name):
+                    self.history.mark_command_error(cmd["id"], f"Nieznana scena: '{name}'")
+                else:
+                    await self.scenes.run(name)
+                    self.history.mark_command_done(cmd["id"], {"message": f"Uruchomiono scenę '{name}'"})
             elif cmd["command"] == "reload_config":
                 result = await self.reload_config()
                 self.history.mark_command_done(cmd["id"], result)

@@ -887,6 +887,9 @@ PLUGIN_DEFS = [
     {"id": "notifications", "name": "Powiadomienia push (ntfy)", "icon": "🔔", "toggleable": True, "restart_required": True,
      "has_log_level": True,
      "description": "Push przy utracie/przywróceniu połączenia z centralą/MQTT/Tuya/kamerami oraz przy alarmach progowych."},
+    {"id": "mcp_server", "name": "Serwer MCP (Model Context Protocol)", "icon": "🤖", "toggleable": True, "restart_required": False,
+     "has_log_level": True,
+     "description": "Udostępnia sterowanie systemem jako narzędzia MCP dla asystentów AI (Claude Desktop, Claude Code itp.) - wymaga tokenu API."},
 ]
 
 
@@ -898,6 +901,7 @@ def list_plugins(config_raw: dict) -> list[dict]:
     mqtt_publish = config_raw.get("mqtt_publish", {})
     presence = config_raw.get("presence_simulation", {})
     notifications = config_raw.get("notifications", {})
+    mcp_server = config_raw.get("mcp_server", {})
 
     tuya_devices = tuya.get("devices", {}) or {}
     zigbee_devices = {n: d for n, d in tuya_devices.items() if d.get("gateway")}
@@ -967,6 +971,11 @@ def list_plugins(config_raw: dict) -> list[dict]:
             "enabled": notifications.get("enabled", True) and bool(notifications.get("ntfy_topic_url")),
             "configured": bool(notifications.get("ntfy_topic_url")),
             "detail": "skonfigurowane" if notifications.get("ntfy_topic_url") else "nieskonfigurowane",
+        },
+        "mcp_server": {
+            "enabled": bool(mcp_server.get("enabled")),
+            "configured": True,
+            "detail": "aktywny (POST /api/mcp) - wymaga tokenu API" if mcp_server.get("enabled") else "wyłączony",
         },
     }
 

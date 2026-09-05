@@ -1329,6 +1329,49 @@ Dzięki temu autoryzacja zostaje jedna, spójna, i w jednym miejscu -
 zamiast dwóch równoległych ścieżek sterowania o różnym poziomie
 zabezpieczeń.
 
+## Serwer MCP (Model Context Protocol)
+
+Opcjonalna wtyczka (zakładka 🧩 Wtyczki -> "🤖 Serwer MCP"), która
+udostępnia sterowanie systemem jako zestaw narzędzi
+[MCP](https://modelcontextprotocol.io/) dla asystentów AI (Claude
+Desktop, Claude Code, inne klienty MCP obsługujące zdalny serwer przez
+HTTP) - jeden endpoint, `POST /api/mcp`, protokół JSON-RPC 2.0
+("Streamable HTTP", bez zależności od pakietu `mcp` - obsługa napisana
+ręcznie w `plugins/mcp_server/routes.py`, żeby nie ciągnąć do projektu
+Starlette/uvicorn/anyio obok już używanego Quarta/Hypercorna).
+
+**Domyślnie wyłączony** - to pełnoprawny kanał sterowania (uzbrajanie,
+urządzenia Tuya, sceny), więc świadomie włącz go w ustawieniach wtyczki,
+gdy chcesz podłączyć klienta MCP.
+
+**Autoryzacja - tylko token API.** Endpoint jest chroniony tak samo jak
+reszta panelu (sesja/Basic Auth/token - patrz "Zakładka ⚙ Ustawienia
+ogólne" wyżej), ale w praktyce klient MCP nie ma przeglądarki ani hasła
+pod ręką - użyj **tokenu API** (`Authorization: Bearer <token>`,
+wygenerowanego w sekcji "Tokeny API"). Strona ustawień wtyczki pokazuje
+gotowy adres endpointu oraz przykładową konfigurację klienta.
+
+**Dostępne narzędzia** - każde wywołanie trafia do tej samej kolejki
+komend co REST API (`history.enqueue_command`, wykonywane przez proces
+`bridge`, patrz sekcja "Bezpieczeństwo panelu" o architekturze
+komend) - MCP nie omija żadnej walidacji ani logiki, jakiej nie miałyby
+istniejące endpointy:
+- `get_status(category?)` - aktualny stan czujników/wejść/wyjść/urządzeń.
+- `list_scenes()` - lista zdefiniowanych scen (nazwa, czy włączona, liczba akcji).
+- `run_scene(name)` - uruchamia scenę o podanej nazwie.
+- `satel_arm(partitions?, mode?)` / `satel_disarm(partitions?)` -
+  uzbraja/rozbraja strefy (domyślnie wszystkie skonfigurowane).
+- `trigger_virtual_input(name)` - aktywuje wirtualne wejście Satela.
+- `tuya_on(name)` / `tuya_off(name)` - włącza/wyłącza urządzenie Tuya.
+
+Wywołanie narzędzia czeka do 5 sekund na wykonanie komendy przez proces
+`bridge` (odpytując `commands.status` co 0,2s) - jeśli bridge nie zdąży w
+tym czasie (np. jest właśnie przeładowywany), narzędzie zwraca
+`status: "pending"` z `command_id`, zamiast wisieć w nieskończoność.
+Nieznana nazwa sceny/urządzenia/wejścia albo błąd wykonania komendy
+wraca jako `isError: true` z czytelnym komunikatem - LLM po drugiej
+stronie dostaje treść błędu zamiast pustej odpowiedzi.
+
 ## Automatyzacje: sceny, harmonogramy, eskalacja, warunki, łańcuchy, symulacja obecności
 
 Oprócz prostych reguł "ruch -> włącz urządzenie", bridge wspiera bardziej

@@ -127,6 +127,8 @@ _plugin_metas = _plugins.register_all(
     get_config_path=lambda: config_path,
     reload_bridge_config=_reload_bridge_config_from_disk,
     enqueue_bridge_reload=_enqueue_bridge_reload,
+    get_history=lambda: history,
+    get_satel_partitions=lambda: satel_partitions_cfg,
 )
 app.jinja_loader = ChoiceLoader([
     app.jinja_loader,
@@ -756,6 +758,16 @@ async def api_config_automations_post():
         },
         "message": _RELOAD_MESSAGE,
     })
+
+
+@app.route("/api/automation/scenes/<name>/run", methods=["POST"])
+@require_auth()
+async def api_automation_scene_run(name):
+    scene_names = {s["name"] for s in config_raw.get("scenes", [])}
+    if name not in scene_names:
+        return jsonify({"error": f"Nieznana scena: '{name}'"}), 404
+    command_id = history.enqueue_command("run_scene", {"name": name})
+    return jsonify({"command_id": command_id, "message": f"Zlecono uruchomienie sceny '{name}'"})
 
 
 @app.route("/api/sensors")
