@@ -849,6 +849,26 @@ class TestPluginsEndpoint:
         ))
         assert resp.status_code == 400
 
+    async def test_post_enables_mcp_server_without_prior_config(self, client):
+        import dashboard.app as app_module
+
+        resp = (await client.post(
+            "/api/plugins", json={"mcp_server": {"enabled": True}}, headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")
+        assert saved["mcp_server"]["enabled"] is True
+
+    async def test_post_enables_homekit_without_prior_config(self, client):
+        import dashboard.app as app_module
+
+        resp = (await client.post(
+            "/api/plugins", json={"homekit": {"enabled": True}}, headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")
+        assert saved["homekit"]["enabled"] is True
+
     async def test_post_toggles_satel_enabled_without_touching_host(self, client):
         import dashboard.app as app_module
 
