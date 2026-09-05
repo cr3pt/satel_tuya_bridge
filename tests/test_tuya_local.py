@@ -3,6 +3,7 @@ import pytest
 from bridge.tuya_local import (
     TuyaLocalController, scan_network, fetch_cloud_devices, fetch_device_dp_schema,
     fetch_dp_schemas_for_devices, find_tuya_switch_key, format_tuya_dps,
+    extract_tuya_sensor_readings, detect_tuya_sensor_type,
 )
 
 DEVICES_CFG = {
@@ -456,6 +457,119 @@ class TestFormatTuyaDps:
     def test_short_string_value_shown_verbatim(self):
         is_on, extra = format_tuya_dps({"switch_1": True, "breaker_number": "gom25010001"})
         assert extra == "numer licznika: gom25010001"
+
+
+class TestExtractTuyaSensorReadings:
+
+    def test_temperature_scaled_from_schema(self):
+        schema = {"4": {"code": "va_temperature", "type": "Value", "values": '{"scale":1,"unit":"C"}'}}
+        readings = extract_tuya_sensor_readings({"4": 235}, schema=schema)
+        assert readings == {"temperature_celsius": 23.5}
+
+    def test_temperature_defaults_to_tenths_scale_without_schema(self):
+        readings = extract_tuya_sensor_readings({"va_temperature": 179})
+        assert readings == {"temperature_celsius": 17.9}
+
+    def test_temperature_converted_from_fahrenheit_when_unit_convert_is_f(self):
+        readings = extract_tuya_sensor_readings({"va_temperature": 680, "temp_unit_convert": "f"})
+        assert readings["temperature_celsius"] == pytest.approx(20.0, abs=0.1)
+
+    def test_temperature_stays_celsius_when_unit_convert_is_c(self):
+        readings = extract_tuya_sensor_readings({"va_temperature": 200, "temp_unit_convert": "c"})
+        assert readings["temperature_celsius"] == 20.0
+
+    def test_humidity_has_no_default_scaling(self):
+        readings = extract_tuya_sensor_readings({"va_humidity": 53})
+        assert readings == {"humidity_percent": 53.0}
+
+    def test_humidity_clamped_to_0_100(self):
+        readings = extract_tuya_sensor_readings({"va_humidity": 253})
+        assert readings["humidity_percent"] == 100.0
+
+    def test_combined_temperature_and_humidity(self):
+        readings = extract_tuya_sensor_readings({"va_temperature": 212, "va_humidity": 53, "battery_percentage": 39})
+        assert readings == {"temperature_celsius": 21.2, "humidity_percent": 53.0, "battery_percent": 39.0}
+
+    def test_leak_enum_normal_is_not_detected(self):
+        readings = extract_tuya_sensor_readings({"watersensor_state": "normal"})
+        assert readings == {"leak_detected": False}
+
+    def test_leak_enum_alarm_is_detected(self):
+        readings = extract_tuya_sensor_readings({"watersensor_state": "alarm"})
+        assert readings == {"leak_detected": True}
+
+    def test_leak_boolean_true_is_detected(self):
+        readings = extract_tuya_sensor_readings({"watersensor_state": True})
+        assert readings == {"leak_detected": True}
+
+    def test_contact_true_is_open(self):
+        readings = extract_tuya_sensor_readings({"doorcontact_state": True})
+        assert readings == {"contact_open": True}
+
+    def test_contact_false_is_closed(self):
+        readings = extract_tuya_sensor_readings({"doorcontact_state": False})
+        assert readings == {"contact_open": False}
+
+    def test_battery_percentage_no_scaling(self):
+        readings = extract_tuya_sensor_readings({"battery_percentage": 100})
+        assert readings == {"battery_percent": 100.0}
+
+    def test_local_device_dp_ids_resolved_through_schema(self):
+        schema = {
+            "1": {"code": "doorcontact_state", "type": "Boolean"},
+            "2": {"code": "battery_percentage", "type": "Value", "values": '{"scale":0,"unit":"%"}'},
+        }
+        readings = extract_tuya_sensor_readings({"1": False, "2": 100}, schema=schema)
+        assert readings == {"contact_open": False, "battery_percent": 100.0}
+
+    def test_no_recognized_codes_returns_empty(self):
+        assert extract_tuya_sensor_readings({"switch_1": True}) == {}
+
+    def test_none_values_are_ignored(self):
+        assert extract_tuya_sensor_readings({"va_temperature": None}) == {}
+
+
+class TestDetectTuyaSensorType:
+
+    def test_local_device_temp_and_humidity_schema_detects_combo(self):
+        device_cfg = {"dp_schema": {
+            "1": {"code": "va_temperature", "type": "Value"},
+            "2": {"code": "va_humidity", "type": "Value"},
+        }}
+        assert detect_tuya_sensor_type(device_cfg) == "temp_humidity_sensor"
+
+    def test_local_device_temperature_only(self):
+        device_cfg = {"dp_schema": {"1": {"code": "va_temperature", "type": "Value"}}}
+        assert detect_tuya_sensor_type(device_cfg) == "temperature_sensor"
+
+    def test_local_device_humidity_only(self):
+        device_cfg = {"dp_schema": {"1": {"code": "va_humidity", "type": "Value"}}}
+        assert detect_tuya_sensor_type(device_cfg) == "humidity_sensor"
+
+    def test_local_device_leak_sensor(self):
+        device_cfg = {"dp_schema": {"1": {"code": "watersensor_state", "type": "Enum"}}}
+        assert detect_tuya_sensor_type(device_cfg) == "leak_sensor"
+
+    def test_local_device_contact_sensor(self):
+        device_cfg = {"dp_schema": {"1": {"code": "doorcontact_state", "type": "Boolean"}}}
+        assert detect_tuya_sensor_type(device_cfg) == "contact_sensor"
+
+    def test_cloud_device_category_wsdcg_detects_combo(self):
+        assert detect_tuya_sensor_type({"category": "wsdcg"}) == "temp_humidity_sensor"
+
+    def test_cloud_device_category_sj_detects_leak(self):
+        assert detect_tuya_sensor_type({"category": "sj"}) == "leak_sensor"
+
+    def test_cloud_device_category_mcs_detects_contact(self):
+        assert detect_tuya_sensor_type({"category": "mcs"}) == "contact_sensor"
+
+    def test_no_schema_no_matching_category_returns_empty(self):
+        assert detect_tuya_sensor_type({"category": "cz"}) == ""
+        assert detect_tuya_sensor_type({}) == ""
+
+    def test_dp_schema_takes_priority_over_category(self):
+        device_cfg = {"category": "sj", "dp_schema": {"1": {"code": "va_temperature", "type": "Value"}}}
+        assert detect_tuya_sensor_type(device_cfg) == "temperature_sensor"
 
 
 class TestZigbeeGateways:

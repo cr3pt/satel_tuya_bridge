@@ -437,3 +437,134 @@ class TestResolveHomekitConfig:
         config_raw["scenes"].append({"actions": []})
         resolved = resolve_homekit_config(config_raw)
         assert len(resolved["scenes"]) == 2
+
+    def test_detected_type_exposed_for_device_with_recognized_dp_schema(self):
+        config_raw = self._config_raw()
+        config_raw["tuya"]["devices"]["lampka"]["dp_schema"] = {
+            "1": {"code": "va_temperature", "type": "Value"},
+        }
+        resolved = resolve_homekit_config(config_raw)
+        assert resolved["devices"]["lampka"]["detected_type"] == "temperature_sensor"
+
+    def test_auto_detected_type_used_as_default_when_nothing_saved(self):
+        config_raw = self._config_raw()
+        config_raw["tuya"]["devices"]["lampka"]["dp_schema"] = {
+            "1": {"code": "va_temperature", "type": "Value"},
+        }
+        resolved = resolve_homekit_config(config_raw)
+        assert resolved["devices"]["lampka"]["type"] == "temperature_sensor"
+
+    def test_saved_type_overrides_auto_detected_type(self):
+        config_raw = self._config_raw()
+        config_raw["tuya"]["devices"]["lampka"]["dp_schema"] = {
+            "1": {"code": "va_temperature", "type": "Value"},
+        }
+        config_raw["homekit"] = {"devices": {"lampka": {"type": "lightbulb"}}}
+        resolved = resolve_homekit_config(config_raw)
+        assert resolved["devices"]["lampka"]["type"] == "lightbulb"
+        assert resolved["devices"]["lampka"]["detected_type"] == "temperature_sensor"
+
+    def test_explicit_blank_type_suppresses_auto_detected_type(self):
+        config_raw = self._config_raw()
+        config_raw["tuya"]["devices"]["lampka"]["dp_schema"] = {
+            "1": {"code": "va_temperature", "type": "Value"},
+        }
+        config_raw["homekit"] = {"devices": {"lampka": {"type": ""}}}
+        resolved = resolve_homekit_config(config_raw)
+        assert resolved["devices"]["lampka"]["type"] == ""
+        assert resolved["devices"]["lampka"]["detected_type"] == "temperature_sensor"
+
+    def test_cloud_device_category_drives_auto_detection(self):
+        config_raw = self._config_raw()
+        config_raw["tuya"]["cloud_devices"]["gniazdko"]["category"] = "sj"
+        resolved = resolve_homekit_config(config_raw)
+        assert resolved["devices"]["gniazdko"]["type"] == "leak_sensor"
+        assert resolved["devices"]["gniazdko"]["detected_type"] == "leak_sensor"
+
+
+def _sensor_device(type_id, room=""):
+    return {"type": type_id, "room": room, "is_dimmer": False}
+
+
+class TestSensorAccessoryConstruction:
+
+    async def test_temperature_sensor_gets_temperature_sensor_service(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("temperature_sensor")})
+        acc = next(a for a in hk.bridge.accessories.values() if a.display_name == "czujnik")
+        assert acc.get_service("TemperatureSensor") is not None
+
+    async def test_humidity_sensor_gets_humidity_sensor_service(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("humidity_sensor")})
+        acc = next(a for a in hk.bridge.accessories.values() if a.display_name == "czujnik")
+        assert acc.get_service("HumiditySensor") is not None
+
+    async def test_temp_humidity_sensor_gets_both_services_on_one_accessory(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("temp_humidity_sensor")})
+        acc = next(a for a in hk.bridge.accessories.values() if a.display_name == "czujnik")
+        assert acc.get_service("TemperatureSensor") is not None
+        assert acc.get_service("HumiditySensor") is not None
+
+    async def test_leak_sensor_gets_leak_sensor_service(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("leak_sensor")})
+        acc = next(a for a in hk.bridge.accessories.values() if a.display_name == "czujnik")
+        assert acc.get_service("LeakSensor") is not None
+
+    async def test_contact_sensor_gets_contact_sensor_service(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("contact_sensor")})
+        acc = next(a for a in hk.bridge.accessories.values() if a.display_name == "czujnik")
+        assert acc.get_service("ContactSensor") is not None
+
+    async def test_sensor_accessories_are_not_stored_as_actuators(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("temperature_sensor")})
+        assert "czujnik" not in hk._tuya_chars
+        assert "czujnik" in hk._tuya_sensor_chars
+
+
+class TestUpdateTuyaSensorState:
+
+    async def test_temperature_sensor_updates_current_temperature(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("temperature_sensor")})
+        hk.update_tuya_sensor_state("czujnik", {"temperature_celsius": 21.5})
+        assert hk._tuya_sensor_chars["czujnik"]["temperature"].value == 21.5
+
+    async def test_temperature_sensor_low_battery_flag(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("temperature_sensor")})
+        hk.update_tuya_sensor_state("czujnik", {"temperature_celsius": 21.5, "battery_percent": 15})
+        assert hk._tuya_sensor_chars["czujnik"]["low_battery"].value == 1
+        hk.update_tuya_sensor_state("czujnik", {"temperature_celsius": 21.5, "battery_percent": 80})
+        assert hk._tuya_sensor_chars["czujnik"]["low_battery"].value == 0
+
+    async def test_humidity_sensor_updates_current_relative_humidity(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("humidity_sensor")})
+        hk.update_tuya_sensor_state("czujnik", {"humidity_percent": 62.0})
+        assert hk._tuya_sensor_chars["czujnik"]["humidity"].value == 62.0
+
+    async def test_temp_humidity_sensor_updates_both_services(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("temp_humidity_sensor")})
+        hk.update_tuya_sensor_state("czujnik", {"temperature_celsius": 21.2, "humidity_percent": 53.0})
+        chars = hk._tuya_sensor_chars["czujnik"]
+        assert chars["temperature"].value == 21.2
+        assert chars["humidity"].value == 53.0
+
+    async def test_leak_sensor_detected_and_not_detected(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("leak_sensor")})
+        hk.update_tuya_sensor_state("czujnik", {"leak_detected": True})
+        assert hk._tuya_sensor_chars["czujnik"]["leak"].value == 1
+        hk.update_tuya_sensor_state("czujnik", {"leak_detected": False})
+        assert hk._tuya_sensor_chars["czujnik"]["leak"].value == 0
+
+    async def test_contact_sensor_open_and_closed(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("contact_sensor")})
+        hk.update_tuya_sensor_state("czujnik", {"contact_open": True})
+        assert hk._tuya_sensor_chars["czujnik"]["contact"].value == 1
+        hk.update_tuya_sensor_state("czujnik", {"contact_open": False})
+        assert hk._tuya_sensor_chars["czujnik"]["contact"].value == 0
+
+    async def test_update_unknown_sensor_device_is_noop(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("temperature_sensor")})
+        hk.update_tuya_sensor_state("brak_takiego", {"temperature_celsius": 10})
+
+    async def test_empty_readings_is_noop(self, tmp_path):
+        hk = _make_bridge(tmp_path, devices={"czujnik": _sensor_device("temperature_sensor")})
+        hk.update_tuya_sensor_state("czujnik", {})
+        assert hk._tuya_sensor_chars["czujnik"]["temperature"].value == 20.0

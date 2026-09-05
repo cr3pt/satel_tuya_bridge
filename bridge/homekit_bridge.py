@@ -8,9 +8,11 @@ from pyhap.accessory import Accessory, Bridge
 from pyhap.accessory_driver import AccessoryDriver
 from pyhap.const import (
     CATEGORY_ALARM_SYSTEM, CATEGORY_DOOR_LOCK, CATEGORY_FAN, CATEGORY_GARAGE_DOOR_OPENER,
-    CATEGORY_LIGHTBULB, CATEGORY_OUTLET, CATEGORY_SPRINKLER, CATEGORY_SWITCH,
+    CATEGORY_LIGHTBULB, CATEGORY_OUTLET, CATEGORY_SENSOR, CATEGORY_SPRINKLER, CATEGORY_SWITCH,
     CATEGORY_WINDOW_COVERING,
 )
+
+from .tuya_local import detect_tuya_sensor_type
 
 logger = logging.getLogger("bridge.homekit")
 
@@ -21,6 +23,10 @@ SECURITY_STATE_TRIGGERED = 4
 _DOOR_OPEN = 0
 _DOOR_CLOSED = 1
 _POSITION_STOPPED = 2
+
+_CONTACT_DETECTED = 0
+_CONTACT_NOT_DETECTED = 1
+_LOW_BATTERY_THRESHOLD = 20
 
 _DEFAULT_PORT = 51826
 _SCENE_RESET_DELAY_SECONDS = 1.0
@@ -201,6 +207,98 @@ def _apply_lock(chars: dict, is_on: bool, percent: int | None) -> None:
     chars["target"].set_value(state)
 
 
+def _build_temperature_sensor(acc, tuya, loop, name: str, is_dimmer: bool) -> dict:
+    service = acc.add_preload_service("TemperatureSensor", chars=["StatusLowBattery"])
+    temp_char = service.get_characteristic("CurrentTemperature")
+    battery_char = service.get_characteristic("StatusLowBattery")
+    temp_char.set_value(20.0)
+    battery_char.set_value(0)
+    return {"temperature": temp_char, "low_battery": battery_char}
+
+
+def _apply_temperature_sensor(chars: dict, readings: dict) -> None:
+    if "temperature_celsius" in readings:
+        chars["temperature"].set_value(readings["temperature_celsius"])
+    if "battery_percent" in readings:
+        chars["low_battery"].set_value(1 if readings["battery_percent"] < _LOW_BATTERY_THRESHOLD else 0)
+
+
+def _build_humidity_sensor(acc, tuya, loop, name: str, is_dimmer: bool) -> dict:
+    service = acc.add_preload_service("HumiditySensor", chars=["StatusLowBattery"])
+    humidity_char = service.get_characteristic("CurrentRelativeHumidity")
+    battery_char = service.get_characteristic("StatusLowBattery")
+    humidity_char.set_value(50.0)
+    battery_char.set_value(0)
+    return {"humidity": humidity_char, "low_battery": battery_char}
+
+
+def _apply_humidity_sensor(chars: dict, readings: dict) -> None:
+    if "humidity_percent" in readings:
+        chars["humidity"].set_value(readings["humidity_percent"])
+    if "battery_percent" in readings:
+        chars["low_battery"].set_value(1 if readings["battery_percent"] < _LOW_BATTERY_THRESHOLD else 0)
+
+
+def _build_temp_humidity_sensor(acc, tuya, loop, name: str, is_dimmer: bool) -> dict:
+    temp_service = acc.add_preload_service("TemperatureSensor", chars=["StatusLowBattery"])
+    humidity_service = acc.add_preload_service("HumiditySensor", chars=["StatusLowBattery"])
+    temp_char = temp_service.get_characteristic("CurrentTemperature")
+    humidity_char = humidity_service.get_characteristic("CurrentRelativeHumidity")
+    temp_low_battery_char = temp_service.get_characteristic("StatusLowBattery")
+    humidity_low_battery_char = humidity_service.get_characteristic("StatusLowBattery")
+    temp_char.set_value(20.0)
+    humidity_char.set_value(50.0)
+    temp_low_battery_char.set_value(0)
+    humidity_low_battery_char.set_value(0)
+    return {
+        "temperature": temp_char, "humidity": humidity_char,
+        "low_battery": temp_low_battery_char, "low_battery_2": humidity_low_battery_char,
+    }
+
+
+def _apply_temp_humidity_sensor(chars: dict, readings: dict) -> None:
+    if "temperature_celsius" in readings:
+        chars["temperature"].set_value(readings["temperature_celsius"])
+    if "humidity_percent" in readings:
+        chars["humidity"].set_value(readings["humidity_percent"])
+    if "battery_percent" in readings:
+        low = 1 if readings["battery_percent"] < _LOW_BATTERY_THRESHOLD else 0
+        chars["low_battery"].set_value(low)
+        chars["low_battery_2"].set_value(low)
+
+
+def _build_leak_sensor(acc, tuya, loop, name: str, is_dimmer: bool) -> dict:
+    service = acc.add_preload_service("LeakSensor", chars=["StatusLowBattery"])
+    leak_char = service.get_characteristic("LeakDetected")
+    battery_char = service.get_characteristic("StatusLowBattery")
+    leak_char.set_value(0)
+    battery_char.set_value(0)
+    return {"leak": leak_char, "low_battery": battery_char}
+
+
+def _apply_leak_sensor(chars: dict, readings: dict) -> None:
+    if "leak_detected" in readings:
+        chars["leak"].set_value(1 if readings["leak_detected"] else 0)
+    if "battery_percent" in readings:
+        chars["low_battery"].set_value(1 if readings["battery_percent"] < _LOW_BATTERY_THRESHOLD else 0)
+
+
+def _build_contact_sensor(acc, tuya, loop, name: str, is_dimmer: bool) -> dict:
+    service = acc.add_preload_service("ContactSensor", chars=["StatusLowBattery"])
+    contact_char = service.get_characteristic("ContactSensorState")
+    battery_char = service.get_characteristic("StatusLowBattery")
+    contact_char.set_value(_CONTACT_DETECTED)
+    battery_char.set_value(0)
+    return {"contact": contact_char, "low_battery": battery_char}
+
+
+def _apply_contact_sensor(chars: dict, readings: dict) -> None:
+    if "contact_open" in readings:
+        chars["contact"].set_value(_CONTACT_NOT_DETECTED if readings["contact_open"] else _CONTACT_DETECTED)
+    if "battery_percent" in readings:
+        chars["low_battery"].set_value(1 if readings["battery_percent"] < _LOW_BATTERY_THRESHOLD else 0)
+
+
 TUYA_ACCESSORY_TYPES: dict[str, dict] = {
     "switch": {"label": "Włącznik", "category": CATEGORY_SWITCH, "build": _build_switch, "apply": _apply_switch},
     "outlet": {"label": "Gniazdko", "category": CATEGORY_OUTLET, "build": _build_outlet, "apply": _apply_outlet},
@@ -210,6 +308,26 @@ TUYA_ACCESSORY_TYPES: dict[str, dict] = {
     "window_covering": {"label": "Roleta / markiza", "category": CATEGORY_WINDOW_COVERING, "build": _build_window_covering, "apply": _apply_window_covering},
     "valve": {"label": "Zawór (nawadnianie)", "category": CATEGORY_SPRINKLER, "build": _build_valve, "apply": _apply_valve},
     "lock": {"label": "Zamek", "category": CATEGORY_DOOR_LOCK, "build": _build_lock, "apply": _apply_lock},
+    "temperature_sensor": {
+        "label": "Czujnik temperatury", "category": CATEGORY_SENSOR, "is_sensor": True,
+        "build": _build_temperature_sensor, "apply": _apply_temperature_sensor,
+    },
+    "humidity_sensor": {
+        "label": "Czujnik wilgotności", "category": CATEGORY_SENSOR, "is_sensor": True,
+        "build": _build_humidity_sensor, "apply": _apply_humidity_sensor,
+    },
+    "temp_humidity_sensor": {
+        "label": "Czujnik temperatury i wilgotności", "category": CATEGORY_SENSOR, "is_sensor": True,
+        "build": _build_temp_humidity_sensor, "apply": _apply_temp_humidity_sensor,
+    },
+    "leak_sensor": {
+        "label": "Czujnik zalania", "category": CATEGORY_SENSOR, "is_sensor": True,
+        "build": _build_leak_sensor, "apply": _apply_leak_sensor,
+    },
+    "contact_sensor": {
+        "label": "Kontaktron (drzwi/okno)", "category": CATEGORY_SENSOR, "is_sensor": True,
+        "build": _build_contact_sensor, "apply": _apply_contact_sensor,
+    },
 }
 
 
@@ -232,10 +350,13 @@ def resolve_homekit_config(config_raw: dict) -> dict:
     devices = {}
     for name, device_cfg in all_tuya_devices.items():
         saved = saved_devices.get(name) or {}
+        detected_type = detect_tuya_sensor_type(device_cfg)
+        type_id = saved["type"] if "type" in saved else (detected_type or "")
         devices[name] = {
-            "type": saved.get("type") or "",
+            "type": type_id,
             "room": saved.get("room") or "",
             "is_dimmer": (device_cfg or {}).get("type") == "dimmer",
+            "detected_type": detected_type,
         }
 
     scenes = {}
@@ -260,6 +381,8 @@ class HomeKitBridge:
         self._partition_chars: dict[int, tuple] = {}
         self._tuya_chars: dict[str, dict] = {}
         self._tuya_apply: dict[str, object] = {}
+        self._tuya_sensor_chars: dict[str, dict] = {}
+        self._tuya_sensor_apply: dict[str, object] = {}
 
         pincode = cfg.get("pincode")
         self.driver = AccessoryDriver(
@@ -287,8 +410,12 @@ class HomeKitBridge:
             chars = type_def["build"](acc, self.tuya, self._loop, device_name, bool(device_cfg.get("is_dimmer")))
             acc.aid = _stable_aid(f"tuya:{device_name}")
             bridge.add_accessory(acc)
-            self._tuya_chars[device_name] = chars
-            self._tuya_apply[device_name] = type_def["apply"]
+            if type_def.get("is_sensor"):
+                self._tuya_sensor_chars[device_name] = chars
+                self._tuya_sensor_apply[device_name] = type_def["apply"]
+            else:
+                self._tuya_chars[device_name] = chars
+                self._tuya_apply[device_name] = type_def["apply"]
 
         for scene_name in scene_names:
             if scene_name not in scenes.scenes:
@@ -357,6 +484,12 @@ class HomeKitBridge:
         chars = self._tuya_chars.get(device_name)
         if apply_fn is not None and chars is not None:
             apply_fn(chars, is_on, percent)
+
+    def update_tuya_sensor_state(self, device_name: str, readings: dict) -> None:
+        apply_fn = self._tuya_sensor_apply.get(device_name)
+        chars = self._tuya_sensor_chars.get(device_name)
+        if apply_fn is not None and chars is not None and readings:
+            apply_fn(chars, readings)
 
     async def async_start(self) -> None:
         await self.driver.async_start()

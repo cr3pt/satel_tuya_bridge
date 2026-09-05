@@ -281,6 +281,116 @@ def format_tuya_dps(dps: dict, schema: dict | None = None, preferred_switch_key:
     return is_on, " | ".join(parts)
 
 
+_TEMPERATURE_CODES = ("va_temperature", "temp_current")
+_HUMIDITY_CODES = ("va_humidity", "humidity_value")
+_LEAK_CODES = ("watersensor_state",)
+_CONTACT_CODES = ("doorcontact_state",)
+_BATTERY_CODES = ("battery_percentage",)
+_TEMP_UNIT_CODES = ("temp_unit_convert",)
+
+_DEFAULT_HOMEKIT_SCALES = {"va_temperature": 1, "temp_current": 1}
+
+_CLOUD_CATEGORY_SENSOR_TYPES = {
+    "wsdcg": "temp_humidity_sensor",
+    "sj": "leak_sensor",
+    "mcs": "contact_sensor",
+}
+
+
+def _dp_numeric_value(value: object, spec: dict | None, code: str) -> float | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    spec = spec or {}
+    scale = None
+    if spec.get("type") == "Value":
+        try:
+            meta = json.loads(spec.get("values") or "{}")
+        except (ValueError, TypeError):
+            meta = {}
+        scale = meta.get("scale")
+    if scale is None:
+        scale = _DEFAULT_HOMEKIT_SCALES.get(code, 0)
+    return value / (10 ** scale) if scale else float(value)
+
+
+def extract_tuya_sensor_readings(dps: dict, schema: dict | None = None) -> dict:
+    schema = schema or {}
+    by_code = {}
+    for key, value in dps.items():
+        if value is None:
+            continue
+        spec = schema.get(key)
+        by_code[_dp_code(key, spec)] = (value, spec)
+
+    readings: dict = {}
+
+    temp_unit = None
+    for code in _TEMP_UNIT_CODES:
+        if code in by_code:
+            temp_unit = str(by_code[code][0]).strip().lower()
+
+    for code in _TEMPERATURE_CODES:
+        if code in by_code:
+            value, spec = by_code[code]
+            numeric = _dp_numeric_value(value, spec, code)
+            if numeric is not None:
+                if temp_unit == "f":
+                    numeric = (numeric - 32) * 5 / 9
+                readings["temperature_celsius"] = round(numeric, 1)
+            break
+
+    for code in _HUMIDITY_CODES:
+        if code in by_code:
+            value, spec = by_code[code]
+            numeric = _dp_numeric_value(value, spec, code)
+            if numeric is not None:
+                readings["humidity_percent"] = max(0.0, min(100.0, numeric))
+            break
+
+    for code in _LEAK_CODES:
+        if code in by_code:
+            value, _spec = by_code[code]
+            if isinstance(value, bool):
+                readings["leak_detected"] = value
+            else:
+                readings["leak_detected"] = str(value).strip().lower() not in ("normal", "0", "false", "")
+            break
+
+    for code in _CONTACT_CODES:
+        if code in by_code:
+            value, _spec = by_code[code]
+            readings["contact_open"] = bool(value)
+            break
+
+    for code in _BATTERY_CODES:
+        if code in by_code:
+            value, spec = by_code[code]
+            numeric = _dp_numeric_value(value, spec, code)
+            if numeric is not None:
+                readings["battery_percent"] = numeric
+            break
+
+    return readings
+
+
+def detect_tuya_sensor_type(device_cfg: dict) -> str:
+    schema = (device_cfg or {}).get("dp_schema") or {}
+    codes = {spec.get("code") for spec in schema.values() if spec.get("code")}
+    if codes & set(_LEAK_CODES):
+        return "leak_sensor"
+    if codes & set(_CONTACT_CODES):
+        return "contact_sensor"
+    has_temp = bool(codes & set(_TEMPERATURE_CODES))
+    has_humidity = bool(codes & set(_HUMIDITY_CODES))
+    if has_temp and has_humidity:
+        return "temp_humidity_sensor"
+    if has_temp:
+        return "temperature_sensor"
+    if has_humidity:
+        return "humidity_sensor"
+    return _CLOUD_CATEGORY_SENSOR_TYPES.get((device_cfg or {}).get("category"), "")
+
+
 class TuyaLocalController:
     def __init__(self, devices_cfg: dict, zigbee_gateways_cfg: dict | None = None,
                  retries: int = 2, retry_delay: float = 1.5):

@@ -1772,12 +1772,31 @@ class TestHomekitPluginPage:
         data = await resp.get_json()
         assert data["rooms"] == []
         assert {"name": "Dom", "enabled": True} in data["partitions"]
-        assert {"name": "gniazdko", "type": "", "room": "", "is_dimmer": False} in data["devices"]
+        assert {
+            "name": "gniazdko", "type": "", "room": "", "is_dimmer": False, "detected_type": "",
+        } in data["devices"]
         assert data["scenes"] == []
         type_ids = {choice["id"] for choice in data["type_choices"]}
         assert type_ids == {
             "switch", "outlet", "lightbulb", "fan", "garage_door", "window_covering", "valve", "lock",
+            "temperature_sensor", "humidity_sensor", "temp_humidity_sensor", "leak_sensor", "contact_sensor",
         }
+
+    async def test_entities_get_exposes_detected_type_for_recognized_dp_schema(self, client):
+        import dashboard.app as app_module
+
+        current = app_module.config_store.get("config")
+        current["tuya"]["devices"]["gniazdko"]["dp_schema"] = {
+            "1": {"code": "watersensor_state", "type": "Enum"},
+        }
+        app_module.config_store.set("config", current)
+        app_module.create_app(BridgeConfig.load(app_module.config_path))
+
+        resp = (await client.get("/api/plugins/homekit/entities", headers=_basic_auth_header("test_haslo_123")))
+        data = await resp.get_json()
+        device = next(d for d in data["devices"] if d["name"] == "gniazdko")
+        assert device["detected_type"] == "leak_sensor"
+        assert device["type"] == "leak_sensor"
 
     async def test_entities_post_without_auth_returns_401(self, client):
         resp = (await client.post("/api/plugins/homekit/entities", json={}))
@@ -1828,7 +1847,9 @@ class TestHomekitPluginPage:
         )).get_json()
         assert after["rooms"] == ["Salon", "Kuchnia"]
         assert {"name": "Dom", "enabled": False} in after["partitions"]
-        assert {"name": "gniazdko", "type": "outlet", "room": "Kuchnia", "is_dimmer": False} in after["devices"]
+        assert {
+            "name": "gniazdko", "type": "outlet", "room": "Kuchnia", "is_dimmer": False, "detected_type": "",
+        } in after["devices"]
 
     async def test_entities_post_enqueues_bridge_reload(self, client):
         import dashboard.app as app_module

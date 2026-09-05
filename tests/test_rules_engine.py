@@ -1380,6 +1380,39 @@ class TestApplyTuyaDeviceStatus:
         statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
         assert statuses["tuya:gniazdko_salon"] == "niedostępne"
 
+    async def test_sensor_readings_forwarded_to_homekit_even_without_switch_dp(self, engine):
+        class FakeHomeKit:
+            def __init__(self):
+                self.sensor_calls = []
+
+            def update_tuya_state(self, *a, **kw):
+                pass
+
+            def update_tuya_sensor_state(self, device_name, readings):
+                self.sensor_calls.append((device_name, readings))
+
+        engine.homekit = FakeHomeKit()
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "4": {"code": "va_temperature", "type": "Value", "values": '{"scale":1,"unit":"C"}'},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"4": 235})
+        assert engine.homekit.sensor_calls == [("gniazdko_salon", {"temperature_celsius": 23.5})]
+
+    async def test_no_sensor_call_when_no_recognized_sensor_dps(self, engine):
+        class FakeHomeKit:
+            def __init__(self):
+                self.sensor_calls = []
+
+            def update_tuya_state(self, *a, **kw):
+                pass
+
+            def update_tuya_sensor_state(self, device_name, readings):
+                self.sensor_calls.append((device_name, readings))
+
+        engine.homekit = FakeHomeKit()
+        await engine._apply_tuya_device_status("gniazdko_salon", {"1": True})
+        assert engine.homekit.sensor_calls == []
+
 
 class TestTuyaStatusPollLoop:
 
