@@ -162,6 +162,12 @@
 </div>
 
 <script>
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
 async function authorizedFetch(url, options = {}) {
   const resp = await fetch(url, options);
   if (resp.status === 401) {
@@ -345,7 +351,7 @@ document.getElementById('discoverBtn').addEventListener('click', async () => {
       row.className = 'discovered-row';
       const dishTag = a.is_dishwasher ? '<span class="tag">zmywarka</span>' : '';
       row.innerHTML = `
-        <div class="meta">${a.name || a.appliance_id}${dishTag}<div class="id">${a.brand || ''} ${a.model || ''} · ${a.appliance_id}</div></div>
+        <div class="meta">${escapeHtml(a.name || a.appliance_id)}${dishTag}<div class="id">${escapeHtml(a.brand || '')} ${escapeHtml(a.model || '')} · ${escapeHtml(a.appliance_id)}</div></div>
         <button type="button" class="secondary add-discovered-btn">+ Dodaj</button>`;
       row.querySelector('.add-discovered-btn').addEventListener('click', () => {
         addApplianceRow({ name: a.name || a.appliance_id, appliance_id: a.appliance_id });

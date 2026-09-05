@@ -973,9 +973,10 @@ class TestPluginsEndpoint:
 
 class TestDiscoveryEndpoints:
 
-    async def test_discover_tuya_no_auth_required(self, client, monkeypatch):
+    async def test_discover_tuya_requires_auth_once_configured(self, client, monkeypatch):
         monkeypatch.setattr("dashboard.app.scan_tuya_network", lambda: [{"id": "d1", "ip": "1.2.3.4", "version": "3.4"}])
-        resp = (await client.post("/api/discover/tuya", json={}))
+        assert (await client.post("/api/discover/tuya", json={})).status_code == 401
+        resp = (await client.post("/api/discover/tuya", json={}, headers=_basic_auth_header("test_haslo_123")))
         assert resp.status_code == 200
         assert (await resp.get_json())["devices"] == [{"id": "d1", "ip": "1.2.3.4", "version": "3.4"}]
 
@@ -984,7 +985,7 @@ class TestDiscoveryEndpoints:
             raise RuntimeError("skan padł")
 
         monkeypatch.setattr("dashboard.app.scan_tuya_network", raise_error)
-        resp = (await client.post("/api/discover/tuya", json={}))
+        resp = (await client.post("/api/discover/tuya", json={}, headers=_basic_auth_header("test_haslo_123")))
         assert resp.status_code == 502
 
     async def test_discover_tuya_does_not_block_event_loop(self, client, monkeypatch):
@@ -998,7 +999,7 @@ class TestDiscoveryEndpoints:
         scan_finished_at: list[float] = []
 
         async def do_scan():
-            resp = await client.post("/api/discover/tuya", json={})
+            resp = await client.post("/api/discover/tuya", json={}, headers=_basic_auth_header("test_haslo_123"))
             scan_finished_at.append(time.monotonic())
             return resp
 
@@ -1018,16 +1019,22 @@ class TestDiscoveryEndpoints:
 
 
 class TestSatelConnectionTestEndpoint:
-    async def test_no_auth_required(self, client, monkeypatch):
+    async def test_requires_auth_once_configured(self, client, monkeypatch):
         async def fake_test_connection(host, port, **_kwargs):
             return None
 
         monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
-        resp = (await client.post("/api/setup/test-satel-connection", json={"host": "192.168.1.10", "port": 7094}))
+        payload = {"host": "192.168.1.10", "port": 7094}
+        assert (await client.post("/api/setup/test-satel-connection", json=payload)).status_code == 401
+        resp = (await client.post(
+            "/api/setup/test-satel-connection", json=payload, headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert resp.status_code == 200
 
     async def test_missing_host_returns_400(self, client):
-        resp = (await client.post("/api/setup/test-satel-connection", json={}))
+        resp = (await client.post(
+            "/api/setup/test-satel-connection", json={}, headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert resp.status_code == 400
 
     async def test_connection_error_returns_502_with_message(self, client, monkeypatch):
@@ -1035,7 +1042,10 @@ class TestSatelConnectionTestEndpoint:
             raise ConnectionError(f"Nie udało się połączyć z {host}:{port}")
 
         monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
-        resp = (await client.post("/api/setup/test-satel-connection", json={"host": "10.0.0.5", "port": 7094}))
+        resp = (await client.post(
+            "/api/setup/test-satel-connection", json={"host": "10.0.0.5", "port": 7094},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert resp.status_code == 502
         assert "10.0.0.5" in (await resp.get_json())["error"]
 
@@ -1046,24 +1056,33 @@ class TestSatelConnectionTestEndpoint:
             captured["port"] = port
 
         monkeypatch.setattr("dashboard.app.test_satel_connection", fake_test_connection)
-        (await client.post("/api/setup/test-satel-connection", json={"host": "192.168.1.10"}))
+        (await client.post(
+            "/api/setup/test-satel-connection", json={"host": "192.168.1.10"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert captured["port"] == 7094
 
 
 class TestSatelDiscoveryEndpoint:
 
-    async def test_no_auth_required(self, client, monkeypatch):
+    async def test_requires_auth_once_configured(self, client, monkeypatch):
         async def fake_discover(host, port, timeout_seconds=30.0, **_kwargs):
             return {"zones": [12], "outputs": [3]}
 
         monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
-        resp = (await client.post("/api/discover/satel", json={"host": "192.168.1.10", "port": 7094}))
+        payload = {"host": "192.168.1.10", "port": 7094}
+        assert (await client.post("/api/discover/satel", json=payload)).status_code == 401
+        resp = (await client.post(
+            "/api/discover/satel", json=payload, headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert resp.status_code == 200
         assert await resp.get_json() == {"zones": [12], "outputs": [3]}
 
     async def test_missing_host_returns_400(self, client, monkeypatch):
         monkeypatch.setattr("dashboard.app.config_raw", {})
-        resp = (await client.post("/api/discover/satel", json={}))
+        resp = (await client.post(
+            "/api/discover/satel", json={}, headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert resp.status_code == 400
 
     async def test_defaults_to_configured_host_and_port_when_omitted(self, client, monkeypatch):
@@ -1075,7 +1094,9 @@ class TestSatelDiscoveryEndpoint:
             return {"zones": [], "outputs": []}
 
         monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
-        resp = (await client.post("/api/discover/satel", json={}))
+        resp = (await client.post(
+            "/api/discover/satel", json={}, headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert resp.status_code == 200
         assert captured == {"host": "127.0.0.1", "port": 7094}
 
@@ -1090,7 +1111,9 @@ class TestSatelDiscoveryEndpoint:
         monkeypatch.setattr("dashboard.app.config_raw", {
             "satel": {"host": "127.0.0.1", "port": 7094, "encryption_key": "AESKEY", "encryption_enabled": False},
         })
-        resp = (await client.post("/api/discover/satel", json={}))
+        resp = (await client.post(
+            "/api/discover/satel", json={}, headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert resp.status_code == 200
         assert captured["encryption_key"] is None
 
@@ -1105,7 +1128,9 @@ class TestSatelDiscoveryEndpoint:
         monkeypatch.setattr("dashboard.app.config_raw", {
             "satel": {"host": "127.0.0.1", "port": 7094, "encryption_key": "AESKEY", "encryption_enabled": True},
         })
-        resp = (await client.post("/api/discover/satel", json={}))
+        resp = (await client.post(
+            "/api/discover/satel", json={}, headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert resp.status_code == 200
         assert captured["encryption_key"] == "AESKEY"
 
@@ -1117,7 +1142,9 @@ class TestSatelDiscoveryEndpoint:
             return {"zones": [], "outputs": []}
 
         monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
-        (await client.post("/api/discover/satel", json={"host": "10.0.0.9"}))
+        (await client.post(
+            "/api/discover/satel", json={"host": "10.0.0.9"}, headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert captured["host"] == "10.0.0.9"
 
     async def test_connection_error_returns_502(self, client, monkeypatch):
@@ -1125,7 +1152,10 @@ class TestSatelDiscoveryEndpoint:
             raise ConnectionError(f"Nie udało się połączyć z {host}:{port}")
 
         monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
-        resp = (await client.post("/api/discover/satel", json={"host": "10.0.0.5", "port": 7094}))
+        resp = (await client.post(
+            "/api/discover/satel", json={"host": "10.0.0.5", "port": 7094},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert resp.status_code == 502
         assert "10.0.0.5" in (await resp.get_json())["error"]
 
@@ -1137,7 +1167,10 @@ class TestSatelDiscoveryEndpoint:
             return {"zones": [], "outputs": []}
 
         monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
-        (await client.post("/api/discover/satel", json={"host": "192.168.1.10", "timeout_seconds": 99999}))
+        (await client.post(
+            "/api/discover/satel", json={"host": "192.168.1.10", "timeout_seconds": 99999},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert captured["timeout_seconds"] == 120
 
     async def test_default_timeout_used_when_omitted(self, client, monkeypatch):
@@ -1148,24 +1181,29 @@ class TestSatelDiscoveryEndpoint:
             return {"zones": [], "outputs": []}
 
         monkeypatch.setattr("dashboard.app.discover_active_zones_and_outputs", fake_discover)
-        (await client.post("/api/discover/satel", json={"host": "192.168.1.10"}))
+        (await client.post(
+            "/api/discover/satel", json={"host": "192.168.1.10"}, headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert captured["timeout_seconds"] == 30.0
 
 
 class TestTuyaCloudDiscoveryEndpoint:
-    async def test_no_auth_required(self, client, monkeypatch):
+    async def test_requires_auth_once_configured(self, client, monkeypatch):
         monkeypatch.setattr("dashboard.app.fetch_tuya_cloud_devices", lambda region, aid, akey: [
             {"id": "d1", "name": "Gniazdko", "local_key": "k1", "ip": "1.2.3.4", "version": "3.4"},
         ])
+        payload = {"api_region": "eu", "access_id": "aid", "access_key": "akey"}
+        assert (await client.post("/api/discover/tuya-cloud", json=payload)).status_code == 401
         resp = (await client.post(
-            "/api/discover/tuya-cloud",
-            json={"api_region": "eu", "access_id": "aid", "access_key": "akey"},
+            "/api/discover/tuya-cloud", json=payload, headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 200
         assert (await resp.get_json())["devices"][0]["name"] == "Gniazdko"
 
     async def test_missing_credentials_returns_400(self, client):
-        resp = (await client.post("/api/discover/tuya-cloud", json={"api_region": "eu"}))
+        resp = (await client.post(
+            "/api/discover/tuya-cloud", json={"api_region": "eu"}, headers=_basic_auth_header("test_haslo_123"),
+        ))
         assert resp.status_code == 400
 
     async def test_connection_error_returns_502(self, client, monkeypatch):
@@ -1176,6 +1214,7 @@ class TestTuyaCloudDiscoveryEndpoint:
         resp = (await client.post(
             "/api/discover/tuya-cloud",
             json={"api_region": "eu", "access_id": "aid", "access_key": "bad"},
+            headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 502
         assert "zły klucz" in (await resp.get_json())["error"]
@@ -1191,5 +1230,22 @@ class TestTuyaCloudDiscoveryEndpoint:
         (await client.post(
             "/api/discover/tuya-cloud",
             json={"api_region": "us", "access_id": "myid", "access_key": "mykey"},
+            headers=_basic_auth_header("test_haslo_123"),
         ))
         assert captured == {"region": "us", "aid": "myid", "akey": "mykey"}
+
+
+class TestSetupOnlyPathsPublicOnlyBeforeConfiguration:
+    def test_setup_paths_public_when_not_configured(self, monkeypatch):
+        import dashboard.app as app_module
+
+        monkeypatch.setattr(app_module, "is_configured", lambda: False)
+        for path in app_module._SETUP_ONLY_PUBLIC_PATHS:
+            assert app_module._is_public_path(path) is True
+
+    def test_setup_paths_require_auth_when_configured(self, monkeypatch):
+        import dashboard.app as app_module
+
+        monkeypatch.setattr(app_module, "is_configured", lambda: True)
+        for path in app_module._SETUP_ONLY_PUBLIC_PATHS:
+            assert app_module._is_public_path(path) is False

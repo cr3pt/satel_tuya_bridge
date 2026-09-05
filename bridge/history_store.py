@@ -19,9 +19,9 @@ CREATE INDEX IF NOT EXISTS idx_readings_sensor_ts ON readings(sensor, ts);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
-    type TEXT NOT NULL,        -- motion | light_to_satel | camera_alarm | system | alert
-    source TEXT,               -- np. 'satel_zone:12', 'tuya:swiatlo_korytarz'
-    detail TEXT                -- dowolny JSON z dodatkowym kontekstem
+    type TEXT NOT NULL,
+    source TEXT,
+    detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_type_ts ON events(type, ts);
 
@@ -36,10 +36,10 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE INDEX IF NOT EXISTS idx_alerts_resolved ON alerts(resolved_ts);
 
 CREATE TABLE IF NOT EXISTS status (
-    key TEXT PRIMARY KEY,       -- unikalny identyfikator, np. 'tuya:swiatlo_korytarz'
-    category TEXT NOT NULL,     -- tuya | satel_input | satel_output | boiler
-    label TEXT,                 -- czytelna nazwa do wyświetlenia
-    value TEXT NOT NULL,        -- ostatnia wartość (jako tekst - bool/liczba/string)
+    key TEXT PRIMARY KEY,
+    category TEXT NOT NULL,
+    label TEXT,
+    value TEXT NOT NULL,
     ts REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_status_category ON status(category);
@@ -47,10 +47,10 @@ CREATE INDEX IF NOT EXISTS idx_status_category ON status(category);
 CREATE TABLE IF NOT EXISTS commands (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
-    command TEXT NOT NULL,      -- np. 'satel_arm', 'satel_disarm'
-    params TEXT NOT NULL,       -- JSON, np. {"partitions": [1], "mode": 0}
-    status TEXT NOT NULL,       -- pending | done | error
-    result TEXT,                -- JSON z wynikiem/błędem, wypełniane po wykonaniu
+    command TEXT NOT NULL,
+    params TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result TEXT,
     done_ts REAL
 );
 CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status);
@@ -58,9 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status);
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
-    component TEXT NOT NULL,   -- 'bridge' | 'dashboard' - który proces
-    logger TEXT NOT NULL,      -- np. 'bridge.satel'
-    level TEXT NOT NULL,       -- DEBUG | INFO | WARNING | ERROR | CRITICAL
+    component TEXT NOT NULL,
+    logger TEXT NOT NULL,
+    level TEXT NOT NULL,
     message TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
