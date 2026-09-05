@@ -579,11 +579,16 @@ _CONNECTIONS_PLUGIN_IDS_LIVE = {"satel", "tuya_local"}
 _CONNECTIONS_PLUGIN_IDS = _CONNECTIONS_PLUGIN_IDS_RESTART | _CONNECTIONS_PLUGIN_IDS_LIVE
 _AUTOMATIONS_PLUGIN_IDS = {"presence_simulation"}
 
-_TOGGLE_ONLY_PLUGIN_IDS = {"satel", "tuya_local", "ebus", "unifi_protect", "homewhiz", "notifications"}
+_TOGGLE_ONLY_PLUGIN_IDS = {
+    "satel", "tuya_local", "ebus", "unifi_protect", "homewhiz", "notifications",
+    "mcp_server", "homekit",
+}
 _TOGGLE_ONLY_CONFIG_KEY = {
     "satel": "satel", "tuya_local": "tuya", "ebus": "ebus",
     "unifi_protect": "unifi_protect", "homewhiz": "homewhiz", "notifications": "notifications",
+    "mcp_server": "mcp_server", "homekit": "homekit",
 }
+_TOGGLE_ONLY_NO_PREREQ_IDS = {"mcp_server", "homekit"}
 
 
 @app.route("/plugins")
@@ -618,9 +623,11 @@ async def api_plugins_post():
         for plugin_id, patch in toggle_only_body.items():
             config_key = _TOGGLE_ONLY_CONFIG_KEY[plugin_id]
             if current.get(config_key) is None:
-                return jsonify({
-                    "error": f"Najpierw skonfiguruj wtyczkę '{plugin_id}' w jej zakładce, zanim ją włączysz.",
-                }), 400
+                if plugin_id not in _TOGGLE_ONLY_NO_PREREQ_IDS:
+                    return jsonify({
+                        "error": f"Najpierw skonfiguruj wtyczkę '{plugin_id}' w jej zakładce, zanim ją włączysz.",
+                    }), 400
+                current[config_key] = {}
             current[config_key]["enabled"] = bool(patch.get("enabled"))
         config_store.set("config", current)
         saved.update(toggle_only_body)
