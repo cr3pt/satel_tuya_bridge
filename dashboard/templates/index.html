@@ -503,6 +503,12 @@ function statusCardClass(category, value) {
   return '';
 }
 
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
 function statusCardTypeInfo(category, label) {
   if (category === 'satel_input' && satelZoneTypes[label]) {
     const slug = satelZoneTypes[label];
@@ -536,7 +542,7 @@ function renderStatusGrid(elementId, items) {
     seenKeys.add(key);
     const { icon, typeLabel } = statusCardTypeInfo(s.category, s.label);
     const wantedClass = 'status-card' + (statusCardClass(s.category, s.value) ? ' ' + statusCardClass(s.category, s.value) : '');
-    const labelHtml = `${icon ? icon + ' ' : ''}${s.label}${typeLabel ? `<span class="type-tag">${typeLabel}</span>` : ''}`;
+    const labelHtml = `${icon ? icon + ' ' : ''}${escapeHtml(s.label)}${typeLabel ? `<span class="type-tag">${typeLabel}</span>` : ''}`;
     const tsText = fmtTime(s.ts);
 
     let card = el.querySelector(`.status-card[data-key="${CSS.escape(key)}"]`);

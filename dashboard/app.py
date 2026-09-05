@@ -144,16 +144,21 @@ async def _redirect_to_setup_if_unconfigured():
 
 
 _PUBLIC_PATHS = {
-    "/login", "/api/login", "/api/logout", "/api/auth/status",
+    "/login", "/api/login", "/api/logout", "/api/auth/status", "/healthz",
+}
+_SETUP_ONLY_PUBLIC_PATHS = {
     "/setup", "/api/setup/draft", "/api/setup/test-satel-connection", "/api/setup/save",
     "/api/discover/satel", "/api/discover/tuya", "/api/discover/tuya-cloud",
-    "/healthz",
 }
 _PUBLIC_PATH_PREFIXES = ("/static/",)
 
 
 def _is_public_path(path: str) -> bool:
-    return path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PATH_PREFIXES)
+    if path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PATH_PREFIXES):
+        return True
+    if path in _SETUP_ONLY_PUBLIC_PATHS:
+        return not is_configured()
+    return False
 
 
 @app.before_request
