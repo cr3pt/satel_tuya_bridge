@@ -915,6 +915,21 @@ MQTT, Tuya Cloud Pulsar) startuje tylko raz, przy starcie procesu (patrz
 żyje w dokumencie `automations` i włącza/wyłącza się na żywo w ciągu ok.
 1-2s, bez restartu (patrz "Zmiany działają od razu" wyżej).
 
+### Podział listy: włączone / wtyczki do włączenia
+
+Strona `/plugins` dzieli karty na dwie listy zamiast jednej długiej: **włączone
+wtyczki** na górze (widoczne od razu) i zwijana lista **"Wtyczki do
+włączenia"** poniżej (domyślnie zwinięta, z licznikiem w nagłówku), do której
+trafia każda wtyczka niewłączona - niezależnie od tego, czy jest w pełni
+skonfigurowana ("Wyłączona") czy nie ("Nieskonfigurowana"). Podział opiera się
+o to samo pole `enabled`, które już wcześniej sterowało obramowaniem karty i
+plakietką statusu, więc po włączeniu wtyczki i zapisaniu zmian karta
+automatycznie przenosi się na listę włączonych - bez odświeżania strony
+ręcznie (panel i tak sam odświeża listę po udanym zapisie), a po ewentualnym
+pełnym restarcie procesu (`wymaga restartu`) pozostaje tam trwale, bo o
+przynależności decyduje zapisany stan w `config.db`, a nie chwilowy stan
+procesu.
+
 ### Jak wtyczki są wykrywane (auto-discovery)
 
 Lista wtyczek na `/plugins` **nie jest hardkodowana** - każdy podkatalog

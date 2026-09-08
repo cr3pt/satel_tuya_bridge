@@ -97,6 +97,19 @@
   }
   .load-errors-banner.show { display: block; }
   .load-errors-banner ul { margin: 6px 0 0; padding-left: 20px; }
+  .plugins-disabled-details { margin-bottom: 18px; }
+  .plugins-disabled-details > summary {
+    cursor: pointer; font-size: 14px; font-weight: 600; color: var(--muted);
+    padding: 10px 14px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; list-style: none; user-select: none;
+  }
+  .plugins-disabled-details > summary::-webkit-details-marker { display: none; }
+  .plugins-disabled-details > summary::before {
+    content: "▸"; display: inline-block; margin-right: 8px; transition: transform 0.15s;
+  }
+  .plugins-disabled-details[open] > summary::before { transform: rotate(90deg); }
+  .plugins-disabled-details .plugin-list { margin-top: 10px; margin-bottom: 0; }
+  .plugins-disabled-details[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -123,6 +136,10 @@
 <div id="pluginsMsg" class="msg-box"></div>
 <div id="loadErrorsBanner" class="load-errors-banner"></div>
 <div id="pluginList" class="plugin-list"></div>
+<details id="pluginsDisabledDetails" class="plugins-disabled-details" hidden>
+  <summary>Wtyczki do włączenia (<span id="pluginsDisabledCount">0</span>)</summary>
+  <div id="pluginListDisabled" class="plugin-list"></div>
+</details>
 <div class="actions-bar">
   <button id="saveBtn" type="button" disabled>Zapisz zmiany</button>
   <span id="pendingHint" style="color: var(--muted); font-size: 12.5px;"></span>
@@ -320,9 +337,19 @@ function renderPlugin(p) {
 
 async function loadPlugins() {
   const plugins = await (await fetch('/api/plugins')).json();
+  const enabled = plugins.filter(p => p.enabled);
+  const disabled = plugins.filter(p => !p.enabled);
+
   const list = document.getElementById('pluginList');
   list.innerHTML = '';
-  plugins.forEach(p => list.appendChild(renderPlugin(p)));
+  enabled.forEach(p => list.appendChild(renderPlugin(p)));
+
+  const disabledDetails = document.getElementById('pluginsDisabledDetails');
+  const disabledList = document.getElementById('pluginListDisabled');
+  disabledList.innerHTML = '';
+  disabled.forEach(p => disabledList.appendChild(renderPlugin(p)));
+  document.getElementById('pluginsDisabledCount').textContent = disabled.length;
+  disabledDetails.hidden = disabled.length === 0;
 }
 
 async function loadPluginLoadErrors() {
