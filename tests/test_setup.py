@@ -1691,6 +1691,202 @@ class TestBuildConfigDictAdvanced:
         assert runner.exists("wykryto_intruza")
 
 
+class TestMultiSourceAndMultiActionMotionRules:
+    def _form_with_rule(self, rule: dict) -> dict:
+        return {**FORM_WITH_ADVANCED, "motion_rules": [{**rule, "time_window": {}, "escalation": {}}]}
+
+    def test_multi_source_or_rule_has_no_errors(self):
+        form = self._form_with_rule({
+            "sources": [
+                {"source": "satel_zone", "zone_number": "12"},
+                {"source": "satel_zone", "zone_number": "13"},
+            ],
+            "target_device": "gniazdko_salon", "duration_seconds": "60",
+        })
+        assert validate_automations(form) == []
+
+    def test_multi_source_and_rule_has_no_errors(self):
+        form = self._form_with_rule({
+            "sources": [
+                {"source": "satel_zone", "zone_number": "12"},
+                {"source": "satel_zone", "zone_number": "13"},
+            ],
+            "source_combinator": "and",
+            "target_device": "gniazdko_salon",
+        })
+        assert validate_automations(form) == []
+
+    def test_single_entry_sources_list_is_an_error(self):
+        form = self._form_with_rule({
+            "sources": [{"source": "satel_zone", "zone_number": "12"}],
+            "target_device": "gniazdko_salon", "duration_seconds": "60",
+        })
+        errors = validate_automations(form)
+        assert any("co najmniej 2" in e for e in errors)
+
+    def test_unknown_combinator_is_an_error(self):
+        form = self._form_with_rule({
+            "sources": [
+                {"source": "satel_zone", "zone_number": "12"},
+                {"source": "satel_zone", "zone_number": "13"},
+            ],
+            "source_combinator": "xor",
+            "target_device": "gniazdko_salon", "duration_seconds": "60",
+        })
+        errors = validate_automations(form)
+        assert any("nieznany łącznik źródeł" in e for e in errors)
+
+    def test_multi_source_invalid_entry_is_reported(self):
+        form = self._form_with_rule({
+            "sources": [
+                {"source": "satel_zone", "zone_number": ""},
+                {"source": "satel_zone", "zone_number": "13"},
+            ],
+            "target_device": "gniazdko_salon", "duration_seconds": "60",
+        })
+        errors = validate_automations(form)
+        assert any("źródło #1" in e for e in errors)
+
+    def test_multi_action_rule_has_no_errors(self):
+        form = self._form_with_rule({
+            "zone_number": "12",
+            "actions": [
+                {"target_device": "gniazdko_salon"},
+                {"target_device": "wiatrak"},
+            ],
+            "duration_seconds": "60",
+        })
+        assert validate_automations(form) == []
+
+    def test_multi_action_invalid_entry_is_reported(self):
+        form = self._form_with_rule({
+            "zone_number": "12",
+            "actions": [
+                {"target_device": ""},
+                {"target_device": "wiatrak"},
+            ],
+            "duration_seconds": "60",
+        })
+        errors = validate_automations(form)
+        assert any("akcja #1" in e for e in errors)
+
+    def test_multi_source_rule_is_built_with_sources_list(self):
+        form = self._form_with_rule({
+            "sources": [
+                {"source": "satel_zone", "zone_number": "12"},
+                {"source": "satel_zone", "zone_number": "13"},
+            ],
+            "target_device": "gniazdko_salon", "duration_seconds": "60",
+        })
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["sources"] == [
+            {"source": "satel_zone", "zone_number": 12},
+            {"source": "satel_zone", "zone_number": 13},
+        ]
+        assert "source_combinator" not in rule
+        assert "source" not in rule
+        assert "zone_number" not in rule
+        assert rule["target_device"] == "gniazdko_salon"
+        assert rule["duration_seconds"] == 60
+
+    def test_multi_source_and_combinator_is_built(self):
+        form = self._form_with_rule({
+            "sources": [
+                {"source": "satel_zone", "zone_number": "12"},
+                {"source": "satel_zone", "zone_number": "13"},
+            ],
+            "source_combinator": "and",
+            "target_device": "gniazdko_salon",
+        })
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["source_combinator"] == "and"
+
+    def test_sources_list_with_fewer_than_two_valid_entries_skips_rule(self):
+        form = self._form_with_rule({
+            "sources": [
+                {"source": "satel_zone", "zone_number": "12"},
+                {"source": "satel_zone", "zone_number": ""},
+            ],
+            "target_device": "gniazdko_salon", "duration_seconds": "60",
+        })
+        assert build_automations_dict(form)["reguły_ruchu"] == []
+
+    def test_mixed_source_types_are_built(self):
+        form = self._form_with_rule({
+            "sources": [
+                {"source": "satel_zone", "zone_number": "12"},
+                {"source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone"},
+            ],
+            "target_device": "gniazdko_salon", "duration_seconds": "60",
+        })
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["sources"] == [
+            {"source": "satel_zone", "zone_number": 12},
+            {"source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone"},
+        ]
+
+    def test_multi_action_rule_is_built_with_actions_list(self):
+        form = self._form_with_rule({
+            "zone_number": "12",
+            "actions": [
+                {"target_device": "gniazdko_salon", "dimmer_level_percent": "70"},
+                {"target_device": "wiatrak"},
+            ],
+            "duration_seconds": "60",
+        })
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["actions"] == [
+            {"target_device": "gniazdko_salon", "dimmer_level_percent": 70},
+            {"target_device": "wiatrak"},
+        ]
+        assert "target_device" not in rule
+        assert rule["duration_seconds"] == 60
+
+    def test_multi_action_turn_off_is_built(self):
+        form = self._form_with_rule({
+            "zone_number": "12", "trigger_on": "restored", "action": "turn_off",
+            "actions": [
+                {"target_device": "gniazdko_salon"},
+                {"target_device": "wiatrak"},
+            ],
+        })
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["action"] == "turn_off"
+        assert "duration_seconds" not in rule
+
+    def test_multi_action_satel_output_entry_omits_dimmer(self):
+        form = self._form_with_rule({
+            "zone_number": "12",
+            "actions": [
+                {"target_device": "Brama", "target_system": "satel_output"},
+                {"target_device": "wiatrak"},
+            ],
+            "duration_seconds": "60",
+        })
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["actions"][0] == {"target_device": "Brama", "target_system": "satel_output"}
+
+    def test_multi_action_invalid_entry_is_skipped(self):
+        form = self._form_with_rule({
+            "zone_number": "12",
+            "actions": [
+                {"target_device": ""},
+                {"target_device": "wiatrak"},
+            ],
+            "duration_seconds": "60",
+        })
+        rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert rule["actions"] == [{"target_device": "wiatrak"}]
+
+    def test_all_actions_invalid_skips_rule(self):
+        form = self._form_with_rule({
+            "zone_number": "12",
+            "actions": [{"target_device": ""}],
+            "duration_seconds": "60",
+        })
+        assert build_automations_dict(form)["reguły_ruchu"] == []
+
+
 class TestSetupDraft:
     async def test_no_draft_returns_empty_object(self, setup_client):
         client, _ = setup_client

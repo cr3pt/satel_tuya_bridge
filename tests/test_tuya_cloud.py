@@ -228,6 +228,82 @@ class TestAutoDetectedSwitchCodes:
         assert "lampa_taras" not in controller._switch_codes_cache
 
 
+class FakeTinytuyaCloudWithFunctions(FakeTinytuyaCloud):
+
+    def __init__(self, functions_by_device: dict | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self.functions_by_device = functions_by_device or {}
+
+    def getdps(self, deviceid=None):
+        return {"success": True, "result": {"functions": self.functions_by_device.get(deviceid, []), "status": []}}
+
+
+class TestFunctionsSchemaSwitchDetection:
+    """Ściemniacz zgłoszony przez użytkownika: status raportował dodatkowy kod
+    podobny do przełącznika, który nie był faktycznie zapisywalny - wysłanie go
+    razem z prawdziwym przełącznikiem w jednej komendzie Tuya Cloud odrzucało
+    całą paczkę błędem 'command or value not support'. Detekcja musi korzystać
+    ze schematu 'functions' (gwarantowanie zapisywalne DP), nie z samego statusu.
+    """
+
+    DEVICES_CFG_NO_SWITCH_CODE = {
+        "sciemniacz": {"id": "cloud4"},
+    }
+
+    async def test_ignores_status_only_code_not_present_in_functions(self):
+        controller = TuyaCloudController(self.DEVICES_CFG_NO_SWITCH_CODE, CREDENTIALS, retries=2, retry_delay=0.01)
+        fake = FakeTinytuyaCloudWithFunctions(functions_by_device={
+            "cloud4": [{"code": "switch_led", "type": "Boolean", "dp_id": 1}],
+        })
+        fake.status_by_device["cloud4"] = [
+            {"code": "switch_1", "value": False},
+            {"code": "switch_led", "value": False},
+        ]
+        controller._cloud = fake
+        await controller.turn_on("sciemniacz")
+        assert fake.sent_commands == [("cloud4", {"commands": [{"code": "switch_led", "value": True}]})]
+
+    async def test_multi_gang_still_uses_all_writable_codes(self):
+        controller = TuyaCloudController(self.DEVICES_CFG_NO_SWITCH_CODE, CREDENTIALS, retries=2, retry_delay=0.01)
+        fake = FakeTinytuyaCloudWithFunctions(functions_by_device={
+            "cloud4": [
+                {"code": "switch_1", "type": "Boolean", "dp_id": 1},
+                {"code": "switch_2", "type": "Boolean", "dp_id": 2},
+            ],
+        })
+        controller._cloud = fake
+        await controller.turn_on("sciemniacz")
+        assert fake.sent_commands == [
+            ("cloud4", {"commands": [{"code": "switch_1", "value": True}, {"code": "switch_2", "value": True}]}),
+        ]
+
+    async def test_falls_back_to_status_when_functions_schema_unavailable(self):
+        controller = TuyaCloudController(self.DEVICES_CFG_NO_SWITCH_CODE, CREDENTIALS, retries=2, retry_delay=0.01)
+        fake = FakeTinytuyaCloudWithFunctions(functions_by_device={"cloud4": []})
+        fake.status_by_device["cloud4"] = [{"code": "switch_1", "value": False}]
+        controller._cloud = fake
+        await controller.turn_on("sciemniacz")
+        assert fake.sent_commands == [("cloud4", {"commands": [{"code": "switch_1", "value": True}]})]
+
+    async def test_falls_back_to_status_when_getdps_missing(self):
+        controller = TuyaCloudController(self.DEVICES_CFG_NO_SWITCH_CODE, CREDENTIALS, retries=2, retry_delay=0.01)
+        fake = FakeTinytuyaCloud()
+        fake.status_by_device["cloud4"] = [{"code": "switch_1", "value": False}]
+        controller._cloud = fake
+        await controller.turn_on("sciemniacz")
+        assert fake.sent_commands == [("cloud4", {"commands": [{"code": "switch_1", "value": True}]})]
+
+    async def test_functions_based_codes_are_cached(self):
+        controller = TuyaCloudController(self.DEVICES_CFG_NO_SWITCH_CODE, CREDENTIALS, retries=2, retry_delay=0.01)
+        fake = FakeTinytuyaCloudWithFunctions(functions_by_device={
+            "cloud4": [{"code": "switch_led", "type": "Boolean", "dp_id": 1}],
+        })
+        controller._cloud = fake
+        await controller.turn_on("sciemniacz")
+        await controller.turn_off("sciemniacz")
+        assert controller._switch_codes_cache["sciemniacz"] == ["switch_led"]
+
+
 def test_client_created_lazily_with_credentials(monkeypatch):
     created_with = {}
 

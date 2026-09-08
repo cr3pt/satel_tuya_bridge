@@ -228,6 +228,18 @@ def find_switch_keys_from_schema(schema: dict) -> list[str]:
     ]
 
 
+def find_switch_codes_from_functions_result(result: object) -> list[str]:
+    if not isinstance(result, dict) or not result.get("success"):
+        return []
+    data = result.get("result") or {}
+    codes = []
+    for entry in data.get("functions") or []:
+        code = entry.get("code") or ""
+        if entry.get("type") == "Boolean" and is_switch_code(code):
+            codes.append(code)
+    return codes
+
+
 def _dp_code(key: str, spec: dict | None) -> str:
     return (spec or {}).get("code") or key
 

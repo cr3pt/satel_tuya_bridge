@@ -364,12 +364,22 @@ Import rozdziela urządzenia automatycznie:
 Sterowanie chmurowe jest na start ograniczone do prostych przełączników
 on/off (bez ściemniania). **"Kod przełącznika" jest wykrywany automatycznie**,
 jeśli pole "Switch code" zostawisz puste - przy pierwszym sterowaniu danym
-urządzeniem bridge odpytuje jego bieżący stan i sam odnajduje wszystkie
-kody pasujące do wzorca przełącznika (`switch`, `switch_1`, `switch_2`, ...,
-`switch_led`), po czym steruje nimi **wszystkimi naraz** w jednej komendzie -
-dotyczy to zwłaszcza przełączników wielobwodowych (np. włącznik 2-gniazdowy
-sterujący dwiema żarówkami pod jednym ID urządzenia), gdzie ręcznie podany,
-pojedynczy kod (`switch_1`) sterowałby tylko jednym obwodem. Wynik
+urządzeniem bridge pobiera z Tuya Cloud listę **funkcji urządzenia**
+(`devices/{id}/specifications`, dokładnie te DP, które Tuya gwarantuje jako
+zapisywalne) i sam odnajduje wśród nich wszystkie kody pasujące do wzorca
+przełącznika (`switch`, `switch_1`, `switch_2`, ..., `switch_led`), po czym
+steruje nimi **wszystkimi naraz** w jednej komendzie - dotyczy to zwłaszcza
+przełączników wielobwodowych (np. włącznik 2-gniazdowy sterujący dwiema
+żarówkami pod jednym ID urządzenia), gdzie ręcznie podany, pojedynczy kod
+(`switch_1`) sterowałby tylko jednym obwodem. Celowo NIE korzystamy do tego
+z samego bieżącego stanu urządzenia (`getstatus`) - potrafi on raportować
+też kody tylko-do-odczytu, które wyglądają jak przełącznik, ale nie są
+zapisywalne; wysłanie takiego kodu razem z prawdziwym przełącznikiem w
+jednej komendzie odrzucałoby całą paczkę błędem Tuya Cloud "command or
+value not support" (dotyczyło to np. ściemniaczy z dodatkowym,
+niezapisywalnym statusem przełącznika). Jeśli z jakiegoś powodu lista
+funkcji nie jest dostępna, bridge spada do starszej heurystyki opartej na
+`getstatus`, a gdy i to zawiedzie - do domyślnego `switch_1`. Wynik
 wykrywania jest zapamiętywany (nie odpytuje ponownie przy każdym
 sterowaniu). Pole "Switch code" nadal można ustawić ręcznie, żeby
 wymusić dokładnie jeden konkretny kod (np. gdy zależy Ci na sterowaniu
@@ -2229,6 +2239,64 @@ nazwy reguły siedzi teraz w nagłówku karty (po lewej stronie przycisku
 serwera (już zapisane) startują zwinięte; nowo dodana reguła ("+ Dodaj
 regułę") zostaje rozwinięta do edycji, a po kliknięciu "Zapisz
 automatyzacje" wszystkie karty zwijają się razem.
+
+### Wiele źródeł (AND/OR) i wiele akcji w jednej regule (`sources`/`actions`)
+
+Domyślnie reguła ruchu ma dokładnie JEDNO źródło (`source`/`zone_number`
+albo `source_device`/`trigger_value`) i JEDEN cel (`target_device` albo
+`virtual_input`) - to nadal działa bez zmian i to właśnie budują starsze
+configi. Opcjonalne pola `sources` (lista) i `actions` (lista) rozszerzają
+to na wiele źródeł łączonych logiką AND/OR i/albo wiele urządzeń
+uruchamianych naraz, bez potrzeby duplikowania całej reguły albo
+zakładania osobnej sceny jako pośrednika:
+
+```yaml
+reguły_ruchu:
+  - name: "podwojne_wejscie"
+    sources:
+      - {source: satel_zone, zone_number: 3}
+      - {source: satel_zone, zone_number: 5}
+    source_combinator: and   # domyślnie "or", gdy pole pominięte
+    actions:
+      - {target_device: lampa_salon}
+      - {target_device: wiatrak, dimmer_level_percent: 60}
+    duration_seconds: 300
+```
+
+- **`source_combinator: or`** (domyślne) - reguła reaguje, gdy KTÓREKOLWIEK
+  z wymienionych źródeł się wyzwoli, dokładnie tak samo jak dziś działałoby
+  N osobnych reguł z tym samym celem - różnica jest wyłącznie w tym, że
+  nie trzeba ich duplikować ani synchronizować przy zmianie akcji/warunku/
+  harmonogramu.
+- **`source_combinator: and`** - reguła wyzwala się dopiero, gdy WSZYSTKIE
+  wymienione źródła są jednocześnie aktywne (np. dwie strefy naruszone
+  naraz) - i to jest coś, czego pojedyncze `condition` (patrz wyżej) nie
+  dawało zrobić jako część samego wyzwalacza, tylko jako dodatkowy warunek
+  gdy inne źródło JUŻ się wyzwoliło. Ewaluacja jest krawędziowa (fire tylko
+  na przejściu stanu): powtórna aktualizacja już-aktywnego źródła nie
+  odpala reguły ponownie, a "ustanie" (powrót do stanu, w którym nie
+  wszystkie źródła są już aktywne) wyzwala regułę z `trigger="restored"` -
+  respektuje to samo `trigger_on`/tryb "aż do ustania naruszenia" co
+  pojedyncze źródło.
+- Źródła w liście mogą być RÓŻNYCH typów (np. jedna strefa Satela + jeden
+  stan urządzenia Tuya w tej samej regule).
+- **`actions`** - lista wielu celów; każdy wpis ma te same pola co
+  pojedynczy cel (`target_device`+opcjonalnie `target_system`/
+  `dimmer_level_percent`, albo `virtual_input`). Wszystkie cele w liście
+  współdzielą resztę zachowania reguły (`duration_seconds`, `action:
+  turn_off`, tryb "aż do ustania naruszenia") - różnią się tylko samym
+  urządzeniem/jasnością. Przy stałym czasie włączenia (`duration_seconds`)
+  wszystkie cele startują i kończą jako JEDNA grupa (`asyncio.gather`), więc
+  status `automation:<nazwa>` poprawnie obejmuje cały czas trwania grupy,
+  a nie tylko pierwszego/najkrócej trwającego celu.
+- W edytorze (`/automations`) odpowiadają temu przyciski "+ Dodaj kolejne
+  źródło" (sekcja "1. Wejście", z selektorem OR/AND, gdy dodano więcej niż
+  jedno) i "+ Dodaj kolejne urządzenie" (sekcja "2. Wyjście", widoczny
+  tylko dla akcji "Włącz urządzenie na czas"/"Wyłącz urządzenie" - scena i
+  wirtualne wejście Satela pozostają jednokrotne). Reguła z dokładnie
+  jednym źródłem/celem jest zapisywana w starym, pojedynczym formacie
+  (`source`/`target_device`...) - `sources`/`actions` pojawiają się w
+  configu tylko wtedy, gdy faktycznie jest ich więcej niż jeden.
 
 ### Włączanie/wyłączanie i usuwanie sceny/reguły (`enabled`)
 

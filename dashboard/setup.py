@@ -170,6 +170,35 @@ def _validate_condition(condition: dict | None, label: str, depth: int = 0) -> l
 
 
 _MOTION_RULE_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state")
+_MOTION_RULE_SOURCE_COMBINATORS = ("or", "and")
+
+
+def _validate_motion_rule_source(source_entry: dict, label: str) -> list[str]:
+    errors = []
+    source = (source_entry.get("source") or "satel_zone").strip()
+    if source not in _MOTION_RULE_SOURCES:
+        errors.append(f"{label}: nieznane wejście '{source}'")
+    if source == "satel_zone":
+        if not source_entry.get("zone_number"):
+            errors.append(f"{label}: numer wejścia Satela jest wymagany")
+    else:
+        if not (source_entry.get("source_device") or "").strip():
+            errors.append(f"{label}: wybierz urządzenie źródłowe")
+        if not (source_entry.get("trigger_value") or "").strip():
+            errors.append(f"{label}: wybierz wartość wyzwalającą")
+    return errors
+
+
+def _validate_motion_rule_action(action_entry: dict, label: str) -> list[str]:
+    errors = []
+    if "virtual_input" in action_entry:
+        return errors
+    if not action_entry.get("target_device"):
+        errors.append(f"{label}: wybierz urządzenie docelowe")
+    target_system = (action_entry.get("target_system") or "tuya").strip()
+    if target_system not in ("tuya", "satel_output"):
+        errors.append(f"{label}: nieznany system urządzenia docelowego '{target_system}'")
+    return errors
 
 
 def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str]:
@@ -178,17 +207,19 @@ def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str
     seen_names = set()
     for i, rule in enumerate(rules):
         label = f"Reguła ruchu #{i + 1}"
-        source = (rule.get("source") or "satel_zone").strip()
-        if source not in _MOTION_RULE_SOURCES:
-            errors.append(f"{label}: nieznane wejście '{source}'")
-        if source == "satel_zone":
-            if not rule.get("zone_number"):
-                errors.append(f"{label}: numer wejścia Satela jest wymagany")
+        sources = rule.get("sources")
+        if sources:
+            if len(sources) < 2:
+                errors.append(f"{label}: lista wielu źródeł ('sources') wymaga co najmniej 2 wpisów")
+            combinator = (rule.get("source_combinator") or "or").strip()
+            if combinator not in _MOTION_RULE_SOURCE_COMBINATORS:
+                errors.append(f"{label}: nieznany łącznik źródeł '{combinator}'")
+            for j, source_entry in enumerate(sources):
+                errors.extend(_validate_motion_rule_source(source_entry, f"{label}, źródło #{j + 1}"))
+            source = (sources[0].get("source") or "satel_zone").strip()
         else:
-            if not (rule.get("source_device") or "").strip():
-                errors.append(f"{label}: wybierz urządzenie źródłowe")
-            if not (rule.get("trigger_value") or "").strip():
-                errors.append(f"{label}: wybierz wartość wyzwalającą")
+            errors.extend(_validate_motion_rule_source(rule, label))
+            source = (rule.get("source") or "satel_zone").strip()
 
         name = (rule.get("name") or "").strip()
         if name:
@@ -201,10 +232,14 @@ def _validate_motion_rules(rules: list[dict], scene_names: set[str]) -> list[str
 
         uses_scene = bool((rule.get("scene") or "").strip())
         uses_virtual_input = bool((rule.get("virtual_input") or "").strip())
+        actions = rule.get("actions")
         if uses_scene:
             scene_name = rule["scene"].strip()
             if scene_name not in scene_names:
                 errors.append(f"{label}: wybrana scena '{scene_name}' nie istnieje wśród zdefiniowanych scen")
+        elif actions:
+            for j, action_entry in enumerate(actions):
+                errors.extend(_validate_motion_rule_action(action_entry, f"{label}, akcja #{j + 1}"))
         elif uses_virtual_input:
             pass
         else:
@@ -347,20 +382,52 @@ def _build_condition(condition: dict | None, depth: int = 0) -> dict | None:
     return None
 
 
+def _build_motion_rule_source(entry: dict) -> dict | None:
+    source = (entry.get("source") or "satel_zone").strip()
+    if source == "satel_zone":
+        if not entry.get("zone_number"):
+            return None
+        return {"source": "satel_zone", "zone_number": int(entry["zone_number"])}
+    source_device = (entry.get("source_device") or "").strip()
+    trigger_value = (entry.get("trigger_value") or "").strip()
+    if not source_device or not trigger_value:
+        return None
+    return {"source": source, "source_device": source_device, "trigger_value": trigger_value}
+
+
+def _build_motion_rule_action(entry: dict) -> dict | None:
+    virtual_input_name = (entry.get("virtual_input") or "").strip()
+    if virtual_input_name:
+        return {"virtual_input": virtual_input_name}
+    if not entry.get("target_device"):
+        return None
+    built = {"target_device": entry["target_device"]}
+    target_system = (entry.get("target_system") or "tuya").strip()
+    if target_system == "satel_output":
+        built["target_system"] = "satel_output"
+    elif entry.get("dimmer_level_percent") not in (None, ""):
+        built["dimmer_level_percent"] = int(entry["dimmer_level_percent"])
+    return built
+
+
 def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
     rules = []
     for rule in rules_form:
-        source = (rule.get("source") or "satel_zone").strip()
-        if source == "satel_zone":
-            if not rule.get("zone_number"):
+        sources_form = rule.get("sources")
+        if sources_form:
+            built_sources = [s for s in (_build_motion_rule_source(e) for e in sources_form) if s]
+            if len(built_sources) < 2:
                 continue
-            built = {"source": "satel_zone", "zone_number": int(rule["zone_number"])}
+            built = {"sources": built_sources}
+            if (rule.get("source_combinator") or "or").strip() == "and":
+                built["source_combinator"] = "and"
+            source = built_sources[0]["source"]
         else:
-            source_device = (rule.get("source_device") or "").strip()
-            trigger_value = (rule.get("trigger_value") or "").strip()
-            if not source_device or not trigger_value:
+            source = (rule.get("source") or "satel_zone").strip()
+            single_source = _build_motion_rule_source(rule)
+            if single_source is None:
                 continue
-            built = {"source": source, "source_device": source_device, "trigger_value": trigger_value}
+            built = dict(single_source)
 
         name = (rule.get("name") or "").strip()
         if name:
@@ -368,8 +435,18 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
 
         scene_name = (rule.get("scene") or "").strip()
         virtual_input_name = (rule.get("virtual_input") or "").strip()
+        actions_form = rule.get("actions")
         if scene_name:
             built["scene"] = scene_name
+        elif actions_form:
+            built_actions = [a for a in (_build_motion_rule_action(e) for e in actions_form) if a]
+            if not built_actions:
+                continue
+            built["actions"] = built_actions
+            if rule.get("action") == "turn_off":
+                built["action"] = "turn_off"
+            elif rule.get("duration_seconds") not in (None, ""):
+                built["duration_seconds"] = int(rule["duration_seconds"])
         elif virtual_input_name:
             built["virtual_input"] = virtual_input_name
             if rule.get("duration_seconds") not in (None, ""):

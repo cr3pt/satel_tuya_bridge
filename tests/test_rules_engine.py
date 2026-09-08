@@ -598,6 +598,182 @@ class TestDeviceStateTrigger:
         assert fake_tuya.calls == []
 
 
+class TestMotionRuleMultiSourceAndAction:
+
+    async def _reload_with_rule(self, engine, rule: dict, fake_tuya=None, fake_satel=None, fake_virtual_inputs=None):
+        engine.config.store.set("automations", {
+            "scenes": [], "reguły_ruchu": [rule], "presence_simulation": {"enabled": False},
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya, fake_satel, fake_virtual_inputs)
+
+    async def test_or_either_zone_source_fires(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "sources": [
+                {"source": "satel_zone", "zone_number": 30},
+                {"source": "satel_zone", "zone_number": 31},
+            ],
+            "target_device": "gniazdko_salon", "duration_seconds": 60,
+        }, fake_tuya=fake_tuya)
+
+        await engine.handle_motion("satel_zone", 30)
+        await asyncio.sleep(0)
+        assert ("on_for", "gniazdko_salon", 60, None) in fake_tuya.calls
+
+        fake_tuya.calls.clear()
+        await engine.handle_motion("satel_zone", 31)
+        await asyncio.sleep(0)
+        assert ("on_for", "gniazdko_salon", 60, None) in fake_tuya.calls
+
+    async def test_or_unrelated_zone_does_not_fire(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "sources": [
+                {"source": "satel_zone", "zone_number": 30},
+                {"source": "satel_zone", "zone_number": 31},
+            ],
+            "target_device": "gniazdko_salon", "duration_seconds": 60,
+        }, fake_tuya=fake_tuya)
+        await engine.handle_motion("satel_zone", 999)
+        assert fake_tuya.calls == []
+
+    async def test_or_mixed_zone_and_device_state_sources(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "sources": [
+                {"source": "satel_zone", "zone_number": 30},
+                {"source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone"},
+            ],
+            "target_device": "gniazdko_salon", "duration_seconds": 10,
+        }, fake_tuya=fake_tuya)
+
+        await engine.handle_motion("satel_zone", 30)
+        await asyncio.sleep(0)
+        assert ("on_for", "gniazdko_salon", 10, None) in fake_tuya.calls
+
+        fake_tuya.calls.clear()
+        await engine.handle_device_state("tuya_state", "czujnik_drzwi", "włączone")
+        await asyncio.sleep(0)
+        assert ("on_for", "gniazdko_salon", 10, None) in fake_tuya.calls
+
+    async def test_and_requires_all_sources_violated(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "sources": [
+                {"source": "satel_zone", "zone_number": 30},
+                {"source": "satel_zone", "zone_number": 31},
+            ],
+            "source_combinator": "and",
+            "target_device": "gniazdko_salon",
+        }, fake_tuya=fake_tuya)
+
+        await engine.handle_motion("satel_zone", 30, trigger="violated")
+        assert fake_tuya.calls == []
+
+        await engine.handle_motion("satel_zone", 31, trigger="violated")
+        assert ("on", "gniazdko_salon", None) in fake_tuya.calls
+
+    async def test_and_does_not_refire_on_duplicate_update(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "sources": [
+                {"source": "satel_zone", "zone_number": 30},
+                {"source": "satel_zone", "zone_number": 31},
+            ],
+            "source_combinator": "and",
+            "target_device": "gniazdko_salon",
+        }, fake_tuya=fake_tuya)
+
+        await engine.handle_motion("satel_zone", 30, trigger="violated")
+        await engine.handle_motion("satel_zone", 31, trigger="violated")
+        fake_tuya.calls.clear()
+
+        await engine.handle_motion("satel_zone", 30, trigger="violated")
+        assert fake_tuya.calls == []
+
+    async def test_and_restores_when_any_source_clears(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "sources": [
+                {"source": "satel_zone", "zone_number": 30},
+                {"source": "satel_zone", "zone_number": 31},
+            ],
+            "source_combinator": "and",
+            "target_device": "gniazdko_salon",
+        }, fake_tuya=fake_tuya)
+
+        await engine.handle_motion("satel_zone", 30, trigger="violated")
+        await engine.handle_motion("satel_zone", 31, trigger="violated")
+        fake_tuya.calls.clear()
+
+        await engine.handle_motion("satel_zone", 30, trigger="restored")
+        assert ("off", "gniazdko_salon") in fake_tuya.calls
+
+    async def test_multiple_actions_all_receive_on_for(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "satel_zone", "zone_number": 30,
+            "actions": [
+                {"target_device": "gniazdko_salon"},
+                {"target_device": "wiatrak"},
+            ],
+            "duration_seconds": 45,
+        }, fake_tuya=fake_tuya)
+
+        await engine.handle_motion("satel_zone", 30)
+        # Wiele akcji biegnie jako jedna grupa (asyncio.gather) - potrzeba dodatkowego
+        # "ticku" event loopa względem pojedynczej akcji, żeby child-taski wystartowały.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert ("on_for", "gniazdko_salon", 45, None) in fake_tuya.calls
+        assert ("on_for", "wiatrak", 45, None) in fake_tuya.calls
+
+    async def test_multiple_actions_turn_off_all(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "satel_zone", "zone_number": 30, "trigger_on": "restored", "action": "turn_off",
+            "actions": [
+                {"target_device": "gniazdko_salon"},
+                {"target_device": "wiatrak"},
+            ],
+        }, fake_tuya=fake_tuya)
+
+        await engine.handle_motion("satel_zone", 30, trigger="restored")
+        assert ("off", "gniazdko_salon") in fake_tuya.calls
+        assert ("off", "wiatrak") in fake_tuya.calls
+
+    async def test_multiple_actions_until_restored_all(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "satel_zone", "zone_number": 30,
+            "actions": [
+                {"target_device": "gniazdko_salon", "dimmer_level_percent": 70},
+                {"target_device": "wiatrak"},
+            ],
+        }, fake_tuya=fake_tuya)
+
+        await engine.handle_motion("satel_zone", 30, trigger="violated")
+        assert ("on", "gniazdko_salon", 70) in fake_tuya.calls
+        assert ("on", "wiatrak", None) in fake_tuya.calls
+
+        await engine.handle_motion("satel_zone", 30, trigger="restored")
+        assert ("off", "gniazdko_salon") in fake_tuya.calls
+        assert ("off", "wiatrak") in fake_tuya.calls
+
+    async def test_retrigger_cancels_pending_group_timer(self, engine, fake_tuya):
+        await self._reload_with_rule(engine, {
+            "source": "satel_zone", "zone_number": 30,
+            "actions": [
+                {"target_device": "gniazdko_salon"},
+                {"target_device": "wiatrak"},
+            ],
+            "duration_seconds": 60,
+        }, fake_tuya=fake_tuya)
+
+        await engine.handle_motion("satel_zone", 30)
+        await asyncio.sleep(0)
+        assert "gniazdko_salon" in engine._active_timers
+        assert "wiatrak" in engine._active_timers
+        first_task = engine._active_timers["gniazdko_salon"]
+
+        await engine.handle_motion("satel_zone", 30)
+        await asyncio.sleep(0)
+        assert engine._active_timers["gniazdko_salon"] is not first_task
+        assert engine._active_timers["wiatrak"] is not first_task
+
+
 class TestMotionRuleChaining:
 
     async def _reload_with_rules(self, engine, rules: list[dict], fake_tuya=None, fake_satel=None, fake_virtual_inputs=None):

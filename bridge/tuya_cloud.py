@@ -5,7 +5,7 @@ import logging
 
 import tinytuya
 
-from .tuya_local import is_switch_code
+from .tuya_local import find_switch_codes_from_functions_result, is_switch_code
 
 logger = logging.getLogger("bridge.tuya_cloud")
 
@@ -54,6 +54,20 @@ class TuyaCloudController:
         )
         raise ConnectionError(f"Nie udało się wysłać komendy do Tuya Cloud dla '{device_name}': {last_error}")
 
+    async def _detect_switch_codes_from_functions(self, device_name: str) -> list[str] | None:
+        cfg = self.devices_cfg[device_name]
+        client = self._client()
+        getdps = getattr(client, "getdps", None)
+        if getdps is None:
+            return None
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(None, getdps, cfg["id"])
+        except Exception:
+            return None
+        codes = find_switch_codes_from_functions_result(result)
+        return codes or None
+
     async def _switch_codes(self, device_name: str) -> list[str]:
         cfg = self.devices_cfg[device_name]
         explicit = (cfg.get("switch_code") or "").strip()
@@ -61,11 +75,17 @@ class TuyaCloudController:
             return [explicit]
         if device_name in self._switch_codes_cache:
             return self._switch_codes_cache[device_name]
-        try:
-            status = await self.get_status(device_name)
-        except ConnectionError:
-            return _FALLBACK_SWITCH_CODES
-        codes = [code for code in status if is_switch_code(code)]
+        # Wykrywamy kody wyłącznie z listy "functions" (gwarantowanie zapisywalne DP) -
+        # sam status potrafi raportować też kody tylko-do-odczytu, których wysłanie
+        # w tej samej komendzie co prawdziwy przełącznik odrzuca całą paczkę (Tuya Cloud
+        # zwraca wtedy "command or value not support").
+        codes = await self._detect_switch_codes_from_functions(device_name)
+        if not codes:
+            try:
+                status = await self.get_status(device_name)
+            except ConnectionError:
+                status = {}
+            codes = [code for code in status if is_switch_code(code)]
         codes = codes or _FALLBACK_SWITCH_CODES
         self._switch_codes_cache[device_name] = codes
         return codes
