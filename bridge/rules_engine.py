@@ -77,6 +77,8 @@ class RulesEngine:
         )
         self._active_timers: dict[str, asyncio.Task] = {}
         self._device_state_last_value: dict[tuple[str, str], str] = {}
+        self._zone_violated_state: dict[int, bool] = {}
+        self._rule_and_state: dict[str, bool] = {}
         self._alarm_status_debounce_task: asyncio.Task | None = None
         self.boiler_publishers = build_boiler_publishers(config, history=self.history)
         self.ebus_listener: EbusMqttListener | None = None
@@ -165,24 +167,74 @@ class RulesEngine:
             )
             return False
 
+    @staticmethod
+    def _rule_sources(rule: dict) -> list[dict]:
+        """Normalizuje źródła reguły do listy - reguły bez pola "sources" (stary,
+        pojedynczy format) zwracają listę z jednym elementem zbudowanym z
+        legacy pól "source"/"zone_number"/"source_device"/"trigger_value",
+        więc cała reszta silnika może zawsze operować na liście."""
+        sources = rule.get("sources")
+        if sources:
+            return sources
+        entry = {"source": rule.get("source")}
+        if rule.get("source") == "satel_zone":
+            entry["zone_number"] = rule.get("zone_number")
+        else:
+            entry["source_device"] = rule.get("source_device")
+            entry["trigger_value"] = rule.get("trigger_value")
+        return [entry]
+
+    def _source_is_active(self, entry: dict) -> bool:
+        if entry.get("source") == "satel_zone":
+            return self._zone_violated_state.get(entry.get("zone_number"), False)
+        key = (entry.get("source"), entry.get("source_device"))
+        return self._device_state_last_value.get(key) == entry.get("trigger_value")
+
+    def _resolve_and_trigger(self, rule: dict, rule_key: str, sources: list[dict]) -> str | None:
+        """Dla combinator="and": przelicza, czy WSZYSTKIE źródła są aktualnie
+        aktywne, i zwraca "violated"/"restored" tylko na zboczu (przejściu
+        stanu), albo None gdy nic się nie zmieniło - unika wielokrotnego
+        odpalania reguły przy każdej aktualizacji jednego z wielu źródeł."""
+        all_active = all(self._source_is_active(s) for s in sources)
+        was_active = self._rule_and_state.get(rule_key, False)
+        self._rule_and_state[rule_key] = all_active
+        if all_active == was_active:
+            return None
+        return "violated" if all_active else "restored"
+
     async def handle_motion(self, source: str, zone_or_device_id, trigger: str = "violated") -> None:
+        if source == "satel_zone":
+            self._zone_violated_state[zone_or_device_id] = (trigger == "violated")
+
         now = datetime.now()
         for idx, rule in enumerate(self.config.motion_rules):
-            if rule["source"] != source:
-                continue
-            if source == "satel_zone" and rule.get("zone_number") != zone_or_device_id:
-                continue
-
             if not rule.get("enabled", True):
                 continue
 
-            if not self._rule_matches_trigger(rule, trigger):
+            sources = self._rule_sources(rule)
+            if not any(
+                s.get("source") == source and (
+                    source != "satel_zone" or s.get("zone_number") == zone_or_device_id
+                )
+                for s in sources
+            ):
+                continue
+
+            rule_key = f"motion_rule_{idx}"
+            if rule.get("source_combinator") == "and" and len(sources) > 1:
+                effective_trigger = self._resolve_and_trigger(rule, rule_key, sources)
+                if effective_trigger is None:
+                    continue
+            else:
+                effective_trigger = trigger
+
+            if not self._rule_matches_trigger(rule, effective_trigger):
                 continue
 
             if not self._rule_gate_open(rule, now):
                 continue
 
-            await self._fire_motion_rule(rule, f"motion_rule_{idx}", source, zone_or_device_id, trigger)
+            await self._fire_motion_rule(rule, rule_key, source, zone_or_device_id, effective_trigger)
 
     async def handle_device_state(self, source: str, device_name: str, value: str) -> None:
         state_key = (source, device_name)
@@ -193,23 +245,32 @@ class RulesEngine:
 
         now = datetime.now()
         for idx, rule in enumerate(self.config.motion_rules):
-            if rule.get("source") != source or rule.get("source_device") != device_name:
-                continue
             if not rule.get("enabled", True):
                 continue
 
-            trigger_value = rule.get("trigger_value")
-            if value == trigger_value:
-                trigger = "violated"
-            elif self._is_until_restored(rule) and old_value == trigger_value:
-                trigger = "restored"
-            else:
+            sources = self._rule_sources(rule)
+            matching = [s for s in sources if s.get("source") == source and s.get("source_device") == device_name]
+            if not matching:
                 continue
+
+            rule_key = f"motion_rule_{idx}"
+            if rule.get("source_combinator") == "and" and len(sources) > 1:
+                trigger = self._resolve_and_trigger(rule, rule_key, sources)
+                if trigger is None:
+                    continue
+            else:
+                trigger_value = matching[0].get("trigger_value")
+                if value == trigger_value:
+                    trigger = "violated"
+                elif self._is_until_restored(rule) and old_value == trigger_value:
+                    trigger = "restored"
+                else:
+                    continue
 
             if not self._rule_gate_open(rule, now):
                 continue
 
-            await self._fire_motion_rule(rule, f"motion_rule_{idx}", source, device_name, trigger)
+            await self._fire_motion_rule(rule, rule_key, source, device_name, trigger)
 
     @staticmethod
     def _is_until_restored(rule: dict) -> bool:
@@ -257,65 +318,97 @@ class RulesEngine:
             await self._chain_trigger(rule, trigger, _chain_depth)
             return
 
-        if "virtual_input" in rule:
-            device = rule["virtual_input"]
-            target_system = "satel_virtual_input"
-        else:
-            device = rule["target_device"]
-            target_system = rule.get("target_system", "tuya")
+        targets = self._rule_targets(rule)
 
-        if device in self._active_timers and not self._active_timers[device].done():
-            self._active_timers[device].cancel()
+        for target in targets:
+            device, _ = self._resolve_target(target, rule)
+            if device in self._active_timers and not self._active_timers[device].done():
+                self._active_timers[device].cancel()
 
         if rule.get("action") == "turn_off":
-            await self._set_target_state(target_system, device, False)
-            logger.info(
-                "Reguła ruchu: %s(%s) -> wyłączenie %s (%s)",
-                source, zone_or_device_id, device, target_system,
-            )
-            self.history.write_event(
-                "motion", source=f"{source}:{zone_or_device_id}",
-                detail={"target_device": device, "target_system": target_system, "action": "turn_off"},
-            )
+            for target in targets:
+                device, target_system = self._resolve_target(target, rule)
+                await self._set_target_state(target_system, device, False)
+                logger.info(
+                    "Reguła ruchu: %s(%s) -> wyłączenie %s (%s)",
+                    source, zone_or_device_id, device, target_system,
+                )
+                self.history.write_event(
+                    "motion", source=f"{source}:{zone_or_device_id}",
+                    detail={"target_device": device, "target_system": target_system, "action": "turn_off"},
+                )
+            await self._chain_trigger(rule, trigger, _chain_depth)
+            return
+
+        if self._is_until_restored(rule):
+            for target in targets:
+                device, target_system = self._resolve_target(target, rule)
+                dimmer = target.get("dimmer_level_percent", rule.get("dimmer_level_percent"))
+                await self._set_target_state(target_system, device, trigger != "restored", dimmer)
+                logger.info(
+                    "Reguła ruchu: %s(%s) -> %s %s (%s, do ustania naruszenia)",
+                    source, zone_or_device_id, "wyłączenie" if trigger == "restored" else "włączenie",
+                    device, target_system,
+                )
+                self.history.write_event(
+                    "motion", source=f"{source}:{zone_or_device_id}",
+                    detail={
+                        "target_device": device, "target_system": target_system,
+                        "until_restored": True, "trigger": trigger,
+                    },
+                )
             await self._chain_trigger(rule, trigger, _chain_depth)
             return
 
         duration = rule.get("duration_seconds")
-        dimmer = rule.get("dimmer_level_percent")
-
-        if self._is_until_restored(rule):
-            await self._set_target_state(target_system, device, trigger != "restored", dimmer)
-            logger.info(
-                "Reguła ruchu: %s(%s) -> %s %s (%s, do ustania naruszenia)",
-                source, zone_or_device_id, "wyłączenie" if trigger == "restored" else "włączenie",
-                device, target_system,
-            )
-            self.history.write_event(
-                "motion", source=f"{source}:{zone_or_device_id}",
-                detail={
-                    "target_device": device, "target_system": target_system,
-                    "until_restored": True, "trigger": trigger,
-                },
-            )
-            await self._chain_trigger(rule, trigger, _chain_depth)
-            return
-
         rule_name = rule.get("name")
-        self._active_timers[device] = asyncio.create_task(
-            self._run_on_for_duration(target_system, device, duration, dimmer, rule_name)
-        )
+        if len(targets) == 1:
+            # Ścieżka identyczna z tą sprzed wsparcia wielu akcji - bez dodatkowej
+            # warstwy asyncio.gather, żeby nie zmieniać liczby "przełączeń" event loopa
+            # (od tego zależy część istniejących testów asyncio.sleep(0)).
+            device, target_system = self._resolve_target(targets[0], rule)
+            dimmer = targets[0].get("dimmer_level_percent", rule.get("dimmer_level_percent"))
+            self._active_timers[device] = asyncio.create_task(
+                self._run_on_for_duration(target_system, device, duration, dimmer, rule_name)
+            )
+        else:
+            # Wiele celów jednej reguły biegnie jako JEDNA grupa (asyncio.gather) zamiast
+            # osobnych zadań na urządzenie - dzięki temu status "automation:<nazwa>" odpowiada
+            # całej grupie (od startu pierwszego do końca ostatniego celu), a nie temu, który
+            # cel akurat skończy jako pierwszy.
+            group_task = asyncio.create_task(self._run_targets_for_duration(targets, rule, duration, rule_name))
+            for target in targets:
+                device, _ = self._resolve_target(target, rule)
+                self._active_timers[device] = group_task
         logger.info(
-            "Reguła ruchu: %s(%s) -> %s (%s) na %ss",
-            source, zone_or_device_id, device, target_system, duration,
+            "Reguła ruchu: %s(%s) -> %d cel(e) na %ss",
+            source, zone_or_device_id, len(targets), duration,
         )
         self.history.write_event(
             "motion", source=f"{source}:{zone_or_device_id}",
             detail={
-                "target_device": device, "target_system": target_system,
-                "duration_seconds": duration, "dimmer_level_percent": dimmer,
+                "targets": [self._resolve_target(t, rule)[0] for t in targets],
+                "duration_seconds": duration,
             },
         )
         await self._chain_trigger(rule, trigger, _chain_depth)
+
+    @staticmethod
+    def _rule_targets(rule: dict) -> list[dict]:
+        """Normalizuje cele akcji reguły do listy - reguły bez pola "actions"
+        (stary, pojedynczy format) zwracają listę z jednym elementem zbudowanym
+        z legacy pól "virtual_input"/"target_device"/"target_system"."""
+        if rule.get("actions"):
+            return rule["actions"]
+        if "virtual_input" in rule:
+            return [{"virtual_input": rule["virtual_input"]}]
+        return [{"target_device": rule["target_device"], "target_system": rule.get("target_system", "tuya")}]
+
+    @staticmethod
+    def _resolve_target(target: dict, rule: dict) -> tuple[str, str]:
+        if "virtual_input" in target:
+            return target["virtual_input"], "satel_virtual_input"
+        return target["target_device"], target.get("target_system", rule.get("target_system", "tuya"))
 
     async def _set_target_state(
         self, target_system: str, device: str, on: bool, dimmer: int | None = None,
@@ -348,6 +441,22 @@ class RulesEngine:
                 await self._set_target_state(target_system, device, False)
             else:
                 await self.tuya.turn_on_for_duration(device, duration, dimmer)
+        finally:
+            if rule_name:
+                self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)
+
+    async def _run_targets_for_duration(
+        self, targets: list[dict], rule: dict, duration: float, rule_name: str | None,
+    ) -> None:
+        if rule_name:
+            self.history.set_status(f"automation:{rule_name}", "automation", "uruchomiona", label=rule_name)
+        try:
+            async def _run_one(target: dict):
+                device, target_system = self._resolve_target(target, rule)
+                dimmer = target.get("dimmer_level_percent", rule.get("dimmer_level_percent"))
+                await self._run_on_for_duration(target_system, device, duration, dimmer, None)
+
+            await asyncio.gather(*(_run_one(target) for target in targets))
         finally:
             if rule_name:
                 self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)

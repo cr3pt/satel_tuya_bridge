@@ -781,6 +781,102 @@ function thenTriggerRuleOptionsHtml(selected, ownNameEl) {
 }
 
 
+function buildExtraSourceRowHtml(entry) {
+  entry = entry || {};
+  const system = entry.source || 'satel_zone';
+  return `
+    <div class="field-row extra-source-row repeatable-row">
+      <div class="field"><label>System</label>
+        <select class="mr-ex-source-system">
+          <option value="satel_zone" ${system === 'satel_zone' ? 'selected' : ''}>Satel (wejście)</option>
+          <option value="tuya_state" ${system === 'tuya_state' ? 'selected' : ''}>Tuya (stan urządzenia)</option>
+          <option value="homewhiz_state" ${system === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz (stan urządzenia AGD)</option>
+        </select></div>
+      <div class="field mr-ex-satel-fields" style="${system === 'satel_zone' ? '' : 'display:none;'}">
+        <label>Wejście w Satelu</label>
+        <select class="mr-ex-zone">${zoneOptionsHtml(entry.zone_number ?? '')}</select></div>
+      <div class="field mr-ex-device-fields" style="${system === 'satel_zone' ? 'display:none;' : ''}">
+        <label>Urządzenie źródłowe</label>
+        <select class="mr-ex-source-device">${sourceDeviceOptionsHtml(system, entry.source_device)}</select></div>
+      <div class="field mr-ex-device-fields" style="${system === 'satel_zone' ? 'display:none;' : ''}">
+        <label>Wartość wyzwalająca</label>
+        <span class="mr-ex-trigger-value-wrap">${triggerValueFieldHtml(system, entry.trigger_value)}</span></div>
+      <button type="button" class="row-remove">✕</button>
+    </div>`;
+}
+
+function syncSourceCombinatorVisibility(card) {
+  const extraCount = card.querySelectorAll('.mr-extra-sources > .extra-source-row').length;
+  card.querySelector('.mr-source-combinator-row').style.display = extraCount > 0 ? '' : 'none';
+}
+
+function addExtraSourceRow(card, entry) {
+  const container = card.querySelector('.mr-extra-sources');
+  const wrap = document.createElement('div');
+  wrap.innerHTML = buildExtraSourceRowHtml(entry);
+  const row = wrap.firstElementChild;
+  const satelFields = row.querySelectorAll('.mr-ex-satel-fields');
+  const deviceFields = row.querySelectorAll('.mr-ex-device-fields');
+  row.querySelector('.mr-ex-source-system').addEventListener('change', (e) => {
+    const system = e.target.value;
+    const isSatel = system === 'satel_zone';
+    satelFields.forEach(el => { el.style.display = isSatel ? '' : 'none'; });
+    deviceFields.forEach(el => { el.style.display = isSatel ? 'none' : ''; });
+    if (!isSatel) {
+      row.querySelector('.mr-ex-source-device').innerHTML = sourceDeviceOptionsHtml(system, '');
+      row.querySelector('.mr-ex-trigger-value-wrap').innerHTML = triggerValueFieldHtml(system, '');
+    }
+  });
+  row.querySelector('.mr-ex-source-device').addEventListener('change', () => {
+    const system = row.querySelector('.mr-ex-source-system').value;
+    if (system !== 'satel_zone') row.querySelector('.mr-ex-trigger-value-wrap').innerHTML = triggerValueFieldHtml(system, '');
+  });
+  row.querySelector('.row-remove').addEventListener('click', () => {
+    row.remove();
+    syncSourceCombinatorVisibility(card);
+  });
+  container.appendChild(row);
+}
+
+function buildExtraActionRowHtml(entry) {
+  entry = entry || {};
+  const system = entry.target_system || 'tuya';
+  const isDimmer = (context.dimmer_devices || []).includes(entry.target_device);
+  return `
+    <div class="field-row extra-action-row repeatable-row">
+      <div class="field"><label>System</label>
+        <select class="mr-ex-target-system">
+          <option value="tuya" ${system === 'tuya' ? 'selected' : ''}>Tuya</option>
+          <option value="satel_output" ${system === 'satel_output' ? 'selected' : ''}>Satel (wyjście)</option>
+        </select></div>
+      <div class="field"><label>Urządzenie docelowe</label>
+        <select class="mr-ex-target-device">${targetDeviceOptionsHtml(system, entry.target_device)}</select></div>
+      <div class="field mr-ex-dimmer-field" style="${system === 'tuya' && isDimmer ? '' : 'display:none;'}">
+        <label>Jasność % (ściemniacz)</label><input type="number" class="mr-ex-dimmer" value="${entry.dimmer_level_percent ?? ''}"></div>
+      <button type="button" class="row-remove">✕</button>
+    </div>`;
+}
+
+function addExtraActionRow(card, entry) {
+  const container = card.querySelector('.mr-extra-actions');
+  const wrap = document.createElement('div');
+  wrap.innerHTML = buildExtraActionRowHtml(entry);
+  const row = wrap.firstElementChild;
+  function syncDimmer() {
+    const system = row.querySelector('.mr-ex-target-system').value;
+    const device = row.querySelector('.mr-ex-target-device').value;
+    const isDimmer = (context.dimmer_devices || []).includes(device);
+    row.querySelector('.mr-ex-dimmer-field').style.display = (system === 'tuya' && isDimmer) ? '' : 'none';
+  }
+  row.querySelector('.mr-ex-target-system').addEventListener('change', (e) => {
+    row.querySelector('.mr-ex-target-device').innerHTML = targetDeviceOptionsHtml(e.target.value, '');
+    syncDimmer();
+  });
+  row.querySelector('.mr-ex-target-device').addEventListener('change', syncDimmer);
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+
 function setMotionRuleCollapsed(card, collapsed) {
   card.classList.toggle('collapsed', collapsed);
   card.querySelector('.mr-toggle-collapse').textContent = collapsed ? '▶ Rozwiń' : '▼ Zwiń';
@@ -798,7 +894,17 @@ function addMotionRuleCard(initial, startCollapsed) {
   const actionKind = initial.scene ? 'scene'
     : initial.virtual_input ? 'virtual_input'
     : (initial.action === 'turn_off' ? 'device_off' : 'device');
-  const sourceSystem = initial.source || 'satel_zone';
+  const primarySource = (initial.sources && initial.sources[0]) || {
+    source: initial.source, zone_number: initial.zone_number,
+    source_device: initial.source_device, trigger_value: initial.trigger_value,
+  };
+  const extraSources = (initial.sources || []).slice(1);
+  const primaryAction = (initial.actions && initial.actions[0]) || {
+    target_device: initial.target_device, target_system: initial.target_system,
+    dimmer_level_percent: initial.dimmer_level_percent,
+  };
+  const extraActions = (initial.actions || []).slice(1);
+  const sourceSystem = primarySource.source || 'satel_zone';
   const triggerOn = initial.trigger_on === 'restored' ? 'restored' : 'violated';
   const isEnabled = initial.enabled !== false;
   const container = document.getElementById('motionRulesContainer');
@@ -824,10 +930,10 @@ function addMotionRuleCard(initial, startCollapsed) {
           </select></div>
         <div class="field mr-satel-source-fields" style="${sourceSystem === 'satel_zone' ? '' : 'display:none;'}">
           <label>Wejście w Satelu</label>
-          <select class="mr-zone">${zoneOptionsHtml(initial.zone_number ?? '')}</select></div>
+          <select class="mr-zone">${zoneOptionsHtml(primarySource.zone_number ?? '')}</select></div>
         <div class="field mr-device-source-fields" style="${sourceSystem === 'satel_zone' ? 'display:none;' : ''}">
           <label>Urządzenie źródłowe</label>
-          <select class="mr-source-device">${sourceDeviceOptionsHtml(sourceSystem, initial.source_device)}</select></div>
+          <select class="mr-source-device">${sourceDeviceOptionsHtml(sourceSystem, primarySource.source_device)}</select></div>
       </div>
       <div class="field-row">
         <div class="field mr-satel-source-fields" style="${sourceSystem === 'satel_zone' ? '' : 'display:none;'}">
@@ -838,7 +944,7 @@ function addMotionRuleCard(initial, startCollapsed) {
           </select></div>
         <div class="field mr-device-source-fields" style="${sourceSystem === 'satel_zone' ? 'display:none;' : ''}">
           <label>Wyzwalacz - wartość statusu</label>
-          <span class="mr-trigger-value-wrap">${triggerValueFieldHtml(sourceSystem, initial.trigger_value)}</span></div>
+          <span class="mr-trigger-value-wrap">${triggerValueFieldHtml(sourceSystem, primarySource.trigger_value)}</span></div>
         <div class="field"><label>Akcja</label>
           <select class="mr-action-kind">
             <option value="device" ${actionKind === 'device' ? 'selected' : ''}>Włącz urządzenie na czas</option>
@@ -847,6 +953,15 @@ function addMotionRuleCard(initial, startCollapsed) {
             <option value="virtual_input" ${actionKind === 'virtual_input' ? 'selected' : ''}>Aktywuj wejście IP Satela</option>
           </select></div>
       </div>
+      <div class="mr-extra-sources"></div>
+      <div class="field-row mr-source-combinator-row" style="display:none;">
+        <div class="field"><label>Warunek łączenia źródeł</label>
+          <select class="mr-source-combinator">
+            <option value="or" ${initial.source_combinator !== 'and' ? 'selected' : ''}>Dowolne ze źródeł (OR)</option>
+            <option value="and" ${initial.source_combinator === 'and' ? 'selected' : ''}>Wszystkie jednocześnie (AND)</option>
+          </select></div>
+      </div>
+      <button type="button" class="secondary add-row-btn mr-add-source-btn">+ Dodaj kolejne źródło</button>
     </div>
 
     <div class="mr-section">
@@ -854,13 +969,15 @@ function addMotionRuleCard(initial, startCollapsed) {
       <div class="field-row mr-device-fields">
         <div class="field"><label>System</label>
           <select class="mr-target-system">
-            <option value="tuya" ${(initial.target_system || 'tuya') === 'tuya' ? 'selected' : ''}>Tuya</option>
-            <option value="satel_output" ${initial.target_system === 'satel_output' ? 'selected' : ''}>Satel (wyjście)</option>
+            <option value="tuya" ${(primaryAction.target_system || 'tuya') === 'tuya' ? 'selected' : ''}>Tuya</option>
+            <option value="satel_output" ${primaryAction.target_system === 'satel_output' ? 'selected' : ''}>Satel (wyjście)</option>
           </select></div>
-        <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${targetDeviceOptionsHtml(initial.target_system || 'tuya', initial.target_device)}</select></div>
-        <div class="field mr-dimmer-field" style="${(initial.target_system || 'tuya') === 'tuya' && (context.dimmer_devices || []).includes(initial.target_device) ? '' : 'display:none;'}">
-          <label>Jasność % (ściemniacz)</label><input type="number" class="mr-dimmer" value="${initial.dimmer_level_percent ?? ''}"></div>
+        <div class="field"><label>Urządzenie docelowe</label><select class="mr-target-device">${targetDeviceOptionsHtml(primaryAction.target_system || 'tuya', primaryAction.target_device)}</select></div>
+        <div class="field mr-dimmer-field" style="${(primaryAction.target_system || 'tuya') === 'tuya' && (context.dimmer_devices || []).includes(primaryAction.target_device) ? '' : 'display:none;'}">
+          <label>Jasność % (ściemniacz)</label><input type="number" class="mr-dimmer" value="${primaryAction.dimmer_level_percent ?? ''}"></div>
       </div>
+      <div class="mr-extra-actions"></div>
+      <button type="button" class="secondary add-row-btn mr-add-action-btn" style="display:none;">+ Dodaj kolejne urządzenie</button>
       <div class="field-row mr-scene-fields">
         <div class="field"><label>Scena</label><select class="mr-scene">${sceneOptionsHtml(initial.scene)}</select></div>
       </div>
@@ -946,33 +1063,48 @@ function addMotionRuleCard(initial, startCollapsed) {
     if (system !== 'satel_zone') renderTriggerValueField(card, system, '');
   });
 
-  
-  if (sourceSystem === 'homewhiz_state' && initial.source_device) {
-    renderTriggerValueField(card, sourceSystem, initial.trigger_value);
+
+  if (sourceSystem === 'homewhiz_state' && primarySource.source_device) {
+    renderTriggerValueField(card, sourceSystem, primarySource.trigger_value);
   }
+
+  extraSources.forEach(s => addExtraSourceRow(card, s));
+  syncSourceCombinatorVisibility(card);
+  card.querySelector('.mr-add-source-btn').addEventListener('click', () => {
+    addExtraSourceRow(card);
+    syncSourceCombinatorVisibility(card);
+  });
+
+  extraActions.forEach(a => addExtraActionRow(card, a));
+  card.querySelector('.mr-add-action-btn').addEventListener('click', () => addExtraActionRow(card));
 
   const deviceFields = card.querySelector('.mr-device-fields');
   const sceneFields = card.querySelector('.mr-scene-fields');
   const vinputFields = card.querySelector('.mr-vinput-fields');
   const durationField = card.querySelector('.mr-duration-field');
   const dimmerField = card.querySelector('.mr-dimmer-field');
+  const extraActionsEl = card.querySelector('.mr-extra-actions');
+  const addActionBtn = card.querySelector('.mr-add-action-btn');
   function syncActionKind() {
     const kind = card.querySelector('.mr-action-kind').value;
     const system = card.querySelector('.mr-target-system').value;
     deviceFields.style.display = (kind === 'device' || kind === 'device_off') ? '' : 'none';
     sceneFields.style.display = kind === 'scene' ? '' : 'none';
     vinputFields.style.display = kind === 'virtual_input' ? '' : 'none';
-    
-    
+
+
     durationField.style.display = (kind === 'device' || kind === 'virtual_input') ? '' : 'none';
-    
-    
+
+
     if (kind === 'device_off' || system === 'satel_output') {
       dimmerField.style.display = 'none';
     } else if (kind === 'device') {
       const isDimmer = (context.dimmer_devices || []).includes(card.querySelector('.mr-target-device').value);
       dimmerField.style.display = isDimmer ? '' : 'none';
     }
+    const showMultiAction = kind === 'device' || kind === 'device_off';
+    extraActionsEl.style.display = showMultiAction ? '' : 'none';
+    addActionBtn.style.display = showMultiAction ? '' : 'none';
   }
   card.querySelector('.mr-action-kind').addEventListener('change', syncActionKind);
   syncActionKind();
@@ -1014,32 +1146,78 @@ function addMotionRuleCard(initial, startCollapsed) {
 }
 document.getElementById('addMotionRuleBtn').addEventListener('click', () => { addMotionRuleCard(); refreshDependentDropdowns(); });
 
+function collectExtraSources(card) {
+  return Array.from(card.querySelectorAll('.mr-extra-sources > .extra-source-row')).map(row => {
+    const system = row.querySelector('.mr-ex-source-system').value;
+    if (system === 'satel_zone') {
+      return { source: system, zone_number: row.querySelector('.mr-ex-zone').value.trim() };
+    }
+    return {
+      source: system,
+      source_device: row.querySelector('.mr-ex-source-device').value.trim(),
+      trigger_value: row.querySelector('.mr-ex-trigger-value-wrap .mr-trigger-value').value.trim(),
+    };
+  });
+}
+
+function collectExtraActions(card) {
+  return Array.from(card.querySelectorAll('.mr-extra-actions > .extra-action-row')).map(row => {
+    const action = {
+      target_device: row.querySelector('.mr-ex-target-device').value.trim(),
+      target_system: row.querySelector('.mr-ex-target-system').value,
+    };
+    const dimmerField = row.querySelector('.mr-ex-dimmer');
+    if (dimmerField) action.dimmer_level_percent = dimmerField.value.trim();
+    return action;
+  });
+}
+
 function collectMotionRules() {
   return Array.from(document.querySelectorAll('#motionRulesContainer .sub-card')).map(card => {
     const kind = card.querySelector('.mr-action-kind').value;
     const source = card.querySelector('.mr-source-system').value;
-    const rule = { source, enabled: card.querySelector('.mr-enabled').checked };
+    const rule = { enabled: card.querySelector('.mr-enabled').checked };
+
+    const primarySource = { source };
     if (source === 'satel_zone') {
-      rule.zone_number = card.querySelector('.mr-zone').value.trim();
-      rule.trigger_on = card.querySelector('.mr-trigger').value;
+      primarySource.zone_number = card.querySelector('.mr-zone').value.trim();
     } else {
-      rule.source_device = card.querySelector('.mr-source-device').value.trim();
-      rule.trigger_value = card.querySelector('.mr-trigger-value').value.trim();
+      primarySource.source_device = card.querySelector('.mr-source-device').value.trim();
+      primarySource.trigger_value = card.querySelector('.mr-trigger-value').value.trim();
     }
+    const extraSources = collectExtraSources(card);
+    if (extraSources.length > 0) {
+      rule.sources = [primarySource, ...extraSources];
+      rule.source_combinator = card.querySelector('.mr-source-combinator').value;
+    } else {
+      Object.assign(rule, primarySource);
+    }
+    if (source === 'satel_zone') {
+      rule.trigger_on = card.querySelector('.mr-trigger').value;
+    }
+
     if (kind === 'scene') {
       rule.scene = card.querySelector('.mr-scene').value.trim();
     } else if (kind === 'virtual_input') {
       rule.virtual_input = card.querySelector('.mr-vinput').value.trim();
       rule.duration_seconds = card.querySelector('.mr-duration').value.trim();
-    } else if (kind === 'device_off') {
-      rule.target_device = card.querySelector('.mr-target-device').value.trim();
-      rule.target_system = card.querySelector('.mr-target-system').value;
-      rule.action = 'turn_off';
     } else {
-      rule.target_device = card.querySelector('.mr-target-device').value.trim();
-      rule.target_system = card.querySelector('.mr-target-system').value;
-      rule.duration_seconds = card.querySelector('.mr-duration').value.trim();
-      rule.dimmer_level_percent = card.querySelector('.mr-dimmer').value.trim();
+      const primaryAction = {
+        target_device: card.querySelector('.mr-target-device').value.trim(),
+        target_system: card.querySelector('.mr-target-system').value,
+      };
+      if (kind === 'device') primaryAction.dimmer_level_percent = card.querySelector('.mr-dimmer').value.trim();
+      const extraActions = collectExtraActions(card);
+      if (extraActions.length > 0) {
+        rule.actions = [primaryAction, ...extraActions];
+      } else {
+        Object.assign(rule, primaryAction);
+      }
+      if (kind === 'device_off') {
+        rule.action = 'turn_off';
+      } else {
+        rule.duration_seconds = card.querySelector('.mr-duration').value.trim();
+      }
     }
     rule.time_window = {
       enabled: card.querySelector('.mr-window-enabled').checked,
