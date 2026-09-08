@@ -364,12 +364,22 @@ Import rozdziela urządzenia automatycznie:
 Sterowanie chmurowe jest na start ograniczone do prostych przełączników
 on/off (bez ściemniania). **"Kod przełącznika" jest wykrywany automatycznie**,
 jeśli pole "Switch code" zostawisz puste - przy pierwszym sterowaniu danym
-urządzeniem bridge odpytuje jego bieżący stan i sam odnajduje wszystkie
-kody pasujące do wzorca przełącznika (`switch`, `switch_1`, `switch_2`, ...,
-`switch_led`), po czym steruje nimi **wszystkimi naraz** w jednej komendzie -
-dotyczy to zwłaszcza przełączników wielobwodowych (np. włącznik 2-gniazdowy
-sterujący dwiema żarówkami pod jednym ID urządzenia), gdzie ręcznie podany,
-pojedynczy kod (`switch_1`) sterowałby tylko jednym obwodem. Wynik
+urządzeniem bridge pobiera z Tuya Cloud listę **funkcji urządzenia**
+(`devices/{id}/specifications`, dokładnie te DP, które Tuya gwarantuje jako
+zapisywalne) i sam odnajduje wśród nich wszystkie kody pasujące do wzorca
+przełącznika (`switch`, `switch_1`, `switch_2`, ..., `switch_led`), po czym
+steruje nimi **wszystkimi naraz** w jednej komendzie - dotyczy to zwłaszcza
+przełączników wielobwodowych (np. włącznik 2-gniazdowy sterujący dwiema
+żarówkami pod jednym ID urządzenia), gdzie ręcznie podany, pojedynczy kod
+(`switch_1`) sterowałby tylko jednym obwodem. Celowo NIE korzystamy do tego
+z samego bieżącego stanu urządzenia (`getstatus`) - potrafi on raportować
+też kody tylko-do-odczytu, które wyglądają jak przełącznik, ale nie są
+zapisywalne; wysłanie takiego kodu razem z prawdziwym przełącznikiem w
+jednej komendzie odrzucałoby całą paczkę błędem Tuya Cloud "command or
+value not support" (dotyczyło to np. ściemniaczy z dodatkowym,
+niezapisywalnym statusem przełącznika). Jeśli z jakiegoś powodu lista
+funkcji nie jest dostępna, bridge spada do starszej heurystyki opartej na
+`getstatus`, a gdy i to zawiedzie - do domyślnego `switch_1`. Wynik
 wykrywania jest zapamiętywany (nie odpytuje ponownie przy każdym
 sterowaniu). Pole "Switch code" nadal można ustawić ręcznie, żeby
 wymusić dokładnie jeden konkretny kod (np. gdy zależy Ci na sterowaniu
