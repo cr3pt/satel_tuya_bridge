@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flow - Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<style>
+  :root {
+    --bg: #14161a; --card: #1d2026; --border: #2c3038;
+    --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
+    --danger: #e5484d; --ok: #3dd68c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 20px; max-width: 1400px; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 18px; line-height: 1.5; }
+  .hint code { background: #262a32; padding: 1px 5px; border-radius: 4px; }
+  .empty-hint { color: var(--muted); font-size: 12.5px; }
+  .msg-box { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-bottom: 14px; display: none; }
+  .msg-box.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  .msg-box.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  select, input[type=text], input[type=number] {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px;
+  }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .flow-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .flow-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; cursor: pointer;
+  }
+  .flow-item.active { border-color: var(--accent); }
+  .editor-layout { display: flex; gap: 14px; align-items: flex-start; }
+  .palette { width: 150px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
+  .palette button { text-align: left; }
+  .canvas-wrap {
+    flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: 10px;
+    background: #101216; position: relative; height: 560px; min-width: 0;
+  }
+  .canvas { position: relative; width: 2200px; height: 1400px; }
+  svg.wires { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+  .node {
+    position: absolute; width: 160px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px; cursor: move; user-select: none;
+  }
+  .node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .node .node-type { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; }
+  .node .node-title {
+    font-size: 12.5px; font-weight: 600; margin: 2px 0 4px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .port {
+    width: 12px; height: 12px; border-radius: 50%; background: var(--accent);
+    position: absolute; cursor: crosshair; border: 2px solid var(--bg);
+  }
+  .port.in { left: -7px; top: 24px; }
+  .port.out { right: -7px; }
+  .port.connecting { background: var(--ok); }
+  .side-panel {
+    width: 300px; flex-shrink: 0; background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px; max-height: 560px; overflow-y: auto;
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field select, .field input { width: 100%; }
+  .wire-chip {
+    display: inline-flex; align-items: center; gap: 4px; background: #262a32;
+    border-radius: 12px; padding: 2px 8px; font-size: 11.5px; margin: 2px 4px 2px 0;
+  }
+  .wire-chip button { background: none; border: none; color: var(--danger); cursor: pointer; padding: 0; font-size: 12px; }
+</style>
+</head>
+<body>
+{% include "_nav.html" %}
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🔀 Flow</h1>
+<div class="hint">
+  Edytor grafów węzłów w stylu Node-RED - alternatywa dla reguł ruchu
+  (🎬 Automatyzacje) dla bardziej złożonych scenariuszy: wiele kroków,
+  warunki gałęziowe (jedna trasa gdy warunek spełniony, inna gdy nie),
+  MQTT i wywołania HTTP. Węzeł <strong>Trigger</strong> lub
+  <strong>MQTT in</strong> to wejście grafu (to, co go uruchamia) -
+  reszta węzłów wykonuje się po kolei wzdłuż połączeń. Żeby połączyć
+  dwa węzły: kliknij kropkę wyjścia (prawa krawędź) węzła źródłowego,
+  potem kropkę wejścia (lewa krawędź) węzła docelowego - drugie
+  kliknięcie tej samej kropki wyjścia anuluje. <strong>Status: beta</strong> -
+  działa równolegle do reguł ruchu (nie zastępuje ich jeszcze), docelowo
+  ma stać się głównym sposobem budowania automatyzacji krok-po-kroku.
+</div>
+
+<div id="msg" class="msg-box"></div>
+
+<div class="toolbar">
+  <button id="newFlowBtn" type="button" class="secondary">+ Nowy flow</button>
+  <button id="saveFlowsBtn" type="button">💾 Zapisz wszystkie flows</button>
+</div>
+
+<div id="flowList" class="flow-list"></div>
+
+<div id="editorArea" style="display:none;">
+  <div class="toolbar">
+    <input type="text" id="flowNameInput" placeholder="Nazwa flow">
+    <label style="font-size:13px;"><input type="checkbox" id="flowEnabledInput" checked> Włączony</label>
+    <button id="testFlowBtn" type="button" class="secondary">▶ Testuj</button>
+    <button id="deleteFlowBtn" type="button" class="secondary" style="color:var(--danger);">✕ Usuń flow</button>
+  </div>
+  <div class="editor-layout">
+    <div class="palette">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:2px;">Dodaj węzeł</div>
+      <button type="button" class="secondary" data-node-type="trigger">⚡ Trigger</button>
+      <button type="button" class="secondary" data-node-type="condition">❓ Warunek</button>
+      <button type="button" class="secondary" data-node-type="device">🔌 Urządzenie</button>
+      <button type="button" class="secondary" data-node-type="scene">🎬 Scena</button>
+      <button type="button" class="secondary" data-node-type="delay">⏱ Opóźnienie</button>
+      <button type="button" class="secondary" data-node-type="notify">🔔 Powiadomienie</button>
+      <button type="button" class="secondary" data-node-type="mqttIn">📥 MQTT in</button>
+      <button type="button" class="secondary" data-node-type="mqttOut">📤 MQTT out</button>
+      <button type="button" class="secondary" data-node-type="http">🌐 HTTP</button>
+    </div>
+    <div class="canvas-wrap" id="canvasWrap">
+      <div class="canvas" id="canvas">
+        <svg class="wires" id="wiresLayer"></svg>
+      </div>
+    </div>
+    <div class="side-panel" id="sidePanel">
+      <div class="empty-hint">Kliknij węzeł, żeby edytować jego ustawienia.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function refreshAuthNav() {
+  const link = document.getElementById('authNavLink');
+  try {
+    const status = await (await fetch('/api/auth/status')).json();
+    if (status.logged_in) {
+      link.textContent = '🔓 Wyloguj';
+      link.href = '#';
+      link.onclick = async (e) => {
+        e.preventDefault();
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.reload();
+      };
+    } else {
+      link.textContent = '🔒 Zaloguj';
+      link.href = '/login?next=' + encodeURIComponent(location.pathname);
+      link.onclick = null;
+    }
+  } catch (e) {
+
+  }
+}
+
+function showMsg(ok, text) {
+  const el = document.getElementById('msg');
+  el.className = 'msg-box ' + (ok ? 'ok' : 'error');
+  el.style.display = '';
+  el.textContent = (ok ? '✅ ' : '❌ ') + text;
+}
+
+const NODE_DEFS = {
+  trigger:  { label: 'Trigger', icon: '⚡', outputs: [''] },
+  condition:{ label: 'Warunek', icon: '❓', outputs: ['spełniony', 'inaczej'] },
+  device:   { label: 'Urządzenie', icon: '🔌', outputs: [''] },
+  scene:    { label: 'Scena', icon: '🎬', outputs: [''] },
+  delay:    { label: 'Opóźnienie', icon: '⏱', outputs: [''] },
+  notify:   { label: 'Powiadomienie', icon: '🔔', outputs: [''] },
+  mqttIn:   { label: 'MQTT in', icon: '📥', outputs: [''] },
+  mqttOut:  { label: 'MQTT out', icon: '📤', outputs: [''] },
+  http:     { label: 'HTTP', icon: '🌐', outputs: [''] },
+};
+
+let context = {};
+let flows = [];
+let activeFlowIndex = -1;
+let selectedNodeId = null;
+let connecting = null;
+let dragState = null;
+
+function defaultConfigFor(type) {
+  if (type === 'trigger') return { source: 'satel_zone', zone_number: '', op: 'violated' };
+  if (type === 'condition') return { op: '==', value: '' };
+  if (type === 'device') return { target_device: '', target_system: 'tuya', value: 'on' };
+  if (type === 'scene') return { scene_name: '' };
+  if (type === 'delay') return { seconds: 5 };
+  if (type === 'notify') return { level: 'info', message: '' };
+  if (type === 'mqttIn' || type === 'mqttOut') return { topic: '' };
+  if (type === 'http') return { method: 'GET', url: '' };
+  return {};
+}
+
+function nodeLabel(node) {
+  const c = node.config || {};
+  if (node.type === 'trigger') {
+    return c.source === 'satel_zone' ? `Strefa #${c.zone_number || '?'}` : (c.source_device || '(brak urządzenia)');
+  }
+  if (node.type === 'condition') return `${c.op || '?'} ${c.value ?? ''}`;
+  if (node.type === 'device') return c.target_device || '(brak urządzenia)';
+  if (node.type === 'scene') return c.scene_name || '(brak sceny)';
+  if (node.type === 'delay') return `${c.seconds ?? 0}s`;
+  if (node.type === 'notify') return c.message ? c.message.slice(0, 26) : '(brak treści)';
+  if (node.type === 'mqttIn' || node.type === 'mqttOut') return c.topic || '(brak tematu)';
+  if (node.type === 'http') return c.url ? c.url.slice(0, 26) : '(brak URL)';
+  return '';
+}
+
+async function loadContext() {
+  context = await (await fetch('/api/config/automation-context')).json();
+  const automations = await (await fetch('/api/config/automations')).json();
+  context.scene_names = (automations.scenes || []).map(s => s.name).filter(Boolean);
+}
+
+async function loadFlows() {
+  const data = await (await fetch('/api/config/flows')).json();
+  flows = data.flows || [];
+  if (activeFlowIndex >= flows.length) activeFlowIndex = flows.length ? 0 : -1;
+  renderFlowList();
+  if (flows.length && activeFlowIndex === -1) selectFlow(0);
+  else if (activeFlowIndex >= 0) selectFlow(activeFlowIndex);
+  else document.getElementById('editorArea').style.display = 'none';
+}
+
+function renderFlowList() {
+  const el = document.getElementById('flowList');
+  el.innerHTML = '';
+  if (!flows.length) {
+    el.innerHTML = '<div class="empty-hint">Brak zdefiniowanych flows - kliknij "+ Nowy flow".</div>';
+    return;
+  }
+  flows.forEach((f, i) => {
+    const row = document.createElement('div');
+    row.className = 'flow-item' + (i === activeFlowIndex ? ' active' : '');
+    row.innerHTML = `<span>${f.enabled === false ? '⏸' : '▶'} ${escapeHtml(f.name || '(bez nazwy)')} <span style="color:var(--muted);font-size:11px;">(${(f.nodes || []).length} węzłów)</span></span>`;
+    row.addEventListener('click', () => selectFlow(i));
+    el.appendChild(row);
+  });
+}
+
+function selectFlow(i) {
+  activeFlowIndex = i;
+  selectedNodeId = null;
+  connecting = null;
+  renderFlowList();
+  const flow = flows[i];
+  document.getElementById('editorArea').style.display = flow ? '' : 'none';
+  if (!flow) return;
+  document.getElementById('flowNameInput').value = flow.name || '';
+  document.getElementById('flowEnabledInput').checked = flow.enabled !== false;
+  renderCanvas();
+  renderSidePanel();
+}
+
+document.getElementById('newFlowBtn').addEventListener('click', () => {
+  flows.push({ id: 'flow_' + Date.now().toString(36), name: 'Nowy flow', enabled: true, nodes: [] });
+  selectFlow(flows.length - 1);
+});
+
+document.getElementById('deleteFlowBtn').addEventListener('click', () => {
+  if (activeFlowIndex < 0) return;
+  const name = flows[activeFlowIndex].name || '(bez nazwy)';
+  if (!confirm(`Na pewno usunąć flow „${name}”? Tej operacji nie można cofnąć (dopóki nie zapiszesz, można ją jeszcze porzucić odświeżając stronę).`)) return;
+  flows.splice(activeFlowIndex, 1);
+  activeFlowIndex = flows.length ? 0 : -1;
+  if (activeFlowIndex >= 0) selectFlow(activeFlowIndex);
+  else { renderFlowList(); document.getElementById('editorArea').style.display = 'none'; }
+});
+
+document.getElementById('flowNameInput').addEventListener('input', (e) => {
+  if (activeFlowIndex < 0) return;
+  flows[activeFlowIndex].name = e.target.value;
+  renderFlowList();
+});
+document.getElementById('flowEnabledInput').addEventListener('change', (e) => {
+  if (activeFlowIndex < 0) return;
+  flows[activeFlowIndex].enabled = e.target.checked;
+  renderFlowList();
+});
+
+document.querySelectorAll('.palette button[data-node-type]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (activeFlowIndex < 0) return;
+    const type = btn.dataset.nodeType;
+    const outputs = NODE_DEFS[type].outputs.length;
+    const node = {
+      id: 'n_' + Math.random().toString(36).slice(2, 9),
+      type, x: 40 + Math.round(Math.random() * 200), y: 40 + Math.round(Math.random() * 300),
+      config: defaultConfigFor(type),
+      wires: Array.from({ length: outputs }, () => []),
+    };
+    flows[activeFlowIndex].nodes.push(node);
+    selectNode(node.id);
+  });
+});
+
+function buildNodeEl(node) {
+  const def = NODE_DEFS[node.type];
+  const el = document.createElement('div');
+  el.className = 'node' + (node.id === selectedNodeId ? ' selected' : '');
+  el.style.left = (node.x || 0) + 'px';
+  el.style.top = (node.y || 0) + 'px';
+  el.dataset.nodeId = node.id;
+  el.innerHTML = `
+    <div class="node-type">${def.icon} ${def.label}</div>
+    <div class="node-title" title="${escapeHtml(nodeLabel(node))}">${escapeHtml(nodeLabel(node))}</div>
+    <span class="port in"></span>
+    ${def.outputs.map((label, i) => `<span class="port out${connecting && connecting.nodeId === node.id && connecting.port === i ? ' connecting' : ''}" data-port="${i}" style="top:${def.outputs.length > 1 ? (16 + i * 20) : 24}px;" title="${escapeHtml(label)}"></span>`).join('')}
+  `;
+  el.addEventListener('mousedown', (e) => {
+    if (e.target.classList.contains('port')) return;
+    startDrag(e, node);
+  });
+  el.addEventListener('click', (e) => {
+    if (e.target.classList.contains('port')) return;
+    selectNode(node.id);
+  });
+  el.querySelectorAll('.port.out').forEach(portEl => {
+    portEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const port = parseInt(portEl.dataset.port, 10);
+      if (connecting && connecting.nodeId === node.id && connecting.port === port) {
+        connecting = null;
+      } else {
+        connecting = { nodeId: node.id, port };
+      }
+      renderCanvas();
+    });
+  });
+  el.querySelector('.port.in').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!connecting) return;
+    if (connecting.nodeId === node.id) { connecting = null; renderCanvas(); return; }
+    const srcNode = flows[activeFlowIndex].nodes.find(n => n.id === connecting.nodeId);
+    if (!srcNode.wires[connecting.port]) srcNode.wires[connecting.port] = [];
+    if (!srcNode.wires[connecting.port].includes(node.id)) srcNode.wires[connecting.port].push(node.id);
+    connecting = null;
+    renderCanvas();
+    renderSidePanel();
+  });
+  return el;
+}
+
+function renderCanvas() {
+  const canvas = document.getElementById('canvas');
+  canvas.querySelectorAll('.node').forEach(el => el.remove());
+  const flow = flows[activeFlowIndex];
+  if (!flow) { drawWires(); return; }
+  flow.nodes.forEach(node => canvas.appendChild(buildNodeEl(node)));
+  drawWires();
+}
+
+function drawWires() {
+  const svg = document.getElementById('wiresLayer');
+  svg.innerHTML = '';
+  const flow = flows[activeFlowIndex];
+  if (!flow) return;
+  const nodeById = Object.fromEntries(flow.nodes.map(n => [n.id, n]));
+  flow.nodes.forEach(node => {
+    const def = NODE_DEFS[node.type];
+    (node.wires || []).forEach((targets, port) => {
+      (targets || []).forEach(targetId => {
+        const target = nodeById[targetId];
+        if (!target) return;
+        const outY = (node.y || 0) + (def.outputs.length > 1 ? (16 + port * 20) : 24) + 6;
+        const outX = (node.x || 0) + 160;
+        const inX = (target.x || 0);
+        const inY = (target.y || 0) + 30;
+        const midX = (outX + inX) / 2;
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', `M${outX},${outY} C${midX},${outY} ${midX},${inY} ${inX},${inY}`);
+        path.setAttribute('stroke', '#4d8dfd');
+        path.setAttribute('stroke-width', '2');
+        path.setAttribute('fill', 'none');
+        svg.appendChild(path);
+      });
+    });
+  });
+}
+
+function startDrag(e, node) {
+  selectNode(node.id);
+  dragState = { node, startX: e.clientX, startY: e.clientY, origX: node.x || 0, origY: node.y || 0 };
+  e.preventDefault();
+}
+document.addEventListener('mousemove', (e) => {
+  if (!dragState) return;
+  const dx = e.clientX - dragState.startX;
+  const dy = e.clientY - dragState.startY;
+  dragState.node.x = Math.max(0, dragState.origX + dx);
+  dragState.node.y = Math.max(0, dragState.origY + dy);
+  renderCanvas();
+});
+document.addEventListener('mouseup', () => { dragState = null; });
+
+function zoneOptions(selected) {
+  const zones = context.satel_zones || [];
+  const sel = selected === '' || selected === null || selected === undefined ? null : Number(selected);
+  return '<option value="">(wybierz)</option>' + zones.map(z =>
+    `<option value="${z.number}" ${z.number === sel ? 'selected' : ''}>${escapeHtml(z.name)} (#${z.number})</option>`
+  ).join('');
+}
+function sourceDeviceOptions(selected, source) {
+  const list = source === 'homewhiz_state' ? (context.homewhiz_appliances || []) : (context.tuya_devices || []);
+  return '<option value="">(wybierz)</option>' + list.map(n =>
+    `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`
+  ).join('');
+}
+function targetDeviceOptions(selected, system) {
+  const list = system === 'satel_output' ? (context.satel_outputs || []) : (context.tuya_devices || []);
+  return '<option value="">(wybierz)</option>' + list.map(n =>
+    `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`
+  ).join('');
+}
+function sceneOptions(selected) {
+  const names = context.scene_names || [];
+  return '<option value="">(wybierz)</option>' + names.map(n =>
+    `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`
+  ).join('');
+}
+
+function selectNode(id) {
+  selectedNodeId = id;
+  connecting = null;
+  renderCanvas();
+  renderSidePanel();
+}
+
+function removeWire(node, port, targetId) {
+  node.wires[port] = (node.wires[port] || []).filter(id => id !== targetId);
+  renderCanvas();
+  renderSidePanel();
+}
+
+function removeNode(flow, nodeId) {
+  flow.nodes = flow.nodes.filter(n => n.id !== nodeId);
+  flow.nodes.forEach(n => { n.wires = (n.wires || []).map(list => list.filter(id => id !== nodeId)); });
+  selectedNodeId = null;
+  renderFlowList();
+  renderCanvas();
+  renderSidePanel();
+}
+
+function renderNodeFields(node) {
+  const el = document.getElementById('nodeFields');
+  const c = node.config;
+  const field = (html) => `<div class="field">${html}</div>`;
+  let html = '';
+  if (node.type === 'trigger') {
+    html += field(`<label>Źródło</label><select data-field="source">
+      <option value="satel_zone" ${c.source === 'satel_zone' ? 'selected' : ''}>Satel (wejście)</option>
+      <option value="tuya_state" ${c.source === 'tuya_state' ? 'selected' : ''}>Tuya (stan urządzenia)</option>
+      <option value="homewhiz_state" ${c.source === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz</option>
+    </select>`);
+    if (c.source === 'satel_zone') {
+      html += field(`<label>Wejście w Satelu</label><select data-field="zone_number">${zoneOptions(c.zone_number)}</select>`);
+      html += field(`<label>Wyzwalacz</label><select data-field="op">
+        <option value="violated" ${c.op === 'violated' ? 'selected' : ''}>Naruszenie</option>
+        <option value="restored" ${c.op === 'restored' ? 'selected' : ''}>Ustanie naruszenia</option>
+      </select>`);
+    } else {
+      html += field(`<label>Urządzenie źródłowe</label><select data-field="source_device">${sourceDeviceOptions(c.source_device, c.source)}</select>`);
+      html += field(`<label>Wyzwalacz</label><select data-field="op">
+        <option value="changes" ${c.op === 'changes' ? 'selected' : ''}>Każda zmiana</option>
+        <option value="violated" ${c.op === 'violated' ? 'selected' : ''}>Konkretna wartość</option>
+      </select>`);
+      if (c.op === 'violated') {
+        html += field(`<label>Wartość wyzwalająca</label><input type="text" data-field="trigger_value" value="${escapeHtml(c.trigger_value || '')}">`);
+      }
+    }
+  } else if (node.type === 'condition') {
+    html += field(`<label>Operator</label><select data-field="op">
+      ${['>', '<', '>=', '<=', '==', '!='].map(op => `<option value="${op}" ${c.op === op ? 'selected' : ''}>${op}</option>`).join('')}
+    </select>`);
+    html += field(`<label>Wartość porównania</label><input type="text" data-field="value" value="${escapeHtml(c.value ?? '')}">`);
+  } else if (node.type === 'device') {
+    html += field(`<label>System</label><select data-field="target_system">
+      <option value="tuya" ${c.target_system !== 'satel_output' ? 'selected' : ''}>Tuya</option>
+      <option value="satel_output" ${c.target_system === 'satel_output' ? 'selected' : ''}>Satel (wyjście)</option>
+    </select>`);
+    html += field(`<label>Urządzenie docelowe</label><select data-field="target_device">${targetDeviceOptions(c.target_device, c.target_system)}</select>`);
+    html += field(`<label>Wartość</label><select data-field="value">
+      <option value="on" ${c.value !== 'off' ? 'selected' : ''}>Włącz</option>
+      <option value="off" ${c.value === 'off' ? 'selected' : ''}>Wyłącz</option>
+    </select>`);
+    if (c.value !== 'off' && c.target_system !== 'satel_output' && (context.dimmer_devices || []).includes(c.target_device)) {
+      html += field(`<label>Jasność % (ściemniacz)</label><input type="number" data-field="dimmer_level_percent" value="${c.dimmer_level_percent ?? ''}">`);
+    }
+  } else if (node.type === 'scene') {
+    html += field(`<label>Scena</label><select data-field="scene_name">${sceneOptions(c.scene_name)}</select>`);
+  } else if (node.type === 'delay') {
+    html += field(`<label>Sekundy</label><input type="number" step="0.1" min="0" data-field="seconds" value="${c.seconds ?? 0}">`);
+  } else if (node.type === 'notify') {
+    html += field(`<label>Poziom</label><select data-field="level">
+      <option value="info" ${c.level === 'info' ? 'selected' : ''}>Informacja</option>
+      <option value="warning" ${c.level === 'warning' ? 'selected' : ''}>Ostrzeżenie</option>
+      <option value="critical" ${c.level === 'critical' ? 'selected' : ''}>Krytyczne</option>
+    </select>`);
+    html += field(`<label>Treść ({value}/{key} podstawiane)</label><input type="text" data-field="message" value="${escapeHtml(c.message || '')}">`);
+  } else if (node.type === 'mqttIn' || node.type === 'mqttOut') {
+    html += field(`<label>Temat MQTT</label><input type="text" data-field="topic" value="${escapeHtml(c.topic || '')}">`);
+    if (node.type === 'mqttOut') {
+      html += field(`<label>Treść (puste = wartość z wyzwalacza)</label><input type="text" data-field="payload" value="${escapeHtml(c.payload || '')}">`);
+    }
+  } else if (node.type === 'http') {
+    html += field(`<label>Metoda</label><select data-field="method">
+      ${['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(m => `<option value="${m}" ${c.method === m ? 'selected' : ''}>${m}</option>`).join('')}
+    </select>`);
+    html += field(`<label>URL</label><input type="text" data-field="url" value="${escapeHtml(c.url || '')}">`);
+    html += field(`<label>Treść (dla POST/PUT/PATCH)</label><input type="text" data-field="body" value="${escapeHtml(c.body || '')}">`);
+  }
+  el.innerHTML = html;
+  el.querySelectorAll('[data-field]').forEach(input => {
+    input.addEventListener('change', () => {
+      c[input.dataset.field] = input.value;
+      renderCanvas();
+      renderSidePanel();
+    });
+  });
+}
+
+function renderSidePanel() {
+  const panel = document.getElementById('sidePanel');
+  const flow = flows[activeFlowIndex];
+  const node = flow && flow.nodes.find(n => n.id === selectedNodeId);
+  if (!node) {
+    panel.innerHTML = `<div class="empty-hint">Kliknij węzeł, żeby edytować jego ustawienia. Kliknij kropkę wyjścia węzła, a potem kropkę wejścia innego węzła, żeby je połączyć.</div>`;
+    return;
+  }
+  const def = NODE_DEFS[node.type];
+  panel.innerHTML = `
+    <div style="font-weight:600;margin-bottom:8px;">${def.icon} ${def.label}</div>
+    <div id="nodeFields"></div>
+    <div style="margin-top:6px;">
+      ${def.outputs.map((label, i) => `
+        <div class="field"><label>Połączenia wyjścia ${label ? escapeHtml(label) : (i + 1)}</label>
+          <div id="wireChips_${i}"></div></div>
+      `).join('')}
+    </div>
+    <button type="button" class="secondary" id="removeNodeBtn" style="color:var(--danger);margin-top:4px;">✕ Usuń węzeł</button>
+  `;
+  renderNodeFields(node);
+  def.outputs.forEach((_, i) => {
+    const chipsEl = document.getElementById(`wireChips_${i}`);
+    const targets = (node.wires || [])[i] || [];
+    if (!targets.length) { chipsEl.innerHTML = '<span class="empty-hint">(brak)</span>'; return; }
+    chipsEl.innerHTML = targets.map(tid => {
+      const t = flow.nodes.find(n => n.id === tid);
+      const label = t ? (nodeLabel(t) || NODE_DEFS[t.type].label) : tid;
+      return `<span class="wire-chip">${escapeHtml(label)} <button type="button" data-target="${escapeHtml(tid)}" data-port="${i}">✕</button></span>`;
+    }).join('');
+    chipsEl.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => removeWire(node, parseInt(btn.dataset.port, 10), btn.dataset.target));
+    });
+  });
+  document.getElementById('removeNodeBtn').addEventListener('click', () => {
+    if (confirm('Usunąć ten węzeł (razem z połączeniami do niego)?')) removeNode(flow, node.id);
+  });
+}
+
+document.getElementById('saveFlowsBtn').addEventListener('click', async () => {
+  try {
+    const resp = await fetch('/api/config/flows', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flows }),
+    });
+    if (resp.status === 401) { window.location.href = '/login?next=' + encodeURIComponent(location.pathname); return; }
+    const data = await resp.json();
+    if (!resp.ok) {
+      const details = data.details ? ' - ' + data.details.join('; ') : '';
+      showMsg(false, (data.error || 'Błąd zapisu') + details);
+      return;
+    }
+    showMsg(true, data.message);
+    await loadFlows();
+  } catch (e) {
+    showMsg(false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+document.getElementById('testFlowBtn').addEventListener('click', async () => {
+  const flow = flows[activeFlowIndex];
+  if (!flow) return;
+  try {
+    const resp = await fetch(`/api/flows/${encodeURIComponent(flow.id)}/run`, { method: 'POST' });
+    if (resp.status === 401) { window.location.href = '/login?next=' + encodeURIComponent(location.pathname); return; }
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg(false, data.error || 'Błąd uruchomienia - zapisz flow przed testowaniem.');
+      return;
+    }
+    showMsg(true, data.message);
+  } catch (e) {
+    showMsg(false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+(async () => {
+  await refreshAuthNav();
+  await loadContext();
+  await loadFlows();
+})();
+</script>
+</body>
+</html>

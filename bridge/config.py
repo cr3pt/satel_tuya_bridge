@@ -11,6 +11,7 @@ _AUTOMATIONS_DEFAULTS = {
     "scenes": [],
     "reguły_ruchu": [],
     "presence_simulation": {"enabled": False},
+    "flows": [],
 }
 
 
@@ -100,6 +101,10 @@ class BridgeConfig:
     @property
     def motion_rules(self) -> list[dict]:
         return self.raw.get("reguły_ruchu", [])
+
+    @property
+    def flows(self) -> list[dict]:
+        return self.raw.get("flows", [])
 
     @property
     def light_to_satel_rules(self) -> list[dict]:

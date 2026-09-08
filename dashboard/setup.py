@@ -99,6 +99,7 @@ def validate_automations(form: dict) -> list[str]:
     errors.extend(_validate_scenes(form.get("scenes", [])))
     errors.extend(_validate_motion_rules(form.get("motion_rules", []), scene_names))
     errors.extend(_validate_presence_simulation(form.get("presence_simulation", {})))
+    errors.extend(validate_flows(form.get("flows", []), scene_names))
     collision = scene_names & rule_names
     if collision:
         errors.append(
@@ -106,6 +107,94 @@ def validate_automations(form: dict) -> list[str]:
             f"nazwy scen i reguł ruchu muszą być unikalne między sobą (współdzielą jeden klucz statusu "
             f"do warunku 'inna automatyzacja jest uruchomiona')"
         )
+    return errors
+
+
+_FLOW_NODE_TYPES = ("trigger", "condition", "device", "scene", "delay", "notify", "mqttIn", "mqttOut", "http")
+_FLOW_TRIGGER_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state")
+_FLOW_CONDITION_OPS = (">", "<", ">=", "<=", "==", "!=")
+_FLOW_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+
+
+def _validate_flow_node(node: dict, label: str, scene_names: set[str]) -> list[str]:
+    errors = []
+    ntype = node.get("type")
+    if not node.get("id"):
+        errors.append(f"{label}: brak identyfikatora węzła")
+    if ntype not in _FLOW_NODE_TYPES:
+        errors.append(f"{label}: nieznany typ węzła '{ntype}'")
+        return errors
+
+    c = node.get("config") or {}
+    if ntype == "trigger":
+        source = c.get("source") or "satel_zone"
+        if source not in _FLOW_TRIGGER_SOURCES:
+            errors.append(f"{label}: nieznane źródło '{source}'")
+        elif source == "satel_zone":
+            if not c.get("zone_number"):
+                errors.append(f"{label}: numer wejścia Satela jest wymagany")
+        else:
+            if not (c.get("source_device") or "").strip():
+                errors.append(f"{label}: wybierz urządzenie źródłowe")
+    elif ntype == "condition":
+        if c.get("op") not in _FLOW_CONDITION_OPS:
+            errors.append(f"{label}: nieznany operator '{c.get('op')}'")
+        if c.get("value") in (None, ""):
+            errors.append(f"{label}: warunek wymaga wartości porównania")
+    elif ntype == "device":
+        if not (c.get("target_device") or "").strip():
+            errors.append(f"{label}: wybierz urządzenie docelowe")
+        target_system = c.get("target_system") or "tuya"
+        if target_system not in ("tuya", "satel_output"):
+            errors.append(f"{label}: nieznany system urządzenia docelowego '{target_system}'")
+    elif ntype == "scene":
+        scene_name = (c.get("scene_name") or "").strip()
+        if not scene_name:
+            errors.append(f"{label}: wybierz scenę")
+        elif scene_name not in scene_names:
+            errors.append(f"{label}: scena '{scene_name}' nie istnieje wśród zdefiniowanych scen")
+    elif ntype == "delay":
+        if c.get("seconds") in (None, ""):
+            errors.append(f"{label}: opóźnienie wymaga liczby sekund")
+    elif ntype == "notify":
+        if not (c.get("message") or "").strip():
+            errors.append(f"{label}: powiadomienie wymaga treści")
+    elif ntype in ("mqttIn", "mqttOut"):
+        if not (c.get("topic") or "").strip():
+            errors.append(f"{label}: podaj temat MQTT")
+    elif ntype == "http":
+        if not (c.get("url") or "").strip():
+            errors.append(f"{label}: podaj adres URL")
+        method = (c.get("method") or "GET").upper()
+        if method not in _FLOW_HTTP_METHODS:
+            errors.append(f"{label}: nieznana metoda HTTP '{method}'")
+    return errors
+
+
+def validate_flows(flows: list[dict], scene_names: set[str]) -> list[str]:
+    errors = []
+    for i, flow in enumerate(flows):
+        label = f"Flow #{i + 1}"
+        name = (flow.get("name") or "").strip()
+        if not name:
+            errors.append(f"{label}: nazwa jest wymagana")
+
+        nodes = flow.get("nodes") or []
+        if not nodes:
+            errors.append(f"{label} ('{name or '?'}'): musi mieć co najmniej jeden węzeł")
+
+        node_ids = [n.get("id") for n in nodes if n.get("id")]
+        if len(set(node_ids)) != len(node_ids):
+            errors.append(f"{label} ('{name or '?'}'): identyfikatory węzłów muszą być unikalne")
+
+        for j, node in enumerate(nodes):
+            node_label = f"{label} ('{name or '?'}'), węzeł #{j + 1}"
+            errors.extend(_validate_flow_node(node, node_label, scene_names))
+
+        if nodes and not any(n.get("type") in ("trigger", "mqttIn") for n in nodes):
+            errors.append(
+                f"{label} ('{name or '?'}'): potrzebuje co najmniej jednego węzła wejściowego (trigger/mqttIn)"
+            )
     return errors
 
 
@@ -1066,7 +1155,79 @@ def build_automations_dict(form: dict) -> dict:
         "scenes": _build_scenes(form.get("scenes", [])),
         "reguły_ruchu": _build_motion_rules(form.get("motion_rules", [])),
         "presence_simulation": _build_presence_simulation(form),
+        "flows": build_flows(form.get("flows", [])),
     }
+
+
+def _build_flow_node_config(ntype: str, c: dict) -> dict:
+    if ntype == "trigger":
+        source = c.get("source") or "satel_zone"
+        cfg = {"source": source, "op": c.get("op") or ("violated" if source == "satel_zone" else "changes")}
+        if source == "satel_zone":
+            cfg["zone_number"] = int(c["zone_number"])
+        else:
+            cfg["source_device"] = c.get("source_device")
+            if c.get("trigger_value") not in (None, ""):
+                cfg["trigger_value"] = c["trigger_value"]
+        return cfg
+    if ntype == "condition":
+        return {"op": c.get("op"), "value": c.get("value")}
+    if ntype == "device":
+        cfg = {
+            "target_device": c.get("target_device"), "target_system": c.get("target_system") or "tuya",
+            "value": c.get("value") or "on",
+        }
+        if c.get("dimmer_level_percent") not in (None, ""):
+            cfg["dimmer_level_percent"] = int(c["dimmer_level_percent"])
+        return cfg
+    if ntype == "scene":
+        return {"scene_name": c.get("scene_name")}
+    if ntype == "delay":
+        return {"seconds": float(c.get("seconds") or 0)}
+    if ntype == "notify":
+        return {"level": c.get("level") or "info", "message": c.get("message") or ""}
+    if ntype == "mqttIn":
+        return {"topic": c.get("topic")}
+    if ntype == "mqttOut":
+        cfg = {"topic": c.get("topic")}
+        if c.get("payload") not in (None, ""):
+            cfg["payload"] = c["payload"]
+        return cfg
+    if ntype == "http":
+        cfg = {"method": (c.get("method") or "GET").upper(), "url": c.get("url")}
+        if c.get("body") not in (None, ""):
+            cfg["body"] = c["body"]
+        return cfg
+    return dict(c)
+
+
+def _build_flow_node(node: dict) -> dict:
+    built = {
+        "id": node["id"], "type": node["type"],
+        "config": _build_flow_node_config(node["type"], node.get("config") or {}),
+        "wires": [[str(t) for t in (port or [])] for port in (node.get("wires") or [])],
+    }
+    if node.get("x") is not None:
+        built["x"] = node["x"]
+    if node.get("y") is not None:
+        built["y"] = node["y"]
+    return built
+
+
+def build_flows(flows_form: list[dict]) -> list[dict]:
+    flows = []
+    for flow in flows_form:
+        name = (flow.get("name") or "").strip()
+        if not name:
+            continue
+        built_nodes = [_build_flow_node(n) for n in (flow.get("nodes") or []) if n.get("id") and n.get("type")]
+        if not built_nodes:
+            continue
+        built = {"id": flow.get("id") or name, "name": name, "nodes": built_nodes}
+        if flow.get("enabled") is False:
+            built["enabled"] = False
+        flows.append(built)
+    return flows
 
 
 def build_config_dict(form: dict) -> dict:
