@@ -29,6 +29,7 @@ from .maintenance import run_maintenance
 from .ha_discovery import build_all_entities
 from .ha_mqtt import HomeAssistantMqttBridge
 from .homekit_bridge import HomeKitBridge, resolve_homekit_config
+from .flow_engine import FlowEngine
 
 logger = logging.getLogger("bridge.rules")
 
@@ -98,6 +99,11 @@ class RulesEngine:
         self.boiler_automation = BoilerAutomation(config.raw.get("boiler_rules", []), self.scenes)
         self.presence_simulation = PresenceSimulation(
             config.raw.get("presence_simulation", {}), self.tuya, location_cfg=self._location_cfg, history=self.history,
+        )
+        self.flow_engine = FlowEngine(
+            config.raw.get("flows", []), set_target_state=self._set_target_state,
+            run_scene=lambda name: self.scenes.run(name), notify_cfg=notify_cfg,
+            mqtt_cfg=config.raw.get("mqtt_publish", {}),
         )
 
         self._escalation_history: dict[str, list[float]] = {}
@@ -206,6 +212,8 @@ class RulesEngine:
         if source == "satel_zone":
             self._zone_violated_state[zone_or_device_id] = (trigger == "violated")
 
+        await self.flow_engine.handle_motion(source, zone_or_device_id, trigger)
+
         now = datetime.now()
         for idx, rule in enumerate(self.config.motion_rules):
             if not rule.get("enabled", True):
@@ -242,6 +250,8 @@ class RulesEngine:
         self._device_state_last_value[state_key] = value
         if old_value == value:
             return
+
+        await self.flow_engine.handle_device_state(source, device_name, value)
 
         now = datetime.now()
         for idx, rule in enumerate(self.config.motion_rules):
@@ -674,6 +684,13 @@ class RulesEngine:
                 else:
                     await self.scenes.run(name)
                     self.history.mark_command_done(cmd["id"], {"message": f"Uruchomiono scenę '{name}'"})
+            elif cmd["command"] == "run_flow":
+                flow_id = cmd["params"]["flow_id"]
+                try:
+                    await self.flow_engine.run_flow(flow_id)
+                    self.history.mark_command_done(cmd["id"], {"message": f"Uruchomiono flow '{flow_id}'"})
+                except ValueError as exc:
+                    self.history.mark_command_error(cmd["id"], str(exc))
             elif cmd["command"] == "mqtt_publish":
                 topic = cmd["params"]["topic"]
                 payload = cmd["params"].get("payload", "")
@@ -724,6 +741,7 @@ class RulesEngine:
             satel_virtual_inputs=self.satel_virtual_inputs, virtual_input_mode=self._vi_mode,
             history=self.history,
         )
+        self.flow_engine.update_flows(new_config.raw.get("flows", []))
         self.boiler_automation = BoilerAutomation(new_config.raw.get("boiler_rules", []), self.scenes)
         self.alarms = AlarmEngine(new_config.raw.get("alarm_rules", []), self.history, notify_cfg=self._notify_cfg)
 
@@ -952,6 +970,7 @@ class RulesEngine:
     async def start(self) -> None:
         self.history.write_event("system", detail={"message": "Bridge uruchomiony"})
         asyncio.create_task(self._stale_check_loop())
+        self.flow_engine.start()
 
         self._seed_satel_status_labels()
         self._seed_tuya_status_labels()

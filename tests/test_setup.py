@@ -1887,6 +1887,153 @@ class TestMultiSourceAndMultiActionMotionRules:
         assert build_automations_dict(form)["reguły_ruchu"] == []
 
 
+class TestFlows:
+    def _form_with_flow(self, flow: dict) -> dict:
+        return {**VALID_FORM, "flows": [flow]}
+
+    def _simple_flow(self, **overrides) -> dict:
+        flow = {
+            "name": "test-flow",
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["dev"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "gniazdko_salon"}, "wires": []},
+            ],
+        }
+        flow.update(overrides)
+        return flow
+
+    def test_valid_flow_has_no_errors(self):
+        assert validate_automations(self._form_with_flow(self._simple_flow())) == []
+
+    def test_flow_without_name_is_error(self):
+        errors = validate_automations(self._form_with_flow(self._simple_flow(name="")))
+        assert any("nazwa jest wymagana" in e for e in errors)
+
+    def test_flow_without_nodes_is_error(self):
+        errors = validate_automations(self._form_with_flow(self._simple_flow(nodes=[])))
+        assert any("co najmniej jeden węzeł" in e for e in errors)
+
+    def test_flow_without_entry_node_is_error(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "dev", "type": "device", "config": {"target_device": "gniazdko_salon"}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("węzła wejściowego" in e for e in errors)
+
+    def test_duplicate_node_ids_is_error(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "a", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["a"]]},
+            {"id": "a", "type": "device", "config": {"target_device": "x"}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("unikalne" in e for e in errors)
+
+    def test_unknown_node_type_is_error(self):
+        flow = self._simple_flow(nodes=[{"id": "a", "type": "not_a_type", "config": {}, "wires": []}])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("nieznany typ węzła" in e for e in errors)
+
+    def test_trigger_satel_zone_requires_zone_number(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone"}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("numer wejścia Satela" in e for e in errors)
+
+    def test_trigger_device_state_requires_source_device(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "tuya_state"}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("wybierz urządzenie źródłowe" in e for e in errors)
+
+    def test_condition_requires_op_and_value(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["c"]]},
+            {"id": "c", "type": "condition", "config": {}, "wires": [[], []]},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("nieznany operator" in e for e in errors)
+        assert any("wartości porównania" in e for e in errors)
+
+    def test_device_requires_target_device(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["d"]]},
+            {"id": "d", "type": "device", "config": {}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("wybierz urządzenie docelowe" in e for e in errors)
+
+    def test_scene_node_must_reference_existing_scene(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "scene", "config": {"scene_name": "brak_takiej"}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("nie istnieje wśród zdefiniowanych scen" in e for e in errors)
+
+    def test_scene_node_with_existing_scene_is_valid(self):
+        form = {
+            **VALID_FORM,
+            "scenes": [{"name": "moja_scena", "actions": [{"type": "tuya_on", "device": "x"}]}],
+            "flows": [self._simple_flow(nodes=[
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+                {"id": "s", "type": "scene", "config": {"scene_name": "moja_scena"}, "wires": []},
+            ])],
+        }
+        assert validate_automations(form) == []
+
+    def test_mqtt_node_requires_topic(self):
+        flow = self._simple_flow(nodes=[{"id": "m", "type": "mqttIn", "config": {}, "wires": []}])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("temat MQTT" in e for e in errors)
+
+    def test_http_node_requires_url(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["h"]]},
+            {"id": "h", "type": "http", "config": {}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("podaj adres URL" in e for e in errors)
+
+    def test_build_flow_produces_expected_shape(self):
+        automations = build_automations_dict(self._form_with_flow(self._simple_flow()))
+        flows = automations["flows"]
+        assert len(flows) == 1
+        flow = flows[0]
+        assert flow["name"] == "test-flow"
+        assert flow["nodes"][0] == {
+            "id": "trig", "type": "trigger",
+            "config": {"source": "satel_zone", "op": "violated", "zone_number": 3},
+            "wires": [["dev"]],
+        }
+        assert flow["nodes"][1] == {
+            "id": "dev", "type": "device",
+            "config": {"target_device": "gniazdko_salon", "target_system": "tuya", "value": "on"},
+            "wires": [],
+        }
+
+    def test_build_flow_without_name_is_skipped(self):
+        automations = build_automations_dict(self._form_with_flow(self._simple_flow(name="")))
+        assert automations["flows"] == []
+
+    def test_build_flow_disabled_flag_is_kept(self):
+        automations = build_automations_dict(self._form_with_flow(self._simple_flow(enabled=False)))
+        assert automations["flows"][0]["enabled"] is False
+
+    def test_build_flow_enabled_default_is_omitted(self):
+        automations = build_automations_dict(self._form_with_flow(self._simple_flow()))
+        assert "enabled" not in automations["flows"][0]
+
+    def test_build_flow_preserves_positions(self):
+        flow = self._simple_flow()
+        flow["nodes"][0]["x"] = 100
+        flow["nodes"][0]["y"] = 50
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][0]["x"] == 100
+        assert automations["flows"][0]["nodes"][0]["y"] == 50
+
+
 class TestSetupDraft:
     async def test_no_draft_returns_empty_object(self, setup_client):
         client, _ = setup_client

@@ -27,6 +27,7 @@
     <span class="settings-menu-panel" id="settingsMenuPanel">
       <a href="/plugins" class="{{ 'active' if request.path.startswith('/plugins') else '' }}">🧩 Wtyczki</a>
       <a href="/automations" class="{{ 'active' if request.path == '/automations' else '' }}">🎬 Automatyzacje</a>
+      <a href="/flows" class="{{ 'active' if request.path == '/flows' else '' }}">🔀 Flow</a>
       <a href="/system" class="{{ 'active' if request.path == '/system' else '' }}">⚙ Ogólne</a>
     </span>
   </span>

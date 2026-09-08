@@ -34,6 +34,7 @@ from dashboard.setup import (
     build_connections_patch, validate_connections, connections_to_form, list_plugins, list_plugin_load_errors,
     build_location_patch, validate_location,
     draft_path_for, load_draft, save_draft, delete_draft,
+    validate_flows, build_flows,
 )
 
 app = Quart(__name__)
@@ -789,6 +790,50 @@ async def api_automation_scene_run(name):
         return jsonify({"error": f"Nieznana scena: '{name}'"}), 404
     command_id = history.enqueue_command("run_scene", {"name": name})
     return jsonify({"command_id": command_id, "message": f"Zlecono uruchomienie sceny '{name}'"})
+
+
+@app.route("/flows")
+async def flows_page():
+    return await render_template("flows.html")
+
+
+@app.route("/api/config/flows", methods=["GET"])
+async def api_config_flows_get():
+    return jsonify({"flows": config_raw.get("flows", [])})
+
+
+@app.route("/api/config/flows", methods=["POST"])
+@require_auth()
+async def api_config_flows_post():
+    payload = await request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("flows"), list):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+    scene_names = {s.get("name") for s in config_raw.get("scenes", []) if s.get("name")}
+    errors = validate_flows(payload["flows"], scene_names)
+    if errors:
+        return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+    built_flows = build_flows(payload["flows"])
+    current = config_store.get("automations")
+    current["flows"] = built_flows
+    config_store.set("automations", current)
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+    _enqueue_bridge_reload()
+
+    return jsonify({"saved": {"flows": len(built_flows)}, "message": _RELOAD_MESSAGE})
+
+
+@app.route("/api/flows/<flow_id>/run", methods=["POST"])
+@require_auth()
+async def api_flow_run(flow_id):
+    flow_ids = {f.get("id") for f in config_raw.get("flows", [])}
+    if flow_id not in flow_ids:
+        return jsonify({"error": f"Nieznane flow: '{flow_id}'"}), 404
+    command_id = history.enqueue_command("run_flow", {"flow_id": flow_id})
+    return jsonify({"command_id": command_id, "message": f"Zlecono uruchomienie flow '{flow_id}'"})
 
 
 @app.route("/api/sensors")

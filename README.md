@@ -2367,6 +2367,63 @@ temperatura zewnętrzna -> włącz grzałkę). Ma własny `cooldown_seconds`,
 żeby wahania wartości blisko progu nie odpalały sceny co odczyt -
 sprawdzone testem.
 
+## Edytor Flow (beta) - graf węzłów w stylu Node-RED
+
+Zakładka **🔀 Flow** to alternatywny sposób budowania automatyzacji obok
+"reguł ruchu" opisanych wyżej - zamiast jednego formularza z sekcjami
+(Wejście/Wyjście/Warunek/Harmonogram/Eskalacja), rysuje się graf węzłów
+połączonych przewodami, wzorem Node-RED. **Status: beta** - działa
+równolegle do reguł ruchu (`reguły_ruchu` w dokumencie `automations`),
+niczego z nich nie zastępuje ani nie usuwa. Docelowo ma stać się głównym
+sposobem budowania automatyzacji krok-po-kroku, ale to długoterminowy
+kierunek, nie coś co dzieje się automatycznie przy aktualizacji - istniejące
+reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
+
+### 9 typów węzłów
+
+| Węzeł | Rola | Konfiguracja |
+|---|---|---|
+| ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz), wyzwalacz |
+| 📥 MQTT in | wejście grafu | temat MQTT (drugie możliwe wejście obok Trigger) |
+| ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania - dwa wyjścia: "spełniony"/"inaczej" |
+| 🔌 Urządzenie | akcja | system (Tuya/Satel wyjście), urządzenie docelowe, wartość (włącz/wyłącz, jasność dla ściemniaczy) |
+| 🎬 Scena | akcja | uruchamia istniejącą scenę po nazwie |
+| ⏱ Opóźnienie | akcja | pauza N sekund przed kontynuacją grafu |
+| 🔔 Powiadomienie | akcja | poziom (info/ostrzeżenie/krytyczne) i treść (`{value}`/`{key}` podstawiane z wiadomości) |
+| 📤 MQTT out | akcja | publikuje na temat MQTT (treść puste = wartość z wyzwalacza) |
+| 🌐 HTTP | akcja | wywołanie dowolnego URL-a (GET/POST/PUT/PATCH/DELETE) |
+
+Każdy flow musi mieć co najmniej jeden węzeł wejściowy (Trigger albo
+MQTT in) - bez tego graf nigdy się nie uruchomi, co jest sprawdzane przy
+zapisie.
+
+### Rysowanie połączeń
+
+Żeby połączyć dwa węzły: kliknij kropkę wyjścia (prawa krawędź) węzła
+źródłowego, potem kropkę wejścia (lewa krawędź) węzła docelowego -
+przewód narysuje się jako krzywa SVG. Drugie kliknięcie tej samej pary
+kropek usuwa połączenie. Węzeł Warunek ma dwie kropki wyjścia (spełniony
+/ inaczej), więc z niego wychodzą dwie osobne gałęzie grafu. Węzły
+przeciąga się metodą przeciągnij-i-upuść po canvasie.
+
+### Wykonanie: message passing, fire-and-forget
+
+Silnik (`bridge/flow_engine.py`, `FlowEngine`) działa dokładnie jak
+Node-RED: wiadomość (`{payload, key, source}`) propaguje się węzeł-po-
+węźle wzdłuż `wires`, każdy krok uruchamia się jako osobne zadanie
+asynchroniczne (nie czeka na poprzednie węzły w tej samej gałęzi), z
+limitem głębokości 50 kroków, żeby pętla w grafie nie zawiesiła bridge'a.
+
+### Zapis i test
+
+"💾 Zapisz wszystkie flows" zapisuje WSZYSTKIE flow z listy na raz do
+dokumentu `automations` (klucz `flows`) - bridge sam przeładowuje
+konfigurację w ciągu 1-2s, bez restartu procesu. Przycisk "▶ Testuj"
+przy danym flow zleca jego ręczne uruchomienie (od wszystkich węzłów
+wejściowych na raz) przez tę samą kolejkę poleceń SQLite, której używają
+inne przyciski "uruchom teraz" w panelu (bridge i panel działają jako
+osobne procesy).
+
 ## Zmywarki/AGD HomeWhiz (BEQ/Arcelik)
 
 Bridge łączy się BEZPOŚREDNIO z chmurą HomeWhiz (Arcelik IoT/AWS) tymi

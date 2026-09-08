@@ -1088,6 +1088,34 @@ class TestExecuteCommandRunScene:
         assert "nie_istnieje" in result["result"]["error"]
 
 
+class TestExecuteCommandRunFlow:
+
+    async def test_runs_flow_and_marks_done(self, engine, fake_tuya):
+        engine.flow_engine.update_flows([{
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 1}, "wires": [["dev"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "gniazdko_salon", "value": "on"}, "wires": []},
+            ],
+        }])
+        cmd_id = engine.history.enqueue_command("run_flow", {"flow_id": "f1"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+        await asyncio.sleep(0.01)
+
+        assert ("on", "gniazdko_salon", None) in fake_tuya.calls
+        assert engine.history.get_command(cmd_id)["status"] == "done"
+
+    async def test_unknown_flow_marks_command_error(self, engine):
+        cmd_id = engine.history.enqueue_command("run_flow", {"flow_id": "nope"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        result = engine.history.get_command(cmd_id)
+        assert result["status"] == "error"
+        assert "nope" in result["result"]["error"]
+
+
 class TestExecuteCommandMqttPublish:
 
     async def test_publishes_and_marks_done(self, engine):
