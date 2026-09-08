@@ -1269,6 +1269,62 @@ class TestTuyaCloudDiscoveryEndpoint:
         assert captured == {"region": "us", "aid": "myid", "akey": "mykey"}
 
 
+class TestFlowsImportFromMotionRules:
+    async def test_requires_auth(self, client):
+        resp = (await client.post("/api/flows/import-from-motion-rules"))
+        assert resp.status_code == 401
+
+    async def test_no_rules_returns_empty(self, client):
+        resp = (await client.post(
+            "/api/flows/import-from-motion-rules", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        assert await resp.get_json() == {"flows": [], "warnings": []}
+
+    async def test_convertible_rule_is_returned_as_flow(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "reguły_ruchu": [
+                {"name": "swiatlo_na_taras", "source": "satel_zone", "zone_number": 5,
+                 "target_device": "lampa_taras", "duration_seconds": 60},
+            ],
+        })
+        resp = (await client.post(
+            "/api/flows/import-from-motion-rules", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        data = await resp.get_json()
+        assert resp.status_code == 200
+        assert data["warnings"] == []
+        assert len(data["flows"]) == 1
+        assert data["flows"][0]["name"] == "Import: swiatlo_na_taras"
+
+    async def test_unsupported_rule_is_skipped_with_warning(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "reguły_ruchu": [
+                {"name": "wejscie_ip", "source": "satel_zone", "zone_number": 1, "virtual_input": "kamera"},
+            ],
+        })
+        resp = (await client.post(
+            "/api/flows/import-from-motion-rules", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        data = await resp.get_json()
+        assert resp.status_code == 200
+        assert data["flows"] == []
+        assert any("wirtualnego wejścia" in w for w in data["warnings"])
+
+    async def test_does_not_persist_anything(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "reguły_ruchu": [
+                {"name": "swiatlo_na_taras", "source": "satel_zone", "zone_number": 5,
+                 "target_device": "lampa_taras", "duration_seconds": 60},
+            ],
+        })
+        (await client.post(
+            "/api/flows/import-from-motion-rules", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.get("/api/config/flows", headers=_basic_auth_header("test_haslo_123")))
+        assert (await resp.get_json())["flows"] == []
+
+
 class TestSetupOnlyPathsPublicOnlyBeforeConfiguration:
     def test_setup_paths_public_when_not_configured(self, monkeypatch):
         import dashboard.app as app_module

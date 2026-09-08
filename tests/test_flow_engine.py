@@ -408,6 +408,92 @@ class TestRunFlow:
             await engine.run_flow("nope")
 
 
+class TestScheduleNode:
+    async def test_passes_through_when_within_window(self, monkeypatch):
+        captured = []
+
+        def fake_is_within_window(window, location_cfg, now):
+            captured.append((window, location_cfg))
+            return True
+
+        monkeypatch.setattr("bridge.flow_engine.is_within_window", fake_is_within_window)
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["sched"]]},
+                {"id": "sched", "type": "schedule", "config": {"start": "22:00", "end": "06:00"}, "wires": [["dev"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow], location_cfg={"latitude": 1, "longitude": 2})
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
+        assert captured == [({"start": "22:00", "end": "06:00"}, {"latitude": 1, "longitude": 2})]
+
+    async def test_drops_message_when_outside_window(self, monkeypatch):
+        monkeypatch.setattr("bridge.flow_engine.is_within_window", lambda window, location_cfg, now: False)
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["sched"]]},
+                {"id": "sched", "type": "schedule", "config": {"start": "22:00", "end": "06:00"}, "wires": [["dev"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == []
+
+
+class TestEscalationNode:
+    def _flow(self, threshold_count=2, window_seconds=60):
+        return {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["esc"]]},
+                {
+                    "id": "esc", "type": "escalation",
+                    "config": {"threshold_count": threshold_count, "window_seconds": window_seconds},
+                    "wires": [["dev_normal"], ["scn_escalated"]],
+                },
+                {"id": "dev_normal", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+                {"id": "scn_escalated", "type": "scene", "config": {"scene_name": "wykryto_intruza"}, "wires": []},
+            ],
+        }
+
+    async def test_below_threshold_takes_normal_path(self):
+        engine, calls = _engine([self._flow(threshold_count=3)])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
+        assert calls["run_scene"] == []
+
+    async def test_threshold_reached_takes_escalation_path_and_resets(self):
+        engine, calls = _engine([self._flow(threshold_count=2)])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["run_scene"] == ["wykryto_intruza"]
+        assert len(calls["set_target_state"]) == 1
+
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert len(calls["set_target_state"]) == 2
+        assert calls["run_scene"] == ["wykryto_intruza"]
+
+    async def test_window_seconds_prunes_old_entries(self):
+        engine, calls = _engine([self._flow(threshold_count=2, window_seconds=0.05)])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.1)
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["run_scene"] == []
+        assert len(calls["set_target_state"]) == 2
+
+
 class TestUpdateFlows:
     async def test_replaces_flows_and_resets_trigger_state(self):
         flow = {
@@ -427,3 +513,25 @@ class TestUpdateFlows:
         await engine.handle_device_state("tuya_state", "s1", "on")
         await asyncio.sleep(0.01)
         assert len(calls["set_target_state"]) == 2
+
+    async def test_resets_escalation_history(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["esc"]]},
+                {
+                    "id": "esc", "type": "escalation", "config": {"threshold_count": 2, "window_seconds": 60},
+                    "wires": [["dev_normal"], ["scn_escalated"]],
+                },
+                {"id": "dev_normal", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+                {"id": "scn_escalated", "type": "scene", "config": {"scene_name": "wykryto_intruza"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+
+        engine.update_flows([flow])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["run_scene"] == []

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import pathlib
+import uuid
 
 from werkzeug.security import generate_password_hash
 
@@ -110,7 +111,10 @@ def validate_automations(form: dict) -> list[str]:
     return errors
 
 
-_FLOW_NODE_TYPES = ("trigger", "condition", "device", "scene", "delay", "notify", "mqttIn", "mqttOut", "http")
+_FLOW_NODE_TYPES = (
+    "trigger", "condition", "device", "scene", "delay", "notify", "mqttIn", "mqttOut", "http",
+    "schedule", "escalation",
+)
 _FLOW_TRIGGER_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state")
 _FLOW_CONDITION_OPS = (">", "<", ">=", "<=", "==", "!=")
 _FLOW_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
@@ -168,6 +172,14 @@ def _validate_flow_node(node: dict, label: str, scene_names: set[str]) -> list[s
         method = (c.get("method") or "GET").upper()
         if method not in _FLOW_HTTP_METHODS:
             errors.append(f"{label}: nieznana metoda HTTP '{method}'")
+    elif ntype == "schedule":
+        if not c.get("start") or not c.get("end"):
+            errors.append(f"{label}: harmonogram wymaga początku i końca okna czasowego")
+    elif ntype == "escalation":
+        if not c.get("threshold_count"):
+            errors.append(f"{label}: eskalacja wymaga progu (liczby naruszeń)")
+        if not c.get("window_seconds"):
+            errors.append(f"{label}: eskalacja wymaga okna czasowego (sekundy)")
     return errors
 
 
@@ -1198,6 +1210,10 @@ def _build_flow_node_config(ntype: str, c: dict) -> dict:
         if c.get("body") not in (None, ""):
             cfg["body"] = c["body"]
         return cfg
+    if ntype == "schedule":
+        return {"start": c.get("start"), "end": c.get("end")}
+    if ntype == "escalation":
+        return {"threshold_count": int(c["threshold_count"]), "window_seconds": float(c["window_seconds"])}
     return dict(c)
 
 
@@ -1228,6 +1244,114 @@ def build_flows(flows_form: list[dict]) -> list[dict]:
             built["enabled"] = False
         flows.append(built)
     return flows
+
+
+def motion_rule_to_flow(rule: dict, index: int) -> tuple[dict | None, list[str]]:
+    """Konwertuje POJEDYNCZĄ regułę ruchu (`reguły_ruchu`) na flow (graf węzłów),
+    dla przycisku "Importuj z reguł ruchu" w edytorze Flow. Zwraca
+    (flow_albo_None, ostrzeżenia) - None, gdy reguła używa mechanizmu, którego
+    Flow jeszcze nie ma (wiele źródeł/akcji, wirtualne wejście Satela) - wtedy
+    CAŁA reguła jest pomijana z ostrzeżeniem zamiast tworzyć okrojony flow.
+    Zwrócony flow NIE jest jeszcze zapisany - wywołujący (endpoint /api/flows/
+    import-from-motion-rules) oddaje go do przeglądu w panelu przed zapisem."""
+    warnings: list[str] = []
+    name = (rule.get("name") or "").strip() or f"Reguła ruchu #{index + 1}"
+
+    if rule.get("sources") or rule.get("actions"):
+        return None, [f"'{name}': wiele źródeł/akcji (sources/actions) nie jest jeszcze obsługiwane w konwerterze - pomięto całą regułę"]
+    if "virtual_input" in rule:
+        return None, [f"'{name}': aktywacja wirtualnego wejścia Satela nie jest jeszcze obsługiwana w Flow - pomięto całą regułę"]
+
+    if rule.get("condition"):
+        warnings.append(f"'{name}': dodatkowy warunek (condition) NIE został przeniesiony - dodaj go ręcznie jeśli jest potrzebny")
+    if rule.get("then_trigger_rule"):
+        warnings.append(
+            f"'{name}': wyzwalanie łańcuchowe (then_trigger_rule='{rule['then_trigger_rule']}') NIE zostało przeniesione"
+        )
+
+    source = rule.get("source") or "satel_zone"
+    source_cfg = {"source": source}
+    if source == "satel_zone":
+        source_cfg["zone_number"] = rule.get("zone_number")
+    else:
+        source_cfg["source_device"] = rule.get("source_device")
+        source_cfg["trigger_value"] = rule.get("trigger_value")
+
+    has_scene = "scene" in rule
+    until_restored = (
+        not has_scene and rule.get("action") != "turn_off" and rule.get("duration_seconds") in (None, 0)
+    )
+    escalation_cfg = rule.get("escalation")
+    if escalation_cfg and until_restored:
+        warnings.append(
+            f"'{name}': eskalacja pominięta dla trybu \"do ustania naruszenia\" (rzadka kombinacja) - dodaj ręcznie jeśli potrzebna"
+        )
+
+    node_counter = [0]
+    nodes: list[dict] = []
+
+    def next_id() -> str:
+        node_counter[0] += 1
+        return f"n{node_counter[0]}"
+
+    def link(src: dict, port: int, dst: dict) -> None:
+        src["wires"][port].append(dst["id"])
+
+    def build_pipeline(op: str, on_value: str | None, row_y: int) -> None:
+        col = [0]
+
+        def add_node(ntype: str, config: dict, outputs: int = 1) -> dict:
+            node = {
+                "id": next_id(), "type": ntype, "config": config,
+                "wires": [[] for _ in range(outputs)], "x": 40 + 220 * col[0], "y": row_y,
+            }
+            col[0] += 1
+            nodes.append(node)
+            return node
+
+        current = add_node("trigger", {**source_cfg, "op": op})
+
+        window = rule.get("time_window")
+        if window:
+            sched = add_node("schedule", {"start": window.get("start"), "end": window.get("end")})
+            link(current, 0, sched)
+            current = sched
+
+        action_port = 0
+        if escalation_cfg and not until_restored:
+            esc = add_node("escalation", {
+                "threshold_count": escalation_cfg.get("threshold_count"),
+                "window_seconds": escalation_cfg.get("window_seconds"),
+            }, outputs=2)
+            link(current, 0, esc)
+            escalated = add_node("scene", {"scene_name": escalation_cfg.get("escalated_scene")})
+            link(esc, 1, escalated)
+            current = esc
+
+        if has_scene:
+            action = add_node("scene", {"scene_name": rule["scene"]})
+        else:
+            action_cfg = {
+                "target_device": rule.get("target_device"), "target_system": rule.get("target_system") or "tuya",
+                "value": on_value,
+            }
+            if on_value != "off" and rule.get("dimmer_level_percent") is not None:
+                action_cfg["dimmer_level_percent"] = rule.get("dimmer_level_percent")
+            action = add_node("device", action_cfg)
+        link(current, action_port, action)
+
+    if has_scene:
+        build_pipeline(rule.get("trigger_on", "violated"), None, 60)
+    elif until_restored:
+        build_pipeline("violated", "on", 60)
+        build_pipeline("restored", "off", 240)
+    elif rule.get("action") == "turn_off":
+        build_pipeline(rule.get("trigger_on", "violated"), "off", 60)
+    else:
+        build_pipeline(rule.get("trigger_on", "violated"), "on", 60)
+
+    flow = {"id": f"flow_import_{index}_{uuid.uuid4().hex[:6]}", "name": f"Import: {name}", "enabled": True, "nodes": nodes}
+    return flow, warnings
 
 
 def build_config_dict(form: dict) -> dict:

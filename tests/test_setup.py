@@ -13,6 +13,7 @@ from dashboard.setup import (
     ebus_connection_to_form, build_ebus_connection_patch, validate_ebus_connection,
     build_location_patch, validate_location,
     draft_path_for, load_draft, save_draft, delete_draft,
+    motion_rule_to_flow,
 )
 
 
@@ -1996,6 +1997,53 @@ class TestFlows:
         errors = validate_automations(self._form_with_flow(flow))
         assert any("podaj adres URL" in e for e in errors)
 
+    def test_schedule_node_requires_start_and_end(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "schedule", "config": {}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("harmonogram wymaga początku i końca" in e for e in errors)
+
+    def test_schedule_node_with_start_and_end_is_valid(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "schedule", "config": {"start": "22:00", "end": "sunrise"}, "wires": []},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_escalation_node_requires_threshold_and_window(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["e"]]},
+            {"id": "e", "type": "escalation", "config": {}, "wires": [[], []]},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("progu (liczby naruszeń)" in e for e in errors)
+        assert any("okna czasowego (sekundy)" in e for e in errors)
+
+    def test_escalation_node_with_values_is_valid(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["e"]]},
+            {"id": "e", "type": "escalation", "config": {"threshold_count": 3, "window_seconds": 120}, "wires": [[], []]},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_build_schedule_node(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "schedule", "config": {"start": "22:00", "end": "06:00"}, "wires": []},
+        ])
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][1]["config"] == {"start": "22:00", "end": "06:00"}
+
+    def test_build_escalation_node_coerces_numbers(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["e"]]},
+            {"id": "e", "type": "escalation", "config": {"threshold_count": "3", "window_seconds": "120"}, "wires": [[], []]},
+        ])
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][1]["config"] == {"threshold_count": 3, "window_seconds": 120.0}
+
     def test_build_flow_produces_expected_shape(self):
         automations = build_automations_dict(self._form_with_flow(self._simple_flow()))
         flows = automations["flows"]
@@ -2032,6 +2080,152 @@ class TestFlows:
         automations = build_automations_dict(self._form_with_flow(flow))
         assert automations["flows"][0]["nodes"][0]["x"] == 100
         assert automations["flows"][0]["nodes"][0]["y"] == 50
+
+
+class TestMotionRuleToFlow:
+    def _nodes_by_type(self, flow):
+        by_type = {}
+        for node in flow["nodes"]:
+            by_type.setdefault(node["type"], []).append(node)
+        return by_type
+
+    def test_simple_fixed_duration_rule(self):
+        rule = {
+            "name": "swiatlo_na_taras", "source": "satel_zone", "zone_number": 5,
+            "target_device": "lampa_taras", "duration_seconds": 60,
+        }
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert warnings == []
+        assert flow["name"] == "Import: swiatlo_na_taras"
+        by_type = self._nodes_by_type(flow)
+        assert len(by_type["trigger"]) == 1
+        assert by_type["trigger"][0]["config"] == {"source": "satel_zone", "zone_number": 5, "op": "violated"}
+        assert len(by_type["device"]) == 1
+        assert by_type["device"][0]["config"]["target_device"] == "lampa_taras"
+        assert by_type["device"][0]["config"]["value"] == "on"
+        # trigger wires straight into the device node (no schedule/escalation nodes were configured)
+        assert flow["nodes"][0]["wires"] == [[flow["nodes"][1]["id"]]]
+
+    def test_until_restored_mode_creates_two_pipelines(self):
+        rule = {"name": "przedpokoj", "source": "satel_zone", "zone_number": 5, "target_device": "swiatlo"}
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert warnings == []
+        by_type = self._nodes_by_type(flow)
+        ops = sorted(n["config"]["op"] for n in by_type["trigger"])
+        assert ops == ["restored", "violated"]
+        values = sorted(n["config"]["value"] for n in by_type["device"])
+        assert values == ["off", "on"]
+
+    def test_action_turn_off_with_trigger_on_restored(self):
+        rule = {
+            "name": "gasniecie", "zone_number": 12, "trigger_on": "restored",
+            "target_device": "swiatlo_korytarz", "action": "turn_off",
+        }
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert warnings == []
+        by_type = self._nodes_by_type(flow)
+        assert len(by_type["trigger"]) == 1
+        assert by_type["trigger"][0]["config"]["op"] == "restored"
+        assert by_type["device"][0]["config"]["value"] == "off"
+
+    def test_scene_rule(self):
+        rule = {"name": "alarm_wlaczony", "source": "satel_zone", "zone_number": 3, "scene": "powiadomienie"}
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert warnings == []
+        by_type = self._nodes_by_type(flow)
+        assert "device" not in by_type
+        assert by_type["scene"][0]["config"] == {"scene_name": "powiadomienie"}
+
+    def test_time_window_becomes_schedule_node(self):
+        rule = {
+            "name": "wieczorem", "source": "satel_zone", "zone_number": 3, "target_device": "lampa",
+            "duration_seconds": 60, "time_window": {"start": "22:00", "end": "sunrise"},
+        }
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert warnings == []
+        by_type = self._nodes_by_type(flow)
+        assert by_type["schedule"][0]["config"] == {"start": "22:00", "end": "sunrise"}
+        trig = by_type["trigger"][0]
+        sched = by_type["schedule"][0]
+        assert trig["wires"] == [[sched["id"]]]
+
+    def test_escalation_becomes_escalation_node_with_scene_branch(self):
+        rule = {
+            "name": "ruch_powtarzajacy", "source": "satel_zone", "zone_number": 7, "target_device": "lampa",
+            "duration_seconds": 60,
+            "escalation": {"threshold_count": 3, "window_seconds": 120, "escalated_scene": "wykryto_intruza"},
+        }
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert warnings == []
+        by_type = self._nodes_by_type(flow)
+        esc = by_type["escalation"][0]
+        assert esc["config"] == {"threshold_count": 3, "window_seconds": 120}
+        scenes = [n for n in by_type["scene"] if n["config"]["scene_name"] == "wykryto_intruza"]
+        assert len(scenes) == 1
+        assert esc["wires"][1] == [scenes[0]["id"]]
+        devices = by_type["device"]
+        assert len(devices) == 1
+        assert esc["wires"][0] == [devices[0]["id"]]
+
+    def test_escalation_skipped_with_warning_for_until_restored_mode(self):
+        rule = {
+            "name": "do_ustania", "source": "satel_zone", "zone_number": 7, "target_device": "lampa",
+            "escalation": {"threshold_count": 3, "window_seconds": 120, "escalated_scene": "wykryto_intruza"},
+        }
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert any("eskalacja pominięta" in w for w in warnings)
+        by_type = self._nodes_by_type(flow)
+        assert "escalation" not in by_type
+
+    def test_unnamed_rule_gets_positional_name(self):
+        rule = {"source": "satel_zone", "zone_number": 1, "target_device": "x", "duration_seconds": 5}
+        flow, warnings = motion_rule_to_flow(rule, 2)
+        assert flow["name"] == "Import: Reguła ruchu #3"
+
+    def test_multi_source_rule_is_skipped_entirely(self):
+        rule = {"name": "wielo", "sources": [{"zone_number": 1}, {"zone_number": 2}], "target_device": "x"}
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert flow is None
+        assert any("wielo" in w and "sources/actions" in w for w in warnings)
+
+    def test_virtual_input_rule_is_skipped_entirely(self):
+        rule = {"name": "wejscie_ip", "source": "satel_zone", "zone_number": 1, "virtual_input": "kamera"}
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert flow is None
+        assert any("wirtualnego wejścia" in w for w in warnings)
+
+    def test_condition_produces_warning_but_still_converts(self):
+        rule = {
+            "name": "z_warunkiem", "source": "satel_zone", "zone_number": 1, "target_device": "x",
+            "duration_seconds": 5, "condition": {"type": "state", "key": "satel_input:9", "equals": "naruszone"},
+        }
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert flow is not None
+        assert any("warunek" in w and "NIE został przeniesiony" in w for w in warnings)
+
+    def test_then_trigger_rule_produces_warning_but_still_converts(self):
+        rule = {
+            "name": "lancuch", "source": "satel_zone", "zone_number": 1, "target_device": "x",
+            "duration_seconds": 5, "then_trigger_rule": "inna_regula",
+        }
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert flow is not None
+        assert any("then_trigger_rule" in w for w in warnings)
+
+    def test_dimmer_level_percent_is_carried_over(self):
+        rule = {
+            "name": "sciemniacz", "source": "satel_zone", "zone_number": 1, "target_device": "lampa",
+            "duration_seconds": 5, "dimmer_level_percent": 40,
+        }
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        by_type = self._nodes_by_type(flow)
+        assert by_type["device"][0]["config"]["dimmer_level_percent"] == 40
+
+    def test_flow_ids_are_unique_across_calls(self):
+        rule = {"name": "x", "source": "satel_zone", "zone_number": 1, "target_device": "x", "duration_seconds": 5}
+        flow_a, _ = motion_rule_to_flow(rule, 0)
+        flow_b, _ = motion_rule_to_flow(rule, 0)
+        assert flow_a["id"] != flow_b["id"]
 
 
 class TestSetupDraft:

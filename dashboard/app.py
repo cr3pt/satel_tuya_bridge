@@ -34,7 +34,7 @@ from dashboard.setup import (
     build_connections_patch, validate_connections, connections_to_form, list_plugins, list_plugin_load_errors,
     build_location_patch, validate_location,
     draft_path_for, load_draft, save_draft, delete_draft,
-    validate_flows, build_flows,
+    validate_flows, build_flows, motion_rule_to_flow,
 )
 
 app = Quart(__name__)
@@ -824,6 +824,20 @@ async def api_config_flows_post():
     _enqueue_bridge_reload()
 
     return jsonify({"saved": {"flows": len(built_flows)}, "message": _RELOAD_MESSAGE})
+
+
+@app.route("/api/flows/import-from-motion-rules", methods=["POST"])
+@require_auth()
+async def api_flows_import_from_motion_rules():
+    rules = config_raw.get("reguły_ruchu", [])
+    flows = []
+    warnings: list[str] = []
+    for i, rule in enumerate(rules):
+        flow, rule_warnings = motion_rule_to_flow(rule, i)
+        warnings.extend(rule_warnings)
+        if flow is not None:
+            flows.append(flow)
+    return jsonify({"flows": flows, "warnings": warnings})
 
 
 @app.route("/api/flows/<flow_id>/run", methods=["POST"])

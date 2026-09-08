@@ -103,7 +103,7 @@ class RulesEngine:
         self.flow_engine = FlowEngine(
             config.raw.get("flows", []), set_target_state=self._set_target_state,
             run_scene=lambda name: self.scenes.run(name), notify_cfg=notify_cfg,
-            mqtt_cfg=config.raw.get("mqtt_publish", {}),
+            mqtt_cfg=config.raw.get("mqtt_publish", {}), location_cfg=self._location_cfg,
         )
 
         self._escalation_history: dict[str, list[float]] = {}
@@ -742,6 +742,7 @@ class RulesEngine:
             history=self.history,
         )
         self.flow_engine.update_flows(new_config.raw.get("flows", []))
+        self.flow_engine.location_cfg = self._location_cfg
         self.boiler_automation = BoilerAutomation(new_config.raw.get("boiler_rules", []), self.scenes)
         self.alarms = AlarmEngine(new_config.raw.get("alarm_rules", []), self.history, notify_cfg=self._notify_cfg)
 
