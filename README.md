@@ -2392,6 +2392,8 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 | 🔔 Powiadomienie | akcja | poziom (info/ostrzeżenie/krytyczne) i treść (`{value}`/`{key}` podstawiane z wiadomości) |
 | 📤 MQTT out | akcja | publikuje na temat MQTT (treść puste = wartość z wyzwalacza) |
 | 🌐 HTTP | akcja | wywołanie dowolnego URL-a (GET/POST/PUT/PATCH/DELETE) |
+| 📅 Harmonogram | rozgałęzienie | okno czasowe (`start`/`end`, w tym `sunset`/`sunrise+-N` jak w harmonogramie reguły ruchu) - jedno wyjście "w oknie", poza oknem wiadomość jest wygaszana |
+| 📈 Eskalacja | rozgałęzienie | próg (liczba naruszeń) i okno czasowe (sekundy) - dwa wyjścia: "normalnie" (poniżej progu) / "eskalacja" (próg przekroczony, licznik się zeruje) |
 
 Każdy flow musi mieć co najmniej jeden węzeł wejściowy (Trigger albo
 MQTT in) - bez tego graf nigdy się nie uruchomi, co jest sprawdzane przy
@@ -2423,6 +2425,41 @@ przy danym flow zleca jego ręczne uruchomienie (od wszystkich węzłów
 wejściowych na raz) przez tę samą kolejkę poleceń SQLite, której używają
 inne przyciski "uruchom teraz" w panelu (bridge i panel działają jako
 osobne procesy).
+
+### Harmonogram i eskalacja - odpowiedniki mechanizmów reguł ruchu
+
+Węzły **📅 Harmonogram** i **📈 Eskalacja** to graf-owe odpowiedniki
+"harmonogramu" (`time_window`) i "eskalacji" (`escalation`) reguł ruchu
+(patrz sekcje wyżej) - ten sam kod obliczający okno czasowe
+(`bridge/scheduling.py: is_within_window`, w tym `sunset`/`sunrise`
+z lokalizacji ustawionej w sekcji "🌍 Lokalizacja" tej strony) i tę samą
+logikę liczenia naruszeń w ruchomym oknie (`FlowEngine._escalation_history`,
+per węzeł per flow - nie per reguła). Harmonogram to bramka jednowyjściowa
+(przepuszcza dalej TYLKO w oknie, poza nim wiadomość znika bez propagacji
+dalej) - żeby "poza oknem" też coś zrobić, dołącz drugą gałąź od tego
+samego triggera. Eskalacja ma dwa wyjścia jak węzeł Warunek - "normalnie"
+dla każdego wywołania poniżej progu, "eskalacja" (i reset licznika)
+dokładnie w momencie przekroczenia progu w oknie.
+
+### Import z reguł ruchu
+
+Przycisk **"⬇ Importuj z reguł ruchu"** (`POST /api/flows/import-from-
+motion-rules` -> `dashboard/setup.py: motion_rule_to_flow`) konwertuje
+KAŻDĄ regułę z `reguły_ruchu` na osobny flow i dokleja je do listy
+**NIEZAPISANEJ** (dopiero "💾 Zapisz wszystkie flows" utrwala je) - myślą
+przewodnią jest przegląd przed zapisem, nie ślepa jednorazowa migracja.
+Obsługiwane: pojedyncze źródło (Satel/Tuya/HomeWhiz), pojedyncze
+urządzenie docelowe (w tym ściemniacz), scena, tryb "do ustania
+naruszenia" (tworzy DWA triggery - violated->on i restored->off),
+`action: turn_off`, `time_window` (-> węzeł Harmonogram), `escalation`
+(-> węzeł Eskalacja z gałęzią do sceny eskalowanej). NIEOBSŁUGIWANE (Flow
+jeszcze tego nie ma): wiele źródeł/akcji (`sources`/`actions`), aktywacja
+wirtualnego wejścia Satela (`virtual_input`) - takie reguły są w całości
+POMIJANE z ostrzeżeniem zamiast tworzyć okrojony/mylący flow. Dodatkowy
+warunek (`condition`) i wyzwalanie łańcuchowe (`then_trigger_rule`) NIE są
+przenoszone, ale reguła i tak się konwertuje - z ostrzeżeniem, że trzeba
+je dodać ręcznie. Wszystkie ostrzeżenia trafiają razem do komunikatu w
+panelu po imporcie.
 
 ## Zmywarki/AGD HomeWhiz (BEQ/Arcelik)
 

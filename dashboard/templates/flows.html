@@ -80,6 +80,8 @@
     border-radius: 12px; padding: 2px 8px; font-size: 11.5px; margin: 2px 4px 2px 0;
   }
   .wire-chip button { background: none; border: none; color: var(--danger); cursor: pointer; padding: 0; font-size: 12px; }
+  .timespec { display: inline-flex; gap: 6px; flex: 1; min-width: 220px; }
+  .timespec select, .timespec input { flex: 1; min-width: 90px; width: auto; }
 </style>
 </head>
 <body>
@@ -94,15 +96,23 @@
   reszta węzłów wykonuje się po kolei wzdłuż połączeń. Żeby połączyć
   dwa węzły: kliknij kropkę wyjścia (prawa krawędź) węzła źródłowego,
   potem kropkę wejścia (lewa krawędź) węzła docelowego - drugie
-  kliknięcie tej samej kropki wyjścia anuluje. <strong>Status: beta</strong> -
-  działa równolegle do reguł ruchu (nie zastępuje ich jeszcze), docelowo
-  ma stać się głównym sposobem budowania automatyzacji krok-po-kroku.
+  kliknięcie tej samej kropki wyjścia anuluje. Węzeł
+  <strong>Harmonogram</strong> przepuszcza dalej tylko w oknie czasowym
+  (jak "harmonogram" reguły ruchu), <strong>Eskalacja</strong> liczy
+  naruszenia w oknie czasowym i po przekroczeniu progu kieruje na osobne
+  wyjście "eskalacja". Przycisk "⬇ Importuj z reguł ruchu" konwertuje
+  istniejące reguły na flows do przeglądu (część mechanizmów, np.
+  warunki dodatkowe czy wirtualne wejścia Satela, trzeba dodać ręcznie
+  po imporcie). <strong>Status: beta</strong> - działa równolegle do
+  reguł ruchu (nie zastępuje ich jeszcze), docelowo ma stać się głównym
+  sposobem budowania automatyzacji krok-po-kroku.
 </div>
 
 <div id="msg" class="msg-box"></div>
 
 <div class="toolbar">
   <button id="newFlowBtn" type="button" class="secondary">+ Nowy flow</button>
+  <button id="importFromMotionRulesBtn" type="button" class="secondary">⬇ Importuj z reguł ruchu</button>
   <button id="saveFlowsBtn" type="button">💾 Zapisz wszystkie flows</button>
 </div>
 
@@ -127,6 +137,8 @@
       <button type="button" class="secondary" data-node-type="mqttIn">📥 MQTT in</button>
       <button type="button" class="secondary" data-node-type="mqttOut">📤 MQTT out</button>
       <button type="button" class="secondary" data-node-type="http">🌐 HTTP</button>
+      <button type="button" class="secondary" data-node-type="schedule">📅 Harmonogram</button>
+      <button type="button" class="secondary" data-node-type="escalation">📈 Eskalacja</button>
     </div>
     <div class="canvas-wrap" id="canvasWrap">
       <div class="canvas" id="canvas">
@@ -183,6 +195,8 @@ const NODE_DEFS = {
   mqttIn:   { label: 'MQTT in', icon: '📥', outputs: [''] },
   mqttOut:  { label: 'MQTT out', icon: '📤', outputs: [''] },
   http:     { label: 'HTTP', icon: '🌐', outputs: [''] },
+  schedule:   { label: 'Harmonogram', icon: '📅', outputs: ['w oknie'] },
+  escalation: { label: 'Eskalacja', icon: '📈', outputs: ['normalnie', 'eskalacja'] },
 };
 
 let context = {};
@@ -201,6 +215,8 @@ function defaultConfigFor(type) {
   if (type === 'notify') return { level: 'info', message: '' };
   if (type === 'mqttIn' || type === 'mqttOut') return { topic: '' };
   if (type === 'http') return { method: 'GET', url: '' };
+  if (type === 'schedule') return { start: '', end: '' };
+  if (type === 'escalation') return { threshold_count: 3, window_seconds: 120 };
   return {};
 }
 
@@ -216,6 +232,8 @@ function nodeLabel(node) {
   if (node.type === 'notify') return c.message ? c.message.slice(0, 26) : '(brak treści)';
   if (node.type === 'mqttIn' || node.type === 'mqttOut') return c.topic || '(brak tematu)';
   if (node.type === 'http') return c.url ? c.url.slice(0, 26) : '(brak URL)';
+  if (node.type === 'schedule') return `${c.start || '?'} - ${c.end || '?'}`;
+  if (node.type === 'escalation') return `${c.threshold_count ?? '?'}x / ${c.window_seconds ?? '?'}s`;
   return '';
 }
 
@@ -432,6 +450,48 @@ function sceneOptions(selected) {
   ).join('');
 }
 
+function parseTimeSpec(value) {
+  value = (value || '').trim();
+  const m = value.match(/^(sunset|sunrise)([+-]\d+)?$/);
+  if (m) return { type: m[1], fixed: '', offset: m[2] ? parseInt(m[2], 10) : 0 };
+  if (/^\d{2}:\d{2}$/.test(value)) return { type: 'fixed', fixed: value, offset: 0 };
+  return { type: 'fixed', fixed: '', offset: 0 };
+}
+function timeSpecFieldHtml(cls, value) {
+  const spec = parseTimeSpec(value);
+  return `
+    <span class="timespec">
+      <select class="${cls}-type timespec-type">
+        <option value="fixed" ${spec.type === 'fixed' ? 'selected' : ''}>Stały czas</option>
+        <option value="sunset" ${spec.type === 'sunset' ? 'selected' : ''}>Zachód słońca</option>
+        <option value="sunrise" ${spec.type === 'sunrise' ? 'selected' : ''}>Wschód słońca</option>
+      </select>
+      <input type="time" class="${cls}-fixed timespec-fixed" value="${escapeHtml(spec.fixed)}"
+        style="${spec.type === 'fixed' ? '' : 'display:none;'}">
+      <input type="number" class="${cls}-offset timespec-offset" placeholder="przesunięcie (min)" value="${spec.offset}"
+        style="${spec.type === 'fixed' ? 'display:none;' : ''}" title="Minuty przed (ujemne) albo po (dodatnie)">
+    </span>`;
+}
+function wireTimeSpecToggles(root) {
+  root.querySelectorAll('.timespec').forEach(el => {
+    const typeSel = el.querySelector('.timespec-type');
+    const fixedInput = el.querySelector('.timespec-fixed');
+    const offsetInput = el.querySelector('.timespec-offset');
+    typeSel.addEventListener('change', () => {
+      const isFixed = typeSel.value === 'fixed';
+      fixedInput.style.display = isFixed ? '' : 'none';
+      offsetInput.style.display = isFixed ? 'none' : '';
+    });
+  });
+}
+function collectTimeSpec(cls, root) {
+  const type = root.querySelector(`.${cls}-type`).value;
+  if (type === 'fixed') return root.querySelector(`.${cls}-fixed`).value.trim();
+  const offset = parseInt(root.querySelector(`.${cls}-offset`).value.trim() || '0', 10) || 0;
+  if (!offset) return type;
+  return `${type}${offset > 0 ? '+' : ''}${offset}`;
+}
+
 function selectNode(id) {
   selectedNodeId = id;
   connecting = null;
@@ -521,6 +581,12 @@ function renderNodeFields(node) {
     </select>`);
     html += field(`<label>URL</label><input type="text" data-field="url" value="${escapeHtml(c.url || '')}">`);
     html += field(`<label>Treść (dla POST/PUT/PATCH)</label><input type="text" data-field="body" value="${escapeHtml(c.body || '')}">`);
+  } else if (node.type === 'schedule') {
+    html += field(`<label>Początek</label>${timeSpecFieldHtml('sched-start', c.start || '')}`);
+    html += field(`<label>Koniec</label>${timeSpecFieldHtml('sched-end', c.end || '')}`);
+  } else if (node.type === 'escalation') {
+    html += field(`<label>Próg (liczba naruszeń)</label><input type="number" min="1" step="1" data-field="threshold_count" value="${c.threshold_count ?? 3}">`);
+    html += field(`<label>Okno czasowe (sekundy)</label><input type="number" min="1" step="1" data-field="window_seconds" value="${c.window_seconds ?? 120}">`);
   }
   el.innerHTML = html;
   el.querySelectorAll('[data-field]').forEach(input => {
@@ -530,6 +596,23 @@ function renderNodeFields(node) {
       renderSidePanel();
     });
   });
+  if (node.type === 'schedule') {
+    wireTimeSpecToggles(el);
+    el.querySelectorAll('.sched-start-type, .sched-start-fixed, .sched-start-offset').forEach(input => {
+      input.addEventListener('change', () => {
+        c.start = collectTimeSpec('sched-start', el);
+        renderCanvas();
+        renderSidePanel();
+      });
+    });
+    el.querySelectorAll('.sched-end-type, .sched-end-fixed, .sched-end-offset').forEach(input => {
+      input.addEventListener('change', () => {
+        c.end = collectTimeSpec('sched-end', el);
+        renderCanvas();
+        renderSidePanel();
+      });
+    });
+  }
 }
 
 function renderSidePanel() {
@@ -586,6 +669,29 @@ document.getElementById('saveFlowsBtn').addEventListener('click', async () => {
     }
     showMsg(true, data.message);
     await loadFlows();
+  } catch (e) {
+    showMsg(false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+document.getElementById('importFromMotionRulesBtn').addEventListener('click', async () => {
+  try {
+    const resp = await fetch('/api/flows/import-from-motion-rules', { method: 'POST' });
+    if (resp.status === 401) { window.location.href = '/login?next=' + encodeURIComponent(location.pathname); return; }
+    const data = await resp.json();
+    if (!resp.ok) { showMsg(false, data.error || 'Błąd importu'); return; }
+    const imported = data.flows || [];
+    const warnings = data.warnings || [];
+    if (!imported.length) {
+      showMsg(false, warnings.length ? ('Nic nie zaimportowano - ' + warnings.join('; ')) : 'Brak reguł ruchu do zaimportowania.');
+      return;
+    }
+    const startIndex = flows.length;
+    flows.push(...imported);
+    let msg = `Zaimportowano ${imported.length} flow z reguł ruchu (NIEZAPISANE) - przejrzyj i kliknij "Zapisz wszystkie flows".`;
+    if (warnings.length) msg += ' Uwagi: ' + warnings.join('; ');
+    showMsg(true, msg);
+    selectFlow(startIndex);
   } catch (e) {
     showMsg(false, 'Błąd komunikacji z serwerem: ' + e);
   }

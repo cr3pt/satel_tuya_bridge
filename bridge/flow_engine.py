@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
+import time
 from typing import Awaitable, Callable
 
 import aiohttp
 import paho.mqtt.client as mqtt
 
 from .notifier import Notifier
+from .scheduling import is_within_window
 
 logger = logging.getLogger("bridge.flow_engine")
 
@@ -67,6 +70,14 @@ class FlowEngine:
       mqttIn    {topic}  - wejście grafu, odpalane wiadomością MQTT
       mqttOut   {topic, payload}  - {value}/{key} podstawiane jak w notify
       http      {method, url, body}  - odpowiedź trafia do payload wiadomości
+      schedule  {start, end}  - jak time_window reguły ruchu (w tym sunset/
+                sunrise+-N) - przepuszcza wiadomość TYLKO w oknie czasowym,
+                poza nim ją wygasza (bez propagacji dalej)
+      escalation {threshold_count, window_seconds}  - [normalnie, eskalacja]:
+                liczy wejścia w ruchomym oknie czasowym, po przekroczeniu
+                progu przepuszcza wyjściem "eskalacja" (i zeruje licznik)
+                zamiast "normalnie" - analogicznie do `escalation` reguły
+                ruchu (RulesEngine._fire_motion_rule)
     """
 
     def __init__(
@@ -77,6 +88,7 @@ class FlowEngine:
         run_scene: Callable[[str], Awaitable[None]],
         notify_cfg: dict | None,
         mqtt_cfg: dict | None = None,
+        location_cfg: dict | None = None,
     ):
         self.flows = flows_cfg or []
         self._set_target_state = set_target_state
@@ -87,6 +99,8 @@ class FlowEngine:
         self._mqtt_subs: dict[str, list[tuple[dict, dict]]] = {}
         self._mqtt_topics: set[str] = set()
         self._trigger_state: dict[str, bool] = {}
+        self._escalation_history: dict[str, list[float]] = {}
+        self.location_cfg = location_cfg
         self._loop = asyncio.get_event_loop()
 
     def start(self) -> None:
@@ -101,6 +115,7 @@ class FlowEngine:
     def update_flows(self, flows_cfg: list[dict]) -> None:
         self.flows = flows_cfg or []
         self._trigger_state.clear()
+        self._escalation_history.clear()
         self._setup_mqtt_triggers()
 
     # ── Wejścia zdarzeń (te same co RulesEngine.handle_motion/handle_device_state) ──
@@ -251,6 +266,25 @@ class FlowEngine:
             cmp = _OPS.get(c.get("op"))
             passed = bool(cmp(msg.get("payload"), c.get("value"))) if cmp else False
             return [msg if passed else None, None if passed else msg]
+
+        if ntype == "schedule":
+            window = {"start": c.get("start"), "end": c.get("end")}
+            if is_within_window(window, self.location_cfg, dt.datetime.now()):
+                return [msg]
+            return [None]
+
+        if ntype == "escalation":
+            key = f"{flow.get('id')}:{node.get('id')}"
+            history = self._escalation_history.setdefault(key, [])
+            now = time.time()
+            history.append(now)
+            cutoff = now - float(c.get("window_seconds") or 0)
+            history[:] = [t for t in history if t >= cutoff]
+            threshold = int(c.get("threshold_count") or 1)
+            if len(history) >= threshold:
+                history.clear()
+                return [None, msg]
+            return [msg, None]
 
         if ntype == "device":
             device = c.get("target_device")
