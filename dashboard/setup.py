@@ -113,8 +113,9 @@ def validate_automations(form: dict) -> list[str]:
 
 _FLOW_NODE_TYPES = (
     "trigger", "condition", "device", "scene", "delay", "notify", "mqttIn", "mqttOut", "http",
-    "schedule", "escalation",
+    "schedule", "escalation", "state",
 )
+_FLOW_STATE_OPS = ("equals", "not_equals")
 _FLOW_TRIGGER_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state")
 _FLOW_CONDITION_OPS = (">", "<", ">=", "<=", "==", "!=")
 _FLOW_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
@@ -149,7 +150,7 @@ def _validate_flow_node(node: dict, label: str, scene_names: set[str]) -> list[s
         if not (c.get("target_device") or "").strip():
             errors.append(f"{label}: wybierz urządzenie docelowe")
         target_system = c.get("target_system") or "tuya"
-        if target_system not in ("tuya", "satel_output"):
+        if target_system not in ("tuya", "satel_output", "satel_virtual_input"):
             errors.append(f"{label}: nieznany system urządzenia docelowego '{target_system}'")
     elif ntype == "scene":
         scene_name = (c.get("scene_name") or "").strip()
@@ -180,6 +181,13 @@ def _validate_flow_node(node: dict, label: str, scene_names: set[str]) -> list[s
             errors.append(f"{label}: eskalacja wymaga progu (liczby naruszeń)")
         if not c.get("window_seconds"):
             errors.append(f"{label}: eskalacja wymaga okna czasowego (sekundy)")
+    elif ntype == "state":
+        if not (c.get("key") or "").strip():
+            errors.append(f"{label}: warunek stanu wymaga wybrania statusu")
+        if c.get("op") not in _FLOW_STATE_OPS:
+            errors.append(f"{label}: nieznany operator warunku stanu '{c.get('op')}'")
+        if (c.get("value") or "") == "":
+            errors.append(f"{label}: warunek stanu wymaga wartości porównania")
     return errors
 
 
@@ -1214,6 +1222,8 @@ def _build_flow_node_config(ntype: str, c: dict) -> dict:
         return {"start": c.get("start"), "end": c.get("end")}
     if ntype == "escalation":
         return {"threshold_count": int(c["threshold_count"]), "window_seconds": float(c["window_seconds"])}
+    if ntype == "state":
+        return {"key": c.get("key"), "op": c.get("op") or "equals", "value": c.get("value")}
     return dict(c)
 
 
@@ -1250,17 +1260,15 @@ def motion_rule_to_flow(rule: dict, index: int) -> tuple[dict | None, list[str]]
     """Konwertuje POJEDYNCZĄ regułę ruchu (`reguły_ruchu`) na flow (graf węzłów),
     dla przycisku "Importuj z reguł ruchu" w edytorze Flow. Zwraca
     (flow_albo_None, ostrzeżenia) - None, gdy reguła używa mechanizmu, którego
-    Flow jeszcze nie ma (wiele źródeł/akcji, wirtualne wejście Satela) - wtedy
-    CAŁA reguła jest pomijana z ostrzeżeniem zamiast tworzyć okrojony flow.
-    Zwrócony flow NIE jest jeszcze zapisany - wywołujący (endpoint /api/flows/
-    import-from-motion-rules) oddaje go do przeglądu w panelu przed zapisem."""
+    Flow jeszcze nie ma (wiele źródeł/akcji) - wtedy CAŁA reguła jest pomijana
+    z ostrzeżeniem zamiast tworzyć okrojony flow. Zwrócony flow NIE jest
+    jeszcze zapisany - wywołujący (endpoint /api/flows/import-from-motion-
+    rules) oddaje go do przeglądu w panelu przed zapisem."""
     warnings: list[str] = []
     name = (rule.get("name") or "").strip() or f"Reguła ruchu #{index + 1}"
 
     if rule.get("sources") or rule.get("actions"):
         return None, [f"'{name}': wiele źródeł/akcji (sources/actions) nie jest jeszcze obsługiwane w konwerterze - pomięto całą regułę"]
-    if "virtual_input" in rule:
-        return None, [f"'{name}': aktywacja wirtualnego wejścia Satela nie jest jeszcze obsługiwana w Flow - pomięto całą regułę"]
 
     if rule.get("condition"):
         warnings.append(f"'{name}': dodatkowy warunek (condition) NIE został przeniesiony - dodaj go ręcznie jeśli jest potrzebny")
@@ -1330,6 +1338,10 @@ def motion_rule_to_flow(rule: dict, index: int) -> tuple[dict | None, list[str]]
 
         if has_scene:
             action = add_node("scene", {"scene_name": rule["scene"]})
+        elif "virtual_input" in rule:
+            action = add_node("device", {
+                "target_device": rule["virtual_input"], "target_system": "satel_virtual_input", "value": on_value,
+            })
         else:
             action_cfg = {
                 "target_device": rule.get("target_device"), "target_system": rule.get("target_system") or "tuya",

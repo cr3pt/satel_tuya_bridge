@@ -1300,7 +1300,7 @@ class TestFlowsImportFromMotionRules:
     async def test_unsupported_rule_is_skipped_with_warning(self, client, monkeypatch):
         monkeypatch.setattr("dashboard.app.config_raw", {
             "reguły_ruchu": [
-                {"name": "wejscie_ip", "source": "satel_zone", "zone_number": 1, "virtual_input": "kamera"},
+                {"name": "wielo", "sources": [{"zone_number": 1}, {"zone_number": 2}], "target_device": "x"},
             ],
         })
         resp = (await client.post(
@@ -1309,7 +1309,24 @@ class TestFlowsImportFromMotionRules:
         data = await resp.get_json()
         assert resp.status_code == 200
         assert data["flows"] == []
-        assert any("wirtualnego wejścia" in w for w in data["warnings"])
+        assert any("sources/actions" in w for w in data["warnings"])
+
+    async def test_virtual_input_rule_converts_to_device_node(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "reguły_ruchu": [
+                {"name": "wejscie_ip", "source": "satel_zone", "zone_number": 1, "virtual_input": "kamera",
+                 "duration_seconds": 30},
+            ],
+        })
+        resp = (await client.post(
+            "/api/flows/import-from-motion-rules", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        data = await resp.get_json()
+        assert resp.status_code == 200
+        assert data["warnings"] == []
+        assert len(data["flows"]) == 1
+        device_nodes = [n for n in data["flows"][0]["nodes"] if n["type"] == "device"]
+        assert device_nodes[0]["config"]["target_system"] == "satel_virtual_input"
 
     async def test_does_not_persist_anything(self, client, monkeypatch):
         monkeypatch.setattr("dashboard.app.config_raw", {

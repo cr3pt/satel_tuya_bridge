@@ -104,6 +104,7 @@ class RulesEngine:
             config.raw.get("flows", []), set_target_state=self._set_target_state,
             run_scene=lambda name: self.scenes.run(name), notify_cfg=notify_cfg,
             mqtt_cfg=config.raw.get("mqtt_publish", {}), location_cfg=self._location_cfg,
+            get_status_value=self.history.get_status_value,
         )
 
         self._escalation_history: dict[str, list[float]] = {}

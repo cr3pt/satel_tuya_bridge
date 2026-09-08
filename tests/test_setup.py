@@ -1965,6 +1965,21 @@ class TestFlows:
         errors = validate_automations(self._form_with_flow(flow))
         assert any("wybierz urządzenie docelowe" in e for e in errors)
 
+    def test_device_accepts_satel_virtual_input_target_system(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["d"]]},
+            {"id": "d", "type": "device", "config": {"target_device": "kamera", "target_system": "satel_virtual_input"}, "wires": []},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_device_rejects_unknown_target_system(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["d"]]},
+            {"id": "d", "type": "device", "config": {"target_device": "x", "target_system": "nope"}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("nieznany system urządzenia docelowego" in e for e in errors)
+
     def test_scene_node_must_reference_existing_scene(self):
         flow = self._simple_flow(nodes=[
             {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
@@ -2043,6 +2058,33 @@ class TestFlows:
         ])
         automations = build_automations_dict(self._form_with_flow(flow))
         assert automations["flows"][0]["nodes"][1]["config"] == {"threshold_count": 3, "window_seconds": 120.0}
+
+    def test_state_node_requires_key_op_value(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "state", "config": {}, "wires": [[], []]},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("wybrania statusu" in e for e in errors)
+        assert any("nieznany operator warunku stanu" in e for e in errors)
+        assert any("wartości porównania" in e for e in errors)
+
+    def test_state_node_with_values_is_valid(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "state", "config": {"key": "satel_input:9", "op": "equals", "value": "naruszone"}, "wires": [[], []]},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_build_state_node(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "state", "config": {"key": "tuya:gniazdko", "op": "not_equals", "value": "włączone"}, "wires": [[], []]},
+        ])
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][1]["config"] == {
+            "key": "tuya:gniazdko", "op": "not_equals", "value": "włączone",
+        }
 
     def test_build_flow_produces_expected_shape(self):
         automations = build_automations_dict(self._form_with_flow(self._simple_flow()))
@@ -2188,11 +2230,26 @@ class TestMotionRuleToFlow:
         assert flow is None
         assert any("wielo" in w and "sources/actions" in w for w in warnings)
 
-    def test_virtual_input_rule_is_skipped_entirely(self):
+    def test_virtual_input_rule_converts_to_device_node(self):
+        rule = {
+            "name": "wejscie_ip", "source": "satel_zone", "zone_number": 1,
+            "virtual_input": "kamera", "duration_seconds": 30,
+        }
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert warnings == []
+        by_type = self._nodes_by_type(flow)
+        assert by_type["device"][0]["config"] == {
+            "target_device": "kamera", "target_system": "satel_virtual_input", "value": "on",
+        }
+
+    def test_virtual_input_rule_until_restored_creates_two_device_nodes(self):
         rule = {"name": "wejscie_ip", "source": "satel_zone", "zone_number": 1, "virtual_input": "kamera"}
         flow, warnings = motion_rule_to_flow(rule, 0)
-        assert flow is None
-        assert any("wirtualnego wejścia" in w for w in warnings)
+        assert warnings == []
+        by_type = self._nodes_by_type(flow)
+        values = sorted(n["config"]["value"] for n in by_type["device"])
+        assert values == ["off", "on"]
+        assert all(n["config"]["target_system"] == "satel_virtual_input" for n in by_type["device"])
 
     def test_condition_produces_warning_but_still_converts(self):
         rule = {

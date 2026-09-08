@@ -2379,14 +2379,15 @@ sposobem budowania automatyzacji krok-po-kroku, ale to długoterminowy
 kierunek, nie coś co dzieje się automatycznie przy aktualizacji - istniejące
 reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 
-### 9 typów węzłów
+### 11 typów węzłów
 
 | Węzeł | Rola | Konfiguracja |
 |---|---|---|
 | ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz), wyzwalacz |
 | 📥 MQTT in | wejście grafu | temat MQTT (drugie możliwe wejście obok Trigger) |
-| ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania - dwa wyjścia: "spełniony"/"inaczej" |
-| 🔌 Urządzenie | akcja | system (Tuya/Satel wyjście), urządzenie docelowe, wartość (włącz/wyłącz, jasność dla ściemniaczy) |
+| ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania (payload wiadomości) - dwa wyjścia: "spełniony"/"inaczej" |
+| 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`) + operator równa się/różna od - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
+| 🔌 Urządzenie | akcja | system (Tuya / Satel wyjście / Satel wirtualne wejście), urządzenie docelowe, wartość (włącz/wyłącz, jasność dla ściemniaczy Tuya) |
 | 🎬 Scena | akcja | uruchamia istniejącą scenę po nazwie |
 | ⏱ Opóźnienie | akcja | pauza N sekund przed kontynuacją grafu |
 | 🔔 Powiadomienie | akcja | poziom (info/ostrzeżenie/krytyczne) i treść (`{value}`/`{key}` podstawiane z wiadomości) |
@@ -2394,6 +2395,14 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 | 🌐 HTTP | akcja | wywołanie dowolnego URL-a (GET/POST/PUT/PATCH/DELETE) |
 | 📅 Harmonogram | rozgałęzienie | okno czasowe (`start`/`end`, w tym `sunset`/`sunrise+-N` jak w harmonogramie reguły ruchu) - jedno wyjście "w oknie", poza oknem wiadomość jest wygaszana |
 | 📈 Eskalacja | rozgałęzienie | próg (liczba naruszeń) i okno czasowe (sekundy) - dwa wyjścia: "normalnie" (poniżej progu) / "eskalacja" (próg przekroczony, licznik się zeruje) |
+
+Węzeł **Urządzenie** z systemem "Satel (wirtualne wejście)" wywołuje
+DOKŁADNIE ten sam kod co akcja `virtual_input` reguły ruchu
+(`RulesEngine._set_target_state` obsługuje `target_system:
+satel_virtual_input` tak samo jak `satel_output`/Tuya) - wybiera się z
+listy nazwanych wejść (zakładka 🧩 Wtyczki -> Satel), bez osobnego typu
+węzła. Jasność % nie ma tu zastosowania (znika z formularza, tak jak dla
+wyjścia Satela).
 
 Każdy flow musi mieć co najmniej jeden węzeł wejściowy (Trigger albo
 MQTT in) - bez tego graf nigdy się nie uruchomi, co jest sprawdzane przy
@@ -2441,6 +2450,20 @@ samego triggera. Eskalacja ma dwa wyjścia jak węzeł Warunek - "normalnie"
 dla każdego wywołania poniżej progu, "eskalacja" (i reset licznika)
 dokładnie w momencie przekroczenia progu w oknie.
 
+### Warunek stanu - porównanie DOWOLNEGO statusu, nie payloadu wiadomości
+
+Zwykły węzeł **Warunek** porównuje payload WIADOMOŚCI (wartość, która akurat
+płynie przez graf). Węzeł **🔍 Warunek stanu** to inny mechanizm - dokładny
+odpowiednik warunku `state` reguły ruchu (patrz sekcja "Dodatkowy warunek
+reguły" wyżej): porównuje klucz statusu z `bridge/history_store.py:
+HistoryStore.get_status_value` (ten sam klucz co kolumna "key" pod
+`/api/status`, np. `satel_input:3`, `automation:<nazwa>`) NIEZALEŻNIE od
+tego, co akurat niesie wiadomość w grafie. Pole statusu wybiera się z listy
+(to, co panel akurat odczytał), a pole wartości jest zależną listą wyboru
+(`naruszone`/`OK`, `włączone`/`wyłączone`...) dokładnie jak w edytorze
+warunków reguł ruchu - ten sam zestaw opcji (`STATE_VALUE_OPTIONS`)
+skopiowany do `flows.html`.
+
 ### Import z reguł ruchu
 
 Przycisk **"⬇ Importuj z reguł ruchu"** (`POST /api/flows/import-from-
@@ -2449,17 +2472,17 @@ KAŻDĄ regułę z `reguły_ruchu` na osobny flow i dokleja je do listy
 **NIEZAPISANEJ** (dopiero "💾 Zapisz wszystkie flows" utrwala je) - myślą
 przewodnią jest przegląd przed zapisem, nie ślepa jednorazowa migracja.
 Obsługiwane: pojedyncze źródło (Satel/Tuya/HomeWhiz), pojedyncze
-urządzenie docelowe (w tym ściemniacz), scena, tryb "do ustania
-naruszenia" (tworzy DWA triggery - violated->on i restored->off),
-`action: turn_off`, `time_window` (-> węzeł Harmonogram), `escalation`
-(-> węzeł Eskalacja z gałęzią do sceny eskalowanej). NIEOBSŁUGIWANE (Flow
-jeszcze tego nie ma): wiele źródeł/akcji (`sources`/`actions`), aktywacja
-wirtualnego wejścia Satela (`virtual_input`) - takie reguły są w całości
-POMIJANE z ostrzeżeniem zamiast tworzyć okrojony/mylący flow. Dodatkowy
-warunek (`condition`) i wyzwalanie łańcuchowe (`then_trigger_rule`) NIE są
-przenoszone, ale reguła i tak się konwertuje - z ostrzeżeniem, że trzeba
-je dodać ręcznie. Wszystkie ostrzeżenia trafiają razem do komunikatu w
-panelu po imporcie.
+urządzenie docelowe (w tym ściemniacz i wirtualne wejście Satela), scena,
+tryb "do ustania naruszenia" (tworzy DWA triggery - violated->on i
+restored->off), `action: turn_off`, `time_window` (-> węzeł Harmonogram),
+`escalation` (-> węzeł Eskalacja z gałęzią do sceny eskalowanej).
+NIEOBSŁUGIWANE (Flow jeszcze tego nie ma): wiele źródeł/akcji
+(`sources`/`actions`) - takie reguły są w całości POMIJANE z ostrzeżeniem
+zamiast tworzyć okrojony/mylący flow. Dodatkowy warunek (`condition`) i
+wyzwalanie łańcuchowe (`then_trigger_rule`) NIE są przenoszone (konwerter
+nie tworzy jeszcze węzła Warunek stanu automatycznie z `condition`), ale
+reguła i tak się konwertuje - z ostrzeżeniem, że trzeba je dodać ręcznie.
+Wszystkie ostrzeżenia trafiają razem do komunikatu w panelu po imporcie.
 
 ## Zmywarki/AGD HomeWhiz (BEQ/Arcelik)
 

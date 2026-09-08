@@ -78,6 +78,11 @@ class FlowEngine:
                 progu przepuszcza wyjściem "eskalacja" (i zeruje licznik)
                 zamiast "normalnie" - analogicznie do `escalation` reguły
                 ruchu (RulesEngine._fire_motion_rule)
+      state     {key, op: equals|not_equals, value}  - [spełniony, inaczej]:
+                porównuje DOWOLNY klucz statusu widoczny na panelu głównym
+                (np. "satel_input:3", "tuya:gniazdko_salon" - ten sam klucz
+                co warunek "state" reguły ruchu) z zadaną wartością, NIE
+                payload wiadomości (w odróżnieniu od węzła "condition")
     """
 
     def __init__(
@@ -89,6 +94,7 @@ class FlowEngine:
         notify_cfg: dict | None,
         mqtt_cfg: dict | None = None,
         location_cfg: dict | None = None,
+        get_status_value: Callable[[str], str | None] | None = None,
     ):
         self.flows = flows_cfg or []
         self._set_target_state = set_target_state
@@ -99,6 +105,7 @@ class FlowEngine:
         self._mqtt_subs: dict[str, list[tuple[dict, dict]]] = {}
         self._mqtt_topics: set[str] = set()
         self._trigger_state: dict[str, bool] = {}
+        self._get_status_value = get_status_value or (lambda key: None)
         self._escalation_history: dict[str, list[float]] = {}
         self.location_cfg = location_cfg
         self._loop = asyncio.get_event_loop()
@@ -272,6 +279,11 @@ class FlowEngine:
             if is_within_window(window, self.location_cfg, dt.datetime.now()):
                 return [msg]
             return [None]
+
+        if ntype == "state":
+            actual = self._get_status_value(c.get("key"))
+            passed = actual != c.get("value") if c.get("op") == "not_equals" else actual == c.get("value")
+            return [msg if passed else None, None if passed else msg]
 
         if ntype == "escalation":
             key = f"{flow.get('id')}:{node.get('id')}"
