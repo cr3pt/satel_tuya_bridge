@@ -843,10 +843,14 @@ class RulesEngine:
             )
         if self.homekit and is_on is not None:
             self.homekit.update_tuya_state(device_name, is_on, percent)
-        if self.homekit:
-            sensor_readings = extract_tuya_sensor_readings(dps, schema)
-            if sensor_readings:
-                self.homekit.update_tuya_sensor_state(device_name, sensor_readings)
+        sensor_readings = extract_tuya_sensor_readings(dps, schema)
+        if "soil_humidity_percent" in sensor_readings:
+            self.history.set_status(
+                f"tuya:{device_name}:soil_humidity", "tuya", f"{sensor_readings['soil_humidity_percent']}%",
+                label=f"{device_name} (wilgotność gleby)",
+            )
+        if self.homekit and sensor_readings:
+            self.homekit.update_tuya_sensor_state(device_name, sensor_readings)
 
     def _schedule_tuya_status_refresh(self, device_name: str, delay_seconds: float = 1.5) -> None:
         async def _refresh() -> None:

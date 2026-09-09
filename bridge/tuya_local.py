@@ -47,6 +47,11 @@ _PHASE_RAW_CODES = {"phase_a", "phase_b", "phase_c"}
 _KNOWN_VALUE_SCALES = {
     "forward_energy_total": (2, " kWh"),
     "reverse_energy_total": (2, " kWh"),
+    # Fallback dla urządzeń, których dp_schema nie zawiera meta "scale" (typ "Value")
+    # - bez tego surowa wartość DP (np. 256) wyświetlałaby się bez podzielenia przez 10
+    # (25.6C), zamiast poprawnie przeskalowanej wartości.
+    "va_temperature": (1, "°C"),
+    "temp_current": (1, "°C"),
 }
 _MAX_INLINE_VALUE_LENGTH = 60
 
@@ -366,13 +371,21 @@ def extract_tuya_sensor_readings(dps: dict, schema: dict | None = None) -> dict:
                 readings["temperature_celsius"] = round(numeric, 1)
             break
 
-    for code in _HUMIDITY_CODES:
-        if code in by_code:
-            value, spec = by_code[code]
-            numeric = _dp_numeric_value(value, spec, code)
-            if numeric is not None:
-                readings["humidity_percent"] = max(0.0, min(100.0, numeric))
-            break
+    # Kombinowane czujniki zewnętrzne (np. gleba+powietrze) potrafią wystawić OBIE
+    # wartości wilgotności naraz na osobnych DP - pierwsza znaleziona (kolejność
+    # _HUMIDITY_CODES: va_humidity, potem humidity_value) trafia do głównego
+    # "humidity_percent" (jak dotychczas, dla zwykłych czujników z JEDNĄ wartością),
+    # a DRUGA - o ile też jest obecna na tym samym urządzeniu - do
+    # "soil_humidity_percent" (na czujnikach kombo humidity_value oznacza
+    # wilgotność gleby, w odróżnieniu od va_humidity = wilgotność powietrza).
+    humidity_codes_present = [c for c in _HUMIDITY_CODES if c in by_code]
+    for i, code in enumerate(humidity_codes_present):
+        value, spec = by_code[code]
+        numeric = _dp_numeric_value(value, spec, code)
+        if numeric is None:
+            continue
+        numeric = max(0.0, min(100.0, numeric))
+        readings["humidity_percent" if i == 0 else "soil_humidity_percent"] = numeric
 
     for code in _LEAK_CODES:
         if code in by_code:

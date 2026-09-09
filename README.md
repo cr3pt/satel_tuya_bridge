@@ -1600,7 +1600,24 @@ Wartość temperatury bez opisu pól zakłada domyślnie skalę "w dziesiątych
 stopnia" (najczęstsza konwencja Tuya dla tego DP) i honoruje
 `temp_unit_convert` (konwersja z Fahrenheita, jeśli urządzenie tak
 zgłasza) - HomeKit zawsze dostaje wartość w stopniach Celsjusza,
-niezależnie od jednostki wyświetlanej w aplikacji producenta.
+niezależnie od jednostki wyświetlanej w aplikacji producenta. **Ten sam
+fallback "w dziesiątych stopnia" obowiązuje też dla ogólnej listy pól
+urządzenia widocznej w statusie na panelu głównym** (`tuya:<urządzenie>`)
+- wcześniej dotyczyło to tylko odczytów przekazywanych do HomeKit, więc
+urządzenia bez pełnego opisu pól (`dp_schema` bez meta `scale`) pokazywały
+na panelu surową wartość DP (np. `256` zamiast `25.6°C`) - naprawione.
+
+**Kombinowane czujniki zewnętrzne z dwiema wartościami wilgotności**
+(np. gleba + powietrze) zgłaszają obie na osobnych DP jednocześnie
+(`va_humidity` i `humidity_value`). Pierwsza znaleziona (w tej kolejności)
+trafia do głównego statusu `tuya:<urządzenie>` jak dotychczas (dla
+zwykłych czujników z JEDNĄ wartością wilgotności to jedyny odczyt); jeśli
+na tym samym urządzeniu obecna jest też DRUGA wartość, dostaje własny,
+osobny klucz statusu `tuya:<urządzenie>:soil_humidity` (etykieta
+"(wilgotność gleby)") - widoczny osobno na panelu głównym i w historii,
+tak jak `tuya:<urządzenie>:brightness` dla ściemniaczy. Wcześniej druga
+wartość była całkowicie tracona (branych pod uwagę było tylko pierwsze
+dopasowanie).
 
 **Uzbrajanie z aplikacji Dom - dlaczego bezpieczne (w przeciwieństwie do
 MQTT).** HomeKit ma wbudowane, obowiązkowe parowanie i szyfrowanie

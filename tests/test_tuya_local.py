@@ -442,6 +442,15 @@ class TestFormatTuyaDps:
         assert is_on is False
         assert extra == "temperatura: 23.5C"
 
+    def test_temperature_falls_back_to_known_scale_when_schema_meta_missing(self):
+        # dp_schema z kodem, ale bez meta "scale" (typowe dla urządzeń dodanych
+        # bez pełnego skanu schematu) - bez fallbacku wartość wyświetlałaby się
+        # surowa (256 zamiast 25.6C).
+        schema = {"4": {"code": "va_temperature", "type": "Value"}}
+        is_on, extra = format_tuya_dps({"4": 256}, schema=schema)
+        assert is_on is None
+        assert extra == "temperatura: 25.6°C"
+
     def test_boolean_extra_field_formatted_as_tak_nie(self):
         schema = {"1": {"code": "switch_1", "type": "Boolean"}, "2": {"code": "pir", "type": "Boolean"}}
         is_on, extra = format_tuya_dps({"1": True, "2": True}, schema=schema)
@@ -522,6 +531,17 @@ class TestExtractTuyaSensorReadings:
     def test_humidity_clamped_to_0_100(self):
         readings = extract_tuya_sensor_readings({"va_humidity": 253})
         assert readings["humidity_percent"] == 100.0
+
+    def test_both_humidity_codes_present_expose_soil_as_secondary(self):
+        # Kombinowany czujnik zewnętrzny (gleba+powietrze) - va_humidity (powietrze)
+        # trafia do głównego humidity_percent, humidity_value (gleba) do drugiej,
+        # dodatkowej wartości - wcześniej druga wartość była całkowicie tracona.
+        readings = extract_tuya_sensor_readings({"va_humidity": 55, "humidity_value": 32})
+        assert readings == {"humidity_percent": 55.0, "soil_humidity_percent": 32.0}
+
+    def test_humidity_value_alone_stays_primary_humidity_percent(self):
+        readings = extract_tuya_sensor_readings({"humidity_value": 40})
+        assert readings == {"humidity_percent": 40.0}
 
     def test_combined_temperature_and_humidity(self):
         readings = extract_tuya_sensor_readings({"va_temperature": 212, "va_humidity": 53, "battery_percentage": 39})

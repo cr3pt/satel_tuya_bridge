@@ -1633,6 +1633,23 @@ class TestApplyTuyaDeviceStatus:
         await engine._apply_tuya_device_status("gniazdko_salon", {"4": 235})
         assert engine.homekit.sensor_calls == [("gniazdko_salon", {"temperature_celsius": 23.5})]
 
+    async def test_soil_humidity_published_as_separate_status_key(self, engine):
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "5": {"code": "va_humidity", "type": "Value", "values": "{}"},
+            "6": {"code": "humidity_value", "type": "Value", "values": "{}"},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"5": 55, "6": 32})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon:soil_humidity"] == "32.0%"
+
+    async def test_no_soil_humidity_key_when_only_one_humidity_dp(self, engine):
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "5": {"code": "va_humidity", "type": "Value", "values": "{}"},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"5": 55})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert "tuya:gniazdko_salon:soil_humidity" not in statuses
+
     async def test_no_sensor_call_when_no_recognized_sensor_dps(self, engine):
         class FakeHomeKit:
             def __init__(self):
