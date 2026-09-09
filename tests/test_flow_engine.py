@@ -174,6 +174,57 @@ class TestDeviceNode:
         assert calls["set_target_state"] == [("satel_virtual_input", "kamera", True, None)]
 
 
+class TestTuyaDpNode:
+    async def test_calls_set_tuya_dp_with_target_device_code_and_value(self):
+        calls = []
+
+        async def set_tuya_dp(device, dp_code, value):
+            calls.append((device, dp_code, value))
+
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dp"]]},
+                {"id": "dp", "type": "tuya_dp", "config": {"target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1"}, "wires": []},
+            ],
+        }
+        engine, _ = _engine([flow], set_tuya_dp=set_tuya_dp)
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls == [("nawadnianie", "manual_delay", "1")]
+
+    async def test_value_supports_value_template_from_triggering_message(self):
+        calls = []
+
+        async def set_tuya_dp(device, dp_code, value):
+            calls.append((device, dp_code, value))
+
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "tuya_state", "source_device": "wilgotnosc", "op": "changes"}, "wires": [["dp"]]},
+                {"id": "dp", "type": "tuya_dp", "config": {"target_device": "nawadnianie", "dp_code": "manual_delay", "value": "{value}"}, "wires": []},
+            ],
+        }
+        engine, _ = _engine([flow], set_tuya_dp=set_tuya_dp)
+        await engine.handle_device_state("tuya_state", "wilgotnosc", "80")
+        await asyncio.sleep(0.01)
+        assert calls == [("nawadnianie", "manual_delay", "80")]
+
+    async def test_no_handler_configured_does_not_crash(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dp"]]},
+                {"id": "dp", "type": "tuya_dp", "config": {"target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == []
+
+
 class TestSceneNode:
     async def test_runs_named_scene(self):
         flow = {
@@ -492,6 +543,169 @@ class TestStateNode:
         await engine.handle_motion("satel_zone", 5)
         await asyncio.sleep(0.01)
         assert calls["set_target_state"] == []
+
+    async def test_gt_operator_passes_above_threshold(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["st"]]},
+                {"id": "st", "type": "state", "config": {"key": "boiler:temp", "op": "gt", "value": "20"}, "wires": [["dev"], []]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow], get_status_value=lambda key: "25.6")
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
+
+    async def test_lt_operator_else_branch_when_not_below_threshold(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["st"]]},
+                {"id": "st", "type": "state", "config": {"key": "boiler:temp", "op": "lt", "value": "20"}, "wires": [["dev"], ["dev_else"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+                {"id": "dev_else", "type": "device", "config": {"target_device": "inna", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow], get_status_value=lambda key: "25.6")
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "inna", True, None)]
+
+    async def test_gte_operator_equal_value_passes(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["st"]]},
+                {"id": "st", "type": "state", "config": {"key": "boiler:temp", "op": "gte", "value": "20"}, "wires": [["dev"], []]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow], get_status_value=lambda key: "20")
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
+
+    async def test_lte_operator_equal_value_passes(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["st"]]},
+                {"id": "st", "type": "state", "config": {"key": "boiler:temp", "op": "lte", "value": "20"}, "wires": [["dev"], []]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow], get_status_value=lambda key: "20")
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
+
+    async def test_gt_operator_non_numeric_status_treated_as_not_passed(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["st"]]},
+                {"id": "st", "type": "state", "config": {"key": "satel_input:9", "op": "gt", "value": "20"}, "wires": [["dev"], ["dev_else"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+                {"id": "dev_else", "type": "device", "config": {"target_device": "inna", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow], get_status_value=lambda key: "naruszone")
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "inna", True, None)]
+
+
+class TestConditionGroupNode:
+    async def test_and_group_passes_when_all_leaves_match(self):
+        condition = {
+            "type": "and",
+            "conditions": [
+                {"type": "state", "key": "satel_input:9", "equals": "naruszone"},
+                {"type": "state", "key": "tuya:garaz", "equals": "zamknięte"},
+            ],
+        }
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["cg"]]},
+                {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [["dev"], ["dev_else"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+                {"id": "dev_else", "type": "device", "config": {"target_device": "inna", "value": "on"}, "wires": []},
+            ],
+        }
+        values = {"satel_input:9": "naruszone", "tuya:garaz": "zamknięte"}
+        engine, calls = _engine([flow], get_status_value=lambda key: values.get(key))
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
+
+    async def test_and_group_else_branch_when_one_leaf_fails(self):
+        condition = {
+            "type": "and",
+            "conditions": [
+                {"type": "state", "key": "satel_input:9", "equals": "naruszone"},
+                {"type": "state", "key": "tuya:garaz", "equals": "zamknięte"},
+            ],
+        }
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["cg"]]},
+                {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [["dev"], ["dev_else"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+                {"id": "dev_else", "type": "device", "config": {"target_device": "inna", "value": "on"}, "wires": []},
+            ],
+        }
+        values = {"satel_input:9": "naruszone", "tuya:garaz": "otwarte"}
+        engine, calls = _engine([flow], get_status_value=lambda key: values.get(key))
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "inna", True, None)]
+
+    async def test_nested_or_inside_and(self):
+        condition = {
+            "type": "and",
+            "conditions": [
+                {"type": "state", "key": "tuya:swiatlo", "equals": "włączone"},
+                {
+                    "type": "or",
+                    "conditions": [
+                        {"type": "state", "key": "satel_input:1", "equals": "naruszone"},
+                        {"type": "state", "key": "satel_input:2", "equals": "naruszone"},
+                    ],
+                },
+            ],
+        }
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["cg"]]},
+                {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [["dev"], []]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "off"}, "wires": []},
+            ],
+        }
+        values = {"tuya:swiatlo": "włączone", "satel_input:1": "OK", "satel_input:2": "naruszone"}
+        engine, calls = _engine([flow], get_status_value=lambda key: values.get(key))
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "lampa", False, None)]
+
+    async def test_evaluation_error_treated_as_not_passed(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["cg"]]},
+                {"id": "cg", "type": "condition_group", "config": {"condition": {"type": "nieznany_typ"}}, "wires": [["dev"], ["dev_else"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+                {"id": "dev_else", "type": "device", "config": {"target_device": "inna", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "inna", True, None)]
 
 
 class TestScheduleNode:

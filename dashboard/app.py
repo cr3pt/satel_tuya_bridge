@@ -26,7 +26,9 @@ from bridge.satel_client import test_output as test_satel_output
 from bridge.satel_client import test_virtual_input_http as test_satel_virtual_input_http
 from bridge.satel_client import DEFAULT_VIRTUAL_INPUT_HTTP_PORT, DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE
 from bridge.satel_client import discover_active_zones_and_outputs
-from bridge.tuya_local import scan_network as scan_tuya_network, fetch_cloud_devices as fetch_tuya_cloud_devices
+from bridge.tuya_local import (
+    scan_network as scan_tuya_network, fetch_cloud_devices as fetch_tuya_cloud_devices, _dp_label,
+)
 from dashboard.auth import AuthGuard, require_auth, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
 from dashboard.setup import (
     build_config_dict, validate, build_automations_dict, validate_automations,
@@ -34,7 +36,7 @@ from dashboard.setup import (
     build_connections_patch, validate_connections, connections_to_form, list_plugins, list_plugin_load_errors,
     build_location_patch, validate_location,
     draft_path_for, load_draft, save_draft, delete_draft,
-    validate_flows, build_flows, motion_rule_to_flow,
+    validate_flows, build_flows, motion_rule_to_flow, flow_to_motion_rule,
 )
 
 app = Quart(__name__)
@@ -734,11 +736,21 @@ async def api_config_automation_context():
         key=lambda z: z["name"],
     )
     homewhiz_appliances = sorted((config_raw.get("homewhiz") or {}).get("appliances", {}).keys())
+    tuya_dp_options = {
+        name: sorted(
+            (
+                {"code": spec.get("code"), "label": _dp_label(spec.get("code"))}
+                for spec in (cfg.get("dp_schema") or {}).values() if spec.get("code")
+            ),
+            key=lambda o: o["label"],
+        )
+        for name, cfg in tuya.get("devices", {}).items() if cfg.get("dp_schema")
+    }
     return jsonify({
         "tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs, "satel_partitions": satel_partitions,
         "status_keys": status_keys, "motion_rule_names": motion_rule_names,
         "dimmer_devices": dimmer_devices, "satel_outputs": satel_outputs, "satel_zones": satel_zones,
-        "homewhiz_appliances": homewhiz_appliances,
+        "homewhiz_appliances": homewhiz_appliances, "tuya_dp_options": tuya_dp_options,
     })
 
 
@@ -829,11 +841,16 @@ async def api_config_flows_post():
 @app.route("/api/flows/import-from-motion-rules", methods=["POST"])
 @require_auth()
 async def api_flows_import_from_motion_rules():
+    payload = await request.get_json(silent=True) or {}
+    wanted_indices = payload.get("rule_indices") if isinstance(payload, dict) else None
+
     rules = config_raw.get("reguły_ruchu", [])
     flows = []
     warnings: list[str] = []
     imported_rule_indices = []
     for i, rule in enumerate(rules):
+        if isinstance(wanted_indices, list) and i not in wanted_indices:
+            continue
         flow, rule_warnings = motion_rule_to_flow(rule, i)
         warnings.extend(rule_warnings)
         if flow is not None:
@@ -864,6 +881,27 @@ async def api_flows_mark_motion_rules_imported():
     _enqueue_bridge_reload()
 
     return jsonify({"marked": marked, "message": _RELOAD_MESSAGE})
+
+
+@app.route("/api/automations/export-flows-to-motion-rules", methods=["POST"])
+@require_auth()
+async def api_automations_export_flows_to_motion_rules():
+    payload = await request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("flow_ids"), list):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+    wanted_ids = set(payload["flow_ids"])
+    flows = config_raw.get("flows", [])
+    rules = []
+    warnings: list[str] = []
+    for i, flow in enumerate(flows):
+        if flow.get("id") not in wanted_ids:
+            continue
+        rule, flow_warnings = flow_to_motion_rule(flow, i)
+        warnings.extend(flow_warnings)
+        if rule is not None:
+            rules.append(rule)
+    return jsonify({"motion_rules": rules, "warnings": warnings})
 
 
 @app.route("/api/flows/<flow_id>/run", methods=["POST"])

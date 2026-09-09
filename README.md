@@ -1600,7 +1600,24 @@ Wartość temperatury bez opisu pól zakłada domyślnie skalę "w dziesiątych
 stopnia" (najczęstsza konwencja Tuya dla tego DP) i honoruje
 `temp_unit_convert` (konwersja z Fahrenheita, jeśli urządzenie tak
 zgłasza) - HomeKit zawsze dostaje wartość w stopniach Celsjusza,
-niezależnie od jednostki wyświetlanej w aplikacji producenta.
+niezależnie od jednostki wyświetlanej w aplikacji producenta. **Ten sam
+fallback "w dziesiątych stopnia" obowiązuje też dla ogólnej listy pól
+urządzenia widocznej w statusie na panelu głównym** (`tuya:<urządzenie>`)
+- wcześniej dotyczyło to tylko odczytów przekazywanych do HomeKit, więc
+urządzenia bez pełnego opisu pól (`dp_schema` bez meta `scale`) pokazywały
+na panelu surową wartość DP (np. `256` zamiast `25.6°C`) - naprawione.
+
+**Kombinowane czujniki zewnętrzne z dwiema wartościami wilgotności**
+(np. gleba + powietrze) zgłaszają obie na osobnych DP jednocześnie
+(`va_humidity` i `humidity_value`). Pierwsza znaleziona (w tej kolejności)
+trafia do głównego statusu `tuya:<urządzenie>` jak dotychczas (dla
+zwykłych czujników z JEDNĄ wartością wilgotności to jedyny odczyt); jeśli
+na tym samym urządzeniu obecna jest też DRUGA wartość, dostaje własny,
+osobny klucz statusu `tuya:<urządzenie>:soil_humidity` (etykieta
+"(wilgotność gleby)") - widoczny osobno na panelu głównym i w historii,
+tak jak `tuya:<urządzenie>:brightness` dla ściemniaczy. Wcześniej druga
+wartość była całkowicie tracona (branych pod uwagę było tylko pierwsze
+dopasowanie).
 
 **Uzbrajanie z aplikacji Dom - dlaczego bezpieczne (w przeciwieństwie do
 MQTT).** HomeKit ma wbudowane, obowiązkowe parowanie i szyfrowanie
@@ -2069,9 +2086,13 @@ razem). Dwa typy liścia:
 - `state` - porównanie aktualnej wartości DOWOLNEGO statusu widocznego na
   panelu głównym (wejście/wyjście Satela, urządzenie Tuya, czujnik kotła -
   ten sam klucz, co w kolumnie "key" pod `/api/status`, np.
-  `satel_input:3`, `tuya:gniazdko_salon`) z zadaną wartością - `equals` albo
-  `not_equals`. Ten sam mechanizm obsługuje też **"inna automatyzacja jest
-  uruchomiona"** - patrz osobny akapit niżej.
+  `satel_input:3`, `tuya:gniazdko_salon`) z zadaną wartością - `equals`,
+  `not_equals`, albo dla wartości liczbowych (temperatura, wilgotność, CO2...)
+  `gt`/`gte`/`lt`/`lte` (większe/większe-równe/mniejsze/mniejsze-równe -
+  np. "temperatura kotła powyżej 25°C"). Wartość nie do porównania liczbowo
+  (np. status tekstowy przy operatorze liczbowym) traktowana jest jako
+  NIESPEŁNIONY warunek, a nie błąd. Ten sam mechanizm obsługuje też
+  **"inna automatyzacja jest uruchomiona"** - patrz osobny akapit niżej.
 - `time_window` - dokładnie ten sam format co pole `time_window` reguły
   wyżej (w tym `sunset`/`sunrise`), ale jako warunek podrzędny (przydatne
   wewnątrz `not`, żeby wyrazić "poza tym oknem").
@@ -2094,7 +2115,12 @@ reguły_ruchu:
 Edytor w panelu (`/automations`, sekcja "Reguły ruchu") ma do tego
 graficzny konstruktor grup AND/OR/NOT z dowolnym zagnieżdżaniem - klucze
 statusu wybiera się z listy (to, co panel akurat odczytał), zamiast wpisywać
-je ręcznie. **Pole wartości też jest listą wyboru zależną od wybranego
+je ręcznie. **Wybór klucza jest dwustopniowy**: najpierw "System" (Satel
+wejście/wyjście/partycja, Tuya, HomeWhiz, kocioł/eBUS, zdrowie systemu,
+automatyzacja, MQTT), potem dopiero "Status" - lista drugiego kroku jest
+przefiltrowana do wybranego systemu, więc przy wielu skonfigurowanych
+urządzeniach nie trzeba przewijać jednej długiej, płaskiej listy wszystkich
+kluczy naraz. **Pole wartości też jest listą wyboru zależną od wybranego
 statusu** - dla wejścia/wyjścia Satela, urządzenia Tuya czy strefy panel
 sam podpowiada właściwe słowa (`naruszone`/`OK`, `włączone`/`wyłączone`,
 `uzbrojona`/`rozbrojona`...), więc nie da się przekręcić literówką wartości,
@@ -2379,15 +2405,17 @@ sposobem budowania automatyzacji krok-po-kroku, ale to długoterminowy
 kierunek, nie coś co dzieje się automatycznie przy aktualizacji - istniejące
 reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 
-### 11 typów węzłów
+### 13 typów węzłów
 
 | Węzeł | Rola | Konfiguracja |
 |---|---|---|
 | ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz), wyzwalacz |
 | 📥 MQTT in | wejście grafu | temat MQTT (drugie możliwe wejście obok Trigger) |
 | ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania (payload wiadomości) - dwa wyjścia: "spełniony"/"inaczej" |
-| 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`) + operator równa się/różna od - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
+| 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`, wybierany dwustopniowo: System -> Status) + operator (równa się/różna od/większe/większe-równe/mniejsze/mniejsze-równe) - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
+| 🧩 Warunek złożony | rozgałęzienie | zagnieżdżone drzewo AND/OR/NOT z liśćmi Warunek stanu / Okno czasowe - dwa wyjścia: "spełniony"/"inaczej" (patrz niżej) |
 | 🔌 Urządzenie | akcja | system (Tuya / Satel wyjście / Satel wirtualne wejście), urządzenie docelowe, wartość (włącz/wyłącz/zmiana stanu, jasność dla ściemniaczy Tuya) |
+| 🔧 Ustaw pole Tuya | akcja | urządzenie Tuya, kod pola (DP) wybierany z listy odkrytej przez "🔍 Pobierz opisy pól" (albo wpisany ręcznie), wartość - generyczny odpowiednik przycisków w apce Tuya, których nie ma jako osobnej akcji (patrz niżej) |
 | 🎬 Scena | akcja | uruchamia istniejącą scenę po nazwie |
 | ⏱ Opóźnienie | akcja | pauza przed kontynuacją grafu - liczba + jednostka (`s`/`m`/`g` = sekundy/minuty/godziny, np. `30s`, `5m`, `2g`; brak litery = sekundy) |
 | 🔔 Powiadomienie | akcja | poziom (info/ostrzeżenie/krytyczne) i treść (`{value}`/`{key}` podstawiane z wiadomości) |
@@ -2432,6 +2460,16 @@ przewód narysuje się jako krzywa SVG. Drugie kliknięcie tej samej pary
 kropek usuwa połączenie. Węzeł Warunek ma dwie kropki wyjścia (spełniony
 / inaczej), więc z niego wychodzą dwie osobne gałęzie grafu. Węzły
 przeciąga się metodą przeciągnij-i-upuść po canvasie.
+
+**Usuwanie samego połączenia** (bez kasowania żadnego z węzłów) jest
+możliwe na trzy sposoby: kliknij bezpośrednio na przewód na canvasie
+(pod kursorem podświetla się na czerwono, pod spodem widocznej 2px linii
+jest niewidoczna szersza ścieżka - łatwiej trafić kliknięciem), drugie
+kliknięcie tej samej pary kropek wyjście/wejście, albo przycisk ✕ przy
+liście "Połączenia wyjścia..." w panelu bocznym wybranego węzła
+źródłowego. Usunięcie samego połączenia (a nie całego węzła) pozwala
+wstawić między dwa już połączone węzły kolejny węzeł, bez przebudowy
+reszty grafu.
 
 ### Wykonanie: message passing, fire-and-forget
 
@@ -2478,13 +2516,86 @@ tego, co akurat niesie wiadomość w grafie. Pole statusu wybiera się z listy
 (to, co panel akurat odczytał), a pole wartości jest zależną listą wyboru
 (`naruszone`/`OK`, `włączone`/`wyłączone`...) dokładnie jak w edytorze
 warunków reguł ruchu - ten sam zestaw opcji (`STATE_VALUE_OPTIONS`)
-skopiowany do `flows.html`.
+skopiowany do `flows.html`. **Operator** to nie tylko "równa się"/"różna
+od" - dla urządzeń zwracających wartości liczbowe (temperatura, wilgotność,
+CO2, moc...) dostępne są też **większe/większe-równe/mniejsze/
+mniejsze-równe** (`gt`/`gte`/`lt`/`lte`), np. "temperatura zewnętrzna
+poniżej 5°C" -> zablokuj podlewanie. Dla statusów bez skończonego zbioru
+wartości pole wartości jest zwykłym polem tekstowym (wpisuje się liczbę).
 
-### Import z reguł ruchu
+### Warunek złożony - zagnieżdżone AND/OR/NOT (kilka poziomów naraz)
+
+Węzeł **🔍 Warunek stanu** wyraża tylko JEDNO porównanie - żeby złożyć kilka
+takich węzłów w jeden warunek "A i (B lub C)", trzeba by je łańcuchowo
+łączyć po kolei (co daje tylko AND, bez OR/NOT i bez grupowania). Węzeł
+**🧩 Warunek złożony** (`condition_group`) rozwiązuje to jednym węzłem:
+dokładnie ten sam kształt drzewa i ten sam silnik ewaluacji
+(`bridge/conditions.py: evaluate_condition`), co "Dodatkowy warunek reguły"
+opisany wyżej - liście `state` (jak Warunek stanu, z tym samym dwustopniowym
+wyborem System -> Status -> Wartość) i `time_window` (jak Harmonogram),
+złożone dowolnie głęboko przez `and`/`or`/`not`. Przykład z opisu wyżej
+("światło w garażu włączone I (drzwi zamknięte I brama zamknięta)" ->
+zgaś światło) to jeden węzeł Warunek złożony z gałęzią AND zawierającą stan
+światła i zagnieżdżoną grupę AND dla drzwi+bramy, zamiast trzech osobnych
+węzłów Warunek stanu. Dwa wyjścia jak Warunek/Warunek stanu: "spełniony"/
+"inaczej". Edytor w panelu (`/flows`) ma ten sam graficzny konstruktor grup
+AND/OR/NOT co "Dodatkowy warunek reguły" na `/automations` (dodawanie/
+usuwanie liści i podgrup, wybór statusu z listy) - żeby edycja jednego
+skomplikowanego warunku nie gubiła zaznaczenia przy każdej zmianie, zmiany
+w drzewie aktualizują tylko podgląd węzła na canvasie, bez przerysowania
+całego panelu bocznego.
+
+### Prognoza pogody i blokowanie podlewania (np. deszcz)
+
+Sekcja **"🌍 Lokalizacja"** na stronie `/automations` (ta sama, co dla
+wschodu/zachodu słońca w Harmonogramie) uruchamia też - po ustawieniu
+szerokości/długości geograficznej - cykliczne pobieranie prognozy opadów
+z [Open-Meteo](https://open-meteo.com) (darmowe API, bez klucza,
+`bridge/weather_client.py: fetch_forecast`). Prognoza (raz na ok. 3 godziny)
+publikowana jest jako statusy widoczne na panelu głównym i do użycia w
+Warunku stanu / Warunku złożonym, kategoria "Pogoda":
+
+- `weather:precipitation_probability_percent` - prawdopodobieństwo opadów
+  dzisiaj (%)
+- `weather:precipitation_sum_mm` - suma opadów przewidywana na dziś (mm)
+
+Obie wartości są liczbowe - użyj nowych operatorów większe/mniejsze
+(patrz "Dodatkowy warunek reguły" wyżej), np. warunek `state`
+`weather:precipitation_probability_percent gte 60` w Warunku stanu (Flow)
+albo Warunku złożonym. **Lokalizacja musi być ustawiona PRZED startem
+procesu bridge'a** - pętla prognozy startuje raz w `RulesEngine.start()`,
+podobnie jak inne pętle odpytywania w tym projekcie (ustawienie lokalizacji
+po raz pierwszy w już działającym procesie wymaga jego restartu, żeby
+zaczęła działać).
+
+**Blokowanie podlewania** (albo dowolna inna akcja specyficzna dla
+konkretnego modelu urządzenia, której nie ma jako gotowej opcji w edytorze)
+łączy się z tym przez nowy węzeł Flow **🔧 Ustaw pole Tuya** (`tuya_dp`) -
+generyczny odpowiednik przycisku w apce Tuya: ustawia DOWOLNE pole (DP)
+wskazanego urządzenia po kodzie, niezależnie od tego, czy jest to zwykły
+przełącznik czy nie. Np. sterowniki nawadniania mają zwykle funkcję "rain
+delay" (w polskiej apce Tuya: **"Opóźnienie ręczne"**, kod DP zwykle
+`manual_delay` - liczba dni, o którą przesuwa się kolejne zaplanowane
+podlewanie): flow **Harmonogram (rano) -> Warunek stanu
+(`weather:precipitation_probability_percent gte 60`) -> Ustaw pole Tuya
+(urządzenie: sterownik nawadniania, pole: "Opóźnienie ręczne", wartość: 1)**
+odkłada podlewanie o dzień, gdy prognoza zapowiada deszcz. Kod pola wybiera
+się z listy odkrytej przez **"🔍 Pobierz opisy pól"** na stronie Tuya (LAN)
+- bez tego (albo dla urządzeń Cloud bez zapisanego opisu) trzeba wpisać kod
+ręcznie (widoczny w apce producenta albo w dokumentacji API Tuya dla danej
+kategorii urządzenia). Wartość wpisywana jako tekst jest automatycznie
+konwertowana na `bool`/`int`/`float`, jeśli się da (np. `"1"` -> `1`,
+`"true"` -> `True`), w przeciwnym razie wysyłana jako string - działa
+zarówno dla urządzeń lokalnych (Tuya LAN), jak i Tuya Cloud.
+
+### Import z reguł ruchu i eksport do reguł ruchu (zaznaczone, oba kierunki)
 
 Przycisk **"⬇ Importuj z reguł ruchu"** (`POST /api/flows/import-from-
 motion-rules` -> `dashboard/setup.py: motion_rule_to_flow`) konwertuje
-KAŻDĄ regułę z `reguły_ruchu` na osobny flow i dokleja je do listy
+KAŻDĄ regułę z `reguły_ruchu` (albo tylko ZAZNACZONE reguły - endpoint
+przyjmuje opcjonalne `rule_indices`, panel `/automations` ma do tego
+checkbox "do eksportu" przy każdej karcie reguły i przycisk "➡ Eksportuj
+zaznaczone do Flow") na osobny flow i dokleja je do listy
 **NIEZAPISANEJ** (dopiero "💾 Zapisz wszystkie flows" utrwala je) - myślą
 przewodnią jest przegląd przed zapisem, nie ślepa jednorazowa migracja.
 Obsługiwane: pojedyncze źródło (Satel/Tuya/HomeWhiz), pojedyncze
@@ -2517,6 +2628,32 @@ oznaczona jako zaimportowana jest pomijana przy kolejnych kliknięciach
 ostrzeżeniem "już zaimportowano wcześniej do Flow". Admin może ją ręcznie
 z powrotem włączyć na `/automations` (checkbox "Włączona") - odznaka
 zostaje jako informacja o pochodzeniu, ale nie blokuje ponownego użycia.
+
+**Kierunek odwrotny** - przycisk **"➡ Eksportuj zaznaczone do
+Automatyzacje"** na `/flows` (checkbox przy nazwie każdego flow na liście,
+`POST /api/automations/export-flows-to-motion-rules` ->
+`dashboard/setup.py: flow_to_motion_rule`) konwertuje ZAZNACZONE, JUŻ
+ZAPISANE flow z powrotem na reguły ruchu i ląduje na `/automations` jako
+karty **NIEZAPISANE** (tak samo trzeba je przejrzeć i kliknąć "Zapisz
+automatyzacje"). To konwerter zachowawczy - rozpoznaje TYLKO liniowe grafy
+w kształcie, jaki sam tworzy `motion_rule_to_flow`: jeden węzeł Trigger (bez
+MQTT in, bez wyzwalacza "każda zmiana"), opcjonalnie Harmonogram, opcjonalnie
+Eskalacja (z gałęzią "eskalacja" prowadzącą do dokładnie jednej Sceny),
+opcjonalnie JEDEN węzeł Warunek stanu albo Warunek złożony (mapowany 1:1 na
+`condition` reguły, w tym cały zagnieżdżony drzewo AND/OR/NOT), a na końcu
+Scena ALBO Urządzenie - opcjonalnie Urządzenie(włącz) -> Opóźnienie ->
+Urządzenie(wyłącz, TO SAMO urządzenie) jako odpowiednik `duration_seconds`.
+**NIEOBSŁUGIWANE** (flow jest w całości pomijane z konkretnym ostrzeżeniem
+zamiast tworzyć okrojoną/mylącą regułę): rozgałęzienia (kilka połączeń z
+jednego wyjścia węzła), węzły MQTT/HTTP/Powiadomienie, zwykły węzeł Warunek
+(porównanie payloadu - w odróżnieniu od Warunku stanu), akcja "Zmiana
+stanu" (toggle), Urządzenie(włącz) bez Opóźnienia+Urządzenie(wyłącz) po
+nim, więcej niż jeden węzeł Trigger/Harmonogram/Eskalacja/warunku. Oba
+przyciski eksportu (do Flow i do Automatyzacji) używają tego samego
+mechanizmu "NIEZAPISANE, przejrzyj przed zapisem" - `sessionStorage` z
+danymi z odpowiedzi API, odczytywany raz po przeładowaniu docelowej strony -
+żadna z operacji nie zapisuje niczego bez jawnego kliknięcia przycisku
+"Zapisz" na stronie docelowej.
 
 ## Zmywarki/AGD HomeWhiz (BEQ/Arcelik)
 

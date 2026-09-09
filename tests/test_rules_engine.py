@@ -1633,6 +1633,23 @@ class TestApplyTuyaDeviceStatus:
         await engine._apply_tuya_device_status("gniazdko_salon", {"4": 235})
         assert engine.homekit.sensor_calls == [("gniazdko_salon", {"temperature_celsius": 23.5})]
 
+    async def test_soil_humidity_published_as_separate_status_key(self, engine):
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "5": {"code": "va_humidity", "type": "Value", "values": "{}"},
+            "6": {"code": "humidity_value", "type": "Value", "values": "{}"},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"5": 55, "6": 32})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon:soil_humidity"] == "32.0%"
+
+    async def test_no_soil_humidity_key_when_only_one_humidity_dp(self, engine):
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "5": {"code": "va_humidity", "type": "Value", "values": "{}"},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"5": 55})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert "tuya:gniazdko_salon:soil_humidity" not in statuses
+
     async def test_no_sensor_call_when_no_recognized_sensor_dps(self, engine):
         class FakeHomeKit:
             def __init__(self):
@@ -1683,6 +1700,68 @@ class TestTuyaStatusPollLoop:
             pass
 
         assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+
+class TestWeatherPollLoop:
+
+    async def test_publishes_precipitation_status_keys(self, engine, monkeypatch):
+        engine._location_cfg = {"latitude": 52.23, "longitude": 21.01}
+
+        async def fake_fetch_forecast(lat, lon):
+            assert (lat, lon) == (52.23, 21.01)
+            return {"precipitation_probability_percent": 80, "precipitation_sum_mm": 5.2}
+
+        monkeypatch.setattr("bridge.rules_engine.fetch_forecast", fake_fetch_forecast)
+        try:
+            await asyncio.wait_for(engine._weather_poll_loop(interval_seconds=100), timeout=0.05)
+        except asyncio.TimeoutError:
+            pass
+
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("weather")}
+        assert statuses["weather:precipitation_probability_percent"] == "80"
+        assert statuses["weather:precipitation_sum_mm"] == "5.2"
+
+    async def test_none_forecast_does_not_crash_loop(self, engine, monkeypatch):
+        engine._location_cfg = {"latitude": 52.23, "longitude": 21.01}
+
+        async def fake_fetch_forecast(lat, lon):
+            return None
+
+        monkeypatch.setattr("bridge.rules_engine.fetch_forecast", fake_fetch_forecast)
+        try:
+            await asyncio.wait_for(engine._weather_poll_loop(interval_seconds=100), timeout=0.05)
+        except asyncio.TimeoutError:
+            pass
+        assert engine.history.get_status("weather") == []
+
+    async def test_exception_does_not_crash_loop(self, engine, monkeypatch):
+        engine._location_cfg = {"latitude": 52.23, "longitude": 21.01}
+
+        async def failing_fetch_forecast(lat, lon):
+            raise ConnectionError("brak sieci")
+
+        monkeypatch.setattr("bridge.rules_engine.fetch_forecast", failing_fetch_forecast)
+        try:
+            await asyncio.wait_for(engine._weather_poll_loop(interval_seconds=100), timeout=0.05)
+        except asyncio.TimeoutError:
+            pass
+        assert engine.history.get_status("weather") == []
+
+
+class TestSetTuyaDp:
+
+    async def test_delegates_to_tuya_controller(self, engine, fake_tuya):
+        await engine._set_tuya_dp("nawadnianie", "manual_delay", "1")
+        assert ("set_dp", "nawadnianie", "manual_delay", "1") in fake_tuya.calls
+
+    async def test_uses_fresh_tuya_reference_after_reload(self, engine):
+        old_tuya = engine.tuya
+        await engine.reload_config()
+        assert engine.tuya is not old_tuya
+        # nie powinno rzucić - _set_tuya_dp odczytuje self.tuya na bieżąco, a nie
+        # w momencie budowy FlowEngine (analogicznie do _set_target_state)
+        with pytest.raises(KeyError):
+            await engine._set_tuya_dp("nieznane_urzadzenie", "manual_delay", "1")
 
 
 class TestStaleCheckLoop:

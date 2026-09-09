@@ -5,7 +5,7 @@ import logging
 
 import tinytuya
 
-from .tuya_local import find_switch_codes_from_functions_result, is_switch_code
+from .tuya_local import coerce_dp_value, find_switch_codes_from_functions_result, is_switch_code
 
 logger = logging.getLogger("bridge.tuya_cloud")
 
@@ -105,6 +105,14 @@ class TuyaCloudController:
         commands = {"commands": [{"code": code, "value": False} for code in codes]}
         await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
         logger.info("Wyłączono '%s' przez Tuya Cloud (%s)", device_name, ", ".join(codes))
+
+    async def set_dp(self, device_name: str, dp_code: str, value: object) -> None:
+        cfg = self.devices_cfg[device_name]
+        client = self._client()
+        coerced = coerce_dp_value(value)
+        commands = {"commands": [{"code": dp_code, "value": coerced}]}
+        await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
+        logger.info("Ustawiono pole '%s' urządzenia '%s' na %r przez Tuya Cloud", dp_code, device_name, coerced)
 
     async def get_status(self, device_name: str) -> dict:
         cfg = self.devices_cfg[device_name]

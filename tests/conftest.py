@@ -47,6 +47,9 @@ class FakeTuya:
     async def get_all_statuses(self):
         return {name: await self.get_status(name) for name in self.devices_cfg}
 
+    async def set_dp(self, device, dp_code, value):
+        self.calls.append(("set_dp", device, dp_code, value))
+
 
 class FakeSatel:
 

@@ -9,6 +9,7 @@ from typing import Awaitable, Callable
 import aiohttp
 import paho.mqtt.client as mqtt
 
+from .conditions import evaluate_condition
 from .notifier import Notifier
 from .scheduling import is_within_window
 
@@ -86,6 +87,24 @@ class FlowEngine:
                 (np. "satel_input:3", "tuya:gniazdko_salon" - ten sam klucz
                 co warunek "state" reguły ruchu) z zadaną wartością, NIE
                 payload wiadomości (w odróżnieniu od węzła "condition")
+      condition_group {condition: {type: and|or|not|state|time_window, ...}}
+                - [spełniony, inaczej]: zagnieżdżone drzewo warunków AND/OR/
+                NOT z liśćmi "state" (jak węzeł state) i "time_window" (jak
+                harmonogram) - DOKŁADNIE ten sam kształt i ewaluator
+                (bridge.conditions.evaluate_condition) co "dodatkowy
+                warunek" reguły ruchu. Zamiast łańcucha kilku węzłów
+                Warunek stanu (co daje tylko AND) pozwala złożyć
+                jednym węzłem np. "A i (B lub C)"
+      tuya_dp   {target_device, dp_code, value}  - ustawia DOWOLNE pole (DP)
+                urządzenia Tuya (lokalnego lub Cloud) po kodzie - generyczny
+                odpowiednik przycisków w apce Tuya, których nie ma jako
+                osobnej akcji (np. "Opóźnienie ręczne"/"manual_delay" w
+                sterownikach nawadniania - rain delay). `value` wpisywane
+                jako tekst jest konwertowane na bool/int/float, jeśli się da
+                (patrz bridge.tuya_local.coerce_dp_value), inaczej wysyłane
+                jako string. Kod pola wybiera się z listy odkrytej przez
+                "🔍 Pobierz opisy pól" na stronie Tuya (LAN) - bez tego
+                trzeba go wpisać ręcznie.
     """
 
     def __init__(
@@ -98,10 +117,12 @@ class FlowEngine:
         mqtt_cfg: dict | None = None,
         location_cfg: dict | None = None,
         get_status_value: Callable[[str], str | None] | None = None,
+        set_tuya_dp: Callable[[str, str, object], Awaitable[None]] | None = None,
     ):
         self.flows = flows_cfg or []
         self._set_target_state = set_target_state
         self._run_scene = run_scene
+        self._set_tuya_dp = set_tuya_dp
         self._notifier = Notifier(notify_cfg)
         self._mqtt_cfg = mqtt_cfg or {}
         self._mqtt_client: mqtt.Client | None = None
@@ -285,7 +306,30 @@ class FlowEngine:
 
         if ntype == "state":
             actual = self._get_status_value(c.get("key"))
-            passed = actual != c.get("value") if c.get("op") == "not_equals" else actual == c.get("value")
+            op = c.get("op") or "equals"
+            if op == "equals":
+                passed = actual == c.get("value")
+            elif op == "not_equals":
+                passed = actual != c.get("value")
+            else:
+                cmp = {"gt": ">", "lt": "<", "gte": ">=", "lte": "<="}.get(op)
+                try:
+                    passed = bool(_OPS[cmp](actual, c.get("value"))) if cmp else False
+                except Exception:
+                    passed = False
+            return [msg if passed else None, None if passed else msg]
+
+        if ntype == "condition_group":
+            try:
+                passed = evaluate_condition(
+                    c.get("condition"), get_status_value=self._get_status_value,
+                    location_cfg=self.location_cfg, now=dt.datetime.now(),
+                )
+            except Exception:
+                logger.exception(
+                    "Flow '%s': błąd ewaluacji węzła Warunek złożony - traktuję jako niespełniony", flow.get("name"),
+                )
+                passed = False
             return [msg if passed else None, None if passed else msg]
 
         if ntype == "escalation":
@@ -314,6 +358,16 @@ class FlowEngine:
             scene_name = c.get("scene_name")
             if scene_name:
                 await self._run_scene(scene_name)
+            return [msg]
+
+        if ntype == "tuya_dp":
+            if self._set_tuya_dp is None:
+                logger.warning(
+                    "Flow '%s': węzeł 'Ustaw pole Tuya' pominięty - brak skonfigurowanego handlera", flow.get("name"),
+                )
+                return [msg]
+            value = _resolve_template(c.get("value"), msg)
+            await self._set_tuya_dp(c.get("target_device"), c.get("dp_code"), value)
             return [msg]
 
         if ntype == "delay":

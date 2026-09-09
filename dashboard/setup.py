@@ -113,9 +113,9 @@ def validate_automations(form: dict) -> list[str]:
 
 _FLOW_NODE_TYPES = (
     "trigger", "condition", "device", "scene", "delay", "notify", "mqttIn", "mqttOut", "http",
-    "schedule", "escalation", "state",
+    "schedule", "escalation", "state", "condition_group", "tuya_dp",
 )
-_FLOW_STATE_OPS = ("equals", "not_equals")
+_FLOW_STATE_OPS = ("equals", "not_equals", "gt", "lt", "gte", "lte")
 _FLOW_TRIGGER_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state")
 _FLOW_CONDITION_OPS = (">", "<", ">=", "<=", "==", "!=")
 _FLOW_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
@@ -191,6 +191,15 @@ def _validate_flow_node(node: dict, label: str, scene_names: set[str]) -> list[s
             errors.append(f"{label}: nieznany operator warunku stanu '{c.get('op')}'")
         if (c.get("value") or "") == "":
             errors.append(f"{label}: warunek stanu wymaga wartości porównania")
+    elif ntype == "condition_group":
+        errors.extend(_validate_condition(c.get("condition"), f"{label}: warunek"))
+    elif ntype == "tuya_dp":
+        if not c.get("target_device"):
+            errors.append(f"{label}: wybierz urządzenie Tuya")
+        if not (c.get("dp_code") or "").strip():
+            errors.append(f"{label}: podaj kod pola (DP) do ustawienia")
+        if (c.get("value") or "") == "":
+            errors.append(f"{label}: podaj wartość do ustawienia")
     return errors
 
 
@@ -251,6 +260,7 @@ def _validate_scenes(scenes: list[dict]) -> list[str]:
 
 _CONDITION_COMPOSITE_TYPES = ("and", "or", "not")
 _CONDITION_LEAF_TYPES = ("state", "time_window")
+_STATE_CONDITION_COMPARISON_KEYS = ("equals", "not_equals", "gt", "lt", "gte", "lte")
 
 
 def _validate_condition(condition: dict | None, label: str, depth: int = 0) -> list[str]:
@@ -271,8 +281,11 @@ def _validate_condition(condition: dict | None, label: str, depth: int = 0) -> l
     elif ctype == "state":
         if not (condition.get("key") or "").strip():
             errors.append(f"{label}: warunek 'state' wymaga wybrania statusu/urządzenia")
-        if condition.get("equals") in (None, "") and condition.get("not_equals") in (None, ""):
-            errors.append(f"{label}: warunek 'state' wymaga wartości porównania (równa się / różna od)")
+        if all(condition.get(k) in (None, "") for k in _STATE_CONDITION_COMPARISON_KEYS):
+            errors.append(
+                f"{label}: warunek 'state' wymaga wartości porównania "
+                f"(równa się / różna od / większe / mniejsze / większe-równe / mniejsze-równe)"
+            )
     elif ctype == "time_window":
         if not condition.get("start") or not condition.get("end"):
             errors.append(f"{label}: warunek 'okno czasowe' wymaga początku i końca")
@@ -479,10 +492,10 @@ def _build_condition(condition: dict | None, depth: int = 0) -> dict | None:
         if not key:
             return None
         built = {"type": "state", "key": key}
-        if condition.get("equals") not in (None, ""):
-            built["equals"] = condition["equals"]
-        elif condition.get("not_equals") not in (None, ""):
-            built["not_equals"] = condition["not_equals"]
+        for comp_key in _STATE_CONDITION_COMPARISON_KEYS:
+            if condition.get(comp_key) not in (None, ""):
+                built[comp_key] = condition[comp_key]
+                break
         else:
             return None
         return built
@@ -1229,6 +1242,10 @@ def _build_flow_node_config(ntype: str, c: dict) -> dict:
         return {"threshold_count": int(c["threshold_count"]), "window_seconds": float(c["window_seconds"])}
     if ntype == "state":
         return {"key": c.get("key"), "op": c.get("op") or "equals", "value": c.get("value")}
+    if ntype == "condition_group":
+        return {"condition": _build_condition(c.get("condition"))}
+    if ntype == "tuya_dp":
+        return {"target_device": c.get("target_device"), "dp_code": c.get("dp_code"), "value": c.get("value")}
     return dict(c)
 
 
@@ -1389,6 +1406,164 @@ def motion_rule_to_flow(rule: dict, index: int) -> tuple[dict | None, list[str]]
 
     flow = {"id": f"flow_import_{index}_{uuid.uuid4().hex[:6]}", "name": f"Import: {name}", "enabled": True, "nodes": nodes}
     return flow, warnings
+
+
+def flow_to_motion_rule(flow: dict, index: int) -> tuple[dict | None, list[str]]:
+    """Konwertuje POJEDYNCZE flow na regułę ruchu (`reguły_ruchu`) - odwrotność
+    motion_rule_to_flow, dla przycisku "Eksportuj zaznaczone do Automatyzacje" w
+    edytorze Flow. Obsługuje TYLKO liniowe grafy o kształcie, jaki sama tworzy
+    motion_rule_to_flow: jeden węzeł Trigger (bez MQTT in), opcjonalnie
+    Harmonogram, opcjonalnie Eskalacja (z gałęzią "eskalacja" do dokładnie
+    jednej Sceny), opcjonalnie JEDEN węzeł Warunek stanu albo Warunek złożony,
+    a na końcu Scena ALBO Urządzenie - opcjonalnie Urządzenie(włącz) ->
+    Opóźnienie -> Urządzenie(wyłącz, TO SAMO urządzenie) jako odpowiednik
+    duration_seconds. Rozgałęzienia (kilka połączeń z jednego wyjścia), węzły
+    MQTT/HTTP/Powiadomienie, zwykły węzeł Warunek (porównanie payloadu) i
+    akcja "Zmiana stanu" NIE mają odpowiednika w regule ruchu - flow jest
+    w całości pomijane z ostrzeżeniem opisującym dlaczego (zwraca None)."""
+    name = (flow.get("name") or "").strip() or f"Flow #{index + 1}"
+    if name.startswith("Import: "):
+        name = name[len("Import: "):]
+    nodes_by_id = {n["id"]: n for n in flow.get("nodes", [])}
+    warnings: list[str] = []
+
+    trigger_nodes = [n for n in flow.get("nodes", []) if n.get("type") == "trigger"]
+    if len(trigger_nodes) != 1:
+        return None, [f"'{name}': eksport do reguły ruchu wymaga dokładnie jednego węzła Trigger (bez MQTT in) - pomięto"]
+    trigger = trigger_nodes[0]
+    tcfg = trigger.get("config") or {}
+    op = tcfg.get("op", "violated")
+    if op == "changes":
+        return None, [f"'{name}': wyzwalacz \"każda zmiana\" nie ma odpowiednika w regule ruchu - pomięto"]
+
+    source = tcfg.get("source") or "satel_zone"
+    built: dict = {"source": source}
+    if source == "satel_zone":
+        built["zone_number"] = tcfg.get("zone_number")
+    else:
+        built["source_device"] = tcfg.get("source_device")
+        built["trigger_value"] = tcfg.get("trigger_value")
+    if op == "restored":
+        built["trigger_on"] = "restored"
+
+    def next_node(node: dict, port: int = 0):
+        wires = node.get("wires") or []
+        targets = wires[port] if port < len(wires) else []
+        if len(targets) > 1:
+            return "branch"
+        if not targets:
+            return None
+        return nodes_by_id.get(targets[0])
+
+    current = trigger
+    while True:
+        nxt = next_node(current, 0)
+        if nxt == "branch":
+            return None, [f"'{name}': rozgałęzienie (kilka połączeń z jednego wyjścia) nie ma odpowiednika w regule ruchu - pomięto"]
+        if nxt is None:
+            return None, [f"'{name}': flow nie kończy się rozpoznawalną akcją (Scena albo Urządzenie) - pomięto"]
+        ntype = nxt.get("type")
+        ncfg = nxt.get("config") or {}
+
+        if ntype == "schedule":
+            if "time_window" in built:
+                return None, [f"'{name}': wiele węzłów Harmonogram nieobsługiwane - pomięto"]
+            built["time_window"] = {"start": ncfg.get("start"), "end": ncfg.get("end")}
+            current = nxt
+            continue
+
+        if ntype == "escalation":
+            if "escalation" in built:
+                return None, [f"'{name}': wiele węzłów Eskalacja nieobsługiwane - pomięto"]
+            esc_target = next_node(nxt, 1)
+            if esc_target == "branch" or esc_target is None or esc_target.get("type") != "scene":
+                return None, [f"'{name}': węzeł Eskalacja musi mieć dokładnie jedną Scenę na wyjściu \"eskalacja\" - pomięto"]
+            built["escalation"] = {
+                "threshold_count": ncfg.get("threshold_count"),
+                "window_seconds": ncfg.get("window_seconds"),
+                "escalated_scene": (esc_target.get("config") or {}).get("scene_name"),
+            }
+            current = nxt
+            continue
+
+        if ntype in ("state", "condition_group"):
+            if "condition" in built:
+                return None, [f"'{name}': wiele węzłów warunku nieobsługiwane - pomięto"]
+            other = next_node(nxt, 1)
+            if other == "branch" or other is not None:
+                node_label = "Warunek stanu" if ntype == "state" else "Warunek złożony"
+                warnings.append(f"'{name}': gałąź \"inaczej\" węzła {node_label} pominięta")
+            if ntype == "state":
+                leaf = {"type": "state", "key": ncfg.get("key")}
+                if ncfg.get("op") == "not_equals":
+                    leaf["not_equals"] = ncfg.get("value")
+                else:
+                    leaf["equals"] = ncfg.get("value")
+                built["condition"] = leaf
+            else:
+                built["condition"] = ncfg.get("condition")
+            current = nxt
+            continue
+
+        if ntype == "condition":
+            return None, [f"'{name}': zwykły węzeł Warunek (porównanie payloadu) nie ma odpowiednika w regule ruchu - pomięto"]
+
+        if ntype == "scene":
+            if next_node(nxt, 0) is not None:
+                warnings.append(f"'{name}': węzły po Scenie pominięte (reguła kończy się na scenie)")
+            built["scene"] = ncfg.get("scene_name")
+            break
+
+        if ntype == "device":
+            value = str(ncfg.get("value", "on")).lower()
+            if value == "toggle":
+                return None, [f"'{name}': akcja \"Zmiana stanu\" węzła Urządzenie nie ma odpowiednika w regule ruchu - pomięto"]
+            target_device = ncfg.get("target_device")
+            target_system = ncfg.get("target_system") or "tuya"
+            if target_system == "satel_virtual_input":
+                built["virtual_input"] = target_device
+            else:
+                built["target_device"] = target_device
+                if target_system == "satel_output":
+                    built["target_system"] = "satel_output"
+                if value != "off" and ncfg.get("dimmer_level_percent") is not None:
+                    built["dimmer_level_percent"] = ncfg.get("dimmer_level_percent")
+
+            if value == "off":
+                built["action"] = "turn_off"
+                if next_node(nxt, 0) is not None:
+                    warnings.append(f"'{name}': węzły po Urządzeniu (wyłącz) pominięte")
+                break
+
+            after = next_node(nxt, 0)
+            if after == "branch":
+                return None, [f"'{name}': rozgałęzienie po Urządzeniu (włącz) nieobsługiwane - pomięto"]
+            if after is None:
+                return None, [
+                    f"'{name}': pojedynczy węzeł Urządzenie (włącz) bez opóźnienia/wyłączenia nie ma odpowiednika "
+                    f"w regule ruchu (reguła zawsze wymaga czasu, sceny albo trybu do ustania naruszenia) - pomięto"
+                ]
+            if after.get("type") != "delay":
+                return None, [f"'{name}': po Urządzeniu (włącz) oczekiwano węzła Opóźnienie - pomięto"]
+            off_node = next_node(after, 0)
+            if off_node == "branch" or off_node is None or off_node.get("type") != "device":
+                return None, [f"'{name}': po Opóźnieniu oczekiwano węzła Urządzenie (wyłącz) - pomięto"]
+            off_cfg = off_node.get("config") or {}
+            if (
+                str(off_cfg.get("value", "on")).lower() != "off"
+                or off_cfg.get("target_device") != target_device
+                or (off_cfg.get("target_system") or "tuya") != target_system
+            ):
+                return None, [f"'{name}': węzeł Urządzenie po Opóźnieniu musi wyłączać TO SAMO urządzenie - pomięto"]
+            if next_node(off_node, 0) is not None:
+                warnings.append(f"'{name}': węzły po Urządzeniu (wyłącz) pominięte")
+            built["duration_seconds"] = (after.get("config") or {}).get("seconds")
+            break
+
+        return None, [f"'{name}': węzeł '{ntype}' nie ma odpowiednika w regule ruchu - pomięto całą regułę"]
+
+    built["name"] = name
+    return built, warnings
 
 
 def build_config_dict(form: dict) -> dict:

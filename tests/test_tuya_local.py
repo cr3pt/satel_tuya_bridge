@@ -4,7 +4,7 @@ from bridge.tuya_local import (
     TuyaLocalController, scan_network, fetch_cloud_devices, fetch_device_dp_schema,
     fetch_dp_schemas_for_devices, find_tuya_switch_key, format_tuya_dps,
     extract_tuya_sensor_readings, detect_tuya_sensor_type,
-    is_switch_code, find_switch_keys_from_schema,
+    is_switch_code, find_switch_keys_from_schema, coerce_dp_value,
 )
 
 DEVICES_CFG = {
@@ -442,6 +442,15 @@ class TestFormatTuyaDps:
         assert is_on is False
         assert extra == "temperatura: 23.5C"
 
+    def test_temperature_falls_back_to_known_scale_when_schema_meta_missing(self):
+        # dp_schema z kodem, ale bez meta "scale" (typowe dla urządzeń dodanych
+        # bez pełnego skanu schematu) - bez fallbacku wartość wyświetlałaby się
+        # surowa (256 zamiast 25.6C).
+        schema = {"4": {"code": "va_temperature", "type": "Value"}}
+        is_on, extra = format_tuya_dps({"4": 256}, schema=schema)
+        assert is_on is None
+        assert extra == "temperatura: 25.6°C"
+
     def test_boolean_extra_field_formatted_as_tak_nie(self):
         schema = {"1": {"code": "switch_1", "type": "Boolean"}, "2": {"code": "pir", "type": "Boolean"}}
         is_on, extra = format_tuya_dps({"1": True, "2": True}, schema=schema)
@@ -522,6 +531,17 @@ class TestExtractTuyaSensorReadings:
     def test_humidity_clamped_to_0_100(self):
         readings = extract_tuya_sensor_readings({"va_humidity": 253})
         assert readings["humidity_percent"] == 100.0
+
+    def test_both_humidity_codes_present_expose_soil_as_secondary(self):
+        # Kombinowany czujnik zewnętrzny (gleba+powietrze) - va_humidity (powietrze)
+        # trafia do głównego humidity_percent, humidity_value (gleba) do drugiej,
+        # dodatkowej wartości - wcześniej druga wartość była całkowicie tracona.
+        readings = extract_tuya_sensor_readings({"va_humidity": 55, "humidity_value": 32})
+        assert readings == {"humidity_percent": 55.0, "soil_humidity_percent": 32.0}
+
+    def test_humidity_value_alone_stays_primary_humidity_percent(self):
+        readings = extract_tuya_sensor_readings({"humidity_value": 40})
+        assert readings == {"humidity_percent": 40.0}
 
     def test_combined_temperature_and_humidity(self):
         readings = extract_tuya_sensor_readings({"va_temperature": 212, "va_humidity": 53, "battery_percentage": 39})
@@ -791,3 +811,44 @@ class TestZigbeeGateways:
         ctrl = TuyaLocalController(DEVICES_CFG)
         assert ctrl._gateways == {}
         assert set(ctrl._devices) == set(DEVICES_CFG)
+
+
+class TestCoerceDpValue:
+
+    def test_true_string_becomes_bool(self):
+        assert coerce_dp_value("true") is True
+
+    def test_false_string_becomes_bool(self):
+        assert coerce_dp_value("False") is False
+
+    def test_integer_string_becomes_int(self):
+        assert coerce_dp_value("3") == 3
+        assert isinstance(coerce_dp_value("3"), int)
+
+    def test_float_string_becomes_float(self):
+        assert coerce_dp_value("3.5") == 3.5
+
+    def test_plain_text_stays_string(self):
+        assert coerce_dp_value("auto") == "auto"
+
+    def test_non_string_passthrough(self):
+        assert coerce_dp_value(True) is True
+        assert coerce_dp_value(5) == 5
+
+
+class TestSetDp:
+
+    async def test_resolves_code_to_dp_id_via_schema_and_coerces_value(self, controller):
+        controller.devices_cfg["gniazdko_salon"]["dp_schema"] = {
+            "9": {"code": "manual_delay", "type": "Integer"},
+        }
+        fake = FakeMultiDPDevice()
+        controller._devices["gniazdko_salon"] = fake
+        await controller.set_dp("gniazdko_salon", "manual_delay", "2")
+        assert fake.calls == [("set_value", "9", 2)]
+
+    async def test_unknown_code_without_schema_used_as_raw_dp_id(self, controller):
+        fake = FakeMultiDPDevice()
+        controller._devices["gniazdko_salon"] = fake
+        await controller.set_dp("gniazdko_salon", "9", "true")
+        assert fake.calls == [("set_value", "9", True)]

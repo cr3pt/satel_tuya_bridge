@@ -41,12 +41,18 @@ DP_LABEL_TRANSLATIONS = {
     "decibel_switch": "detekcja dźwięku", "decibel_sensitivity": "czułość detekcji dźwięku",
     "record_switch": "nagrywanie", "record_mode": "tryb nagrywania",
     "siren_switch": "syrena",
+    "manual_delay": "opóźnienie ręczne", "countdown": "odliczanie", "auto_manual": "tryb automatyczny",
 }
 
 _PHASE_RAW_CODES = {"phase_a", "phase_b", "phase_c"}
 _KNOWN_VALUE_SCALES = {
     "forward_energy_total": (2, " kWh"),
     "reverse_energy_total": (2, " kWh"),
+    # Fallback dla urządzeń, których dp_schema nie zawiera meta "scale" (typ "Value")
+    # - bez tego surowa wartość DP (np. 256) wyświetlałaby się bez podzielenia przez 10
+    # (25.6C), zamiast poprawnie przeskalowanej wartości.
+    "va_temperature": (1, "°C"),
+    "temp_current": (1, "°C"),
 }
 _MAX_INLINE_VALUE_LENGTH = 60
 
@@ -277,6 +283,27 @@ def _dp_format_value(value: object, spec: dict | None, code: str) -> object:
     return value
 
 
+def coerce_dp_value(value: object) -> object:
+    """Zamienia tekst z formularza na typ oczekiwany przez większość DP Tuya -
+    bool dla "true"/"false", int/float dla liczb, w przeciwnym razie zwraca
+    oryginalny tekst (np. dla DP typu Enum, gdzie wartością jest sama nazwa)."""
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    lowered = stripped.lower()
+    if lowered in ("true", "false"):
+        return lowered == "true"
+    try:
+        return int(stripped)
+    except ValueError:
+        pass
+    try:
+        return float(stripped)
+    except ValueError:
+        pass
+    return value
+
+
 def find_tuya_switch_key(dps: dict, schema: dict | None = None, preferred: str | None = None) -> str | None:
     if preferred and preferred in dps:
         return preferred
@@ -366,13 +393,21 @@ def extract_tuya_sensor_readings(dps: dict, schema: dict | None = None) -> dict:
                 readings["temperature_celsius"] = round(numeric, 1)
             break
 
-    for code in _HUMIDITY_CODES:
-        if code in by_code:
-            value, spec = by_code[code]
-            numeric = _dp_numeric_value(value, spec, code)
-            if numeric is not None:
-                readings["humidity_percent"] = max(0.0, min(100.0, numeric))
-            break
+    # Kombinowane czujniki zewnętrzne (np. gleba+powietrze) potrafią wystawić OBIE
+    # wartości wilgotności naraz na osobnych DP - pierwsza znaleziona (kolejność
+    # _HUMIDITY_CODES: va_humidity, potem humidity_value) trafia do głównego
+    # "humidity_percent" (jak dotychczas, dla zwykłych czujników z JEDNĄ wartością),
+    # a DRUGA - o ile też jest obecna na tym samym urządzeniu - do
+    # "soil_humidity_percent" (na czujnikach kombo humidity_value oznacza
+    # wilgotność gleby, w odróżnieniu od va_humidity = wilgotność powietrza).
+    humidity_codes_present = [c for c in _HUMIDITY_CODES if c in by_code]
+    for i, code in enumerate(humidity_codes_present):
+        value, spec = by_code[code]
+        numeric = _dp_numeric_value(value, spec, code)
+        if numeric is None:
+            continue
+        numeric = max(0.0, min(100.0, numeric))
+        readings["humidity_percent" if i == 0 else "soil_humidity_percent"] = numeric
 
     for code in _LEAK_CODES:
         if code in by_code:
@@ -528,6 +563,23 @@ class TuyaLocalController:
         else:
             await self._call_with_retry(device_name, dev.turn_off)
         logger.info("Zmieniono stan '%s' na %s (DP: %s)", device_name, new_value, key)
+
+    def _resolve_dp_id(self, device_name: str, dp_code: str) -> str:
+        schema = self.devices_cfg.get(device_name, {}).get("dp_schema") or {}
+        for dp_id, spec in schema.items():
+            if spec.get("code") == dp_code:
+                return dp_id
+        # Brak opisu pól (dp_schema) albo kod nierozpoznany - zakładamy, że
+        # to już surowy numer DP (tak jak generyczna lista pól w panelu robi
+        # to samo, gdy schemat jest niepełny).
+        return dp_code
+
+    async def set_dp(self, device_name: str, dp_code: str, value: object) -> None:
+        dev = self._devices[device_name]
+        dp_id = self._resolve_dp_id(device_name, dp_code)
+        coerced = coerce_dp_value(value)
+        await self._call_with_retry(device_name, dev.set_value, dp_id, coerced)
+        logger.info("Ustawiono pole '%s' (DP=%s) urządzenia '%s' na %r", dp_code, dp_id, device_name, coerced)
 
     async def get_status(self, device_name: str) -> dict:
         dev = self._devices[device_name]

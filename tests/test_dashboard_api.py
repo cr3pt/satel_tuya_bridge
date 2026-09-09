@@ -1342,6 +1342,25 @@ class TestFlowsImportFromMotionRules:
         resp = (await client.get("/api/config/flows", headers=_basic_auth_header("test_haslo_123")))
         assert (await resp.get_json())["flows"] == []
 
+    async def test_rule_indices_filters_selection(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "reguły_ruchu": [
+                {"name": "pierwsza", "source": "satel_zone", "zone_number": 5,
+                 "target_device": "lampa_taras", "duration_seconds": 60},
+                {"name": "druga", "source": "satel_zone", "zone_number": 6,
+                 "target_device": "lampa_ogrod", "duration_seconds": 30},
+            ],
+        })
+        resp = (await client.post(
+            "/api/flows/import-from-motion-rules", json={"rule_indices": [1]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        data = await resp.get_json()
+        assert resp.status_code == 200
+        assert data["imported_rule_indices"] == [1]
+        assert len(data["flows"]) == 1
+        assert data["flows"][0]["name"] == "Import: druga"
+
 
 class TestFlowsMarkMotionRulesImported:
     async def test_requires_auth(self, client):
@@ -1400,6 +1419,94 @@ class TestFlowsMarkMotionRulesImported:
             headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 400
+
+
+class TestAutomationsExportFlowsToMotionRules:
+    async def test_requires_auth(self, client):
+        resp = (await client.post("/api/automations/export-flows-to-motion-rules", json={"flow_ids": []}))
+        assert resp.status_code == 401
+
+    async def test_invalid_payload_is_rejected(self, client):
+        resp = (await client.post(
+            "/api/automations/export-flows-to-motion-rules", json={"flow_ids": "not-a-list"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_convertible_flow_is_returned_as_motion_rule(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "flows": [
+                {"id": "flow-1", "name": "taras", "enabled": True, "nodes": [
+                    {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["scene"]]},
+                    {"id": "scene", "type": "scene", "config": {"scene_name": "wieczor"}, "wires": []},
+                ]},
+            ],
+        })
+        resp = (await client.post(
+            "/api/automations/export-flows-to-motion-rules", json={"flow_ids": ["flow-1"]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        data = await resp.get_json()
+        assert resp.status_code == 200
+        assert data["warnings"] == []
+        assert data["motion_rules"] == [
+            {"source": "satel_zone", "zone_number": 5, "scene": "wieczor", "name": "taras"},
+        ]
+
+    async def test_only_selected_flow_ids_are_exported(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "flows": [
+                {"id": "flow-1", "name": "taras", "enabled": True, "nodes": [
+                    {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["scene"]]},
+                    {"id": "scene", "type": "scene", "config": {"scene_name": "wieczor"}, "wires": []},
+                ]},
+                {"id": "flow-2", "name": "ogrod", "enabled": True, "nodes": [
+                    {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 6}, "wires": [["scene"]]},
+                    {"id": "scene", "type": "scene", "config": {"scene_name": "impreza"}, "wires": []},
+                ]},
+            ],
+        })
+        resp = (await client.post(
+            "/api/automations/export-flows-to-motion-rules", json={"flow_ids": ["flow-2"]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        data = await resp.get_json()
+        assert len(data["motion_rules"]) == 1
+        assert data["motion_rules"][0]["name"] == "ogrod"
+
+    async def test_unsupported_flow_is_skipped_with_warning(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "flows": [
+                {"id": "flow-1", "name": "z_mqtt", "enabled": True, "nodes": [
+                    {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["mq"]]},
+                    {"id": "mq", "type": "mqttOut", "config": {"topic": "x"}, "wires": []},
+                ]},
+            ],
+        })
+        resp = (await client.post(
+            "/api/automations/export-flows-to-motion-rules", json={"flow_ids": ["flow-1"]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        data = await resp.get_json()
+        assert data["motion_rules"] == []
+        assert any("z_mqtt" in w for w in data["warnings"])
+
+    async def test_does_not_persist_anything(self, client, monkeypatch):
+        monkeypatch.setattr("dashboard.app.config_raw", {
+            "flows": [
+                {"id": "flow-1", "name": "taras", "enabled": True, "nodes": [
+                    {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["scene"]]},
+                    {"id": "scene", "type": "scene", "config": {"scene_name": "wieczor"}, "wires": []},
+                ]},
+            ],
+        })
+        (await client.post(
+            "/api/automations/export-flows-to-motion-rules", json={"flow_ids": ["flow-1"]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.get("/api/config/automations", headers=_basic_auth_header("test_haslo_123")))
+        rules = (await resp.get_json()).get("reguły_ruchu", [])
+        assert rules == []
 
 
 class TestSetupOnlyPathsPublicOnlyBeforeConfiguration:

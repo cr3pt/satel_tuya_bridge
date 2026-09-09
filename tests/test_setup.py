@@ -13,7 +13,7 @@ from dashboard.setup import (
     ebus_connection_to_form, build_ebus_connection_patch, validate_ebus_connection,
     build_location_patch, validate_location,
     draft_path_for, load_draft, save_draft, delete_draft,
-    motion_rule_to_flow,
+    motion_rule_to_flow, flow_to_motion_rule,
 )
 
 
@@ -1310,6 +1310,17 @@ class TestConditionAndChainingValidation:
         form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
         assert validate(form) == []
 
+    def test_gt_condition_has_no_errors(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {"type": "state", "key": "boiler:temp", "gt": "20"}}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        assert validate(form) == []
+
+    def test_state_condition_with_no_comparison_key_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {"type": "state", "key": "boiler:temp"}}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("wartości porównania" in e for e in errors)
+
 
 class TestPresenceSimulation:
 
@@ -2111,6 +2122,98 @@ class TestFlows:
             "key": "tuya:gniazdko", "op": "not_equals", "value": "włączone",
         }
 
+    def test_state_node_with_gt_operator_is_valid(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "state", "config": {"key": "boiler:temp", "op": "gt", "value": "20"}, "wires": [[], []]},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_state_node_with_unknown_operator_is_error(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "state", "config": {"key": "boiler:temp", "op": "bogus", "value": "20"}, "wires": [[], []]},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("nieznany operator warunku stanu" in e for e in errors)
+
+    def test_build_state_node_with_gt_operator(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "state", "config": {"key": "boiler:temp", "op": "gt", "value": "20"}, "wires": [[], []]},
+        ])
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][1]["config"] == {
+            "key": "boiler:temp", "op": "gt", "value": "20",
+        }
+
+    def test_condition_group_node_requires_valid_condition(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["cg"]]},
+            {"id": "cg", "type": "condition_group", "config": {"condition": {"type": "and", "conditions": []}}, "wires": [[], []]},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("wymaga co najmniej jednego warunku podrzędnego" in e for e in errors)
+
+    def test_condition_group_node_rejects_unknown_leaf_type(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["cg"]]},
+            {"id": "cg", "type": "condition_group", "config": {"condition": {"type": "nope"}}, "wires": [[], []]},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("nieznany typ warunku" in e for e in errors)
+
+    def test_condition_group_node_with_gt_leaf_is_valid(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["cg"]]},
+            {"id": "cg", "type": "condition_group", "config": {"condition": {"type": "state", "key": "boiler:temp", "gt": "20"}}, "wires": [[], []]},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_build_condition_group_node_preserves_gt_leaf(self):
+        condition = {"type": "state", "key": "boiler:temp", "gt": "20"}
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["cg"]]},
+            {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [[], []]},
+        ])
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][1]["config"] == {"condition": condition}
+
+    def test_condition_group_node_with_nested_and_or_is_valid(self):
+        condition = {
+            "type": "and",
+            "conditions": [
+                {"type": "state", "key": "tuya:swiatlo_garaz", "equals": "włączone"},
+                {
+                    "type": "or",
+                    "conditions": [
+                        {"type": "state", "key": "satel_input:1", "equals": "naruszone"},
+                        {"type": "time_window", "start": "22:00", "end": "06:00"},
+                    ],
+                },
+            ],
+        }
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["cg"]]},
+            {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [[], []]},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_build_condition_group_node(self):
+        condition = {
+            "type": "and",
+            "conditions": [
+                {"type": "state", "key": "tuya:swiatlo_garaz", "equals": "włączone"},
+                {"type": "state", "key": "satel_input:1", "not_equals": "naruszone"},
+            ],
+        }
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["cg"]]},
+            {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [[], []]},
+        ])
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][1]["config"] == {"condition": condition}
+
     def test_build_flow_produces_expected_shape(self):
         automations = build_automations_dict(self._form_with_flow(self._simple_flow()))
         flows = automations["flows"]
@@ -2126,6 +2229,33 @@ class TestFlows:
             "id": "dev", "type": "device",
             "config": {"target_device": "gniazdko_salon", "target_system": "tuya", "value": "on"},
             "wires": [],
+        }
+
+    def test_tuya_dp_node_requires_device_code_and_value(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["dp"]]},
+            {"id": "dp", "type": "tuya_dp", "config": {}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("wybierz urządzenie Tuya" in e for e in errors)
+        assert any("kod pola" in e for e in errors)
+        assert any("podaj wartość" in e for e in errors)
+
+    def test_tuya_dp_node_with_values_is_valid(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["dp"]]},
+            {"id": "dp", "type": "tuya_dp", "config": {"target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1"}, "wires": []},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_build_tuya_dp_node(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["dp"]]},
+            {"id": "dp", "type": "tuya_dp", "config": {"target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1"}, "wires": []},
+        ])
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][1]["config"] == {
+            "target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1",
         }
 
     def test_build_flow_without_name_is_skipped(self):
@@ -2328,6 +2458,223 @@ class TestMotionRuleToFlow:
         flow, warnings = motion_rule_to_flow(rule, 0)
         assert flow is None
         assert any("juz_zaimportowana" in w and "już zaimportowano" in w for w in warnings)
+
+
+class TestFlowToMotionRule:
+    def _flow(self, nodes, name="test-flow"):
+        return {"id": "f1", "name": name, "enabled": True, "nodes": nodes}
+
+    def test_simple_duration_device_flow(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev_on"]]},
+            {"id": "dev_on", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": [["delay"]]},
+            {"id": "delay", "type": "delay", "config": {"seconds": 60}, "wires": [["dev_off"]]},
+            {"id": "dev_off", "type": "device", "config": {"target_device": "lampa", "value": "off"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert warnings == []
+        assert rule == {
+            "source": "satel_zone", "zone_number": 5,
+            "target_device": "lampa", "duration_seconds": 60,
+            "name": "test-flow",
+        }
+
+    def test_turn_off_flow(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev_off"]]},
+            {"id": "dev_off", "type": "device", "config": {"target_device": "lampa", "value": "off"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert warnings == []
+        assert rule == {
+            "source": "satel_zone", "zone_number": 5,
+            "target_device": "lampa", "action": "turn_off",
+            "name": "test-flow",
+        }
+
+    def test_scene_flow(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["scene"]]},
+            {"id": "scene", "type": "scene", "config": {"scene_name": "wieczor"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert warnings == []
+        assert rule == {"source": "satel_zone", "zone_number": 5, "scene": "wieczor", "name": "test-flow"}
+
+    def test_import_name_prefix_is_stripped(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["scene"]]},
+            {"id": "scene", "type": "scene", "config": {"scene_name": "wieczor"}, "wires": []},
+        ], name="Import: oryginalna_nazwa")
+        rule, _ = flow_to_motion_rule(flow, 0)
+        assert rule["name"] == "oryginalna_nazwa"
+
+    def test_schedule_and_escalation(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["sched"]]},
+            {"id": "sched", "type": "schedule", "config": {"start": "22:00", "end": "06:00"}, "wires": [["esc"]]},
+            {"id": "esc", "type": "escalation", "config": {"threshold_count": 3, "window_seconds": 120}, "wires": [["dev_off"], ["esc_scene"]]},
+            {"id": "dev_off", "type": "device", "config": {"target_device": "lampa", "value": "off"}, "wires": []},
+            {"id": "esc_scene", "type": "scene", "config": {"scene_name": "alarm_scena"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert warnings == []
+        assert rule["time_window"] == {"start": "22:00", "end": "06:00"}
+        assert rule["escalation"] == {"threshold_count": 3, "window_seconds": 120, "escalated_scene": "alarm_scena"}
+        assert rule["action"] == "turn_off"
+
+    def test_condition_group_maps_to_condition(self):
+        condition = {
+            "type": "and",
+            "conditions": [
+                {"type": "state", "key": "tuya:swiatlo_garaz", "equals": "włączone"},
+                {"type": "state", "key": "satel_input:1", "equals": "naruszone"},
+            ],
+        }
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["cg"]]},
+            {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [["dev_off"], []]},
+            {"id": "dev_off", "type": "device", "config": {"target_device": "lampa", "value": "off"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert warnings == []
+        assert rule["condition"] == condition
+
+    def test_state_node_maps_to_single_leaf_condition(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["st"]]},
+            {"id": "st", "type": "state", "config": {"key": "satel_input:9", "op": "equals", "value": "naruszone"}, "wires": [["dev_off"], []]},
+            {"id": "dev_off", "type": "device", "config": {"target_device": "lampa", "value": "off"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert warnings == []
+        assert rule["condition"] == {"type": "state", "key": "satel_input:9", "equals": "naruszone"}
+
+    def test_condition_else_branch_produces_warning(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["st"]]},
+            {"id": "st", "type": "state", "config": {"key": "satel_input:9", "op": "equals", "value": "naruszone"}, "wires": [["dev_off"], ["dev_else"]]},
+            {"id": "dev_off", "type": "device", "config": {"target_device": "lampa", "value": "off"}, "wires": []},
+            {"id": "dev_else", "type": "device", "config": {"target_device": "inna", "value": "off"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert rule is not None
+        assert any("inaczej" in w for w in warnings)
+
+    def test_virtual_input_target_system_maps_to_virtual_input(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev_on"]]},
+            {"id": "dev_on", "type": "device", "config": {"target_device": "brama", "target_system": "satel_virtual_input", "value": "on"}, "wires": [["delay"]]},
+            {"id": "delay", "type": "delay", "config": {"seconds": 5}, "wires": [["dev_off"]]},
+            {"id": "dev_off", "type": "device", "config": {"target_device": "brama", "target_system": "satel_virtual_input", "value": "off"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert warnings == []
+        assert rule["virtual_input"] == "brama"
+        assert "target_device" not in rule
+
+    def test_restored_op_maps_to_trigger_on(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5, "op": "restored"}, "wires": [["scene"]]},
+            {"id": "scene", "type": "scene", "config": {"scene_name": "wieczor"}, "wires": []},
+        ])
+        rule, _ = flow_to_motion_rule(flow, 0)
+        assert rule["trigger_on"] == "restored"
+
+    # --- przypadki odrzucenia (flow pomijane w całości) ---
+
+    def test_no_trigger_node_rejected(self):
+        flow = self._flow([
+            {"id": "scene", "type": "scene", "config": {"scene_name": "wieczor"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert rule is None
+        assert any("dokładnie jednego węzła Trigger" in w for w in warnings)
+
+    def test_multiple_trigger_nodes_rejected(self):
+        flow = self._flow([
+            {"id": "trig1", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["scene"]]},
+            {"id": "trig2", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 6}, "wires": [["scene"]]},
+            {"id": "scene", "type": "scene", "config": {"scene_name": "wieczor"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert rule is None
+        assert any("dokładnie jednego węzła Trigger" in w for w in warnings)
+
+    def test_op_changes_rejected(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "tuya_state", "op": "changes"}, "wires": [["scene"]]},
+            {"id": "scene", "type": "scene", "config": {"scene_name": "wieczor"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert rule is None
+        assert any("każda zmiana" in w for w in warnings)
+
+    def test_branching_rejected(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev1", "dev2"]]},
+            {"id": "dev1", "type": "device", "config": {"target_device": "lampa", "value": "off"}, "wires": []},
+            {"id": "dev2", "type": "device", "config": {"target_device": "inna", "value": "off"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert rule is None
+        assert any("rozgałęzienie" in w for w in warnings)
+
+    def test_mqtt_node_rejected(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["mq"]]},
+            {"id": "mq", "type": "mqttOut", "config": {"topic": "x"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert rule is None
+        assert any("'mqttOut'" in w for w in warnings)
+
+    def test_plain_condition_node_rejected(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["cond"]]},
+            {"id": "cond", "type": "condition", "config": {"op": "equals", "value": "x"}, "wires": [[], []]},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert rule is None
+        assert any("zwykły węzeł Warunek" in w for w in warnings)
+
+    def test_toggle_action_rejected(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev"]]},
+            {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "toggle"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert rule is None
+        assert any("Zmiana stanu" in w for w in warnings)
+
+    def test_mismatched_off_target_rejected(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev_on"]]},
+            {"id": "dev_on", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": [["delay"]]},
+            {"id": "delay", "type": "delay", "config": {"seconds": 60}, "wires": [["dev_off"]]},
+            {"id": "dev_off", "type": "device", "config": {"target_device": "inna_lampa", "value": "off"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert rule is None
+        assert any("TO SAMO urządzenie" in w for w in warnings)
+
+    def test_device_on_without_delay_rejected(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev_on"]]},
+            {"id": "dev_on", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert rule is None
+        assert any("bez opóźnienia/wyłączenia" in w for w in warnings)
+
+    def test_unsupported_terminal_node_type_rejected(self):
+        flow = self._flow([
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["notify"]]},
+            {"id": "notify", "type": "notify", "config": {"level": "info", "message": "x"}, "wires": []},
+        ])
+        rule, warnings = flow_to_motion_rule(flow, 0)
+        assert rule is None
+        assert any("'notify'" in w for w in warnings)
 
 
 class TestSetupDraft:
