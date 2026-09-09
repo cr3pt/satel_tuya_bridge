@@ -2379,21 +2379,46 @@ sposobem budowania automatyzacji krok-po-kroku, ale to długoterminowy
 kierunek, nie coś co dzieje się automatycznie przy aktualizacji - istniejące
 reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 
-### 9 typów węzłów
+### 11 typów węzłów
 
 | Węzeł | Rola | Konfiguracja |
 |---|---|---|
 | ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz), wyzwalacz |
 | 📥 MQTT in | wejście grafu | temat MQTT (drugie możliwe wejście obok Trigger) |
-| ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania - dwa wyjścia: "spełniony"/"inaczej" |
-| 🔌 Urządzenie | akcja | system (Tuya/Satel wyjście), urządzenie docelowe, wartość (włącz/wyłącz, jasność dla ściemniaczy) |
+| ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania (payload wiadomości) - dwa wyjścia: "spełniony"/"inaczej" |
+| 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`) + operator równa się/różna od - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
+| 🔌 Urządzenie | akcja | system (Tuya / Satel wyjście / Satel wirtualne wejście), urządzenie docelowe, wartość (włącz/wyłącz/zmiana stanu, jasność dla ściemniaczy Tuya) |
 | 🎬 Scena | akcja | uruchamia istniejącą scenę po nazwie |
-| ⏱ Opóźnienie | akcja | pauza N sekund przed kontynuacją grafu |
+| ⏱ Opóźnienie | akcja | pauza przed kontynuacją grafu - liczba + jednostka (`s`/`m`/`g` = sekundy/minuty/godziny, np. `30s`, `5m`, `2g`; brak litery = sekundy) |
 | 🔔 Powiadomienie | akcja | poziom (info/ostrzeżenie/krytyczne) i treść (`{value}`/`{key}` podstawiane z wiadomości) |
 | 📤 MQTT out | akcja | publikuje na temat MQTT (treść puste = wartość z wyzwalacza) |
 | 🌐 HTTP | akcja | wywołanie dowolnego URL-a (GET/POST/PUT/PATCH/DELETE) |
 | 📅 Harmonogram | rozgałęzienie | okno czasowe (`start`/`end`, w tym `sunset`/`sunrise+-N` jak w harmonogramie reguły ruchu) - jedno wyjście "w oknie", poza oknem wiadomość jest wygaszana |
 | 📈 Eskalacja | rozgałęzienie | próg (liczba naruszeń) i okno czasowe (sekundy) - dwa wyjścia: "normalnie" (poniżej progu) / "eskalacja" (próg przekroczony, licznik się zeruje) |
+
+Węzeł **Urządzenie** z systemem "Satel (wirtualne wejście)" wywołuje
+DOKŁADNIE ten sam kod co akcja `virtual_input` reguły ruchu
+(`RulesEngine._set_target_state` obsługuje `target_system:
+satel_virtual_input` tak samo jak `satel_output`/Tuya) - wybiera się z
+listy nazwanych wejść (zakładka 🧩 Wtyczki -> Satel), bez osobnego typu
+węzła. Jasność % nie ma tu zastosowania (znika z formularza, tak jak dla
+wyjścia Satela).
+
+**Wartość "Zmiana stanu" (toggle)** odwraca AKTUALNY stan celu zamiast
+wymuszać konkretny - dla Tuya i wyjścia Satela czyta na żywo bieżący stan
+i wysyła przeciwny. **WAŻNE dla "Satel (wirtualne wejście)" w trybie
+`http`** (`satel.virtual_inputs.mode: http`, wejścia IP ETHM-1 Plus):
+protokół HTTP zna TYLKO wyzwolenie (impuls naruszenia) wejścia - nie ma
+odpowiednika "wyłącz" na poziomie protokołu. Dlatego w tym trybie:
+"Włącz" i "Zmiana stanu" wysyłają dokładnie ten sam impuls (to jedyna
+dostępna akcja), a **"Wyłącz" jest bezpiecznym no-opem** (nic nie
+wysyła, tylko loguje info). Wcześniej "Wyłącz" błędnie wysyłało TEN SAM
+impuls co "Włącz", co przy typowym flow włącz->opóźnienie->wyłącz
+(albo imporcie reguły "włącz na czas") powodowało samopodtrzymujące się,
+powtarzające się przełączanie ("flapowanie") oświetlenia - naprawione.
+W trybie `library` (wirtualne wejście zmapowane na prawdziwe wyjście)
+"Wyłącz"/"Włącz"/"Zmiana stanu" działają jak zwykłe wyjście Satela -
+bez tego ograniczenia.
 
 Każdy flow musi mieć co najmniej jeden węzeł wejściowy (Trigger albo
 MQTT in) - bez tego graf nigdy się nie uruchomi, co jest sprawdzane przy
@@ -2441,6 +2466,20 @@ samego triggera. Eskalacja ma dwa wyjścia jak węzeł Warunek - "normalnie"
 dla każdego wywołania poniżej progu, "eskalacja" (i reset licznika)
 dokładnie w momencie przekroczenia progu w oknie.
 
+### Warunek stanu - porównanie DOWOLNEGO statusu, nie payloadu wiadomości
+
+Zwykły węzeł **Warunek** porównuje payload WIADOMOŚCI (wartość, która akurat
+płynie przez graf). Węzeł **🔍 Warunek stanu** to inny mechanizm - dokładny
+odpowiednik warunku `state` reguły ruchu (patrz sekcja "Dodatkowy warunek
+reguły" wyżej): porównuje klucz statusu z `bridge/history_store.py:
+HistoryStore.get_status_value` (ten sam klucz co kolumna "key" pod
+`/api/status`, np. `satel_input:3`, `automation:<nazwa>`) NIEZALEŻNIE od
+tego, co akurat niesie wiadomość w grafie. Pole statusu wybiera się z listy
+(to, co panel akurat odczytał), a pole wartości jest zależną listą wyboru
+(`naruszone`/`OK`, `włączone`/`wyłączone`...) dokładnie jak w edytorze
+warunków reguł ruchu - ten sam zestaw opcji (`STATE_VALUE_OPTIONS`)
+skopiowany do `flows.html`.
+
 ### Import z reguł ruchu
 
 Przycisk **"⬇ Importuj z reguł ruchu"** (`POST /api/flows/import-from-
@@ -2449,17 +2488,35 @@ KAŻDĄ regułę z `reguły_ruchu` na osobny flow i dokleja je do listy
 **NIEZAPISANEJ** (dopiero "💾 Zapisz wszystkie flows" utrwala je) - myślą
 przewodnią jest przegląd przed zapisem, nie ślepa jednorazowa migracja.
 Obsługiwane: pojedyncze źródło (Satel/Tuya/HomeWhiz), pojedyncze
-urządzenie docelowe (w tym ściemniacz), scena, tryb "do ustania
-naruszenia" (tworzy DWA triggery - violated->on i restored->off),
-`action: turn_off`, `time_window` (-> węzeł Harmonogram), `escalation`
-(-> węzeł Eskalacja z gałęzią do sceny eskalowanej). NIEOBSŁUGIWANE (Flow
-jeszcze tego nie ma): wiele źródeł/akcji (`sources`/`actions`), aktywacja
-wirtualnego wejścia Satela (`virtual_input`) - takie reguły są w całości
-POMIJANE z ostrzeżeniem zamiast tworzyć okrojony/mylący flow. Dodatkowy
-warunek (`condition`) i wyzwalanie łańcuchowe (`then_trigger_rule`) NIE są
-przenoszone, ale reguła i tak się konwertuje - z ostrzeżeniem, że trzeba
-je dodać ręcznie. Wszystkie ostrzeżenia trafiają razem do komunikatu w
-panelu po imporcie.
+urządzenie docelowe (w tym ściemniacz i wirtualne wejście Satela), scena,
+tryb "do ustania naruszenia" (tworzy DWA triggery - violated->on i
+restored->off), `action: turn_off`, `time_window` (-> węzeł Harmonogram),
+`escalation` (-> węzeł Eskalacja z gałęzią do sceny eskalowanej). Reguła
+"włącz na czas" (`duration_seconds` ustawione, bez `action: turn_off` i
+bez trybu "do ustania naruszenia") importuje się jako **włącz -> opóźnienie
+(`duration_seconds`) -> wyłącz** - dokładnie odwzorowując, co faktycznie
+robi `RulesEngine._run_on_for_duration` w regułach ruchu. Bez tego
+zaimportowany flow zostawiałby urządzenie włączone na zawsze.
+NIEOBSŁUGIWANE (Flow jeszcze tego nie ma): wiele źródeł/akcji
+(`sources`/`actions`) - takie reguły są w całości POMIJANE z ostrzeżeniem
+zamiast tworzyć okrojony/mylący flow. Dodatkowy warunek (`condition`) i
+wyzwalanie łańcuchowe (`then_trigger_rule`) NIE są przenoszone (konwerter
+nie tworzy jeszcze węzła Warunek stanu automatycznie z `condition`), ale
+reguła i tak się konwertuje - z ostrzeżeniem, że trzeba je dodać ręcznie.
+Wszystkie ostrzeżenia trafiają razem do komunikatu w panelu po imporcie.
+
+Po kliknięciu **"💾 Zapisz wszystkie flows"** (gdy w kolejce są flows
+pochodzące z importu) panel automatycznie woła `POST /api/flows/mark-
+motion-rules-imported`, który w oryginalnych `reguły_ruchu` ustawia
+`enabled: false` oraz `imported_to_flows: true`. Na stronie
+`/automations` taka reguła robi się szara (jak każda wyłączona) i dostaje
+odznakę **"ZAIMPORTOWANO DO FLOWS"** przy nazwie - żeby było jasno widać,
+że logika działa już w Flow, a nie w starym silniku reguł ruchu. Reguła
+oznaczona jako zaimportowana jest pomijana przy kolejnych kliknięciach
+"Importuj z reguł ruchu" (żeby nie tworzyć duplikatów flow) - z
+ostrzeżeniem "już zaimportowano wcześniej do Flow". Admin może ją ręcznie
+z powrotem włączyć na `/automations` (checkbox "Włączona") - odznaka
+zostaje jako informacja o pochodzeniu, ale nie blokuje ponownego użycia.
 
 ## Zmywarki/AGD HomeWhiz (BEQ/Arcelik)
 

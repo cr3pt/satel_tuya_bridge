@@ -33,6 +33,11 @@ class FakeTuya:
             raise ConnectionError(f"symulowana awaria: {device}")
         self.calls.append(("off", device))
 
+    async def toggle(self, device):
+        if device in self.fail_devices:
+            raise ConnectionError(f"symulowana awaria: {device}")
+        self.calls.append(("toggle", device))
+
     async def turn_on_for_duration(self, device, duration, dimmer_level_percent=None):
         self.calls.append(("on_for", device, duration, dimmer_level_percent))
 
@@ -52,12 +57,18 @@ class FakeSatel:
         self.virtual_inputs: dict = {}
         self.armed_partition_numbers: set[int] = set()
         self.triggered_partition_numbers: set[int] = set()
+        self.violated_outputs: list[int] = []
         self._zone_cb = None
         self._output_cb = None
         self._alarm_status_cb = None
 
     async def set_output(self, number, state):
         self.calls.append(("output", number, state))
+        if state:
+            if number not in self.violated_outputs:
+                self.violated_outputs.append(number)
+        elif number in self.violated_outputs:
+            self.violated_outputs.remove(number)
 
     async def arm(self, mode=0, partitions=None):
         self.calls.append(("arm", mode, partitions))

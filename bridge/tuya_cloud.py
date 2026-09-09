@@ -113,6 +113,16 @@ class TuyaCloudController:
         items = result.get("result", []) if isinstance(result, dict) else []
         return {item["code"]: item.get("value") for item in items if item.get("code")}
 
+    async def toggle(self, device_name: str) -> None:
+        cfg = self.devices_cfg[device_name]
+        client = self._client()
+        codes = await self._switch_codes(device_name)
+        status = await self.get_status(device_name)
+        new_value = not bool(status.get(codes[0]))
+        commands = {"commands": [{"code": code, "value": new_value} for code in codes]}
+        await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
+        logger.info("Zmieniono stan '%s' na %s przez Tuya Cloud (%s)", device_name, new_value, ", ".join(codes))
+
     async def get_all_statuses(self) -> dict[str, dict | None]:
         names = list(self.devices_cfg)
         results_list = await asyncio.gather(

@@ -832,12 +832,38 @@ async def api_flows_import_from_motion_rules():
     rules = config_raw.get("reguły_ruchu", [])
     flows = []
     warnings: list[str] = []
+    imported_rule_indices = []
     for i, rule in enumerate(rules):
         flow, rule_warnings = motion_rule_to_flow(rule, i)
         warnings.extend(rule_warnings)
         if flow is not None:
             flows.append(flow)
-    return jsonify({"flows": flows, "warnings": warnings})
+            imported_rule_indices.append(i)
+    return jsonify({"flows": flows, "warnings": warnings, "imported_rule_indices": imported_rule_indices})
+
+
+@app.route("/api/flows/mark-motion-rules-imported", methods=["POST"])
+@require_auth()
+async def api_flows_mark_motion_rules_imported():
+    payload = await request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("rule_indices"), list):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+    current = config_store.get("automations")
+    rules = current.get("reguły_ruchu", [])
+    marked = 0
+    for idx in payload["rule_indices"]:
+        if isinstance(idx, int) and 0 <= idx < len(rules):
+            rules[idx]["enabled"] = False
+            rules[idx]["imported_to_flows"] = True
+            marked += 1
+    config_store.set("automations", current)
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+    _enqueue_bridge_reload()
+
+    return jsonify({"marked": marked, "message": _RELOAD_MESSAGE})
 
 
 @app.route("/api/flows/<flow_id>/run", methods=["POST"])

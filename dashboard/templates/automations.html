@@ -54,6 +54,10 @@
   .enabled-toggle input { width: 15px; height: 15px; cursor: pointer; }
   .sub-card.disabled { opacity: 0.55; }
   .sub-card.disabled .sub-card-header { opacity: 1; }
+  .imported-badge {
+    background: #4a3b1f; color: #e0b25c; border: 1px solid #8a6a2a; border-radius: 4px;
+    padding: 2px 7px; font-size: 11px; font-weight: 600; white-space: nowrap; flex-shrink: 0;
+  }
   .checkbox-row input { width: 17px; height: 17px; }
   .checkbox-grid { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 8px 0 14px; }
   .checkbox-grid label { display: flex; align-items: center; gap: 6px; font-size: 13.5px; }
@@ -907,12 +911,15 @@ function addMotionRuleCard(initial, startCollapsed) {
   const sourceSystem = primarySource.source || 'satel_zone';
   const triggerOn = initial.trigger_on === 'restored' ? 'restored' : 'violated';
   const isEnabled = initial.enabled !== false;
+  const isImported = !!initial.imported_to_flows;
   const container = document.getElementById('motionRulesContainer');
   const card = document.createElement('div');
   card.className = 'sub-card' + (isEnabled ? '' : ' disabled');
+  card.dataset.importedToFlows = isImported ? '1' : '';
   card.innerHTML = `
     <div class="sub-card-header">
       <input type="text" class="mr-name" placeholder="Nazwa reguły (opcjonalnie - potrzebna do wyzwalania łańcuchowego)" value="${escapeHtml(initial.name || '')}" style="flex:1;">
+      ${isImported ? '<span class="imported-badge">ZAIMPORTOWANO DO FLOWS</span>' : ''}
       <label class="enabled-toggle"><input type="checkbox" class="mr-enabled" ${isEnabled ? 'checked' : ''}> Włączona</label>
       <button type="button" class="secondary mr-toggle-collapse">▼ Zwiń</button>
       <button type="button" class="row-remove">✕ usuń regułę</button>
@@ -1177,6 +1184,7 @@ function collectMotionRules() {
     const kind = card.querySelector('.mr-action-kind').value;
     const source = card.querySelector('.mr-source-system').value;
     const rule = { enabled: card.querySelector('.mr-enabled').checked };
+    if (card.dataset.importedToFlows === '1') rule.imported_to_flows = true;
 
     const primarySource = { source };
     if (source === 'satel_zone') {

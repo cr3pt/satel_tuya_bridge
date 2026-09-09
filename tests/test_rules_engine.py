@@ -355,18 +355,20 @@ class TestVirtualInputHttpMode:
         _repatch_fakes(engine, fake_tuya=fake_tuya, fake_satel=fake_satel, fake_virtual_inputs=fake_virtual_inputs)
         engine._vi_mode = "http"
 
-    async def test_no_duration_fires_trigger_twice(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
+    async def test_no_duration_restore_does_not_repulse(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
+        # Regresja: WYŁĄCZ (restored) w trybie http NIE MOŻE wysłać tego samego impulsu co
+        # WŁĄCZ - protokół ETHM-1 zna tylko wyzwolenie, nie ma odpowiednika "wyłącz". Wcześniej
+        # oba wywołania wysyłały identyczny impuls, co powodowało samopodtrzymujące się
+        # przełączanie (flapowanie) w regułach/flow typu włącz->opóźnienie->wyłącz.
         await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
             "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
         })
         await engine.handle_motion("satel_zone", 12, trigger="violated")
         await engine.handle_motion("satel_zone", 12, trigger="restored")
-        assert fake_virtual_inputs.calls == [
-            ("trigger", "motion_hall_camera"), ("trigger", "motion_hall_camera"),
-        ]
+        assert fake_virtual_inputs.calls == [("trigger", "motion_hall_camera")]
         assert fake_satel.calls == []
 
-    async def test_explicit_duration_fires_once_now_and_once_after_timeout(
+    async def test_explicit_duration_fires_once_off_is_noop(
         self, engine, fake_tuya, fake_satel, fake_virtual_inputs,
     ):
         await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
@@ -377,9 +379,9 @@ class TestVirtualInputHttpMode:
         await asyncio.sleep(0)
         assert fake_virtual_inputs.calls == [("trigger", "motion_hall_camera")]
         await asyncio.sleep(0.05)
-        assert fake_virtual_inputs.calls == [
-            ("trigger", "motion_hall_camera"), ("trigger", "motion_hall_camera"),
-        ]
+        # Po upływie duration silnik wywołuje "wyłącz" - w trybie http to no-op, więc
+        # licznik wywołań NIE rośnie (bez tego testu regresja wróciłaby niezauważona).
+        assert fake_virtual_inputs.calls == [("trigger", "motion_hall_camera")]
 
 
 class TestSatelOutputTarget:
@@ -407,6 +409,35 @@ class TestSatelOutputTarget:
         fake_satel.monitored_outputs = {}
         await engine.handle_motion("satel_zone", 20)
         assert fake_satel.calls == []
+
+
+class TestSetTargetStateToggle:
+    """on=None ('zmiana stanu') odwraca AKTUALNY stan celu zamiast go wymuszać."""
+
+    async def test_satel_output_toggle_reads_current_state_and_inverts(self, engine, fake_satel):
+        fake_satel.monitored_outputs = {"Brama": 5}
+        await engine._set_target_state("satel_output", "Brama", None)
+        assert fake_satel.calls == [("output", 5, True)]
+        await engine._set_target_state("satel_output", "Brama", None)
+        assert fake_satel.calls == [("output", 5, True), ("output", 5, False)]
+
+    async def test_tuya_toggle_delegates_to_controller(self, engine, fake_tuya):
+        await engine._set_target_state("tuya", "gniazdko", None)
+        assert fake_tuya.calls == [("toggle", "gniazdko")]
+
+    async def test_satel_virtual_input_library_mode_toggle(self, engine, fake_satel):
+        fake_satel.virtual_inputs = {"kamera": 9}
+        engine._vi_mode = "library"
+        await engine._set_target_state("satel_virtual_input", "kamera", None)
+        assert fake_satel.calls == [("output", 9, True)]
+
+    async def test_satel_virtual_input_http_mode_toggle_sends_pulse(
+        self, engine, fake_virtual_inputs,
+    ):
+        engine._vi_mode = "http"
+        engine.satel_virtual_inputs = fake_virtual_inputs
+        await engine._set_target_state("satel_virtual_input", "kamera", None)
+        assert fake_virtual_inputs.calls == [("trigger", "kamera")]
 
 
 class TestAutomationRunningStatus:

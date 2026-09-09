@@ -30,6 +30,9 @@ class TuyaController:
     async def turn_off(self, device_name: str) -> None:
         await self._resolve(device_name).turn_off(device_name)
 
+    async def toggle(self, device_name: str) -> None:
+        await self._resolve(device_name).toggle(device_name)
+
     async def get_status(self, device_name: str) -> dict:
         return await self._resolve(device_name).get_status(device_name)
 

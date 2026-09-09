@@ -61,8 +61,11 @@ class FlowEngine:
                 wejście grafu - odpalane przez handle_motion/handle_device_state,
                 dokładnie te same zdarzenia co reguły ruchu.
       condition {op: > < >= <= == !=, value}  - [dopasowano, else]
-      device    {target_device, target_system: tuya|satel_output,
-                 value: "on"|"off", dimmer_level_percent?}
+      device    {target_device, target_system: tuya|satel_output|satel_virtual_input,
+                 value: "on"|"off"|"toggle", dimmer_level_percent?}
+                "toggle" (Zmiana stanu) odwraca AKTUALNY stan celu zamiast wymuszać
+                konkretny - dla satel_virtual_input w trybie http jest RÓWNOWAŻNE
+                "on" (protokół zna tylko impuls, nie ma odpowiednika "off")
       scene     {scene_name}  - uruchamia istniejącą, nazwaną scenę
       delay     {seconds}
       notify    {level: info|warning|critical, message}  - {value}/{key} w
@@ -78,17 +81,23 @@ class FlowEngine:
                 progu przepuszcza wyjściem "eskalacja" (i zeruje licznik)
                 zamiast "normalnie" - analogicznie do `escalation` reguły
                 ruchu (RulesEngine._fire_motion_rule)
+      state     {key, op: equals|not_equals, value}  - [spełniony, inaczej]:
+                porównuje DOWOLNY klucz statusu widoczny na panelu głównym
+                (np. "satel_input:3", "tuya:gniazdko_salon" - ten sam klucz
+                co warunek "state" reguły ruchu) z zadaną wartością, NIE
+                payload wiadomości (w odróżnieniu od węzła "condition")
     """
 
     def __init__(
         self,
         flows_cfg: list[dict],
         *,
-        set_target_state: Callable[[str, str, bool, int | None], Awaitable[None]],
+        set_target_state: Callable[[str, str, bool | None, int | None], Awaitable[None]],
         run_scene: Callable[[str], Awaitable[None]],
         notify_cfg: dict | None,
         mqtt_cfg: dict | None = None,
         location_cfg: dict | None = None,
+        get_status_value: Callable[[str], str | None] | None = None,
     ):
         self.flows = flows_cfg or []
         self._set_target_state = set_target_state
@@ -99,6 +108,7 @@ class FlowEngine:
         self._mqtt_subs: dict[str, list[tuple[dict, dict]]] = {}
         self._mqtt_topics: set[str] = set()
         self._trigger_state: dict[str, bool] = {}
+        self._get_status_value = get_status_value or (lambda key: None)
         self._escalation_history: dict[str, list[float]] = {}
         self.location_cfg = location_cfg
         self._loop = asyncio.get_event_loop()
@@ -273,6 +283,11 @@ class FlowEngine:
                 return [msg]
             return [None]
 
+        if ntype == "state":
+            actual = self._get_status_value(c.get("key"))
+            passed = actual != c.get("value") if c.get("op") == "not_equals" else actual == c.get("value")
+            return [msg if passed else None, None if passed else msg]
+
         if ntype == "escalation":
             key = f"{flow.get('id')}:{node.get('id')}"
             history = self._escalation_history.setdefault(key, [])
@@ -289,7 +304,8 @@ class FlowEngine:
         if ntype == "device":
             device = c.get("target_device")
             target_system = c.get("target_system", "tuya")
-            on = str(c.get("value", "on")).lower() not in ("off", "false", "0")
+            value = str(c.get("value", "on")).lower()
+            on = None if value == "toggle" else value not in ("off", "false", "0")
             dimmer = c.get("dimmer_level_percent")
             await self._set_target_state(target_system, device, on, dimmer)
             return [msg]

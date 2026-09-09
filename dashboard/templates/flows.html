@@ -15,7 +15,7 @@
   body {
     background: var(--bg); color: var(--text); margin: 0;
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-    padding: 20px; max-width: 1400px; margin-left: auto; margin-right: auto;
+    padding: 20px; width: 95%; margin-left: auto; margin-right: auto;
   }
   h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
   .hint { color: var(--muted); font-size: 13px; margin-bottom: 18px; line-height: 1.5; }
@@ -100,12 +100,15 @@
   <strong>Harmonogram</strong> przepuszcza dalej tylko w oknie czasowym
   (jak "harmonogram" reguły ruchu), <strong>Eskalacja</strong> liczy
   naruszenia w oknie czasowym i po przekroczeniu progu kieruje na osobne
-  wyjście "eskalacja". Przycisk "⬇ Importuj z reguł ruchu" konwertuje
-  istniejące reguły na flows do przeglądu (część mechanizmów, np.
-  warunki dodatkowe czy wirtualne wejścia Satela, trzeba dodać ręcznie
-  po imporcie). <strong>Status: beta</strong> - działa równolegle do
-  reguł ruchu (nie zastępuje ich jeszcze), docelowo ma stać się głównym
-  sposobem budowania automatyzacji krok-po-kroku.
+  wyjście "eskalacja". <strong>Warunek stanu</strong> porównuje dowolny
+  status widoczny na panelu głównym (nie tylko wartość z wyzwalacza, jak
+  zwykły Warunek), a węzeł <strong>Urządzenie</strong> może zamiast
+  urządzenia Tuya/wyjścia Satela aktywować wirtualne wejście IP Satela.
+  Przycisk "⬇ Importuj z reguł ruchu" konwertuje istniejące reguły na
+  flows do przeglądu (dodatkowy warunek AND/OR/NOT i wyzwalanie
+  łańcuchowe trzeba dodać ręcznie po imporcie). <strong>Status: beta</strong> -
+  działa równolegle do reguł ruchu (nie zastępuje ich jeszcze), docelowo
+  ma stać się głównym sposobem budowania automatyzacji krok-po-kroku.
 </div>
 
 <div id="msg" class="msg-box"></div>
@@ -130,6 +133,7 @@
       <div style="font-size:12px;color:var(--muted);margin-bottom:2px;">Dodaj węzeł</div>
       <button type="button" class="secondary" data-node-type="trigger">⚡ Trigger</button>
       <button type="button" class="secondary" data-node-type="condition">❓ Warunek</button>
+      <button type="button" class="secondary" data-node-type="state">🔍 Warunek stanu</button>
       <button type="button" class="secondary" data-node-type="device">🔌 Urządzenie</button>
       <button type="button" class="secondary" data-node-type="scene">🎬 Scena</button>
       <button type="button" class="secondary" data-node-type="delay">⏱ Opóźnienie</button>
@@ -178,6 +182,22 @@ async function refreshAuthNav() {
   }
 }
 
+function formatSecondsAsDuration(seconds) {
+  const s = Number(seconds) || 0;
+  if (s !== 0 && s % 3600 === 0) return `${s / 3600}g`;
+  if (s !== 0 && s % 60 === 0) return `${s / 60}m`;
+  return `${s}s`;
+}
+function parseDurationToSeconds(text) {
+  const m = String(text || '').trim().match(/^([0-9]*\.?[0-9]+)\s*([smg]?)$/i);
+  if (!m) return 0;
+  const value = parseFloat(m[1]);
+  const unit = (m[2] || 's').toLowerCase();
+  if (unit === 'm') return value * 60;
+  if (unit === 'g') return value * 3600;
+  return value;
+}
+
 function showMsg(ok, text) {
   const el = document.getElementById('msg');
   el.className = 'msg-box ' + (ok ? 'ok' : 'error');
@@ -197,6 +217,7 @@ const NODE_DEFS = {
   http:     { label: 'HTTP', icon: '🌐', outputs: [''] },
   schedule:   { label: 'Harmonogram', icon: '📅', outputs: ['w oknie'] },
   escalation: { label: 'Eskalacja', icon: '📈', outputs: ['normalnie', 'eskalacja'] },
+  state:      { label: 'Warunek stanu', icon: '🔍', outputs: ['spełniony', 'inaczej'] },
 };
 
 let context = {};
@@ -205,6 +226,7 @@ let activeFlowIndex = -1;
 let selectedNodeId = null;
 let connecting = null;
 let dragState = null;
+let pendingImportedRuleIndices = [];
 
 function defaultConfigFor(type) {
   if (type === 'trigger') return { source: 'satel_zone', zone_number: '', op: 'violated' };
@@ -217,6 +239,7 @@ function defaultConfigFor(type) {
   if (type === 'http') return { method: 'GET', url: '' };
   if (type === 'schedule') return { start: '', end: '' };
   if (type === 'escalation') return { threshold_count: 3, window_seconds: 120 };
+  if (type === 'state') return { key: '', op: 'equals', value: '' };
   return {};
 }
 
@@ -226,14 +249,19 @@ function nodeLabel(node) {
     return c.source === 'satel_zone' ? `Strefa #${c.zone_number || '?'}` : (c.source_device || '(brak urządzenia)');
   }
   if (node.type === 'condition') return `${c.op || '?'} ${c.value ?? ''}`;
-  if (node.type === 'device') return c.target_device || '(brak urządzenia)';
+  if (node.type === 'device') {
+    const device = c.target_device || '(brak urządzenia)';
+    const valueLabel = c.value === 'off' ? 'wyłącz' : c.value === 'toggle' ? 'zmiana stanu' : 'włącz';
+    return `${device} (${valueLabel})`;
+  }
   if (node.type === 'scene') return c.scene_name || '(brak sceny)';
-  if (node.type === 'delay') return `${c.seconds ?? 0}s`;
+  if (node.type === 'delay') return formatSecondsAsDuration(c.seconds ?? 0);
   if (node.type === 'notify') return c.message ? c.message.slice(0, 26) : '(brak treści)';
   if (node.type === 'mqttIn' || node.type === 'mqttOut') return c.topic || '(brak tematu)';
   if (node.type === 'http') return c.url ? c.url.slice(0, 26) : '(brak URL)';
   if (node.type === 'schedule') return `${c.start || '?'} - ${c.end || '?'}`;
   if (node.type === 'escalation') return `${c.threshold_count ?? '?'}x / ${c.window_seconds ?? '?'}s`;
+  if (node.type === 'state') return `${c.key || '?'} ${c.op === 'not_equals' ? '≠' : '='} ${c.value ?? ''}`;
   return '';
 }
 
@@ -438,10 +466,49 @@ function sourceDeviceOptions(selected, source) {
   ).join('');
 }
 function targetDeviceOptions(selected, system) {
-  const list = system === 'satel_output' ? (context.satel_outputs || []) : (context.tuya_devices || []);
+  const list = system === 'satel_output' ? (context.satel_outputs || [])
+    : system === 'satel_virtual_input' ? (context.virtual_inputs || [])
+    : (context.tuya_devices || []);
   return '<option value="">(wybierz)</option>' + list.map(n =>
     `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`
   ).join('');
+}
+const STATE_VALUE_OPTIONS = {
+  satel_input: ['naruszone', 'OK'],
+  satel_output: ['włączone', 'wyłączone'],
+  satel_partition: ['uzbrojona', 'rozbrojona'],
+  tuya: ['włączone', 'wyłączone', 'niedostępne'],
+  system_health: ['połączono'],
+  automation: ['uruchomiona', 'bezczynna'],
+};
+function statusKeyCategory(key) {
+  const found = (context.status_keys || []).find(s => s.key === key);
+  return found ? found.category : null;
+}
+function stateKeyOptionsHtml(selected) {
+  const known = context.status_keys || [];
+  const opts = known.map(s =>
+    `<option value="${escapeHtml(s.key)}" ${s.key === selected ? 'selected' : ''}>${escapeHtml(s.label)} (${escapeHtml(s.category)})</option>`
+  ).join('');
+  const hasSelected = selected && known.some(s => s.key === selected);
+  const extra = (selected && !hasSelected)
+    ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (obecnie brak danych)</option>` : '';
+  const placeholder = `<option value="">${known.length ? '(wybierz status)' : '(brak danych - odśwież po chwili)'}</option>`;
+  return placeholder + opts + extra;
+}
+function stateValueFieldHtml(category, selectedValue) {
+  const options = STATE_VALUE_OPTIONS[category];
+  if (!options) {
+    return `<input type="text" class="state-value" placeholder="wartość" value="${escapeHtml(selectedValue || '')}">`;
+  }
+  const hasSelected = selectedValue && options.includes(selectedValue);
+  const extra = (selectedValue && !hasSelected)
+    ? `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>` : '';
+  return `<select class="state-value">
+    <option value="">(wybierz wartość)</option>
+    ${options.map(v => `<option value="${escapeHtml(v)}" ${v === selectedValue ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
+    ${extra}
+  </select>`;
 }
 function sceneOptions(selected) {
   const names = context.scene_names || [];
@@ -546,23 +613,34 @@ function renderNodeFields(node) {
       ${['>', '<', '>=', '<=', '==', '!='].map(op => `<option value="${op}" ${c.op === op ? 'selected' : ''}>${op}</option>`).join('')}
     </select>`);
     html += field(`<label>Wartość porównania</label><input type="text" data-field="value" value="${escapeHtml(c.value ?? '')}">`);
+  } else if (node.type === 'state') {
+    html += field(`<label>Status</label><select class="state-key">${stateKeyOptionsHtml(c.key)}</select>`);
+    html += field(`<label>Operator</label><select data-field="op">
+      <option value="equals" ${c.op !== 'not_equals' ? 'selected' : ''}>równa się</option>
+      <option value="not_equals" ${c.op === 'not_equals' ? 'selected' : ''}>różna od</option>
+    </select>`);
+    html += field(`<label>Wartość</label><span class="state-value-wrap">${stateValueFieldHtml(statusKeyCategory(c.key), c.value)}</span>`);
   } else if (node.type === 'device') {
+    const targetSystem = c.target_system || 'tuya';
     html += field(`<label>System</label><select data-field="target_system">
-      <option value="tuya" ${c.target_system !== 'satel_output' ? 'selected' : ''}>Tuya</option>
-      <option value="satel_output" ${c.target_system === 'satel_output' ? 'selected' : ''}>Satel (wyjście)</option>
+      <option value="tuya" ${targetSystem === 'tuya' ? 'selected' : ''}>Tuya</option>
+      <option value="satel_output" ${targetSystem === 'satel_output' ? 'selected' : ''}>Satel (wyjście)</option>
+      <option value="satel_virtual_input" ${targetSystem === 'satel_virtual_input' ? 'selected' : ''}>Satel (wirtualne wejście)</option>
     </select>`);
     html += field(`<label>Urządzenie docelowe</label><select data-field="target_device">${targetDeviceOptions(c.target_device, c.target_system)}</select>`);
+    const deviceValue = c.value === 'off' || c.value === 'toggle' ? c.value : 'on';
     html += field(`<label>Wartość</label><select data-field="value">
-      <option value="on" ${c.value !== 'off' ? 'selected' : ''}>Włącz</option>
-      <option value="off" ${c.value === 'off' ? 'selected' : ''}>Wyłącz</option>
+      <option value="on" ${deviceValue === 'on' ? 'selected' : ''}>Włącz</option>
+      <option value="off" ${deviceValue === 'off' ? 'selected' : ''}>Wyłącz</option>
+      <option value="toggle" ${deviceValue === 'toggle' ? 'selected' : ''}>Zmiana stanu</option>
     </select>`);
-    if (c.value !== 'off' && c.target_system !== 'satel_output' && (context.dimmer_devices || []).includes(c.target_device)) {
+    if (deviceValue === 'on' && targetSystem === 'tuya' && (context.dimmer_devices || []).includes(c.target_device)) {
       html += field(`<label>Jasność % (ściemniacz)</label><input type="number" data-field="dimmer_level_percent" value="${c.dimmer_level_percent ?? ''}">`);
     }
   } else if (node.type === 'scene') {
     html += field(`<label>Scena</label><select data-field="scene_name">${sceneOptions(c.scene_name)}</select>`);
   } else if (node.type === 'delay') {
-    html += field(`<label>Sekundy</label><input type="number" step="0.1" min="0" data-field="seconds" value="${c.seconds ?? 0}">`);
+    html += field(`<label>Czas (liczba + jednostka: s/m/g)</label><input type="text" class="delay-duration" placeholder="np. 30s, 5m, 2g" value="${escapeHtml(formatSecondsAsDuration(c.seconds ?? 0))}">`);
   } else if (node.type === 'notify') {
     html += field(`<label>Poziom</label><select data-field="level">
       <option value="info" ${c.level === 'info' ? 'selected' : ''}>Informacja</option>
@@ -611,6 +689,30 @@ function renderNodeFields(node) {
         renderCanvas();
         renderSidePanel();
       });
+    });
+  }
+  if (node.type === 'state') {
+    el.querySelector('.state-key').addEventListener('change', (e) => {
+      c.key = e.target.value;
+      c.value = '';
+      renderCanvas();
+      renderSidePanel();
+    });
+    const valueEl = el.querySelector('.state-value');
+    if (valueEl) {
+      valueEl.addEventListener('change', (e) => {
+        c.value = e.target.value;
+        renderCanvas();
+        renderSidePanel();
+      });
+    }
+  }
+  if (node.type === 'delay') {
+    const input = el.querySelector('.delay-duration');
+    input.addEventListener('change', () => {
+      c.seconds = parseDurationToSeconds(input.value);
+      renderCanvas();
+      renderSidePanel();
     });
   }
 }
@@ -667,7 +769,18 @@ document.getElementById('saveFlowsBtn').addEventListener('click', async () => {
       showMsg(false, (data.error || 'Błąd zapisu') + details);
       return;
     }
-    showMsg(true, data.message);
+    let msg = data.message;
+    if (pendingImportedRuleIndices.length) {
+      const markResp = await fetch('/api/flows/mark-motion-rules-imported', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rule_indices: pendingImportedRuleIndices }),
+      });
+      if (markResp.ok) {
+        msg += ` Oznaczono ${pendingImportedRuleIndices.length} zaimportowaną automatyzację jako nieaktywną (ZAIMPORTOWANO DO FLOWS).`;
+      }
+      pendingImportedRuleIndices = [];
+    }
+    showMsg(true, msg);
     await loadFlows();
   } catch (e) {
     showMsg(false, 'Błąd komunikacji z serwerem: ' + e);
@@ -688,7 +801,8 @@ document.getElementById('importFromMotionRulesBtn').addEventListener('click', as
     }
     const startIndex = flows.length;
     flows.push(...imported);
-    let msg = `Zaimportowano ${imported.length} flow z reguł ruchu (NIEZAPISANE) - przejrzyj i kliknij "Zapisz wszystkie flows".`;
+    pendingImportedRuleIndices.push(...(data.imported_rule_indices || []));
+    let msg = `Zaimportowano ${imported.length} flow z reguł ruchu (NIEZAPISANE) - przejrzyj i kliknij "Zapisz wszystkie flows". Po zapisie oryginalne automatyzacje zostaną oznaczone jako zaimportowane i wyłączone.`;
     if (warnings.length) msg += ' Uwagi: ' + warnings.join('; ');
     showMsg(true, msg);
     selectFlow(startIndex);

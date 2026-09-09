@@ -78,6 +78,10 @@ class FakeMultiDPDevice:
         self.dps.update(data)
         return {"dps": dict(self.dps)}
 
+    def status(self):
+        self.calls.append(("status",))
+        return {"dps": dict(self.dps)}
+
 
 @pytest.fixture
 def controller():
@@ -715,6 +719,27 @@ class TestSwitchKeyControl:
         controller._devices["swiatlo_korytarz"] = fake
         await controller.turn_on("swiatlo_korytarz", dimmer_level_percent=50)
         assert fake.calls[0] == ("set_status", "1", True)
+
+    async def test_toggle_reads_current_state_and_inverts_off_to_on(self):
+        schema = {"5": {"code": "switch_led", "type": "Boolean"}}
+        ctrl, fake = self._controller_with_schema(schema)
+        fake.dps["5"] = False
+        await ctrl.toggle("urzadzenie")
+        assert ("set_status", "5", True) in fake.calls
+
+    async def test_toggle_reads_current_state_and_inverts_on_to_off(self):
+        schema = {"5": {"code": "switch_led", "type": "Boolean"}}
+        ctrl, fake = self._controller_with_schema(schema)
+        fake.dps["5"] = True
+        await ctrl.toggle("urzadzenie")
+        assert ("set_status", "5", False) in fake.calls
+
+    async def test_toggle_no_schema_falls_back_to_dp1(self, controller):
+        fake = FlakyDevice(fail_times=0)
+        fake.turned_on = False
+        controller._devices["gniazdko_salon"] = fake
+        await controller.toggle("gniazdko_salon")
+        assert fake.turned_on is True
 
 
 class TestZigbeeGateways:

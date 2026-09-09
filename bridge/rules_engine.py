@@ -104,6 +104,7 @@ class RulesEngine:
             config.raw.get("flows", []), set_target_state=self._set_target_state,
             run_scene=lambda name: self.scenes.run(name), notify_cfg=notify_cfg,
             mqtt_cfg=config.raw.get("mqtt_publish", {}), location_cfg=self._location_cfg,
+            get_status_value=self.history.get_status_value,
         )
 
         self._escalation_history: dict[str, list[float]] = {}
@@ -421,8 +422,12 @@ class RulesEngine:
         return target["target_device"], target.get("target_system", rule.get("target_system", "tuya"))
 
     async def _set_target_state(
-        self, target_system: str, device: str, on: bool, dimmer: int | None = None,
+        self, target_system: str, device: str, on: bool | None, dimmer: int | None = None,
     ) -> None:
+        """`on=None` oznacza "zmiana stanu" (toggle) - odwrócenie AKTUALNEGO stanu
+        celu zamiast wymuszenia konkretnego. Dla `satel_output` i `satel_virtual_input`
+        (tryb library) stan aktualny czytamy z `SatelIntegraClient.violated_outputs`
+        (na żywo, bez zapytania) - dla Tuya przez `TuyaController.toggle`."""
         if target_system == "satel_output":
             output_number = self.satel.monitored_outputs.get(device)
             if output_number is None:
@@ -431,9 +436,13 @@ class RulesEngine:
                     "⚙ Ustawienia -> Satel) - pomijam", device,
                 )
                 return
+            if on is None:
+                on = output_number not in self.satel.violated_outputs
             await self.satel.set_output(output_number, on)
         elif target_system == "satel_virtual_input":
             await self._trigger_virtual_input(device, on)
+        elif on is None:
+            await self.tuya.toggle(device)
         elif on:
             await self.tuya.turn_on(device, dimmer)
         else:
@@ -512,8 +521,20 @@ class RulesEngine:
             target, f"motion_rule_{idx}", "chain", rule.get("name", "?"), trigger, _chain_depth + 1,
         )
 
-    async def _trigger_virtual_input(self, name: str, state: bool = True) -> None:
+    async def _trigger_virtual_input(self, name: str, state: bool | None = True) -> None:
         if self._vi_mode == "http":
+            if state is False:
+                logger.info(
+                    "Wirtualne wejście IP '%s': akcja WYŁĄCZ pominięta - tryb HTTP (ETHM-1 Plus) "
+                    "obsługuje TYLKO wyzwolenie (impuls naruszenia) wejścia, nie ma odpowiednika "
+                    "'wyłącz' na poziomie protokołu. Wcześniej WYŁĄCZ błędnie wysyłało dokładnie "
+                    "ten sam impuls co WŁĄCZ, co powodowało samopodtrzymujące się przełączanie "
+                    "(flapowanie) w regułach/flow typu włącz->opóźnienie->wyłącz.",
+                    name,
+                )
+                return
+            # state is True lub None (zmiana stanu) - w trybie http oba oznaczają identyczny
+            # impuls, bo protokół nie zna pojęcia poziomu/stanu, tylko moment naruszenia.
             await self.satel_virtual_inputs.trigger(name)
             return
         output_number = self.satel.virtual_inputs.get(name)
@@ -523,6 +544,8 @@ class RulesEngine:
                 "⚙ Ustawienia -> Satel) - pomijam", name,
             )
             return
+        if state is None:
+            state = output_number not in self.satel.violated_outputs
         await self.satel.set_output(output_number, state)
 
     async def handle_light_state_change(self, device_name: str, is_on: bool) -> None:

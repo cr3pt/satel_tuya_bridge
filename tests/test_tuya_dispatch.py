@@ -14,6 +14,9 @@ class FakeSubController:
     async def turn_off(self, device_name):
         self.calls.append(("turn_off", device_name))
 
+    async def toggle(self, device_name):
+        self.calls.append(("toggle", device_name))
+
     async def get_status(self, device_name):
         self.calls.append(("get_status", device_name))
         return {"1": True}
@@ -55,6 +58,12 @@ async def test_turn_on_routes_cloud_only_device_to_cloud(dispatch, local, cloud)
 async def test_turn_off_routes_correctly(dispatch, local, cloud):
     await dispatch.turn_off("lampa_cloud")
     assert cloud.calls == [("turn_off", "lampa_cloud")]
+
+
+async def test_toggle_routes_correctly(dispatch, local, cloud):
+    await dispatch.toggle("gniazdko_local")
+    assert local.calls == [("toggle", "gniazdko_local")]
+    assert cloud.calls == []
 
 
 async def test_unknown_device_raises_key_error(dispatch):
