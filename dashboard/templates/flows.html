@@ -69,7 +69,7 @@
   .port.out { right: -7px; }
   .port.connecting { background: var(--ok); }
   .side-panel {
-    width: 300px; flex-shrink: 0; background: var(--card); border: 1px solid var(--border);
+    width: 380px; flex-shrink: 0; background: var(--card); border: 1px solid var(--border);
     border-radius: 10px; padding: 12px; max-height: 560px; overflow-y: auto;
   }
   .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
@@ -82,6 +82,26 @@
   .wire-chip button { background: none; border: none; color: var(--danger); cursor: pointer; padding: 0; font-size: 12px; }
   .timespec { display: inline-flex; gap: 6px; flex: 1; min-width: 220px; }
   .timespec select, .timespec input { flex: 1; min-width: 90px; width: auto; }
+  .cond-group {
+    border: 1px dashed var(--border); border-radius: 8px; padding: 8px; margin-top: 4px;
+  }
+  .cond-nested .cond-group { margin-top: 0; }
+  .cond-group-header { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .cond-group-header select.cond-op { max-width: 100%; }
+  .cond-group-header .add-row-btn { padding: 5px 8px; font-size: 12px; }
+  .cond-children { display: flex; flex-direction: column; gap: 6px; }
+  .cond-row {
+    display: flex; gap: 6px; align-items: flex-start; background: #1a1d23;
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px;
+  }
+  .cond-leaf-fields { flex: 1; min-width: 0; }
+  .cond-leaf-fields .field { margin-bottom: 6px; }
+  .cond-row .cond-nested { flex: 1; margin-top: 0; }
+  .cond-empty-hint { font-size: 12px; margin-top: 2px; }
+  .row-remove {
+    background: transparent; color: var(--danger); border: none; font-size: 15px;
+    cursor: pointer; padding: 4px 6px; flex-shrink: 0;
+  }
 </style>
 </head>
 <body>
@@ -116,6 +136,7 @@
 <div class="toolbar">
   <button id="newFlowBtn" type="button" class="secondary">+ Nowy flow</button>
   <button id="importFromMotionRulesBtn" type="button" class="secondary">⬇ Importuj z reguł ruchu</button>
+  <button id="exportSelectedToAutomationsBtn" type="button" class="secondary">➡ Eksportuj zaznaczone do Automatyzacje</button>
   <button id="saveFlowsBtn" type="button">💾 Zapisz wszystkie flows</button>
 </div>
 
@@ -134,6 +155,7 @@
       <button type="button" class="secondary" data-node-type="trigger">⚡ Trigger</button>
       <button type="button" class="secondary" data-node-type="condition">❓ Warunek</button>
       <button type="button" class="secondary" data-node-type="state">🔍 Warunek stanu</button>
+      <button type="button" class="secondary" data-node-type="condition_group">🧩 Warunek złożony</button>
       <button type="button" class="secondary" data-node-type="device">🔌 Urządzenie</button>
       <button type="button" class="secondary" data-node-type="scene">🎬 Scena</button>
       <button type="button" class="secondary" data-node-type="delay">⏱ Opóźnienie</button>
@@ -218,6 +240,7 @@ const NODE_DEFS = {
   schedule:   { label: 'Harmonogram', icon: '📅', outputs: ['w oknie'] },
   escalation: { label: 'Eskalacja', icon: '📈', outputs: ['normalnie', 'eskalacja'] },
   state:      { label: 'Warunek stanu', icon: '🔍', outputs: ['spełniony', 'inaczej'] },
+  condition_group: { label: 'Warunek złożony', icon: '🧩', outputs: ['spełniony', 'inaczej'] },
 };
 
 let context = {};
@@ -240,7 +263,15 @@ function defaultConfigFor(type) {
   if (type === 'schedule') return { start: '', end: '' };
   if (type === 'escalation') return { threshold_count: 3, window_seconds: 120 };
   if (type === 'state') return { key: '', op: 'equals', value: '' };
+  if (type === 'condition_group') return { condition: { type: 'and', conditions: [] } };
   return {};
+}
+function countConditionLeaves(condition) {
+  if (!condition) return 0;
+  if (condition.type === 'and' || condition.type === 'or' || condition.type === 'not') {
+    return (condition.conditions || []).reduce((sum, sub) => sum + countConditionLeaves(sub), 0);
+  }
+  return 1;
 }
 
 function nodeLabel(node) {
@@ -262,6 +293,11 @@ function nodeLabel(node) {
   if (node.type === 'schedule') return `${c.start || '?'} - ${c.end || '?'}`;
   if (node.type === 'escalation') return `${c.threshold_count ?? '?'}x / ${c.window_seconds ?? '?'}s`;
   if (node.type === 'state') return `${c.key || '?'} ${c.op === 'not_equals' ? '≠' : '='} ${c.value ?? ''}`;
+  if (node.type === 'condition_group') {
+    const n = countConditionLeaves(c.condition);
+    const word = n === 1 ? 'warunek' : n < 5 ? 'warunki' : 'warunków';
+    return n ? `${n} ${word} (${(c.condition && c.condition.type || 'and').toUpperCase()})` : '(brak warunków)';
+  }
   return '';
 }
 
@@ -291,8 +327,12 @@ function renderFlowList() {
   flows.forEach((f, i) => {
     const row = document.createElement('div');
     row.className = 'flow-item' + (i === activeFlowIndex ? ' active' : '');
-    row.innerHTML = `<span>${f.enabled === false ? '⏸' : '▶'} ${escapeHtml(f.name || '(bez nazwy)')} <span style="color:var(--muted);font-size:11px;">(${(f.nodes || []).length} węzłów)</span></span>`;
-    row.addEventListener('click', () => selectFlow(i));
+    row.innerHTML = `<label style="display:flex;align-items:center;gap:6px;flex:1;cursor:pointer;">
+      <input type="checkbox" class="flow-export-select" data-flow-id="${escapeHtml(f.id)}">
+      <span>${f.enabled === false ? '⏸' : '▶'} ${escapeHtml(f.name || '(bez nazwy)')} <span style="color:var(--muted);font-size:11px;">(${(f.nodes || []).length} węzłów)</span></span>
+    </label>`;
+    row.querySelector('span').addEventListener('click', () => selectFlow(i));
+    row.querySelector('.flow-export-select').addEventListener('click', (e) => e.stopPropagation());
     el.appendChild(row);
   });
 }
@@ -426,12 +466,37 @@ function drawWires() {
         const inX = (target.x || 0);
         const inY = (target.y || 0) + 30;
         const midX = (outX + inX) / 2;
+        const d = `M${outX},${outY} C${midX},${outY} ${midX},${inY} ${inX},${inY}`;
+
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('d', `M${outX},${outY} C${midX},${outY} ${midX},${inY} ${inX},${inY}`);
+        path.setAttribute('d', d);
         path.setAttribute('stroke', '#4d8dfd');
         path.setAttribute('stroke-width', '2');
         path.setAttribute('fill', 'none');
+        path.setAttribute('class', 'wire');
         svg.appendChild(path);
+
+        // Niewidoczna, szersza ścieżka pod spodem - łatwiejsze trafienie kliknięciem
+        // niż w cienki 2px przewód, i pozwala usunąć samo połączenie (bez kasowania
+        // całego węzła) klikając bezpośrednio na przewód na canvasie.
+        const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        hit.setAttribute('d', d);
+        hit.setAttribute('stroke', 'transparent');
+        hit.setAttribute('stroke-width', '14');
+        hit.setAttribute('fill', 'none');
+        hit.setAttribute('class', 'wire-hit');
+        hit.style.cursor = 'pointer';
+        hit.style.pointerEvents = 'stroke';
+        const titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        titleEl.textContent = 'Kliknij, aby usunąć to połączenie';
+        hit.appendChild(titleEl);
+        hit.addEventListener('mouseenter', () => path.setAttribute('stroke', 'var(--danger, #d9534f)'));
+        hit.addEventListener('mouseleave', () => path.setAttribute('stroke', '#4d8dfd'));
+        hit.addEventListener('click', (e) => {
+          e.stopPropagation();
+          removeWire(node, port, targetId);
+        });
+        svg.appendChild(hit);
       });
     });
   });
@@ -485,15 +550,44 @@ function statusKeyCategory(key) {
   const found = (context.status_keys || []).find(s => s.key === key);
   return found ? found.category : null;
 }
-function stateKeyOptionsHtml(selected) {
-  const known = context.status_keys || [];
+const STATUS_CATEGORY_LABELS = {
+  satel_input: 'Satel (wejście)',
+  satel_output: 'Satel (wyjście)',
+  satel_partition: 'Satel (strefa)',
+  tuya: 'Tuya',
+  homewhiz: 'HomeWhiz (AGD)',
+  boiler: 'Kocioł (eBUS)',
+  system_health: 'Zdrowie połączeń',
+  automation: 'Automatyzacja',
+  mqtt_topic: 'MQTT (temat)',
+};
+function statusCategoryOptionsHtml(selected) {
+  const order = Object.keys(STATUS_CATEGORY_LABELS);
+  const categories = [...new Set((context.status_keys || []).map(s => s.category))];
+  categories.sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+  const opts = categories.map(cat =>
+    `<option value="${escapeHtml(cat)}" ${cat === selected ? 'selected' : ''}>${escapeHtml(STATUS_CATEGORY_LABELS[cat] || cat)}</option>`
+  ).join('');
+  const placeholder = `<option value="">${categories.length ? '(wybierz system)' : '(brak danych - odśwież po chwili)'}</option>`;
+  return placeholder + opts;
+}
+function stateKeyOptionsHtml(selected, category) {
+  const known = (context.status_keys || []).filter(s => !category || s.category === category);
   const opts = known.map(s =>
-    `<option value="${escapeHtml(s.key)}" ${s.key === selected ? 'selected' : ''}>${escapeHtml(s.label)} (${escapeHtml(s.category)})</option>`
+    `<option value="${escapeHtml(s.key)}" ${s.key === selected ? 'selected' : ''}>${escapeHtml(s.label)}</option>`
   ).join('');
   const hasSelected = selected && known.some(s => s.key === selected);
   const extra = (selected && !hasSelected)
     ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (obecnie brak danych)</option>` : '';
-  const placeholder = `<option value="">${known.length ? '(wybierz status)' : '(brak danych - odśwież po chwili)'}</option>`;
+  const placeholder = `<option value="">${
+    !category ? '(najpierw wybierz system)' : known.length ? '(wybierz status)' : '(brak danych dla tego systemu)'
+  }</option>`;
   return placeholder + opts + extra;
 }
 function stateValueFieldHtml(category, selectedValue) {
@@ -581,6 +675,130 @@ function removeNode(flow, nodeId) {
   renderSidePanel();
 }
 
+function buildConditionLeafFieldsHtml(type, initial) {
+  initial = initial || {};
+  if (type === 'state') {
+    const selectedValue = initial.equals ?? initial.not_equals ?? '';
+    const category = statusKeyCategory(initial.key) || '';
+    return `
+      <div class="field"><label>System</label><select class="cond-state-category">${statusCategoryOptionsHtml(category)}</select></div>
+      <div class="field"><label>Status</label><select class="cond-state-key">${stateKeyOptionsHtml(initial.key, category)}</select></div>
+      <div class="field"><label>Operator</label><select class="cond-state-op">
+        <option value="equals" ${!initial.not_equals ? 'selected' : ''}>równa się</option>
+        <option value="not_equals" ${initial.not_equals ? 'selected' : ''}>różna od</option>
+      </select></div>
+      <div class="field"><label>Wartość</label><span class="cond-state-value-wrap">${stateValueFieldHtml(category, selectedValue)}</span></div>`;
+  }
+  if (type === 'time_window') {
+    return `
+      <div class="field"><label>Początek okna</label>${timeSpecFieldHtml('cond-tw-start', initial.start)}</div>
+      <div class="field"><label>Koniec okna</label>${timeSpecFieldHtml('cond-tw-end', initial.end)}</div>`;
+  }
+  return '';
+}
+
+function buildConditionGroupEl(groupData) {
+  groupData = groupData || { type: 'and', conditions: [] };
+  const el = document.createElement('div');
+  el.className = 'cond-group';
+  el.innerHTML = `
+    <div class="cond-group-header">
+      <select class="cond-op">
+        <option value="and">Spełnione WSZYSTKIE (AND)</option>
+        <option value="or">Spełniony DOWOLNY (OR)</option>
+        <option value="not">NIE / ŻADEN (NOT)</option>
+      </select>
+      <button type="button" class="secondary add-row-btn cond-add-state">+ warunek</button>
+      <button type="button" class="secondary add-row-btn cond-add-window">+ okno czasowe</button>
+      <button type="button" class="secondary add-row-btn cond-add-group">+ grupa</button>
+    </div>
+    <div class="cond-children"></div>
+    <div class="cond-empty-hint empty-hint">Brak warunków w tej grupie - traktowana jako spełniona.</div>`;
+  el.querySelector('.cond-op').value = groupData.type || 'and';
+  const childrenEl = el.querySelector('.cond-children');
+  const emptyHintEl = el.querySelector('.cond-empty-hint');
+
+  function refreshEmpty() {
+    emptyHintEl.style.display = childrenEl.children.length ? 'none' : '';
+  }
+
+  function addChildRow(kind, initial) {
+    const row = document.createElement('div');
+    row.className = 'cond-row';
+    if (kind === 'group') {
+      const nested = buildConditionGroupEl(initial);
+      nested.classList.add('cond-nested');
+      row.appendChild(nested);
+    } else {
+      const fields = document.createElement('div');
+      fields.className = 'cond-leaf-fields';
+      fields.dataset.condType = kind;
+      fields.innerHTML = buildConditionLeafFieldsHtml(kind, initial);
+      row.appendChild(fields);
+      if (kind === 'state') {
+        fields.querySelector('.cond-state-category').addEventListener('change', (e) => {
+          const category = e.target.value;
+          fields.querySelector('.cond-state-key').innerHTML = stateKeyOptionsHtml('', category);
+          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '');
+        });
+        fields.querySelector('.cond-state-key').addEventListener('change', () => {
+          const category = fields.querySelector('.cond-state-category').value;
+          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '');
+        });
+      }
+      if (kind === 'time_window') {
+        wireTimeSpecToggles(fields);
+      }
+    }
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'row-remove';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', () => { row.remove(); refreshEmpty(); });
+    row.appendChild(removeBtn);
+    childrenEl.appendChild(row);
+    refreshEmpty();
+  }
+
+  el.querySelector('.cond-add-state').addEventListener('click', () => addChildRow('state'));
+  el.querySelector('.cond-add-window').addEventListener('click', () => addChildRow('time_window'));
+  el.querySelector('.cond-add-group').addEventListener('click', () => addChildRow('group', { type: 'and', conditions: [] }));
+
+  (groupData.conditions || []).forEach(child => {
+    if (child.type === 'and' || child.type === 'or' || child.type === 'not') addChildRow('group', child);
+    else addChildRow(child.type, child);
+  });
+  refreshEmpty();
+  return el;
+}
+
+function collectConditionGroup(groupEl) {
+  const type = groupEl.querySelector(':scope > .cond-group-header .cond-op').value;
+  const childrenEl = groupEl.querySelector(':scope > .cond-children');
+  const conditions = Array.from(childrenEl.children).map(row => {
+    const nestedGroup = row.querySelector(':scope > .cond-nested');
+    if (nestedGroup) return collectConditionGroup(nestedGroup);
+    const fields = row.querySelector(':scope > .cond-leaf-fields');
+    const condType = fields.dataset.condType;
+    if (condType === 'state') {
+      const leaf = { type: 'state', key: fields.querySelector('.cond-state-key').value.trim() };
+      const value = fields.querySelector('.state-value').value.trim();
+      if (fields.querySelector('.cond-state-op').value === 'not_equals') leaf.not_equals = value;
+      else leaf.equals = value;
+      return leaf;
+    }
+    if (condType === 'time_window') {
+      return {
+        type: 'time_window',
+        start: collectTimeSpec('cond-tw-start', fields),
+        end: collectTimeSpec('cond-tw-end', fields),
+      };
+    }
+    return null;
+  }).filter(Boolean);
+  return { type, conditions };
+}
+
 function renderNodeFields(node) {
   const el = document.getElementById('nodeFields');
   const c = node.config;
@@ -614,12 +832,14 @@ function renderNodeFields(node) {
     </select>`);
     html += field(`<label>Wartość porównania</label><input type="text" data-field="value" value="${escapeHtml(c.value ?? '')}">`);
   } else if (node.type === 'state') {
-    html += field(`<label>Status</label><select class="state-key">${stateKeyOptionsHtml(c.key)}</select>`);
+    const stateCategory = c.category !== undefined ? c.category : (statusKeyCategory(c.key) || '');
+    html += field(`<label>System</label><select class="state-category">${statusCategoryOptionsHtml(stateCategory)}</select>`);
+    html += field(`<label>Status</label><select class="state-key">${stateKeyOptionsHtml(c.key, stateCategory)}</select>`);
     html += field(`<label>Operator</label><select data-field="op">
       <option value="equals" ${c.op !== 'not_equals' ? 'selected' : ''}>równa się</option>
       <option value="not_equals" ${c.op === 'not_equals' ? 'selected' : ''}>różna od</option>
     </select>`);
-    html += field(`<label>Wartość</label><span class="state-value-wrap">${stateValueFieldHtml(statusKeyCategory(c.key), c.value)}</span>`);
+    html += field(`<label>Wartość</label><span class="state-value-wrap">${stateValueFieldHtml(stateCategory, c.value)}</span>`);
   } else if (node.type === 'device') {
     const targetSystem = c.target_system || 'tuya';
     html += field(`<label>System</label><select data-field="target_system">
@@ -665,8 +885,24 @@ function renderNodeFields(node) {
   } else if (node.type === 'escalation') {
     html += field(`<label>Próg (liczba naruszeń)</label><input type="number" min="1" step="1" data-field="threshold_count" value="${c.threshold_count ?? 3}">`);
     html += field(`<label>Okno czasowe (sekundy)</label><input type="number" min="1" step="1" data-field="window_seconds" value="${c.window_seconds ?? 120}">`);
+  } else if (node.type === 'condition_group') {
+    html += `<div class="field"><label>Warunek (zagnieżdżone AND/OR/NOT)</label><div class="cond-group-container"></div></div>`;
   }
   el.innerHTML = html;
+  if (node.type === 'condition_group') {
+    const container = el.querySelector('.cond-group-container');
+    container.appendChild(buildConditionGroupEl(c.condition || { type: 'and', conditions: [] }));
+    container.addEventListener('change', () => {
+      c.condition = collectConditionGroup(container.firstElementChild);
+      renderCanvas();
+    });
+    container.addEventListener('click', (e) => {
+      if (e.target.closest('.cond-add-state, .cond-add-window, .cond-add-group, .row-remove')) {
+        c.condition = collectConditionGroup(container.firstElementChild);
+        renderCanvas();
+      }
+    });
+  }
   el.querySelectorAll('[data-field]').forEach(input => {
     input.addEventListener('change', () => {
       c[input.dataset.field] = input.value;
@@ -692,6 +928,13 @@ function renderNodeFields(node) {
     });
   }
   if (node.type === 'state') {
+    el.querySelector('.state-category').addEventListener('change', (e) => {
+      c.category = e.target.value;
+      c.key = '';
+      c.value = '';
+      renderCanvas();
+      renderSidePanel();
+    });
     el.querySelector('.state-key').addEventListener('change', (e) => {
       c.key = e.target.value;
       c.value = '';
@@ -787,29 +1030,45 @@ document.getElementById('saveFlowsBtn').addEventListener('click', async () => {
   }
 });
 
+function applyImportedFlows(data, sourceLabel) {
+  const imported = data.flows || [];
+  const warnings = data.warnings || [];
+  if (!imported.length) {
+    showMsg(false, warnings.length ? ('Nic nie zaimportowano - ' + warnings.join('; ')) : 'Brak reguł ruchu do zaimportowania.');
+    return;
+  }
+  const startIndex = flows.length;
+  flows.push(...imported);
+  pendingImportedRuleIndices.push(...(data.imported_rule_indices || []));
+  let msg = `Zaimportowano ${imported.length} flow${sourceLabel || ''} (NIEZAPISANE) - przejrzyj i kliknij "Zapisz wszystkie flows". Po zapisie oryginalne automatyzacje zostaną oznaczone jako zaimportowane i wyłączone.`;
+  if (warnings.length) msg += ' Uwagi: ' + warnings.join('; ');
+  showMsg(true, msg);
+  selectFlow(startIndex);
+}
+
 document.getElementById('importFromMotionRulesBtn').addEventListener('click', async () => {
   try {
     const resp = await fetch('/api/flows/import-from-motion-rules', { method: 'POST' });
     if (resp.status === 401) { window.location.href = '/login?next=' + encodeURIComponent(location.pathname); return; }
     const data = await resp.json();
     if (!resp.ok) { showMsg(false, data.error || 'Błąd importu'); return; }
-    const imported = data.flows || [];
-    const warnings = data.warnings || [];
-    if (!imported.length) {
-      showMsg(false, warnings.length ? ('Nic nie zaimportowano - ' + warnings.join('; ')) : 'Brak reguł ruchu do zaimportowania.');
-      return;
-    }
-    const startIndex = flows.length;
-    flows.push(...imported);
-    pendingImportedRuleIndices.push(...(data.imported_rule_indices || []));
-    let msg = `Zaimportowano ${imported.length} flow z reguł ruchu (NIEZAPISANE) - przejrzyj i kliknij "Zapisz wszystkie flows". Po zapisie oryginalne automatyzacje zostaną oznaczone jako zaimportowane i wyłączone.`;
-    if (warnings.length) msg += ' Uwagi: ' + warnings.join('; ');
-    showMsg(true, msg);
-    selectFlow(startIndex);
+    applyImportedFlows(data, ' z reguł ruchu');
   } catch (e) {
     showMsg(false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
+
+function consumePendingImportFromAutomations() {
+  const raw = sessionStorage.getItem('flow_import_from_automations');
+  if (!raw) return;
+  sessionStorage.removeItem('flow_import_from_automations');
+  try {
+    const data = JSON.parse(raw);
+    applyImportedFlows(data, ' z zaznaczonych reguł ruchu (Automatyzacje)');
+  } catch (e) {
+    showMsg(false, 'Błąd odczytu danych eksportu z Automatyzacji: ' + e);
+  }
+}
 
 document.getElementById('testFlowBtn').addEventListener('click', async () => {
   const flow = flows[activeFlowIndex];
@@ -828,10 +1087,36 @@ document.getElementById('testFlowBtn').addEventListener('click', async () => {
   }
 });
 
+document.getElementById('exportSelectedToAutomationsBtn').addEventListener('click', async () => {
+  const flowIds = Array.from(document.querySelectorAll('.flow-export-select:checked')).map(cb => cb.dataset.flowId);
+  if (!flowIds.length) {
+    showMsg(false, 'Zaznacz co najmniej jeden flow (checkbox przy nazwie na liście flows).');
+    return;
+  }
+  try {
+    const resp = await fetch('/api/automations/export-flows-to-motion-rules', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flow_ids: flowIds }),
+    });
+    if (resp.status === 401) { window.location.href = '/login?next=' + encodeURIComponent(location.pathname); return; }
+    const data = await resp.json();
+    if (!resp.ok) { showMsg(false, data.error || 'Błąd eksportu'); return; }
+    if (!data.motion_rules.length) {
+      showMsg(false, 'Nic nie wyeksportowano' + (data.warnings.length ? ' - ' + data.warnings.join('; ') : ''));
+      return;
+    }
+    sessionStorage.setItem('automations_import_from_flows', JSON.stringify(data));
+    window.location.href = '/automations';
+  } catch (e) {
+    showMsg(false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
 (async () => {
   await refreshAuthNav();
   await loadContext();
   await loadFlows();
+  consumePendingImportFromAutomations();
 })();
 </script>
 </body>

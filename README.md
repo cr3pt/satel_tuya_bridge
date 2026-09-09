@@ -2094,7 +2094,12 @@ reguły_ruchu:
 Edytor w panelu (`/automations`, sekcja "Reguły ruchu") ma do tego
 graficzny konstruktor grup AND/OR/NOT z dowolnym zagnieżdżaniem - klucze
 statusu wybiera się z listy (to, co panel akurat odczytał), zamiast wpisywać
-je ręcznie. **Pole wartości też jest listą wyboru zależną od wybranego
+je ręcznie. **Wybór klucza jest dwustopniowy**: najpierw "System" (Satel
+wejście/wyjście/partycja, Tuya, HomeWhiz, kocioł/eBUS, zdrowie systemu,
+automatyzacja, MQTT), potem dopiero "Status" - lista drugiego kroku jest
+przefiltrowana do wybranego systemu, więc przy wielu skonfigurowanych
+urządzeniach nie trzeba przewijać jednej długiej, płaskiej listy wszystkich
+kluczy naraz. **Pole wartości też jest listą wyboru zależną od wybranego
 statusu** - dla wejścia/wyjścia Satela, urządzenia Tuya czy strefy panel
 sam podpowiada właściwe słowa (`naruszone`/`OK`, `włączone`/`wyłączone`,
 `uzbrojona`/`rozbrojona`...), więc nie da się przekręcić literówką wartości,
@@ -2379,14 +2384,15 @@ sposobem budowania automatyzacji krok-po-kroku, ale to długoterminowy
 kierunek, nie coś co dzieje się automatycznie przy aktualizacji - istniejące
 reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 
-### 11 typów węzłów
+### 12 typów węzłów
 
 | Węzeł | Rola | Konfiguracja |
 |---|---|---|
 | ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz), wyzwalacz |
 | 📥 MQTT in | wejście grafu | temat MQTT (drugie możliwe wejście obok Trigger) |
 | ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania (payload wiadomości) - dwa wyjścia: "spełniony"/"inaczej" |
-| 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`) + operator równa się/różna od - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
+| 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`, wybierany dwustopniowo: System -> Status) + operator równa się/różna od - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
+| 🧩 Warunek złożony | rozgałęzienie | zagnieżdżone drzewo AND/OR/NOT z liśćmi Warunek stanu / Okno czasowe - dwa wyjścia: "spełniony"/"inaczej" (patrz niżej) |
 | 🔌 Urządzenie | akcja | system (Tuya / Satel wyjście / Satel wirtualne wejście), urządzenie docelowe, wartość (włącz/wyłącz/zmiana stanu, jasność dla ściemniaczy Tuya) |
 | 🎬 Scena | akcja | uruchamia istniejącą scenę po nazwie |
 | ⏱ Opóźnienie | akcja | pauza przed kontynuacją grafu - liczba + jednostka (`s`/`m`/`g` = sekundy/minuty/godziny, np. `30s`, `5m`, `2g`; brak litery = sekundy) |
@@ -2432,6 +2438,16 @@ przewód narysuje się jako krzywa SVG. Drugie kliknięcie tej samej pary
 kropek usuwa połączenie. Węzeł Warunek ma dwie kropki wyjścia (spełniony
 / inaczej), więc z niego wychodzą dwie osobne gałęzie grafu. Węzły
 przeciąga się metodą przeciągnij-i-upuść po canvasie.
+
+**Usuwanie samego połączenia** (bez kasowania żadnego z węzłów) jest
+możliwe na trzy sposoby: kliknij bezpośrednio na przewód na canvasie
+(pod kursorem podświetla się na czerwono, pod spodem widocznej 2px linii
+jest niewidoczna szersza ścieżka - łatwiej trafić kliknięciem), drugie
+kliknięcie tej samej pary kropek wyjście/wejście, albo przycisk ✕ przy
+liście "Połączenia wyjścia..." w panelu bocznym wybranego węzła
+źródłowego. Usunięcie samego połączenia (a nie całego węzła) pozwala
+wstawić między dwa już połączone węzły kolejny węzeł, bez przebudowy
+reszty grafu.
 
 ### Wykonanie: message passing, fire-and-forget
 
@@ -2480,11 +2496,36 @@ tego, co akurat niesie wiadomość w grafie. Pole statusu wybiera się z listy
 warunków reguł ruchu - ten sam zestaw opcji (`STATE_VALUE_OPTIONS`)
 skopiowany do `flows.html`.
 
-### Import z reguł ruchu
+### Warunek złożony - zagnieżdżone AND/OR/NOT (kilka poziomów naraz)
+
+Węzeł **🔍 Warunek stanu** wyraża tylko JEDNO porównanie - żeby złożyć kilka
+takich węzłów w jeden warunek "A i (B lub C)", trzeba by je łańcuchowo
+łączyć po kolei (co daje tylko AND, bez OR/NOT i bez grupowania). Węzeł
+**🧩 Warunek złożony** (`condition_group`) rozwiązuje to jednym węzłem:
+dokładnie ten sam kształt drzewa i ten sam silnik ewaluacji
+(`bridge/conditions.py: evaluate_condition`), co "Dodatkowy warunek reguły"
+opisany wyżej - liście `state` (jak Warunek stanu, z tym samym dwustopniowym
+wyborem System -> Status -> Wartość) i `time_window` (jak Harmonogram),
+złożone dowolnie głęboko przez `and`/`or`/`not`. Przykład z opisu wyżej
+("światło w garażu włączone I (drzwi zamknięte I brama zamknięta)" ->
+zgaś światło) to jeden węzeł Warunek złożony z gałęzią AND zawierającą stan
+światła i zagnieżdżoną grupę AND dla drzwi+bramy, zamiast trzech osobnych
+węzłów Warunek stanu. Dwa wyjścia jak Warunek/Warunek stanu: "spełniony"/
+"inaczej". Edytor w panelu (`/flows`) ma ten sam graficzny konstruktor grup
+AND/OR/NOT co "Dodatkowy warunek reguły" na `/automations` (dodawanie/
+usuwanie liści i podgrup, wybór statusu z listy) - żeby edycja jednego
+skomplikowanego warunku nie gubiła zaznaczenia przy każdej zmianie, zmiany
+w drzewie aktualizują tylko podgląd węzła na canvasie, bez przerysowania
+całego panelu bocznego.
+
+### Import z reguł ruchu i eksport do reguł ruchu (zaznaczone, oba kierunki)
 
 Przycisk **"⬇ Importuj z reguł ruchu"** (`POST /api/flows/import-from-
 motion-rules` -> `dashboard/setup.py: motion_rule_to_flow`) konwertuje
-KAŻDĄ regułę z `reguły_ruchu` na osobny flow i dokleja je do listy
+KAŻDĄ regułę z `reguły_ruchu` (albo tylko ZAZNACZONE reguły - endpoint
+przyjmuje opcjonalne `rule_indices`, panel `/automations` ma do tego
+checkbox "do eksportu" przy każdej karcie reguły i przycisk "➡ Eksportuj
+zaznaczone do Flow") na osobny flow i dokleja je do listy
 **NIEZAPISANEJ** (dopiero "💾 Zapisz wszystkie flows" utrwala je) - myślą
 przewodnią jest przegląd przed zapisem, nie ślepa jednorazowa migracja.
 Obsługiwane: pojedyncze źródło (Satel/Tuya/HomeWhiz), pojedyncze
@@ -2517,6 +2558,32 @@ oznaczona jako zaimportowana jest pomijana przy kolejnych kliknięciach
 ostrzeżeniem "już zaimportowano wcześniej do Flow". Admin może ją ręcznie
 z powrotem włączyć na `/automations` (checkbox "Włączona") - odznaka
 zostaje jako informacja o pochodzeniu, ale nie blokuje ponownego użycia.
+
+**Kierunek odwrotny** - przycisk **"➡ Eksportuj zaznaczone do
+Automatyzacje"** na `/flows` (checkbox przy nazwie każdego flow na liście,
+`POST /api/automations/export-flows-to-motion-rules` ->
+`dashboard/setup.py: flow_to_motion_rule`) konwertuje ZAZNACZONE, JUŻ
+ZAPISANE flow z powrotem na reguły ruchu i ląduje na `/automations` jako
+karty **NIEZAPISANE** (tak samo trzeba je przejrzeć i kliknąć "Zapisz
+automatyzacje"). To konwerter zachowawczy - rozpoznaje TYLKO liniowe grafy
+w kształcie, jaki sam tworzy `motion_rule_to_flow`: jeden węzeł Trigger (bez
+MQTT in, bez wyzwalacza "każda zmiana"), opcjonalnie Harmonogram, opcjonalnie
+Eskalacja (z gałęzią "eskalacja" prowadzącą do dokładnie jednej Sceny),
+opcjonalnie JEDEN węzeł Warunek stanu albo Warunek złożony (mapowany 1:1 na
+`condition` reguły, w tym cały zagnieżdżony drzewo AND/OR/NOT), a na końcu
+Scena ALBO Urządzenie - opcjonalnie Urządzenie(włącz) -> Opóźnienie ->
+Urządzenie(wyłącz, TO SAMO urządzenie) jako odpowiednik `duration_seconds`.
+**NIEOBSŁUGIWANE** (flow jest w całości pomijane z konkretnym ostrzeżeniem
+zamiast tworzyć okrojoną/mylącą regułę): rozgałęzienia (kilka połączeń z
+jednego wyjścia węzła), węzły MQTT/HTTP/Powiadomienie, zwykły węzeł Warunek
+(porównanie payloadu - w odróżnieniu od Warunku stanu), akcja "Zmiana
+stanu" (toggle), Urządzenie(włącz) bez Opóźnienia+Urządzenie(wyłącz) po
+nim, więcej niż jeden węzeł Trigger/Harmonogram/Eskalacja/warunku. Oba
+przyciski eksportu (do Flow i do Automatyzacji) używają tego samego
+mechanizmu "NIEZAPISANE, przejrzyj przed zapisem" - `sessionStorage` z
+danymi z odpowiedzi API, odczytywany raz po przeładowaniu docelowej strony -
+żadna z operacji nie zapisuje niczego bez jawnego kliknięcia przycisku
+"Zapisz" na stronie docelowej.
 
 ## Zmywarki/AGD HomeWhiz (BEQ/Arcelik)
 

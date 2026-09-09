@@ -9,6 +9,7 @@ from typing import Awaitable, Callable
 import aiohttp
 import paho.mqtt.client as mqtt
 
+from .conditions import evaluate_condition
 from .notifier import Notifier
 from .scheduling import is_within_window
 
@@ -86,6 +87,14 @@ class FlowEngine:
                 (np. "satel_input:3", "tuya:gniazdko_salon" - ten sam klucz
                 co warunek "state" reguły ruchu) z zadaną wartością, NIE
                 payload wiadomości (w odróżnieniu od węzła "condition")
+      condition_group {condition: {type: and|or|not|state|time_window, ...}}
+                - [spełniony, inaczej]: zagnieżdżone drzewo warunków AND/OR/
+                NOT z liśćmi "state" (jak węzeł state) i "time_window" (jak
+                harmonogram) - DOKŁADNIE ten sam kształt i ewaluator
+                (bridge.conditions.evaluate_condition) co "dodatkowy
+                warunek" reguły ruchu. Zamiast łańcucha kilku węzłów
+                Warunek stanu (co daje tylko AND) pozwala złożyć
+                jednym węzłem np. "A i (B lub C)"
     """
 
     def __init__(
@@ -286,6 +295,19 @@ class FlowEngine:
         if ntype == "state":
             actual = self._get_status_value(c.get("key"))
             passed = actual != c.get("value") if c.get("op") == "not_equals" else actual == c.get("value")
+            return [msg if passed else None, None if passed else msg]
+
+        if ntype == "condition_group":
+            try:
+                passed = evaluate_condition(
+                    c.get("condition"), get_status_value=self._get_status_value,
+                    location_cfg=self.location_cfg, now=dt.datetime.now(),
+                )
+            except Exception:
+                logger.exception(
+                    "Flow '%s': błąd ewaluacji węzła Warunek złożony - traktuję jako niespełniony", flow.get("name"),
+                )
+                passed = False
             return [msg if passed else None, None if passed else msg]
 
         if ntype == "escalation":

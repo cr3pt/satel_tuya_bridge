@@ -34,7 +34,7 @@ from dashboard.setup import (
     build_connections_patch, validate_connections, connections_to_form, list_plugins, list_plugin_load_errors,
     build_location_patch, validate_location,
     draft_path_for, load_draft, save_draft, delete_draft,
-    validate_flows, build_flows, motion_rule_to_flow,
+    validate_flows, build_flows, motion_rule_to_flow, flow_to_motion_rule,
 )
 
 app = Quart(__name__)
@@ -829,11 +829,16 @@ async def api_config_flows_post():
 @app.route("/api/flows/import-from-motion-rules", methods=["POST"])
 @require_auth()
 async def api_flows_import_from_motion_rules():
+    payload = await request.get_json(silent=True) or {}
+    wanted_indices = payload.get("rule_indices") if isinstance(payload, dict) else None
+
     rules = config_raw.get("reguły_ruchu", [])
     flows = []
     warnings: list[str] = []
     imported_rule_indices = []
     for i, rule in enumerate(rules):
+        if isinstance(wanted_indices, list) and i not in wanted_indices:
+            continue
         flow, rule_warnings = motion_rule_to_flow(rule, i)
         warnings.extend(rule_warnings)
         if flow is not None:
@@ -864,6 +869,27 @@ async def api_flows_mark_motion_rules_imported():
     _enqueue_bridge_reload()
 
     return jsonify({"marked": marked, "message": _RELOAD_MESSAGE})
+
+
+@app.route("/api/automations/export-flows-to-motion-rules", methods=["POST"])
+@require_auth()
+async def api_automations_export_flows_to_motion_rules():
+    payload = await request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("flow_ids"), list):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+
+    wanted_ids = set(payload["flow_ids"])
+    flows = config_raw.get("flows", [])
+    rules = []
+    warnings: list[str] = []
+    for i, flow in enumerate(flows):
+        if flow.get("id") not in wanted_ids:
+            continue
+        rule, flow_warnings = flow_to_motion_rule(flow, i)
+        warnings.extend(flow_warnings)
+        if rule is not None:
+            rules.append(rule)
+    return jsonify({"motion_rules": rules, "warnings": warnings})
 
 
 @app.route("/api/flows/<flow_id>/run", methods=["POST"])

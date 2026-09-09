@@ -178,6 +178,7 @@
   <div id="motionRulesContainer"></div>
   <div id="rulesEmptyHint" class="empty-hint">Brak zdefiniowanych reguł ruchu.</div>
   <button type="button" class="secondary add-row-btn" id="addMotionRuleBtn">+ Dodaj regułę</button>
+  <button type="button" class="secondary add-row-btn" id="exportSelectedToFlowBtn" style="margin-left:8px;">➡ Eksportuj zaznaczone do Flow</button>
 </div>
 
 <div class="section" id="presenceSection">
@@ -585,6 +586,33 @@ function statusKeyCategory(key) {
   const found = (context.status_keys || []).find(s => s.key === key);
   return found ? found.category : null;
 }
+const STATUS_CATEGORY_LABELS = {
+  satel_input: 'Satel (wejście)',
+  satel_output: 'Satel (wyjście)',
+  satel_partition: 'Satel (strefa)',
+  tuya: 'Tuya',
+  homewhiz: 'HomeWhiz (AGD)',
+  boiler: 'Kocioł (eBUS)',
+  system_health: 'Zdrowie połączeń',
+  automation: 'Automatyzacja',
+  mqtt_topic: 'MQTT (temat)',
+};
+function statusCategoryOptionsHtml(selected) {
+  const order = Object.keys(STATUS_CATEGORY_LABELS);
+  const categories = [...new Set((context.status_keys || []).map(s => s.category))];
+  categories.sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+  const opts = categories.map(cat =>
+    `<option value="${escapeHtml(cat)}" ${cat === selected ? 'selected' : ''}>${escapeHtml(STATUS_CATEGORY_LABELS[cat] || cat)}</option>`
+  ).join('');
+  const placeholder = `<option value="">${categories.length ? '(wybierz system)' : '(brak danych - odśwież po chwili)'}</option>`;
+  return placeholder + opts;
+}
 
 
 function triggerValueFieldHtml(system, selectedValue, homewhizStates) {
@@ -642,17 +670,17 @@ function stateValueFieldHtml(category, selectedValue) {
   </select>`;
 }
 
-function stateKeyOptionsHtml(selected) {
-  const known = context.status_keys || [];
+function stateKeyOptionsHtml(selected, category) {
+  const known = (context.status_keys || []).filter(s => !category || s.category === category);
   const opts = known.map(s =>
-    `<option value="${escapeHtml(s.key)}" ${s.key === selected ? 'selected' : ''}>${escapeHtml(s.label)} (${escapeHtml(s.category)})</option>`
+    `<option value="${escapeHtml(s.key)}" ${s.key === selected ? 'selected' : ''}>${escapeHtml(s.label)}</option>`
   ).join('');
   const hasSelected = selected && known.some(s => s.key === selected);
-  
-  
   const extra = (selected && !hasSelected)
     ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (obecnie brak danych)</option>` : '';
-  const placeholder = `<option value="">${known.length ? '(wybierz status)' : '(panel jeszcze nic nie odczytał - wpisz klucz ręcznie niżej albo odśwież po chwili)'}</option>`;
+  const placeholder = `<option value="">${
+    !category ? '(najpierw wybierz system)' : known.length ? '(wybierz status)' : '(brak danych dla tego systemu)'
+  }</option>`;
   return placeholder + opts + extra;
 }
 
@@ -660,9 +688,10 @@ function buildConditionLeafFieldsHtml(type, initial) {
   initial = initial || {};
   if (type === 'state') {
     const selectedValue = initial.equals ?? initial.not_equals ?? '';
-    const category = statusKeyCategory(initial.key);
+    const category = statusKeyCategory(initial.key) || '';
     return `
-      <select class="cond-state-key">${stateKeyOptionsHtml(initial.key)}</select>
+      <select class="cond-state-category">${statusCategoryOptionsHtml(category)}</select>
+      <select class="cond-state-key">${stateKeyOptionsHtml(initial.key, category)}</select>
       <select class="cond-state-op" style="max-width:130px;">
         <option value="equals" ${!initial.not_equals ? 'selected' : ''}>równa się</option>
         <option value="not_equals" ${initial.not_equals ? 'selected' : ''}>różna od</option>
@@ -716,8 +745,13 @@ function buildConditionGroupEl(groupData) {
       fields.innerHTML = buildConditionLeafFieldsHtml(kind, initial);
       row.appendChild(fields);
       if (kind === 'state') {
-        fields.querySelector('.cond-state-key').addEventListener('change', (e) => {
-          const category = statusKeyCategory(e.target.value);
+        fields.querySelector('.cond-state-category').addEventListener('change', (e) => {
+          const category = e.target.value;
+          fields.querySelector('.cond-state-key').innerHTML = stateKeyOptionsHtml('', category);
+          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '');
+        });
+        fields.querySelector('.cond-state-key').addEventListener('change', () => {
+          const category = fields.querySelector('.cond-state-category').value;
           fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '');
         });
       }
@@ -918,6 +952,7 @@ function addMotionRuleCard(initial, startCollapsed) {
   card.dataset.importedToFlows = isImported ? '1' : '';
   card.innerHTML = `
     <div class="sub-card-header">
+      <label class="enabled-toggle" title="Zaznacz do eksportu do Flow"><input type="checkbox" class="mr-export-select"> do eksportu</label>
       <input type="text" class="mr-name" placeholder="Nazwa reguły (opcjonalnie - potrzebna do wyzwalania łańcuchowego)" value="${escapeHtml(initial.name || '')}" style="flex:1;">
       ${isImported ? '<span class="imported-badge">ZAIMPORTOWANO DO FLOWS</span>' : ''}
       <label class="enabled-toggle"><input type="checkbox" class="mr-enabled" ${isEnabled ? 'checked' : ''}> Włączona</label>
@@ -1153,6 +1188,37 @@ function addMotionRuleCard(initial, startCollapsed) {
 }
 document.getElementById('addMotionRuleBtn').addEventListener('click', () => { addMotionRuleCard(); refreshDependentDropdowns(); });
 
+document.getElementById('exportSelectedToFlowBtn').addEventListener('click', async () => {
+  const cards = Array.from(document.querySelectorAll('#motionRulesContainer .sub-card'));
+  const ruleIndices = [];
+  cards.forEach((card, i) => {
+    if (card.querySelector('.mr-export-select').checked) ruleIndices.push(i);
+  });
+  if (!ruleIndices.length) {
+    alert('Zaznacz co najmniej jedną regułę (checkbox "do eksportu" w nagłówku karty).');
+    return;
+  }
+  try {
+    const resp = await authorizedFetch('/api/flows/import-from-motion-rules', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rule_indices: ruleIndices }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert((data.error || 'Błąd eksportu') + (data.details ? ' - ' + data.details.join('; ') : ''));
+      return;
+    }
+    if (!data.flows.length) {
+      alert('Nic nie wyeksportowano' + (data.warnings.length ? ' - ' + data.warnings.join('; ') : ''));
+      return;
+    }
+    sessionStorage.setItem('flow_import_from_automations', JSON.stringify(data));
+    window.location.href = '/flows';
+  } catch (e) {
+    alert('Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
 function collectExtraSources(card) {
   return Array.from(card.querySelectorAll('.mr-extra-sources > .extra-source-row')).map(row => {
     const system = row.querySelector('.mr-ex-source-system').value;
@@ -1320,6 +1386,28 @@ async function loadAll() {
   refreshDependentDropdowns();
 }
 
+function consumePendingImportFromFlows() {
+  const raw = sessionStorage.getItem('automations_import_from_flows');
+  if (!raw) return;
+  sessionStorage.removeItem('automations_import_from_flows');
+  const msgEl = document.getElementById('saveMessage');
+  msgEl.style.display = '';
+  try {
+    const data = JSON.parse(raw);
+    const rules = data.motion_rules || [];
+    const warnings = data.warnings || [];
+    rules.forEach(r => addMotionRuleCard(r, false));
+    refreshDependentDropdowns();
+    let msg = `Zaimportowano ${rules.length} reguł ruchu z zaznaczonych flows (NIEZAPISANE) - przejrzyj i kliknij "Zapisz automatyzacje".`;
+    if (warnings.length) msg += ' Uwagi: ' + warnings.join('; ');
+    msgEl.className = rules.length ? 'ok' : 'error';
+    msgEl.textContent = (rules.length ? '✅ ' : '❌ ') + msg;
+  } catch (e) {
+    msgEl.className = 'error';
+    msgEl.textContent = '❌ Błąd odczytu danych eksportu z Flow: ' + e;
+  }
+}
+
 document.getElementById('saveBtn').addEventListener('click', async () => {
   const msgEl = document.getElementById('saveMessage');
   msgEl.className = '';
@@ -1473,7 +1561,7 @@ document.getElementById('clearLocationBtn').addEventListener('click', () => {
 });
 
 loadLocation();
-loadAll();
+loadAll().then(() => { consumePendingImportFromFlows(); });
 </script>
 </body>
 </html>
