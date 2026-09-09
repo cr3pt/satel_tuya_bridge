@@ -2405,7 +2405,7 @@ sposobem budowania automatyzacji krok-po-kroku, ale to długoterminowy
 kierunek, nie coś co dzieje się automatycznie przy aktualizacji - istniejące
 reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 
-### 12 typów węzłów
+### 13 typów węzłów
 
 | Węzeł | Rola | Konfiguracja |
 |---|---|---|
@@ -2415,6 +2415,7 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 | 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`, wybierany dwustopniowo: System -> Status) + operator (równa się/różna od/większe/większe-równe/mniejsze/mniejsze-równe) - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
 | 🧩 Warunek złożony | rozgałęzienie | zagnieżdżone drzewo AND/OR/NOT z liśćmi Warunek stanu / Okno czasowe - dwa wyjścia: "spełniony"/"inaczej" (patrz niżej) |
 | 🔌 Urządzenie | akcja | system (Tuya / Satel wyjście / Satel wirtualne wejście), urządzenie docelowe, wartość (włącz/wyłącz/zmiana stanu, jasność dla ściemniaczy Tuya) |
+| 🔧 Ustaw pole Tuya | akcja | urządzenie Tuya, kod pola (DP) wybierany z listy odkrytej przez "🔍 Pobierz opisy pól" (albo wpisany ręcznie), wartość - generyczny odpowiednik przycisków w apce Tuya, których nie ma jako osobnej akcji (patrz niżej) |
 | 🎬 Scena | akcja | uruchamia istniejącą scenę po nazwie |
 | ⏱ Opóźnienie | akcja | pauza przed kontynuacją grafu - liczba + jednostka (`s`/`m`/`g` = sekundy/minuty/godziny, np. `30s`, `5m`, `2g`; brak litery = sekundy) |
 | 🔔 Powiadomienie | akcja | poziom (info/ostrzeżenie/krytyczne) i treść (`{value}`/`{key}` podstawiane z wiadomości) |
@@ -2543,6 +2544,49 @@ usuwanie liści i podgrup, wybór statusu z listy) - żeby edycja jednego
 skomplikowanego warunku nie gubiła zaznaczenia przy każdej zmianie, zmiany
 w drzewie aktualizują tylko podgląd węzła na canvasie, bez przerysowania
 całego panelu bocznego.
+
+### Prognoza pogody i blokowanie podlewania (np. deszcz)
+
+Sekcja **"🌍 Lokalizacja"** na stronie `/automations` (ta sama, co dla
+wschodu/zachodu słońca w Harmonogramie) uruchamia też - po ustawieniu
+szerokości/długości geograficznej - cykliczne pobieranie prognozy opadów
+z [Open-Meteo](https://open-meteo.com) (darmowe API, bez klucza,
+`bridge/weather_client.py: fetch_forecast`). Prognoza (raz na ok. 3 godziny)
+publikowana jest jako statusy widoczne na panelu głównym i do użycia w
+Warunku stanu / Warunku złożonym, kategoria "Pogoda":
+
+- `weather:precipitation_probability_percent` - prawdopodobieństwo opadów
+  dzisiaj (%)
+- `weather:precipitation_sum_mm` - suma opadów przewidywana na dziś (mm)
+
+Obie wartości są liczbowe - użyj nowych operatorów większe/mniejsze
+(patrz "Dodatkowy warunek reguły" wyżej), np. warunek `state`
+`weather:precipitation_probability_percent gte 60` w Warunku stanu (Flow)
+albo Warunku złożonym. **Lokalizacja musi być ustawiona PRZED startem
+procesu bridge'a** - pętla prognozy startuje raz w `RulesEngine.start()`,
+podobnie jak inne pętle odpytywania w tym projekcie (ustawienie lokalizacji
+po raz pierwszy w już działającym procesie wymaga jego restartu, żeby
+zaczęła działać).
+
+**Blokowanie podlewania** (albo dowolna inna akcja specyficzna dla
+konkretnego modelu urządzenia, której nie ma jako gotowej opcji w edytorze)
+łączy się z tym przez nowy węzeł Flow **🔧 Ustaw pole Tuya** (`tuya_dp`) -
+generyczny odpowiednik przycisku w apce Tuya: ustawia DOWOLNE pole (DP)
+wskazanego urządzenia po kodzie, niezależnie od tego, czy jest to zwykły
+przełącznik czy nie. Np. sterowniki nawadniania mają zwykle funkcję "rain
+delay" (w polskiej apce Tuya: **"Opóźnienie ręczne"**, kod DP zwykle
+`manual_delay` - liczba dni, o którą przesuwa się kolejne zaplanowane
+podlewanie): flow **Harmonogram (rano) -> Warunek stanu
+(`weather:precipitation_probability_percent gte 60`) -> Ustaw pole Tuya
+(urządzenie: sterownik nawadniania, pole: "Opóźnienie ręczne", wartość: 1)**
+odkłada podlewanie o dzień, gdy prognoza zapowiada deszcz. Kod pola wybiera
+się z listy odkrytej przez **"🔍 Pobierz opisy pól"** na stronie Tuya (LAN)
+- bez tego (albo dla urządzeń Cloud bez zapisanego opisu) trzeba wpisać kod
+ręcznie (widoczny w apce producenta albo w dokumentacji API Tuya dla danej
+kategorii urządzenia). Wartość wpisywana jako tekst jest automatycznie
+konwertowana na `bool`/`int`/`float`, jeśli się da (np. `"1"` -> `1`,
+`"true"` -> `True`), w przeciwnym razie wysyłana jako string - działa
+zarówno dla urządzeń lokalnych (Tuya LAN), jak i Tuya Cloud.
 
 ### Import z reguł ruchu i eksport do reguł ruchu (zaznaczone, oba kierunki)
 

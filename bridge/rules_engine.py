@@ -16,6 +16,7 @@ from .tuya_cloud_events import TuyaCameraMotionListener
 from .unifi_protect_events import UnifiProtectMotionListener
 from .homewhiz_client import HomeWhizClient
 from .ebus_client import EbusMqttListener
+from .weather_client import fetch_forecast
 from .boiler_output import build_boiler_publishers, MqttBoilerPublisher, TuyaVirtualDevicePublisher
 from .history_store import HistoryStore
 from .alarms import AlarmEngine
@@ -104,7 +105,7 @@ class RulesEngine:
             config.raw.get("flows", []), set_target_state=self._set_target_state,
             run_scene=lambda name: self.scenes.run(name), notify_cfg=notify_cfg,
             mqtt_cfg=config.raw.get("mqtt_publish", {}), location_cfg=self._location_cfg,
-            get_status_value=self.history.get_status_value,
+            get_status_value=self.history.get_status_value, set_tuya_dp=self._set_tuya_dp,
         )
 
         self._escalation_history: dict[str, list[float]] = {}
@@ -447,6 +448,13 @@ class RulesEngine:
             await self.tuya.turn_on(device, dimmer)
         else:
             await self.tuya.turn_off(device)
+
+    async def _set_tuya_dp(self, device: str, dp_code: str, value: object) -> None:
+        """Wrapper wołany przez FlowEngine (węzeł "Ustaw pole Tuya") - jak
+        _set_target_state, dereferencjonuje self.tuya na bieżąco (a nie w
+        momencie budowy FlowEngine), żeby przetrwać podmianę self.tuya przy
+        reload_config()."""
+        await self.tuya.set_dp(device, dp_code, value)
 
     async def _run_on_for_duration(
         self, target_system: str, device: str, duration: float, dimmer: int | None, rule_name: str | None,
@@ -883,6 +891,32 @@ class RulesEngine:
                 logger.exception("Błąd w pętli odpytywania statusów Tuya")
             await asyncio.sleep(self.config.tuya.get("status_poll_interval_seconds", 15))
 
+    async def _weather_poll_loop(self, interval_seconds: float = 3 * 3600) -> None:
+        """Cyklicznie pobiera prognozę opadów dla lokalizacji ustawionej w
+        sekcji "🌍 Lokalizacja" (ta sama, co dla wschodu/zachodu słońca) i
+        publikuje ją jako statusy widoczne na panelu głównym oraz do użycia
+        w Warunku stanu (Flow) / dodatkowym warunku reguły ruchu - np.
+        "weather:precipitation_probability_percent >= 60" jako warunek
+        blokujący podlewanie. Bez skonfigurowanej lokalizacji pętla w ogóle
+        się nie uruchamia (patrz start())."""
+        while True:
+            try:
+                forecast = await fetch_forecast(
+                    self._location_cfg["latitude"], self._location_cfg["longitude"],
+                )
+                if forecast is not None:
+                    self.history.set_status(
+                        "weather:precipitation_probability_percent", "weather",
+                        str(forecast["precipitation_probability_percent"]), label="Prawdopodobieństwo opadów (%)",
+                    )
+                    self.history.set_status(
+                        "weather:precipitation_sum_mm", "weather",
+                        str(forecast["precipitation_sum_mm"]), label="Suma opadów dziś (mm)",
+                    )
+            except Exception:
+                logger.exception("Błąd w pętli odpytywania prognozy pogody")
+            await asyncio.sleep(interval_seconds)
+
     def _seed_satel_status_labels(self) -> None:
         satel_enabled = self.config.satel.get("enabled", True)
         seen = set() if not satel_enabled else (
@@ -1064,6 +1098,8 @@ class RulesEngine:
         asyncio.create_task(self.presence_simulation.run_forever())
         asyncio.create_task(self._command_poll_loop())
         asyncio.create_task(self._maintenance_loop())
+        if self._location_cfg:
+            asyncio.create_task(self._weather_poll_loop())
 
         if self.config.ebus.get("enabled", True):
             self.ebus_listener = EbusMqttListener(

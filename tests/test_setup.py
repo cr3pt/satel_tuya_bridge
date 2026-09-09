@@ -2231,6 +2231,33 @@ class TestFlows:
             "wires": [],
         }
 
+    def test_tuya_dp_node_requires_device_code_and_value(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["dp"]]},
+            {"id": "dp", "type": "tuya_dp", "config": {}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("wybierz urządzenie Tuya" in e for e in errors)
+        assert any("kod pola" in e for e in errors)
+        assert any("podaj wartość" in e for e in errors)
+
+    def test_tuya_dp_node_with_values_is_valid(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["dp"]]},
+            {"id": "dp", "type": "tuya_dp", "config": {"target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1"}, "wires": []},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_build_tuya_dp_node(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["dp"]]},
+            {"id": "dp", "type": "tuya_dp", "config": {"target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1"}, "wires": []},
+        ])
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][1]["config"] == {
+            "target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1",
+        }
+
     def test_build_flow_without_name_is_skipped(self):
         automations = build_automations_dict(self._form_with_flow(self._simple_flow(name="")))
         assert automations["flows"] == []

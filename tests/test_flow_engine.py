@@ -174,6 +174,57 @@ class TestDeviceNode:
         assert calls["set_target_state"] == [("satel_virtual_input", "kamera", True, None)]
 
 
+class TestTuyaDpNode:
+    async def test_calls_set_tuya_dp_with_target_device_code_and_value(self):
+        calls = []
+
+        async def set_tuya_dp(device, dp_code, value):
+            calls.append((device, dp_code, value))
+
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dp"]]},
+                {"id": "dp", "type": "tuya_dp", "config": {"target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1"}, "wires": []},
+            ],
+        }
+        engine, _ = _engine([flow], set_tuya_dp=set_tuya_dp)
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls == [("nawadnianie", "manual_delay", "1")]
+
+    async def test_value_supports_value_template_from_triggering_message(self):
+        calls = []
+
+        async def set_tuya_dp(device, dp_code, value):
+            calls.append((device, dp_code, value))
+
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "tuya_state", "source_device": "wilgotnosc", "op": "changes"}, "wires": [["dp"]]},
+                {"id": "dp", "type": "tuya_dp", "config": {"target_device": "nawadnianie", "dp_code": "manual_delay", "value": "{value}"}, "wires": []},
+            ],
+        }
+        engine, _ = _engine([flow], set_tuya_dp=set_tuya_dp)
+        await engine.handle_device_state("tuya_state", "wilgotnosc", "80")
+        await asyncio.sleep(0.01)
+        assert calls == [("nawadnianie", "manual_delay", "80")]
+
+    async def test_no_handler_configured_does_not_crash(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dp"]]},
+                {"id": "dp", "type": "tuya_dp", "config": {"target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == []
+
+
 class TestSceneNode:
     async def test_runs_named_scene(self):
         flow = {

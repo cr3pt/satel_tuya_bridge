@@ -95,6 +95,16 @@ class FlowEngine:
                 warunek" reguły ruchu. Zamiast łańcucha kilku węzłów
                 Warunek stanu (co daje tylko AND) pozwala złożyć
                 jednym węzłem np. "A i (B lub C)"
+      tuya_dp   {target_device, dp_code, value}  - ustawia DOWOLNE pole (DP)
+                urządzenia Tuya (lokalnego lub Cloud) po kodzie - generyczny
+                odpowiednik przycisków w apce Tuya, których nie ma jako
+                osobnej akcji (np. "Opóźnienie ręczne"/"manual_delay" w
+                sterownikach nawadniania - rain delay). `value` wpisywane
+                jako tekst jest konwertowane na bool/int/float, jeśli się da
+                (patrz bridge.tuya_local.coerce_dp_value), inaczej wysyłane
+                jako string. Kod pola wybiera się z listy odkrytej przez
+                "🔍 Pobierz opisy pól" na stronie Tuya (LAN) - bez tego
+                trzeba go wpisać ręcznie.
     """
 
     def __init__(
@@ -107,10 +117,12 @@ class FlowEngine:
         mqtt_cfg: dict | None = None,
         location_cfg: dict | None = None,
         get_status_value: Callable[[str], str | None] | None = None,
+        set_tuya_dp: Callable[[str, str, object], Awaitable[None]] | None = None,
     ):
         self.flows = flows_cfg or []
         self._set_target_state = set_target_state
         self._run_scene = run_scene
+        self._set_tuya_dp = set_tuya_dp
         self._notifier = Notifier(notify_cfg)
         self._mqtt_cfg = mqtt_cfg or {}
         self._mqtt_client: mqtt.Client | None = None
@@ -346,6 +358,16 @@ class FlowEngine:
             scene_name = c.get("scene_name")
             if scene_name:
                 await self._run_scene(scene_name)
+            return [msg]
+
+        if ntype == "tuya_dp":
+            if self._set_tuya_dp is None:
+                logger.warning(
+                    "Flow '%s': węzeł 'Ustaw pole Tuya' pominięty - brak skonfigurowanego handlera", flow.get("name"),
+                )
+                return [msg]
+            value = _resolve_template(c.get("value"), msg)
+            await self._set_tuya_dp(c.get("target_device"), c.get("dp_code"), value)
             return [msg]
 
         if ntype == "delay":

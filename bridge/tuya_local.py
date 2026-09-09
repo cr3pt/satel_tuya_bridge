@@ -41,6 +41,7 @@ DP_LABEL_TRANSLATIONS = {
     "decibel_switch": "detekcja dźwięku", "decibel_sensitivity": "czułość detekcji dźwięku",
     "record_switch": "nagrywanie", "record_mode": "tryb nagrywania",
     "siren_switch": "syrena",
+    "manual_delay": "opóźnienie ręczne", "countdown": "odliczanie", "auto_manual": "tryb automatyczny",
 }
 
 _PHASE_RAW_CODES = {"phase_a", "phase_b", "phase_c"}
@@ -279,6 +280,27 @@ def _dp_format_value(value: object, spec: dict | None, code: str) -> object:
         return f"{value}{unit}"
     if isinstance(value, str) and len(value) > _MAX_INLINE_VALUE_LENGTH:
         return f"(dane binarne, {len(value)} znaków)"
+    return value
+
+
+def coerce_dp_value(value: object) -> object:
+    """Zamienia tekst z formularza na typ oczekiwany przez większość DP Tuya -
+    bool dla "true"/"false", int/float dla liczb, w przeciwnym razie zwraca
+    oryginalny tekst (np. dla DP typu Enum, gdzie wartością jest sama nazwa)."""
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    lowered = stripped.lower()
+    if lowered in ("true", "false"):
+        return lowered == "true"
+    try:
+        return int(stripped)
+    except ValueError:
+        pass
+    try:
+        return float(stripped)
+    except ValueError:
+        pass
     return value
 
 
@@ -541,6 +563,23 @@ class TuyaLocalController:
         else:
             await self._call_with_retry(device_name, dev.turn_off)
         logger.info("Zmieniono stan '%s' na %s (DP: %s)", device_name, new_value, key)
+
+    def _resolve_dp_id(self, device_name: str, dp_code: str) -> str:
+        schema = self.devices_cfg.get(device_name, {}).get("dp_schema") or {}
+        for dp_id, spec in schema.items():
+            if spec.get("code") == dp_code:
+                return dp_id
+        # Brak opisu pól (dp_schema) albo kod nierozpoznany - zakładamy, że
+        # to już surowy numer DP (tak jak generyczna lista pól w panelu robi
+        # to samo, gdy schemat jest niepełny).
+        return dp_code
+
+    async def set_dp(self, device_name: str, dp_code: str, value: object) -> None:
+        dev = self._devices[device_name]
+        dp_id = self._resolve_dp_id(device_name, dp_code)
+        coerced = coerce_dp_value(value)
+        await self._call_with_retry(device_name, dev.set_value, dp_id, coerced)
+        logger.info("Ustawiono pole '%s' (DP=%s) urządzenia '%s' na %r", dp_code, dp_id, device_name, coerced)
 
     async def get_status(self, device_name: str) -> dict:
         dev = self._devices[device_name]

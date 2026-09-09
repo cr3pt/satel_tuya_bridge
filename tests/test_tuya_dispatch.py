@@ -27,6 +27,9 @@ class FakeSubController:
     async def turn_on_for_duration(self, device_name, duration_seconds, dimmer_level_percent=None):
         self.calls.append(("turn_on_for_duration", device_name, duration_seconds, dimmer_level_percent))
 
+    async def set_dp(self, device_name, dp_code, value):
+        self.calls.append(("set_dp", device_name, dp_code, value))
+
 
 @pytest.fixture
 def local():
@@ -92,3 +95,15 @@ def test_devices_cfg_merges_both_with_local_precedence(local, cloud):
 async def test_turn_on_for_duration_routes_correctly(dispatch, cloud):
     await dispatch.turn_on_for_duration("lampa_cloud", 30, dimmer_level_percent=None)
     assert cloud.calls == [("turn_on_for_duration", "lampa_cloud", 30, None)]
+
+
+async def test_set_dp_routes_local_device_to_local(dispatch, local, cloud):
+    await dispatch.set_dp("gniazdko_local", "manual_delay", "2")
+    assert local.calls == [("set_dp", "gniazdko_local", "manual_delay", "2")]
+    assert cloud.calls == []
+
+
+async def test_set_dp_routes_cloud_only_device_to_cloud(dispatch, local, cloud):
+    await dispatch.set_dp("lampa_cloud", "manual_delay", "2")
+    assert cloud.calls == [("set_dp", "lampa_cloud", "manual_delay", "2")]
+    assert local.calls == []

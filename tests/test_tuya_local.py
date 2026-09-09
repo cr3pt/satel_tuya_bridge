@@ -4,7 +4,7 @@ from bridge.tuya_local import (
     TuyaLocalController, scan_network, fetch_cloud_devices, fetch_device_dp_schema,
     fetch_dp_schemas_for_devices, find_tuya_switch_key, format_tuya_dps,
     extract_tuya_sensor_readings, detect_tuya_sensor_type,
-    is_switch_code, find_switch_keys_from_schema,
+    is_switch_code, find_switch_keys_from_schema, coerce_dp_value,
 )
 
 DEVICES_CFG = {
@@ -811,3 +811,44 @@ class TestZigbeeGateways:
         ctrl = TuyaLocalController(DEVICES_CFG)
         assert ctrl._gateways == {}
         assert set(ctrl._devices) == set(DEVICES_CFG)
+
+
+class TestCoerceDpValue:
+
+    def test_true_string_becomes_bool(self):
+        assert coerce_dp_value("true") is True
+
+    def test_false_string_becomes_bool(self):
+        assert coerce_dp_value("False") is False
+
+    def test_integer_string_becomes_int(self):
+        assert coerce_dp_value("3") == 3
+        assert isinstance(coerce_dp_value("3"), int)
+
+    def test_float_string_becomes_float(self):
+        assert coerce_dp_value("3.5") == 3.5
+
+    def test_plain_text_stays_string(self):
+        assert coerce_dp_value("auto") == "auto"
+
+    def test_non_string_passthrough(self):
+        assert coerce_dp_value(True) is True
+        assert coerce_dp_value(5) == 5
+
+
+class TestSetDp:
+
+    async def test_resolves_code_to_dp_id_via_schema_and_coerces_value(self, controller):
+        controller.devices_cfg["gniazdko_salon"]["dp_schema"] = {
+            "9": {"code": "manual_delay", "type": "Integer"},
+        }
+        fake = FakeMultiDPDevice()
+        controller._devices["gniazdko_salon"] = fake
+        await controller.set_dp("gniazdko_salon", "manual_delay", "2")
+        assert fake.calls == [("set_value", "9", 2)]
+
+    async def test_unknown_code_without_schema_used_as_raw_dp_id(self, controller):
+        fake = FakeMultiDPDevice()
+        controller._devices["gniazdko_salon"] = fake
+        await controller.set_dp("gniazdko_salon", "9", "true")
+        assert fake.calls == [("set_value", "9", True)]

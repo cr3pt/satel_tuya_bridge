@@ -113,7 +113,7 @@ def validate_automations(form: dict) -> list[str]:
 
 _FLOW_NODE_TYPES = (
     "trigger", "condition", "device", "scene", "delay", "notify", "mqttIn", "mqttOut", "http",
-    "schedule", "escalation", "state", "condition_group",
+    "schedule", "escalation", "state", "condition_group", "tuya_dp",
 )
 _FLOW_STATE_OPS = ("equals", "not_equals", "gt", "lt", "gte", "lte")
 _FLOW_TRIGGER_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state")
@@ -193,6 +193,13 @@ def _validate_flow_node(node: dict, label: str, scene_names: set[str]) -> list[s
             errors.append(f"{label}: warunek stanu wymaga wartości porównania")
     elif ntype == "condition_group":
         errors.extend(_validate_condition(c.get("condition"), f"{label}: warunek"))
+    elif ntype == "tuya_dp":
+        if not c.get("target_device"):
+            errors.append(f"{label}: wybierz urządzenie Tuya")
+        if not (c.get("dp_code") or "").strip():
+            errors.append(f"{label}: podaj kod pola (DP) do ustawienia")
+        if (c.get("value") or "") == "":
+            errors.append(f"{label}: podaj wartość do ustawienia")
     return errors
 
 
@@ -1237,6 +1244,8 @@ def _build_flow_node_config(ntype: str, c: dict) -> dict:
         return {"key": c.get("key"), "op": c.get("op") or "equals", "value": c.get("value")}
     if ntype == "condition_group":
         return {"condition": _build_condition(c.get("condition"))}
+    if ntype == "tuya_dp":
+        return {"target_device": c.get("target_device"), "dp_code": c.get("dp_code"), "value": c.get("value")}
     return dict(c)
 
 

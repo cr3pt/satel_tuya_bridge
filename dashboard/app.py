@@ -26,7 +26,9 @@ from bridge.satel_client import test_output as test_satel_output
 from bridge.satel_client import test_virtual_input_http as test_satel_virtual_input_http
 from bridge.satel_client import DEFAULT_VIRTUAL_INPUT_HTTP_PORT, DEFAULT_VIRTUAL_INPUT_URL_TEMPLATE
 from bridge.satel_client import discover_active_zones_and_outputs
-from bridge.tuya_local import scan_network as scan_tuya_network, fetch_cloud_devices as fetch_tuya_cloud_devices
+from bridge.tuya_local import (
+    scan_network as scan_tuya_network, fetch_cloud_devices as fetch_tuya_cloud_devices, _dp_label,
+)
 from dashboard.auth import AuthGuard, require_auth, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
 from dashboard.setup import (
     build_config_dict, validate, build_automations_dict, validate_automations,
@@ -734,11 +736,21 @@ async def api_config_automation_context():
         key=lambda z: z["name"],
     )
     homewhiz_appliances = sorted((config_raw.get("homewhiz") or {}).get("appliances", {}).keys())
+    tuya_dp_options = {
+        name: sorted(
+            (
+                {"code": spec.get("code"), "label": _dp_label(spec.get("code"))}
+                for spec in (cfg.get("dp_schema") or {}).values() if spec.get("code")
+            ),
+            key=lambda o: o["label"],
+        )
+        for name, cfg in tuya.get("devices", {}).items() if cfg.get("dp_schema")
+    }
     return jsonify({
         "tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs, "satel_partitions": satel_partitions,
         "status_keys": status_keys, "motion_rule_names": motion_rule_names,
         "dimmer_devices": dimmer_devices, "satel_outputs": satel_outputs, "satel_zones": satel_zones,
-        "homewhiz_appliances": homewhiz_appliances,
+        "homewhiz_appliances": homewhiz_appliances, "tuya_dp_options": tuya_dp_options,
     })
 
 
