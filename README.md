@@ -2389,7 +2389,7 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 | 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`) + operator równa się/różna od - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
 | 🔌 Urządzenie | akcja | system (Tuya / Satel wyjście / Satel wirtualne wejście), urządzenie docelowe, wartość (włącz/wyłącz, jasność dla ściemniaczy Tuya) |
 | 🎬 Scena | akcja | uruchamia istniejącą scenę po nazwie |
-| ⏱ Opóźnienie | akcja | pauza N sekund przed kontynuacją grafu |
+| ⏱ Opóźnienie | akcja | pauza przed kontynuacją grafu - liczba + jednostka (`s`/`m`/`g` = sekundy/minuty/godziny, np. `30s`, `5m`, `2g`; brak litery = sekundy) |
 | 🔔 Powiadomienie | akcja | poziom (info/ostrzeżenie/krytyczne) i treść (`{value}`/`{key}` podstawiane z wiadomości) |
 | 📤 MQTT out | akcja | publikuje na temat MQTT (treść puste = wartość z wyzwalacza) |
 | 🌐 HTTP | akcja | wywołanie dowolnego URL-a (GET/POST/PUT/PATCH/DELETE) |

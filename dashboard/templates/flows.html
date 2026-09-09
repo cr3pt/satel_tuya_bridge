@@ -15,7 +15,7 @@
   body {
     background: var(--bg); color: var(--text); margin: 0;
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-    padding: 20px; max-width: 1400px; margin-left: auto; margin-right: auto;
+    padding: 20px; width: 95%; margin-left: auto; margin-right: auto;
   }
   h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
   .hint { color: var(--muted); font-size: 13px; margin-bottom: 18px; line-height: 1.5; }
@@ -182,6 +182,22 @@ async function refreshAuthNav() {
   }
 }
 
+function formatSecondsAsDuration(seconds) {
+  const s = Number(seconds) || 0;
+  if (s !== 0 && s % 3600 === 0) return `${s / 3600}g`;
+  if (s !== 0 && s % 60 === 0) return `${s / 60}m`;
+  return `${s}s`;
+}
+function parseDurationToSeconds(text) {
+  const m = String(text || '').trim().match(/^([0-9]*\.?[0-9]+)\s*([smg]?)$/i);
+  if (!m) return 0;
+  const value = parseFloat(m[1]);
+  const unit = (m[2] || 's').toLowerCase();
+  if (unit === 'm') return value * 60;
+  if (unit === 'g') return value * 3600;
+  return value;
+}
+
 function showMsg(ok, text) {
   const el = document.getElementById('msg');
   el.className = 'msg-box ' + (ok ? 'ok' : 'error');
@@ -234,7 +250,7 @@ function nodeLabel(node) {
   if (node.type === 'condition') return `${c.op || '?'} ${c.value ?? ''}`;
   if (node.type === 'device') return c.target_device || '(brak urządzenia)';
   if (node.type === 'scene') return c.scene_name || '(brak sceny)';
-  if (node.type === 'delay') return `${c.seconds ?? 0}s`;
+  if (node.type === 'delay') return formatSecondsAsDuration(c.seconds ?? 0);
   if (node.type === 'notify') return c.message ? c.message.slice(0, 26) : '(brak treści)';
   if (node.type === 'mqttIn' || node.type === 'mqttOut') return c.topic || '(brak tematu)';
   if (node.type === 'http') return c.url ? c.url.slice(0, 26) : '(brak URL)';
@@ -617,7 +633,7 @@ function renderNodeFields(node) {
   } else if (node.type === 'scene') {
     html += field(`<label>Scena</label><select data-field="scene_name">${sceneOptions(c.scene_name)}</select>`);
   } else if (node.type === 'delay') {
-    html += field(`<label>Sekundy</label><input type="number" step="0.1" min="0" data-field="seconds" value="${c.seconds ?? 0}">`);
+    html += field(`<label>Czas (liczba + jednostka: s/m/g)</label><input type="text" class="delay-duration" placeholder="np. 30s, 5m, 2g" value="${escapeHtml(formatSecondsAsDuration(c.seconds ?? 0))}">`);
   } else if (node.type === 'notify') {
     html += field(`<label>Poziom</label><select data-field="level">
       <option value="info" ${c.level === 'info' ? 'selected' : ''}>Informacja</option>
@@ -683,6 +699,14 @@ function renderNodeFields(node) {
         renderSidePanel();
       });
     }
+  }
+  if (node.type === 'delay') {
+    const input = el.querySelector('.delay-duration');
+    input.addEventListener('change', () => {
+      c.seconds = parseDurationToSeconds(input.value);
+      renderCanvas();
+      renderSidePanel();
+    });
   }
 }
 
