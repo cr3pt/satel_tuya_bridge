@@ -583,6 +583,8 @@ def _build_motion_rules(rules_form: list[dict]) -> list[dict]:
 
         if rule.get("enabled") is False:
             built["enabled"] = False
+        if rule.get("imported_to_flows"):
+            built["imported_to_flows"] = True
 
         window = rule.get("time_window") or {}
         if window.get("enabled") and window.get("start") and window.get("end"):
@@ -1266,6 +1268,9 @@ def motion_rule_to_flow(rule: dict, index: int) -> tuple[dict | None, list[str]]
     rules) oddaje go do przeglądu w panelu przed zapisem."""
     warnings: list[str] = []
     name = (rule.get("name") or "").strip() or f"Reguła ruchu #{index + 1}"
+
+    if rule.get("imported_to_flows"):
+        return None, [f"'{name}': już zaimportowano wcześniej do Flow - pomięto"]
 
     if rule.get("sources") or rule.get("actions"):
         return None, [f"'{name}': wiele źródeł/akcji (sources/actions) nie jest jeszcze obsługiwane w konwerterze - pomięto całą regułę"]

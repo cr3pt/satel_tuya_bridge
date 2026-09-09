@@ -1279,7 +1279,7 @@ class TestFlowsImportFromMotionRules:
             "/api/flows/import-from-motion-rules", headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 200
-        assert await resp.get_json() == {"flows": [], "warnings": []}
+        assert await resp.get_json() == {"flows": [], "warnings": [], "imported_rule_indices": []}
 
     async def test_convertible_rule_is_returned_as_flow(self, client, monkeypatch):
         monkeypatch.setattr("dashboard.app.config_raw", {
@@ -1296,6 +1296,7 @@ class TestFlowsImportFromMotionRules:
         assert data["warnings"] == []
         assert len(data["flows"]) == 1
         assert data["flows"][0]["name"] == "Import: swiatlo_na_taras"
+        assert data["imported_rule_indices"] == [0]
 
     async def test_unsupported_rule_is_skipped_with_warning(self, client, monkeypatch):
         monkeypatch.setattr("dashboard.app.config_raw", {
@@ -1340,6 +1341,65 @@ class TestFlowsImportFromMotionRules:
         ))
         resp = (await client.get("/api/config/flows", headers=_basic_auth_header("test_haslo_123")))
         assert (await resp.get_json())["flows"] == []
+
+
+class TestFlowsMarkMotionRulesImported:
+    async def test_requires_auth(self, client):
+        resp = (await client.post("/api/flows/mark-motion-rules-imported", json={"rule_indices": [0]}))
+        assert resp.status_code == 401
+
+    async def test_marks_rule_disabled_and_imported(self, client):
+        import dashboard.app as app_module
+
+        app_module.config_store.set("automations", {
+            "scenes": [],
+            "reguły_ruchu": [
+                {"name": "swiatlo_na_taras", "source": "satel_zone", "zone_number": 5,
+                 "target_device": "lampa_taras", "duration_seconds": 60},
+                {"name": "inna", "source": "satel_zone", "zone_number": 6, "target_device": "lampa2"},
+            ],
+            "presence_simulation": {"enabled": False},
+        })
+        app_module.create_app(BridgeConfig.load(app_module.config_path))
+
+        resp = (await client.post(
+            "/api/flows/mark-motion-rules-imported", json={"rule_indices": [0]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        assert (await resp.get_json())["marked"] == 1
+
+        saved_rules = app_module.config_store.get("automations")["reguły_ruchu"]
+        assert saved_rules[0]["enabled"] is False
+        assert saved_rules[0]["imported_to_flows"] is True
+        assert "imported_to_flows" not in saved_rules[1]
+
+    async def test_out_of_range_index_is_ignored(self, client):
+        import dashboard.app as app_module
+
+        app_module.config_store.set("automations", {
+            "scenes": [],
+            "reguły_ruchu": [
+                {"name": "swiatlo_na_taras", "source": "satel_zone", "zone_number": 5,
+                 "target_device": "lampa_taras", "duration_seconds": 60},
+            ],
+            "presence_simulation": {"enabled": False},
+        })
+        app_module.create_app(BridgeConfig.load(app_module.config_path))
+
+        resp = (await client.post(
+            "/api/flows/mark-motion-rules-imported", json={"rule_indices": [0, 5]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        assert (await resp.get_json())["marked"] == 1
+
+    async def test_invalid_payload_is_rejected(self, client):
+        resp = (await client.post(
+            "/api/flows/mark-motion-rules-imported", json={"rule_indices": "not-a-list"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
 
 
 class TestSetupOnlyPathsPublicOnlyBeforeConfiguration:

@@ -1405,6 +1405,16 @@ class TestBuildConfigDictAdvanced:
         built_rule = build_automations_dict(form)["reguły_ruchu"][0]
         assert built_rule["enabled"] is False
 
+    def test_motion_rule_imported_to_flows_flag_is_preserved(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "enabled": False, "imported_to_flows": True}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        built_rule = build_automations_dict(form)["reguły_ruchu"][0]
+        assert built_rule["imported_to_flows"] is True
+
+    def test_motion_rule_imported_to_flows_omitted_when_falsy(self):
+        automations = build_automations_dict(FORM_WITH_ADVANCED)
+        assert "imported_to_flows" not in automations["reguły_ruchu"][0]
+
     def test_arm_disarm_actions_capture_explicit_partitions(self):
         form = {**VALID_FORM, "scenes": [
             {
@@ -2283,6 +2293,15 @@ class TestMotionRuleToFlow:
         flow_a, _ = motion_rule_to_flow(rule, 0)
         flow_b, _ = motion_rule_to_flow(rule, 0)
         assert flow_a["id"] != flow_b["id"]
+
+    def test_already_imported_rule_is_skipped_with_warning(self):
+        rule = {
+            "name": "juz_zaimportowana", "source": "satel_zone", "zone_number": 1, "target_device": "x",
+            "duration_seconds": 5, "imported_to_flows": True,
+        }
+        flow, warnings = motion_rule_to_flow(rule, 0)
+        assert flow is None
+        assert any("juz_zaimportowana" in w and "już zaimportowano" in w for w in warnings)
 
 
 class TestSetupDraft:

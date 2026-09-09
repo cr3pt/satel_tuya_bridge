@@ -2484,6 +2484,19 @@ nie tworzy jeszcze węzła Warunek stanu automatycznie z `condition`), ale
 reguła i tak się konwertuje - z ostrzeżeniem, że trzeba je dodać ręcznie.
 Wszystkie ostrzeżenia trafiają razem do komunikatu w panelu po imporcie.
 
+Po kliknięciu **"💾 Zapisz wszystkie flows"** (gdy w kolejce są flows
+pochodzące z importu) panel automatycznie woła `POST /api/flows/mark-
+motion-rules-imported`, który w oryginalnych `reguły_ruchu` ustawia
+`enabled: false` oraz `imported_to_flows: true`. Na stronie
+`/automations` taka reguła robi się szara (jak każda wyłączona) i dostaje
+odznakę **"ZAIMPORTOWANO DO FLOWS"** przy nazwie - żeby było jasno widać,
+że logika działa już w Flow, a nie w starym silniku reguł ruchu. Reguła
+oznaczona jako zaimportowana jest pomijana przy kolejnych kliknięciach
+"Importuj z reguł ruchu" (żeby nie tworzyć duplikatów flow) - z
+ostrzeżeniem "już zaimportowano wcześniej do Flow". Admin może ją ręcznie
+z powrotem włączyć na `/automations` (checkbox "Włączona") - odznaka
+zostaje jako informacja o pochodzeniu, ale nie blokuje ponownego użycia.
+
 ## Zmywarki/AGD HomeWhiz (BEQ/Arcelik)
 
 Bridge łączy się BEZPOŚREDNIO z chmurą HomeWhiz (Arcelik IoT/AWS) tymi

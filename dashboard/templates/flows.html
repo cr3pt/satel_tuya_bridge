@@ -226,6 +226,7 @@ let activeFlowIndex = -1;
 let selectedNodeId = null;
 let connecting = null;
 let dragState = null;
+let pendingImportedRuleIndices = [];
 
 function defaultConfigFor(type) {
   if (type === 'trigger') return { source: 'satel_zone', zone_number: '', op: 'violated' };
@@ -762,7 +763,18 @@ document.getElementById('saveFlowsBtn').addEventListener('click', async () => {
       showMsg(false, (data.error || 'Błąd zapisu') + details);
       return;
     }
-    showMsg(true, data.message);
+    let msg = data.message;
+    if (pendingImportedRuleIndices.length) {
+      const markResp = await fetch('/api/flows/mark-motion-rules-imported', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rule_indices: pendingImportedRuleIndices }),
+      });
+      if (markResp.ok) {
+        msg += ` Oznaczono ${pendingImportedRuleIndices.length} zaimportowaną automatyzację jako nieaktywną (ZAIMPORTOWANO DO FLOWS).`;
+      }
+      pendingImportedRuleIndices = [];
+    }
+    showMsg(true, msg);
     await loadFlows();
   } catch (e) {
     showMsg(false, 'Błąd komunikacji z serwerem: ' + e);
@@ -783,7 +795,8 @@ document.getElementById('importFromMotionRulesBtn').addEventListener('click', as
     }
     const startIndex = flows.length;
     flows.push(...imported);
-    let msg = `Zaimportowano ${imported.length} flow z reguł ruchu (NIEZAPISANE) - przejrzyj i kliknij "Zapisz wszystkie flows".`;
+    pendingImportedRuleIndices.push(...(data.imported_rule_indices || []));
+    let msg = `Zaimportowano ${imported.length} flow z reguł ruchu (NIEZAPISANE) - przejrzyj i kliknij "Zapisz wszystkie flows". Po zapisie oryginalne automatyzacje zostaną oznaczone jako zaimportowane i wyłączone.`;
     if (warnings.length) msg += ' Uwagi: ' + warnings.join('; ');
     showMsg(true, msg);
     selectFlow(startIndex);
