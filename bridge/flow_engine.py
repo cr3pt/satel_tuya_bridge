@@ -61,8 +61,11 @@ class FlowEngine:
                 wejście grafu - odpalane przez handle_motion/handle_device_state,
                 dokładnie te same zdarzenia co reguły ruchu.
       condition {op: > < >= <= == !=, value}  - [dopasowano, else]
-      device    {target_device, target_system: tuya|satel_output,
-                 value: "on"|"off", dimmer_level_percent?}
+      device    {target_device, target_system: tuya|satel_output|satel_virtual_input,
+                 value: "on"|"off"|"toggle", dimmer_level_percent?}
+                "toggle" (Zmiana stanu) odwraca AKTUALNY stan celu zamiast wymuszać
+                konkretny - dla satel_virtual_input w trybie http jest RÓWNOWAŻNE
+                "on" (protokół zna tylko impuls, nie ma odpowiednika "off")
       scene     {scene_name}  - uruchamia istniejącą, nazwaną scenę
       delay     {seconds}
       notify    {level: info|warning|critical, message}  - {value}/{key} w
@@ -89,7 +92,7 @@ class FlowEngine:
         self,
         flows_cfg: list[dict],
         *,
-        set_target_state: Callable[[str, str, bool, int | None], Awaitable[None]],
+        set_target_state: Callable[[str, str, bool | None, int | None], Awaitable[None]],
         run_scene: Callable[[str], Awaitable[None]],
         notify_cfg: dict | None,
         mqtt_cfg: dict | None = None,
@@ -301,7 +304,8 @@ class FlowEngine:
         if ntype == "device":
             device = c.get("target_device")
             target_system = c.get("target_system", "tuya")
-            on = str(c.get("value", "on")).lower() not in ("off", "false", "0")
+            value = str(c.get("value", "on")).lower()
+            on = None if value == "toggle" else value not in ("off", "false", "0")
             dimmer = c.get("dimmer_level_percent")
             await self._set_target_state(target_system, device, on, dimmer)
             return [msg]

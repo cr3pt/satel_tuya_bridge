@@ -147,6 +147,19 @@ class TestDeviceNode:
         await asyncio.sleep(0.01)
         assert calls["set_target_state"] == [("tuya", "lampa", False, None)]
 
+    async def test_toggle_value_passes_none_for_current_state(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "toggle"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow])
+        await engine.handle_motion("satel_zone", 5, trigger="violated")
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "lampa", None, None)]
+
     async def test_activates_satel_virtual_input(self):
         flow = {
             "id": "f1", "name": "f", "enabled": True,

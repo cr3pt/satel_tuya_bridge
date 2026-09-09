@@ -152,6 +152,9 @@ def _validate_flow_node(node: dict, label: str, scene_names: set[str]) -> list[s
         target_system = c.get("target_system") or "tuya"
         if target_system not in ("tuya", "satel_output", "satel_virtual_input"):
             errors.append(f"{label}: nieznany system urządzenia docelowego '{target_system}'")
+        value = c.get("value") or "on"
+        if value not in ("on", "off", "toggle"):
+            errors.append(f"{label}: nieznana wartość akcji '{value}' (dozwolone: on/off/toggle)")
     elif ntype == "scene":
         scene_name = (c.get("scene_name") or "").strip()
         if not scene_name:
@@ -1310,7 +1313,7 @@ def motion_rule_to_flow(rule: dict, index: int) -> tuple[dict | None, list[str]]
     def link(src: dict, port: int, dst: dict) -> None:
         src["wires"][port].append(dst["id"])
 
-    def build_pipeline(op: str, on_value: str | None, row_y: int) -> None:
+    def build_pipeline(op: str, on_value: str | None, row_y: int, after_action_duration: float | None = None) -> None:
         col = [0]
 
         def add_node(ntype: str, config: dict, outputs: int = 1) -> dict:
@@ -1357,6 +1360,20 @@ def motion_rule_to_flow(rule: dict, index: int) -> tuple[dict | None, list[str]]
             action = add_node("device", action_cfg)
         link(current, action_port, action)
 
+        if after_action_duration:
+            delay = add_node("delay", {"seconds": after_action_duration})
+            link(action, 0, delay)
+            if "virtual_input" in rule:
+                off_action = add_node("device", {
+                    "target_device": rule["virtual_input"], "target_system": "satel_virtual_input", "value": "off",
+                })
+            else:
+                off_action = add_node("device", {
+                    "target_device": rule.get("target_device"), "target_system": rule.get("target_system") or "tuya",
+                    "value": "off",
+                })
+            link(delay, 0, off_action)
+
     if has_scene:
         build_pipeline(rule.get("trigger_on", "violated"), None, 60)
     elif until_restored:
@@ -1365,7 +1382,10 @@ def motion_rule_to_flow(rule: dict, index: int) -> tuple[dict | None, list[str]]
     elif rule.get("action") == "turn_off":
         build_pipeline(rule.get("trigger_on", "violated"), "off", 60)
     else:
-        build_pipeline(rule.get("trigger_on", "violated"), "on", 60)
+        build_pipeline(
+            rule.get("trigger_on", "violated"), "on", 60,
+            after_action_duration=rule.get("duration_seconds"),
+        )
 
     flow = {"id": f"flow_import_{index}_{uuid.uuid4().hex[:6]}", "name": f"Import: {name}", "enabled": True, "nodes": nodes}
     return flow, warnings

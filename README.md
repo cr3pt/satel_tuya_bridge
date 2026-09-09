@@ -2387,7 +2387,7 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 | 📥 MQTT in | wejście grafu | temat MQTT (drugie możliwe wejście obok Trigger) |
 | ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania (payload wiadomości) - dwa wyjścia: "spełniony"/"inaczej" |
 | 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`) + operator równa się/różna od - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
-| 🔌 Urządzenie | akcja | system (Tuya / Satel wyjście / Satel wirtualne wejście), urządzenie docelowe, wartość (włącz/wyłącz, jasność dla ściemniaczy Tuya) |
+| 🔌 Urządzenie | akcja | system (Tuya / Satel wyjście / Satel wirtualne wejście), urządzenie docelowe, wartość (włącz/wyłącz/zmiana stanu, jasność dla ściemniaczy Tuya) |
 | 🎬 Scena | akcja | uruchamia istniejącą scenę po nazwie |
 | ⏱ Opóźnienie | akcja | pauza przed kontynuacją grafu - liczba + jednostka (`s`/`m`/`g` = sekundy/minuty/godziny, np. `30s`, `5m`, `2g`; brak litery = sekundy) |
 | 🔔 Powiadomienie | akcja | poziom (info/ostrzeżenie/krytyczne) i treść (`{value}`/`{key}` podstawiane z wiadomości) |
@@ -2403,6 +2403,22 @@ satel_virtual_input` tak samo jak `satel_output`/Tuya) - wybiera się z
 listy nazwanych wejść (zakładka 🧩 Wtyczki -> Satel), bez osobnego typu
 węzła. Jasność % nie ma tu zastosowania (znika z formularza, tak jak dla
 wyjścia Satela).
+
+**Wartość "Zmiana stanu" (toggle)** odwraca AKTUALNY stan celu zamiast
+wymuszać konkretny - dla Tuya i wyjścia Satela czyta na żywo bieżący stan
+i wysyła przeciwny. **WAŻNE dla "Satel (wirtualne wejście)" w trybie
+`http`** (`satel.virtual_inputs.mode: http`, wejścia IP ETHM-1 Plus):
+protokół HTTP zna TYLKO wyzwolenie (impuls naruszenia) wejścia - nie ma
+odpowiednika "wyłącz" na poziomie protokołu. Dlatego w tym trybie:
+"Włącz" i "Zmiana stanu" wysyłają dokładnie ten sam impuls (to jedyna
+dostępna akcja), a **"Wyłącz" jest bezpiecznym no-opem** (nic nie
+wysyła, tylko loguje info). Wcześniej "Wyłącz" błędnie wysyłało TEN SAM
+impuls co "Włącz", co przy typowym flow włącz->opóźnienie->wyłącz
+(albo imporcie reguły "włącz na czas") powodowało samopodtrzymujące się,
+powtarzające się przełączanie ("flapowanie") oświetlenia - naprawione.
+W trybie `library` (wirtualne wejście zmapowane na prawdziwe wyjście)
+"Wyłącz"/"Włącz"/"Zmiana stanu" działają jak zwykłe wyjście Satela -
+bez tego ograniczenia.
 
 Każdy flow musi mieć co najmniej jeden węzeł wejściowy (Trigger albo
 MQTT in) - bez tego graf nigdy się nie uruchomi, co jest sprawdzane przy
@@ -2475,7 +2491,12 @@ Obsługiwane: pojedyncze źródło (Satel/Tuya/HomeWhiz), pojedyncze
 urządzenie docelowe (w tym ściemniacz i wirtualne wejście Satela), scena,
 tryb "do ustania naruszenia" (tworzy DWA triggery - violated->on i
 restored->off), `action: turn_off`, `time_window` (-> węzeł Harmonogram),
-`escalation` (-> węzeł Eskalacja z gałęzią do sceny eskalowanej).
+`escalation` (-> węzeł Eskalacja z gałęzią do sceny eskalowanej). Reguła
+"włącz na czas" (`duration_seconds` ustawione, bez `action: turn_off` i
+bez trybu "do ustania naruszenia") importuje się jako **włącz -> opóźnienie
+(`duration_seconds`) -> wyłącz** - dokładnie odwzorowując, co faktycznie
+robi `RulesEngine._run_on_for_duration` w regułach ruchu. Bez tego
+zaimportowany flow zostawiałby urządzenie włączone na zawsze.
 NIEOBSŁUGIWANE (Flow jeszcze tego nie ma): wiele źródeł/akcji
 (`sources`/`actions`) - takie reguły są w całości POMIJANE z ostrzeżeniem
 zamiast tworzyć okrojony/mylący flow. Dodatkowy warunek (`condition`) i

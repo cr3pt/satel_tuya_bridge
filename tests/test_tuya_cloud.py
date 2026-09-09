@@ -85,6 +85,22 @@ async def test_turn_off_sends_switch_code_false(controller):
     assert fake.sent_commands == [("cloud1", {"commands": [{"code": "switch_1", "value": False}]})]
 
 
+async def test_toggle_reads_current_status_and_inverts(controller):
+    fake = FakeTinytuyaCloud()
+    fake.status_by_device["cloud1"] = [{"code": "switch_1", "value": True}]
+    controller._cloud = fake
+    await controller.toggle("lampa_taras")
+    assert fake.sent_commands == [("cloud1", {"commands": [{"code": "switch_1", "value": False}]})]
+
+
+async def test_toggle_when_currently_off_turns_on(controller):
+    fake = FakeTinytuyaCloud()
+    fake.status_by_device["cloud1"] = [{"code": "switch_1", "value": False}]
+    controller._cloud = fake
+    await controller.toggle("lampa_taras")
+    assert fake.sent_commands == [("cloud1", {"commands": [{"code": "switch_1", "value": True}]})]
+
+
 async def test_uses_per_device_switch_code(controller):
     fake = FakeTinytuyaCloud()
     controller._cloud = fake

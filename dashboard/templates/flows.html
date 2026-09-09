@@ -249,7 +249,11 @@ function nodeLabel(node) {
     return c.source === 'satel_zone' ? `Strefa #${c.zone_number || '?'}` : (c.source_device || '(brak urządzenia)');
   }
   if (node.type === 'condition') return `${c.op || '?'} ${c.value ?? ''}`;
-  if (node.type === 'device') return c.target_device || '(brak urządzenia)';
+  if (node.type === 'device') {
+    const device = c.target_device || '(brak urządzenia)';
+    const valueLabel = c.value === 'off' ? 'wyłącz' : c.value === 'toggle' ? 'zmiana stanu' : 'włącz';
+    return `${device} (${valueLabel})`;
+  }
   if (node.type === 'scene') return c.scene_name || '(brak sceny)';
   if (node.type === 'delay') return formatSecondsAsDuration(c.seconds ?? 0);
   if (node.type === 'notify') return c.message ? c.message.slice(0, 26) : '(brak treści)';
@@ -624,11 +628,13 @@ function renderNodeFields(node) {
       <option value="satel_virtual_input" ${targetSystem === 'satel_virtual_input' ? 'selected' : ''}>Satel (wirtualne wejście)</option>
     </select>`);
     html += field(`<label>Urządzenie docelowe</label><select data-field="target_device">${targetDeviceOptions(c.target_device, c.target_system)}</select>`);
+    const deviceValue = c.value === 'off' || c.value === 'toggle' ? c.value : 'on';
     html += field(`<label>Wartość</label><select data-field="value">
-      <option value="on" ${c.value !== 'off' ? 'selected' : ''}>Włącz</option>
-      <option value="off" ${c.value === 'off' ? 'selected' : ''}>Wyłącz</option>
+      <option value="on" ${deviceValue === 'on' ? 'selected' : ''}>Włącz</option>
+      <option value="off" ${deviceValue === 'off' ? 'selected' : ''}>Wyłącz</option>
+      <option value="toggle" ${deviceValue === 'toggle' ? 'selected' : ''}>Zmiana stanu</option>
     </select>`);
-    if (c.value !== 'off' && targetSystem === 'tuya' && (context.dimmer_devices || []).includes(c.target_device)) {
+    if (deviceValue === 'on' && targetSystem === 'tuya' && (context.dimmer_devices || []).includes(c.target_device)) {
       html += field(`<label>Jasność % (ściemniacz)</label><input type="number" data-field="dimmer_level_percent" value="${c.dimmer_level_percent ?? ''}">`);
     }
   } else if (node.type === 'scene') {

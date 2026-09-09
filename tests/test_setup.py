@@ -1990,6 +1990,21 @@ class TestFlows:
         errors = validate_automations(self._form_with_flow(flow))
         assert any("nieznany system urządzenia docelowego" in e for e in errors)
 
+    def test_device_accepts_toggle_value(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["d"]]},
+            {"id": "d", "type": "device", "config": {"target_device": "x", "value": "toggle"}, "wires": []},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_device_rejects_unknown_value(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["d"]]},
+            {"id": "d", "type": "device", "config": {"target_device": "x", "value": "blink"}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("nieznana wartość akcji" in e for e in errors)
+
     def test_scene_node_must_reference_existing_scene(self):
         flow = self._simple_flow(nodes=[
             {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
@@ -2152,11 +2167,21 @@ class TestMotionRuleToFlow:
         by_type = self._nodes_by_type(flow)
         assert len(by_type["trigger"]) == 1
         assert by_type["trigger"][0]["config"] == {"source": "satel_zone", "zone_number": 5, "op": "violated"}
-        assert len(by_type["device"]) == 1
-        assert by_type["device"][0]["config"]["target_device"] == "lampa_taras"
-        assert by_type["device"][0]["config"]["value"] == "on"
-        # trigger wires straight into the device node (no schedule/escalation nodes were configured)
-        assert flow["nodes"][0]["wires"] == [[flow["nodes"][1]["id"]]]
+        # "włącz na czas" reguły ruchu importuje się jako włącz->opóźnienie->wyłącz,
+        # tak jak faktycznie działa RulesEngine._run_on_for_duration - inaczej zaimportowany
+        # flow zostawiałby urządzenie włączone na zawsze (bez automatycznego wyłączenia).
+        devices = by_type["device"]
+        assert len(devices) == 2
+        on_device = next(d for d in devices if d["config"]["value"] == "on")
+        off_device = next(d for d in devices if d["config"]["value"] == "off")
+        assert on_device["config"]["target_device"] == "lampa_taras"
+        assert off_device["config"]["target_device"] == "lampa_taras"
+        delay = by_type["delay"][0]
+        assert delay["config"] == {"seconds": 60}
+        # trigger -> device(on) -> delay -> device(off)
+        assert flow["nodes"][0]["wires"] == [[on_device["id"]]]
+        assert on_device["wires"] == [[delay["id"]]]
+        assert delay["wires"] == [[off_device["id"]]]
 
     def test_until_restored_mode_creates_two_pipelines(self):
         rule = {"name": "przedpokoj", "source": "satel_zone", "zone_number": 5, "target_device": "swiatlo"}
@@ -2216,8 +2241,9 @@ class TestMotionRuleToFlow:
         assert len(scenes) == 1
         assert esc["wires"][1] == [scenes[0]["id"]]
         devices = by_type["device"]
-        assert len(devices) == 1
-        assert esc["wires"][0] == [devices[0]["id"]]
+        assert len(devices) == 2
+        on_device = next(d for d in devices if d["config"]["value"] == "on")
+        assert esc["wires"][0] == [on_device["id"]]
 
     def test_escalation_skipped_with_warning_for_until_restored_mode(self):
         rule = {

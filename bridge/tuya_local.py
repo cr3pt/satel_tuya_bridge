@@ -515,6 +515,20 @@ class TuyaLocalController:
             await self._call_with_retry(device_name, dev.turn_off)
             logger.info("Wyłączono '%s'", device_name)
 
+    async def toggle(self, device_name: str) -> None:
+        dev = self._devices[device_name]
+        switch_keys = self._switch_keys(device_name)
+        dps = await self.get_status(device_name)
+        key = switch_keys[0] if switch_keys else "1"
+        new_value = not bool(dps.get(key))
+        if switch_keys:
+            await self._set_switch_value(device_name, dev, switch_keys, new_value)
+        elif new_value:
+            await self._call_with_retry(device_name, dev.turn_on)
+        else:
+            await self._call_with_retry(device_name, dev.turn_off)
+        logger.info("Zmieniono stan '%s' na %s (DP: %s)", device_name, new_value, key)
+
     async def get_status(self, device_name: str) -> dict:
         dev = self._devices[device_name]
         result = await self._call_with_retry(device_name, dev.status)
