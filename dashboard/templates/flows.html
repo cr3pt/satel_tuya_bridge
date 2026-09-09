@@ -292,7 +292,7 @@ function nodeLabel(node) {
   if (node.type === 'http') return c.url ? c.url.slice(0, 26) : '(brak URL)';
   if (node.type === 'schedule') return `${c.start || '?'} - ${c.end || '?'}`;
   if (node.type === 'escalation') return `${c.threshold_count ?? '?'}x / ${c.window_seconds ?? '?'}s`;
-  if (node.type === 'state') return `${c.key || '?'} ${c.op === 'not_equals' ? '≠' : '='} ${c.value ?? ''}`;
+  if (node.type === 'state') return `${c.key || '?'} ${stateOpSymbol(c.op)} ${c.value ?? ''}`;
   if (node.type === 'condition_group') {
     const n = countConditionLeaves(c.condition);
     const word = n === 1 ? 'warunek' : n < 5 ? 'warunki' : 'warunków';
@@ -590,6 +590,21 @@ function stateKeyOptionsHtml(selected, category) {
   }</option>`;
   return placeholder + opts + extra;
 }
+const STATE_OPS = [
+  { value: 'equals', label: 'równa się', symbol: '=' },
+  { value: 'not_equals', label: 'różna od', symbol: '≠' },
+  { value: 'gt', label: 'większe niż (>)', symbol: '>' },
+  { value: 'gte', label: 'większe-równe (>=)', symbol: '≥' },
+  { value: 'lt', label: 'mniejsze niż (<)', symbol: '<' },
+  { value: 'lte', label: 'mniejsze-równe (<=)', symbol: '≤' },
+];
+function stateOpOptionsHtml(selectedOp) {
+  const op = selectedOp || 'equals';
+  return STATE_OPS.map(o => `<option value="${o.value}" ${o.value === op ? 'selected' : ''}>${o.label}</option>`).join('');
+}
+function stateOpSymbol(op) {
+  return (STATE_OPS.find(o => o.value === op) || STATE_OPS[0]).symbol;
+}
 function stateValueFieldHtml(category, selectedValue) {
   const options = STATE_VALUE_OPTIONS[category];
   if (!options) {
@@ -678,15 +693,13 @@ function removeNode(flow, nodeId) {
 function buildConditionLeafFieldsHtml(type, initial) {
   initial = initial || {};
   if (type === 'state') {
-    const selectedValue = initial.equals ?? initial.not_equals ?? '';
+    const initialOp = ['equals', 'not_equals', 'gt', 'gte', 'lt', 'lte'].find(op => initial[op] !== undefined) || 'equals';
+    const selectedValue = initial[initialOp] ?? '';
     const category = statusKeyCategory(initial.key) || '';
     return `
       <div class="field"><label>System</label><select class="cond-state-category">${statusCategoryOptionsHtml(category)}</select></div>
       <div class="field"><label>Status</label><select class="cond-state-key">${stateKeyOptionsHtml(initial.key, category)}</select></div>
-      <div class="field"><label>Operator</label><select class="cond-state-op">
-        <option value="equals" ${!initial.not_equals ? 'selected' : ''}>równa się</option>
-        <option value="not_equals" ${initial.not_equals ? 'selected' : ''}>różna od</option>
-      </select></div>
+      <div class="field"><label>Operator</label><select class="cond-state-op">${stateOpOptionsHtml(initialOp)}</select></div>
       <div class="field"><label>Wartość</label><span class="cond-state-value-wrap">${stateValueFieldHtml(category, selectedValue)}</span></div>`;
   }
   if (type === 'time_window') {
@@ -783,8 +796,7 @@ function collectConditionGroup(groupEl) {
     if (condType === 'state') {
       const leaf = { type: 'state', key: fields.querySelector('.cond-state-key').value.trim() };
       const value = fields.querySelector('.state-value').value.trim();
-      if (fields.querySelector('.cond-state-op').value === 'not_equals') leaf.not_equals = value;
-      else leaf.equals = value;
+      leaf[fields.querySelector('.cond-state-op').value] = value;
       return leaf;
     }
     if (condType === 'time_window') {
@@ -835,10 +847,7 @@ function renderNodeFields(node) {
     const stateCategory = c.category !== undefined ? c.category : (statusKeyCategory(c.key) || '');
     html += field(`<label>System</label><select class="state-category">${statusCategoryOptionsHtml(stateCategory)}</select>`);
     html += field(`<label>Status</label><select class="state-key">${stateKeyOptionsHtml(c.key, stateCategory)}</select>`);
-    html += field(`<label>Operator</label><select data-field="op">
-      <option value="equals" ${c.op !== 'not_equals' ? 'selected' : ''}>równa się</option>
-      <option value="not_equals" ${c.op === 'not_equals' ? 'selected' : ''}>różna od</option>
-    </select>`);
+    html += field(`<label>Operator</label><select data-field="op">${stateOpOptionsHtml(c.op)}</select>`);
     html += field(`<label>Wartość</label><span class="state-value-wrap">${stateValueFieldHtml(stateCategory, c.value)}</span>`);
   } else if (node.type === 'device') {
     const targetSystem = c.target_system || 'tuya';

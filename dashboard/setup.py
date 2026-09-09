@@ -115,7 +115,7 @@ _FLOW_NODE_TYPES = (
     "trigger", "condition", "device", "scene", "delay", "notify", "mqttIn", "mqttOut", "http",
     "schedule", "escalation", "state", "condition_group",
 )
-_FLOW_STATE_OPS = ("equals", "not_equals")
+_FLOW_STATE_OPS = ("equals", "not_equals", "gt", "lt", "gte", "lte")
 _FLOW_TRIGGER_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state")
 _FLOW_CONDITION_OPS = (">", "<", ">=", "<=", "==", "!=")
 _FLOW_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
@@ -253,6 +253,7 @@ def _validate_scenes(scenes: list[dict]) -> list[str]:
 
 _CONDITION_COMPOSITE_TYPES = ("and", "or", "not")
 _CONDITION_LEAF_TYPES = ("state", "time_window")
+_STATE_CONDITION_COMPARISON_KEYS = ("equals", "not_equals", "gt", "lt", "gte", "lte")
 
 
 def _validate_condition(condition: dict | None, label: str, depth: int = 0) -> list[str]:
@@ -273,8 +274,11 @@ def _validate_condition(condition: dict | None, label: str, depth: int = 0) -> l
     elif ctype == "state":
         if not (condition.get("key") or "").strip():
             errors.append(f"{label}: warunek 'state' wymaga wybrania statusu/urządzenia")
-        if condition.get("equals") in (None, "") and condition.get("not_equals") in (None, ""):
-            errors.append(f"{label}: warunek 'state' wymaga wartości porównania (równa się / różna od)")
+        if all(condition.get(k) in (None, "") for k in _STATE_CONDITION_COMPARISON_KEYS):
+            errors.append(
+                f"{label}: warunek 'state' wymaga wartości porównania "
+                f"(równa się / różna od / większe / mniejsze / większe-równe / mniejsze-równe)"
+            )
     elif ctype == "time_window":
         if not condition.get("start") or not condition.get("end"):
             errors.append(f"{label}: warunek 'okno czasowe' wymaga początku i końca")
@@ -481,10 +485,10 @@ def _build_condition(condition: dict | None, depth: int = 0) -> dict | None:
         if not key:
             return None
         built = {"type": "state", "key": key}
-        if condition.get("equals") not in (None, ""):
-            built["equals"] = condition["equals"]
-        elif condition.get("not_equals") not in (None, ""):
-            built["not_equals"] = condition["not_equals"]
+        for comp_key in _STATE_CONDITION_COMPARISON_KEYS:
+            if condition.get(comp_key) not in (None, ""):
+                built[comp_key] = condition[comp_key]
+                break
         else:
             return None
         return built

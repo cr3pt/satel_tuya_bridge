@@ -1310,6 +1310,17 @@ class TestConditionAndChainingValidation:
         form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
         assert validate(form) == []
 
+    def test_gt_condition_has_no_errors(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {"type": "state", "key": "boiler:temp", "gt": "20"}}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        assert validate(form) == []
+
+    def test_state_condition_with_no_comparison_key_is_error(self):
+        rule = {**FORM_WITH_ADVANCED["motion_rules"][0], "condition": {"type": "state", "key": "boiler:temp"}}
+        form = {**FORM_WITH_ADVANCED, "motion_rules": [rule]}
+        errors = validate(form)
+        assert any("wartości porównania" in e for e in errors)
+
 
 class TestPresenceSimulation:
 
@@ -2111,6 +2122,31 @@ class TestFlows:
             "key": "tuya:gniazdko", "op": "not_equals", "value": "włączone",
         }
 
+    def test_state_node_with_gt_operator_is_valid(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "state", "config": {"key": "boiler:temp", "op": "gt", "value": "20"}, "wires": [[], []]},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_state_node_with_unknown_operator_is_error(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "state", "config": {"key": "boiler:temp", "op": "bogus", "value": "20"}, "wires": [[], []]},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("nieznany operator warunku stanu" in e for e in errors)
+
+    def test_build_state_node_with_gt_operator(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["s"]]},
+            {"id": "s", "type": "state", "config": {"key": "boiler:temp", "op": "gt", "value": "20"}, "wires": [[], []]},
+        ])
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][1]["config"] == {
+            "key": "boiler:temp", "op": "gt", "value": "20",
+        }
+
     def test_condition_group_node_requires_valid_condition(self):
         flow = self._simple_flow(nodes=[
             {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["cg"]]},
@@ -2126,6 +2162,22 @@ class TestFlows:
         ])
         errors = validate_automations(self._form_with_flow(flow))
         assert any("nieznany typ warunku" in e for e in errors)
+
+    def test_condition_group_node_with_gt_leaf_is_valid(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["cg"]]},
+            {"id": "cg", "type": "condition_group", "config": {"condition": {"type": "state", "key": "boiler:temp", "gt": "20"}}, "wires": [[], []]},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_build_condition_group_node_preserves_gt_leaf(self):
+        condition = {"type": "state", "key": "boiler:temp", "gt": "20"}
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["cg"]]},
+            {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [[], []]},
+        ])
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][1]["config"] == {"condition": condition}
 
     def test_condition_group_node_with_nested_and_or_is_valid(self):
         condition = {

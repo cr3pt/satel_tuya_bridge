@@ -655,6 +655,18 @@ function renderTriggerValueField(card, system, selectedValue) {
   });
 }
 
+const STATE_OPS = [
+  { value: 'equals', label: 'równa się' },
+  { value: 'not_equals', label: 'różna od' },
+  { value: 'gt', label: 'większe niż (>)' },
+  { value: 'gte', label: 'większe-równe (>=)' },
+  { value: 'lt', label: 'mniejsze niż (<)' },
+  { value: 'lte', label: 'mniejsze-równe (<=)' },
+];
+function stateOpOptionsHtml(selectedOp) {
+  const op = selectedOp || 'equals';
+  return STATE_OPS.map(o => `<option value="${o.value}" ${o.value === op ? 'selected' : ''}>${o.label}</option>`).join('');
+}
 function stateValueFieldHtml(category, selectedValue) {
   const options = STATE_VALUE_OPTIONS[category];
   if (!options) {
@@ -687,15 +699,13 @@ function stateKeyOptionsHtml(selected, category) {
 function buildConditionLeafFieldsHtml(type, initial) {
   initial = initial || {};
   if (type === 'state') {
-    const selectedValue = initial.equals ?? initial.not_equals ?? '';
+    const initialOp = ['equals', 'not_equals', 'gt', 'gte', 'lt', 'lte'].find(op => initial[op] !== undefined) || 'equals';
+    const selectedValue = initial[initialOp] ?? '';
     const category = statusKeyCategory(initial.key) || '';
     return `
       <select class="cond-state-category">${statusCategoryOptionsHtml(category)}</select>
       <select class="cond-state-key">${stateKeyOptionsHtml(initial.key, category)}</select>
-      <select class="cond-state-op" style="max-width:130px;">
-        <option value="equals" ${!initial.not_equals ? 'selected' : ''}>równa się</option>
-        <option value="not_equals" ${initial.not_equals ? 'selected' : ''}>różna od</option>
-      </select>
+      <select class="cond-state-op" style="max-width:130px;">${stateOpOptionsHtml(initialOp)}</select>
       <span class="cond-state-value-wrap">${stateValueFieldHtml(category, selectedValue)}</span>`;
   }
   if (type === 'time_window') {
@@ -792,8 +802,7 @@ function collectConditionGroup(groupEl) {
     if (condType === 'state') {
       const leaf = { type: 'state', key: fields.querySelector('.cond-state-key').value.trim() };
       const value = fields.querySelector('.cond-state-value').value.trim();
-      if (fields.querySelector('.cond-state-op').value === 'not_equals') leaf.not_equals = value;
-      else leaf.equals = value;
+      leaf[fields.querySelector('.cond-state-op').value] = value;
       return leaf;
     }
     if (condType === 'time_window') {

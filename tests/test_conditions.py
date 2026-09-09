@@ -38,6 +38,38 @@ class TestStateLeaf:
         cond = {"type": "state", "key": "k", "not_equals": "x"}
         assert evaluate_condition(cond, get_status_value=_status({"k": "x"})) is False
 
+    def test_gt_true(self):
+        cond = {"type": "state", "key": "k", "gt": "20"}
+        assert evaluate_condition(cond, get_status_value=_status({"k": "25.6"})) is True
+
+    def test_gt_false(self):
+        cond = {"type": "state", "key": "k", "gt": "20"}
+        assert evaluate_condition(cond, get_status_value=_status({"k": "15"})) is False
+
+    def test_gte_equal_is_true(self):
+        cond = {"type": "state", "key": "k", "gte": "20"}
+        assert evaluate_condition(cond, get_status_value=_status({"k": "20"})) is True
+
+    def test_lt_true(self):
+        cond = {"type": "state", "key": "k", "lt": "20"}
+        assert evaluate_condition(cond, get_status_value=_status({"k": "15"})) is True
+
+    def test_lt_false(self):
+        cond = {"type": "state", "key": "k", "lt": "20"}
+        assert evaluate_condition(cond, get_status_value=_status({"k": "25"})) is False
+
+    def test_lte_equal_is_true(self):
+        cond = {"type": "state", "key": "k", "lte": "20"}
+        assert evaluate_condition(cond, get_status_value=_status({"k": "20"})) is True
+
+    def test_gt_unknown_key_is_false_not_crash(self):
+        cond = {"type": "state", "key": "brak_klucza", "gt": "20"}
+        assert evaluate_condition(cond, get_status_value=_status({})) is False
+
+    def test_gt_non_numeric_actual_is_false_not_crash(self):
+        cond = {"type": "state", "key": "k", "gt": "20"}
+        assert evaluate_condition(cond, get_status_value=_status({"k": "naruszone"})) is False
+
 
 class TestTimeWindowLeaf:
     def test_inside_window(self):

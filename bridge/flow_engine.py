@@ -294,7 +294,17 @@ class FlowEngine:
 
         if ntype == "state":
             actual = self._get_status_value(c.get("key"))
-            passed = actual != c.get("value") if c.get("op") == "not_equals" else actual == c.get("value")
+            op = c.get("op") or "equals"
+            if op == "equals":
+                passed = actual == c.get("value")
+            elif op == "not_equals":
+                passed = actual != c.get("value")
+            else:
+                cmp = {"gt": ">", "lt": "<", "gte": ">=", "lte": "<="}.get(op)
+                try:
+                    passed = bool(_OPS[cmp](actual, c.get("value"))) if cmp else False
+                except Exception:
+                    passed = False
             return [msg if passed else None, None if passed else msg]
 
         if ntype == "condition_group":

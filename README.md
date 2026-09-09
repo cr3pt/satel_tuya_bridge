@@ -2086,9 +2086,13 @@ razem). Dwa typy liścia:
 - `state` - porównanie aktualnej wartości DOWOLNEGO statusu widocznego na
   panelu głównym (wejście/wyjście Satela, urządzenie Tuya, czujnik kotła -
   ten sam klucz, co w kolumnie "key" pod `/api/status`, np.
-  `satel_input:3`, `tuya:gniazdko_salon`) z zadaną wartością - `equals` albo
-  `not_equals`. Ten sam mechanizm obsługuje też **"inna automatyzacja jest
-  uruchomiona"** - patrz osobny akapit niżej.
+  `satel_input:3`, `tuya:gniazdko_salon`) z zadaną wartością - `equals`,
+  `not_equals`, albo dla wartości liczbowych (temperatura, wilgotność, CO2...)
+  `gt`/`gte`/`lt`/`lte` (większe/większe-równe/mniejsze/mniejsze-równe -
+  np. "temperatura kotła powyżej 25°C"). Wartość nie do porównania liczbowo
+  (np. status tekstowy przy operatorze liczbowym) traktowana jest jako
+  NIESPEŁNIONY warunek, a nie błąd. Ten sam mechanizm obsługuje też
+  **"inna automatyzacja jest uruchomiona"** - patrz osobny akapit niżej.
 - `time_window` - dokładnie ten sam format co pole `time_window` reguły
   wyżej (w tym `sunset`/`sunrise`), ale jako warunek podrzędny (przydatne
   wewnątrz `not`, żeby wyrazić "poza tym oknem").
@@ -2408,7 +2412,7 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 | ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz), wyzwalacz |
 | 📥 MQTT in | wejście grafu | temat MQTT (drugie możliwe wejście obok Trigger) |
 | ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania (payload wiadomości) - dwa wyjścia: "spełniony"/"inaczej" |
-| 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`, wybierany dwustopniowo: System -> Status) + operator równa się/różna od - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
+| 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`, wybierany dwustopniowo: System -> Status) + operator (równa się/różna od/większe/większe-równe/mniejsze/mniejsze-równe) - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
 | 🧩 Warunek złożony | rozgałęzienie | zagnieżdżone drzewo AND/OR/NOT z liśćmi Warunek stanu / Okno czasowe - dwa wyjścia: "spełniony"/"inaczej" (patrz niżej) |
 | 🔌 Urządzenie | akcja | system (Tuya / Satel wyjście / Satel wirtualne wejście), urządzenie docelowe, wartość (włącz/wyłącz/zmiana stanu, jasność dla ściemniaczy Tuya) |
 | 🎬 Scena | akcja | uruchamia istniejącą scenę po nazwie |
@@ -2511,7 +2515,12 @@ tego, co akurat niesie wiadomość w grafie. Pole statusu wybiera się z listy
 (to, co panel akurat odczytał), a pole wartości jest zależną listą wyboru
 (`naruszone`/`OK`, `włączone`/`wyłączone`...) dokładnie jak w edytorze
 warunków reguł ruchu - ten sam zestaw opcji (`STATE_VALUE_OPTIONS`)
-skopiowany do `flows.html`.
+skopiowany do `flows.html`. **Operator** to nie tylko "równa się"/"różna
+od" - dla urządzeń zwracających wartości liczbowe (temperatura, wilgotność,
+CO2, moc...) dostępne są też **większe/większe-równe/mniejsze/
+mniejsze-równe** (`gt`/`gte`/`lt`/`lte`), np. "temperatura zewnętrzna
+poniżej 5°C" -> zablokuj podlewanie. Dla statusów bez skończonego zbioru
+wartości pole wartości jest zwykłym polem tekstowym (wpisuje się liczbę).
 
 ### Warunek złożony - zagnieżdżone AND/OR/NOT (kilka poziomów naraz)
 
