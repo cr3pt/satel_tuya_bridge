@@ -113,7 +113,7 @@ def validate_automations(form: dict) -> list[str]:
 
 _FLOW_NODE_TYPES = (
     "trigger", "condition", "device", "scene", "delay", "notify", "mqttIn", "mqttOut", "http",
-    "schedule", "escalation", "state", "condition_group", "tuya_dp",
+    "schedule", "escalation", "state", "condition_group", "tuya_dp", "stop",
 )
 _FLOW_STATE_OPS = ("equals", "not_equals", "gt", "lt", "gte", "lte")
 _FLOW_TRIGGER_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state")
@@ -736,6 +736,7 @@ def _build_cloud_devices(form: dict) -> dict:
         d["name"]: {
             "id": d["id"], "category": d.get("category", ""),
             "switch_code": (d.get("switch_code") or "switch_1").strip(),
+            "dp_schema": d.get("dp_schema") or {},
         }
         for d in form.get("cloud_devices", [])
         if d.get("name") and d.get("id")
@@ -1132,7 +1133,7 @@ def cloud_devices_to_rows(devices: dict) -> list[dict]:
     return [
         {
             "name": name, "id": cfg.get("id", ""), "category": cfg.get("category", ""),
-            "switch_code": cfg.get("switch_code", "switch_1"),
+            "switch_code": cfg.get("switch_code", "switch_1"), "dp_schema": cfg.get("dp_schema", {}),
         }
         for name, cfg in devices.items()
     ]
@@ -1246,6 +1247,8 @@ def _build_flow_node_config(ntype: str, c: dict) -> dict:
         return {"condition": _build_condition(c.get("condition"))}
     if ntype == "tuya_dp":
         return {"target_device": c.get("target_device"), "dp_code": c.get("dp_code"), "value": c.get("value")}
+    if ntype == "stop":
+        return {}
     return dict(c)
 
 

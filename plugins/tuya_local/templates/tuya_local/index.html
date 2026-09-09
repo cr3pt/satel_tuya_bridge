@@ -128,8 +128,9 @@
     <label>Urządzenia</label>
     <div class="section-hint" style="margin-top:0;">
       Zwykłe urządzenie WiFi ma własne IP + local_key. Podurządzenie Zigbee
-      zamiast tego wskazuje nazwę bramki wyżej (pole "bramka") - IP/klucz
-      zostają puste.
+      zamiast tego WYMAGA wpisania nazwy bramki wyżej w polu "bramka" (musi
+      dokładnie zgadzać się z nazwą bramki) - wtedy IP/klucz zostają puste.
+      Bez adresu IP/local_key ANI bramki zapis się nie powiedzie.
     </div>
     <div id="devicesRows"></div>
     <button type="button" class="add-row-btn" id="addDeviceBtn">+ Dodaj urządzenie</button>
@@ -276,7 +277,7 @@ function addDeviceRow(initial) {
       <option value="dimmer">Ściemniacz</option>
     </select>
     <input type="text" placeholder="DP jasności (tylko ściemniacz)" class="dev-dp" style="max-width: 140px; display:none;">
-    <input type="text" placeholder="bramka Zigbee (opcjonalnie)" class="dev-gateway">
+    <input type="text" placeholder="bramka Zigbee (wymagane, jeśli brak IP/local_key)" class="dev-gateway">
     <input type="hidden" class="dev-schema">
     <button type="button" class="row-remove">✕</button>`;
   const typeSelect = row.querySelector('.dev-type');

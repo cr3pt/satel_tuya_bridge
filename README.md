@@ -2030,8 +2030,10 @@ błędu w logach.
 
 **Rozwiązanie: pobierz opis pól (`dp_schema`)** dla takiego urządzenia -
 przycisk "🔍 Pobierz opisy pól (Tuya Cloud)" na stronie 🧩 Wtyczki → Tuya
-(LAN) (wymaga zapisanych poświadczeń Tuya Cloud, patrz wyżej "Konto Tuya
-Cloud") - odtąd bridge zna realne kody DP tego urządzenia i **sam
+(LAN) - albo, dla urządzeń sterowanych przez chmurę, ten sam przycisk na
+stronie ☁ Tuya Cloud (obie wersje wymagają zapisanych poświadczeń Tuya
+Cloud, patrz wyżej "Konto Tuya Cloud") - odtąd bridge zna realne kody DP
+tego urządzenia i **sam
 odnajduje wszystkie DP pasujące do wzorca przełącznika** (`switch_N`,
 `switch_led`), sterując nimi **wszystkimi naraz** w jednej komendzie
 (`set_multiple_values`) zamiast zgadywać DP `"1"`. Bez pobranego opisu
@@ -2058,6 +2060,11 @@ tekst (`etykieta: wartość | etykieta: wartość`) zamiast samego "?".
   zapisanych poświadczeń w zakładce ☁ Tuya Cloud) i zapisuje go trwale przy
   urządzeniu (`dp_schema`) - odtąd karta pokazuje nazwane, przeskalowane
   wartości (np. `temperatura: 23.5C`) zamiast numerów.
+- Urządzenia sterowane przez **Tuya Cloud** bez pól o znanej nazwie (np.
+  sterowniki nawodnienia z niestandardowymi kodami) mają dokładnie ten sam
+  przycisk **"🔍 Pobierz opisy pól (Tuya Cloud)"** na stronie ☁ Tuya Cloud,
+  pod listą "Urządzenia sterowane przez chmurę" - działa analogicznie, tylko
+  dla urządzeń chmurowych zamiast lokalnych.
 
 ### Eskalacja przy powtarzających się naruszeniach
 
@@ -2405,7 +2412,7 @@ sposobem budowania automatyzacji krok-po-kroku, ale to długoterminowy
 kierunek, nie coś co dzieje się automatycznie przy aktualizacji - istniejące
 reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 
-### 13 typów węzłów
+### 14 typów węzłów
 
 | Węzeł | Rola | Konfiguracja |
 |---|---|---|
@@ -2423,6 +2430,7 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 | 🌐 HTTP | akcja | wywołanie dowolnego URL-a (GET/POST/PUT/PATCH/DELETE) |
 | 📅 Harmonogram | rozgałęzienie | okno czasowe (`start`/`end`, w tym `sunset`/`sunrise+-N` jak w harmonogramie reguły ruchu) - jedno wyjście "w oknie", poza oknem wiadomość jest wygaszana |
 | 📈 Eskalacja | rozgałęzienie | próg (liczba naruszeń) i okno czasowe (sekundy) - dwa wyjścia: "normalnie" (poniżej progu) / "eskalacja" (próg przekroczony, licznik się zeruje) |
+| 🛑 Zakończ | terminalny | brak konfiguracji i brak wyjścia - jawnie kończy przetwarzanie danej gałęzi grafu (funkcjonalnie równoważne pozostawieniu wyjścia niepodłączonego, ale czytelniejsze na canvasie niż "urwany" przewód) |
 
 Węzeł **Urządzenie** z systemem "Satel (wirtualne wejście)" wywołuje
 DOKŁADNIE ten sam kod co akcja `virtual_input` reguły ruchu

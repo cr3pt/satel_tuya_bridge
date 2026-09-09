@@ -744,7 +744,8 @@ async def api_config_automation_context():
             ),
             key=lambda o: o["label"],
         )
-        for name, cfg in tuya.get("devices", {}).items() if cfg.get("dp_schema")
+        for name, cfg in {**tuya.get("devices", {}), **tuya.get("cloud_devices", {})}.items()
+        if cfg.get("dp_schema")
     }
     return jsonify({
         "tuya_devices": tuya_devices, "virtual_inputs": virtual_inputs, "satel_partitions": satel_partitions,

@@ -839,7 +839,9 @@ class TestTuyaCloudPluginPage:
         data = await (await client.get(
             "/api/plugins/tuya_cloud/devices", headers=_basic_auth_header("test_haslo_123"),
         )).get_json()
-        assert data["devices"] == [{"name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1"}]
+        assert data["devices"] == [
+            {"name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1", "dp_schema": {}},
+        ]
 
     async def test_devices_post_preserves_local_devices_and_gateways(self, client):
         before = await (await client.get("/api/plugins/tuya/devices", headers=_basic_auth_header("test_haslo_123"))).get_json()
@@ -901,6 +903,107 @@ class TestTuyaCloudPluginPage:
         resp = (await client.post(
             "/api/plugins/tuya_cloud/cloud-import", headers=_basic_auth_header("test_haslo_123"),
         ))
+        assert resp.status_code == 502
+
+    async def test_refresh_dp_schema_requires_auth(self, client):
+        resp = await client.post("/api/plugins/tuya_cloud/devices/refresh-dp-schema")
+        assert resp.status_code == 401
+
+    async def test_refresh_dp_schema_without_cloud_credentials_returns_400(self, client):
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+        assert "Tuya Cloud" in (await resp.get_json())["error"]
+
+    async def test_refresh_dp_schema_without_devices_returns_400(self, client):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    async def test_refresh_dp_schema_saves_fetched_schema(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def fake_fetch(api_region, access_id, access_key, device_ids):
+            assert device_ids == ["c1"]
+            return {"c1": {"1": {"code": "manual_delay", "type": "Value", "values": "{}"}}}, {}
+
+        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_dp_schemas_for_devices", fake_fetch)
+
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data["updated"] == ["lampa_taras"]
+        assert data["failed"] == []
+
+        devices = await (await client.get(
+            "/api/plugins/tuya_cloud/devices", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        lampa = next(d for d in devices["devices"] if d["name"] == "lampa_taras")
+        assert lampa["dp_schema"] == {"1": {"code": "manual_delay", "type": "Value", "values": "{}"}}
+
+    async def test_refresh_dp_schema_reports_per_device_failures(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def fake_fetch(api_region, access_id, access_key, device_ids):
+            return {}, {"c1": "nie znaleziono urządzenia"}
+
+        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_dp_schemas_for_devices", fake_fetch)
+
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data["updated"] == []
+        assert data["failed"] == ["lampa_taras"]
+
+    async def test_refresh_dp_schema_connection_error_returns_502(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def fake_fetch(api_region, access_id, access_key, device_ids):
+            raise ConnectionError("Błąd logowania do Tuya Cloud: bad credentials")
+
+        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_dp_schemas_for_devices", fake_fetch)
+
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+        )
         assert resp.status_code == 502
 
 

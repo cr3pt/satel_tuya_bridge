@@ -225,6 +225,36 @@ class TestTuyaDpNode:
         assert calls["set_target_state"] == []
 
 
+class TestStopNode:
+    async def test_has_no_outputs_and_does_not_crash(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["stop"]]},
+                {"id": "stop", "type": "stop", "config": {}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == []
+        assert calls["run_scene"] == []
+
+    async def test_stops_propagation_even_if_wires_configured(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["stop"]]},
+                {"id": "stop", "type": "stop", "config": {}, "wires": [["dev"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == []
+
+
 class TestSceneNode:
     async def test_runs_named_scene(self):
         flow = {

@@ -389,12 +389,18 @@ class TestCloudDevicesBuilder:
     def test_build_cloud_devices_requires_only_name_and_id(self):
         form = {"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]}
         devices = build_tuya_devices_dict(form)["cloud_devices"]
-        assert devices == {"lampa_taras": {"id": "c1", "category": "", "switch_code": "switch_1"}}
+        assert devices == {"lampa_taras": {"id": "c1", "category": "", "switch_code": "switch_1", "dp_schema": {}}}
 
     def test_build_cloud_devices_keeps_category_and_switch_code(self):
         form = {"cloud_devices": [{"name": "wentylator", "id": "c2", "category": "fs", "switch_code": "switch"}]}
         devices = build_tuya_devices_dict(form)["cloud_devices"]
-        assert devices["wentylator"] == {"id": "c2", "category": "fs", "switch_code": "switch"}
+        assert devices["wentylator"] == {"id": "c2", "category": "fs", "switch_code": "switch", "dp_schema": {}}
+
+    def test_build_cloud_devices_preserves_dp_schema(self):
+        schema = {"1": {"code": "manual_delay", "type": "Value", "values": "{}"}}
+        form = {"cloud_devices": [{"name": "sterownik", "id": "c3", "dp_schema": schema}]}
+        devices = build_tuya_devices_dict(form)["cloud_devices"]
+        assert devices["sterownik"]["dp_schema"] == schema
 
     def test_build_cloud_devices_skips_incomplete_rows(self):
         form = {"cloud_devices": [{"name": "", "id": "c1"}, {"name": "x", "id": ""}]}
@@ -417,8 +423,14 @@ class TestCloudDevicesBuilder:
     def test_cloud_devices_to_rows_roundtrip(self):
         devices = {"lampa_taras": {"id": "c1", "category": "kg", "switch_code": "switch_1"}}
         assert cloud_devices_to_rows(devices) == [
-            {"name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1"},
+            {"name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1", "dp_schema": {}},
         ]
+
+    def test_cloud_devices_to_rows_includes_dp_schema(self):
+        schema = {"1": {"code": "manual_delay", "type": "Value", "values": "{}"}}
+        devices = {"sterownik": {"id": "c3", "category": "", "switch_code": "switch_1", "dp_schema": schema}}
+        rows = cloud_devices_to_rows(devices)
+        assert rows[0]["dp_schema"] == schema
 
     def test_build_tuya_devices_dict_includes_cloud_devices_key(self):
         form = {"cloud_devices": [{"name": f"urzadzenie_{i}", "id": f"id{i}"} for i in range(40)]}
@@ -2257,6 +2269,21 @@ class TestFlows:
         assert automations["flows"][0]["nodes"][1]["config"] == {
             "target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1",
         }
+
+    def test_stop_node_requires_no_config(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["stop"]]},
+            {"id": "stop", "type": "stop", "config": {}, "wires": []},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_build_stop_node_has_empty_config(self):
+        flow = self._simple_flow(nodes=[
+            {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["stop"]]},
+            {"id": "stop", "type": "stop", "config": {}, "wires": []},
+        ])
+        automations = build_automations_dict(self._form_with_flow(flow))
+        assert automations["flows"][0]["nodes"][1]["config"] == {}
 
     def test_build_flow_without_name_is_skipped(self):
         automations = build_automations_dict(self._form_with_flow(self._simple_flow(name="")))
