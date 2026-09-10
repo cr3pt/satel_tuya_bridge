@@ -821,16 +821,23 @@ każdej integracji była w jednym, oczywistym miejscu):
   opisowy, dokłada tylko ikonę i etykietę rodzaju na panelu głównym
   (zielone OK/czerwone naruszone zostaje bez zmian niezależnie od
   wybranego rodzaju).
-- **`/plugins/tuya`** - urządzenia lokalne (`tuya_devices.yaml`) z
-  przyciskiem **"🔍 Skanuj sieć"**, który wywołuje broadcast UDP w LAN
-  (`tinytuya.deviceScan`, ok. 18 sekund) i podpowiada ID + adres IP
-  znalezionych urządzeń. **Nie podpowiada `local_key`** - Tuya świadomie
-  go nie rozgłasza, trzeba go wyciągnąć osobno (`python -m tinytuya
-  wizard`) albo zaimportować razem z poświadczeniami z zakładki
-  `/plugins/tuya_cloud`. Sekcja **"🐝 Bramki Zigbee"** w tym samym panelu
-  pozwala dodać czujniki/przełączniki Zigbee podpięte pod bramkę Tuya (np.
-  Tuya Zigbee Gateway/Hub) - patrz "Urządzenia Zigbee przez bramkę Tuya"
-  niżej. Każde skonfigurowane urządzenie od razu dostaje kartę na stronie
+- **`/plugins/tuya`** - jedna wspólna strona dla wszystkiego, co związane z
+  Tuya: urządzenia lokalne (`tuya_devices.yaml`), bramki i podurządzenia
+  Zigbee, oraz poświadczenia/import/sterowanie przez Tuya Cloud (dawniej
+  osobna wtyczka `/plugins/tuya_cloud`, teraz przekierowuje tutaj). Przycisk
+  **"🔍 Skanuj sieć"** wywołuje broadcast UDP w LAN (`tinytuya.deviceScan`,
+  ok. 18 sekund) i podpowiada ID + adres IP znalezionych urządzeń. **Nie
+  podpowiada `local_key`** - Tuya świadomie go nie rozgłasza, trzeba go
+  wyciągnąć osobno (`python -m tinytuya wizard`) albo zaimportować razem z
+  poświadczeniami przyciskiem **"☁ Importuj z Tuya Cloud"** na tej samej
+  stronie - import automatycznie rozpoznaje, czy dane urządzenie to bramka
+  Zigbee, podurządzenie Zigbee, zwykłe urządzenie WiFi, czy zostaje
+  sterowane wyłącznie przez chmurę, i pokazuje właściwy przycisk "dodaj" dla
+  każdej z tych czterech grup. Sekcja **"Bramki Zigbee"** w tym samym
+  panelu pozwala dodać czujniki/przełączniki Zigbee podpięte pod bramkę
+  Tuya (np. Tuya Zigbee Gateway/Hub) - patrz "Urządzenia Zigbee przez
+  bramkę Tuya" niżej. Każde skonfigurowane urządzenie od razu dostaje kartę
+  na stronie
   głównej (nie dopiero po pierwszym udanym odpytaniu) - jeśli akurat nie
   odpowiada (zły `local_key`/IP/wersja protokołu, urządzenie offline),
   karta zostaje widoczna z wartością "poza siecią" zamiast całkiem
@@ -939,7 +946,7 @@ przypadkowe ponowne wejście na `/setup` nigdy nie nadpisało ręcznych zmian
 w `config.yaml`) - więc host/port centrali Satel, kod użytkownika, adres
 brokera MQTT, poświadczenia Tuya Cloud, Home Assistant i tematy MQTT
 zmienia się **z panelu**, w sekcji **"🔌 Połączenie"** na stronie
-odpowiedniej wtyczki (`/plugins/satel`, `/plugins/ebus`, `/plugins/tuya_cloud`,
+odpowiedniej wtyczki (`/plugins/satel`, `/plugins/ebus`, `/plugins/tuya`,
 `/plugins/home_assistant`). Na stronie Satela - w odróżnieniu od reszty
 tej strony - **odczyt też wymaga hasła administratora** (kliknij
 "🔒 Wczytaj bieżące ustawienia"), bo dane obejmują kod użytkownika;
@@ -3171,9 +3178,10 @@ satel_tuya_bridge/
                               # każda ma sekcję "⚙ Ustawienia wtyczki" (włącznik + poziom logowania,
                               # patrz plugins/__init__.py: register_settings_route) plus własne pola
     satel/routes.py           # /plugins/satel - host/port/klucze (🔌 Połączenie) + strefy/wyjścia/partycje + skanowanie
-    tuya_local/routes.py      # /plugins/tuya - urządzenia + bramki Zigbee, skan LAN + import z Tuya Cloud
+    tuya_local/routes.py      # /plugins/tuya - JEDNA wtyczka dla wszystkiego: urządzenia lokalne +
+                              # bramki/podurządzenia Zigbee + poświadczenia/import/sterowanie Tuya Cloud
+                              # (/plugins/tuya_cloud przekierowuje tutaj - dawniej osobna wtyczka)
     ebus/routes.py            # /plugins/ebus - broker MQTT (🔌 Połączenie) + czujniki kotła + wykrywanie tematów MQTT (w tle)
-    tuya_cloud/routes.py      # /plugins/tuya_cloud - poświadczenia API (Access ID/Secret, endpointy)
     home_assistant/routes.py  # /plugins/home_assistant - broker MQTT + prefiksy discovery/stanu
     mqtt_publish/routes.py    # /plugins/mqtt_publish - tematy MQTT (Satel/Tuya)
     unifi_protect/routes.py   # /plugins/unifi_protect - host/login/hasło kontrolera UniFi OS

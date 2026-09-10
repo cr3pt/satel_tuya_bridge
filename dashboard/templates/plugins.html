@@ -206,9 +206,7 @@ function showMsg(ok, text) {
 }
 
 
-const PLUGIN_SETTINGS_ENDPOINT_ID = { tuya_zigbee: 'tuya_local' };
-
-let pendingChanges = {};  
+let pendingChanges = {};
 
 function updateSaveButtonState() {
   const count = Object.keys(pendingChanges).length;
@@ -357,9 +355,8 @@ function renderPlugin(p) {
     const savedBadge = row.querySelector('.log-level-saved');
     select.value = p.log_level || '';
     select.addEventListener('change', async () => {
-      const endpointId = PLUGIN_SETTINGS_ENDPOINT_ID[p.id] || p.id;
       try {
-        const resp = await authorizedFetch(`/api/plugins/${endpointId}/settings`, {
+        const resp = await authorizedFetch(`/api/plugins/${p.id}/settings`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ log_level: select.value }),

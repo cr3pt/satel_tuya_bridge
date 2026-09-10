@@ -2837,9 +2837,9 @@ class TestListPlugins:
     def test_empty_config_does_not_crash_and_all_unconfigured(self):
         plugins = list_plugins({})
         by_id = {p["id"]: p for p in plugins}
-        assert len(plugins) == len(by_id) == 13
+        assert len(plugins) == len(by_id) == 11
         for plugin_id in (
-            "satel", "tuya_local", "tuya_zigbee", "tuya_cloud", "ebus", "home_assistant",
+            "satel", "tuya_local", "ebus", "home_assistant",
             "mqtt_publish", "unifi_protect", "homewhiz", "presence_simulation", "notifications",
         ):
             assert by_id[plugin_id]["enabled"] is False, plugin_id
@@ -2856,7 +2856,7 @@ class TestListPlugins:
         assert by_id["satel"]["configured"] is True
         assert "192.168.1.20" in by_id["satel"]["detail"]
 
-    def test_tuya_local_and_zigbee_split_by_gateway_field(self):
+    def test_tuya_local_detail_reports_wifi_and_zigbee_counts(self):
         config_raw = {
             "tuya": {
                 "devices": {
@@ -2868,10 +2868,18 @@ class TestListPlugins:
         }
         by_id = {p["id"]: p for p in list_plugins(config_raw)}
         assert by_id["tuya_local"]["enabled"] is True
-        assert "1 urządzeń WiFi" in by_id["tuya_local"]["detail"]
-        assert by_id["tuya_zigbee"]["enabled"] is True
-        assert "1 bramek" in by_id["tuya_zigbee"]["detail"]
-        assert "1 urządzeń" in by_id["tuya_zigbee"]["detail"]
+        assert "1 WiFi" in by_id["tuya_local"]["detail"]
+        assert "1 Zigbee" in by_id["tuya_local"]["detail"]
+
+    def test_tuya_local_detail_reports_cloud_device_count(self):
+        config_raw = {
+            "tuya": {
+                "devices": {"gniazdko": {"id": "d1", "ip": "1.2.3.4", "local_key": "k"}},
+                "cloud_devices": {"lampa_taras": {"id": "c1"}},
+            },
+        }
+        by_id = {p["id"]: p for p in list_plugins(config_raw)}
+        assert "1 chmurowych" in by_id["tuya_local"]["detail"]
 
     def test_tuya_local_disabled_when_only_zigbee_devices(self):
         config_raw = {
@@ -2892,8 +2900,8 @@ class TestListPlugins:
             "presence_simulation": {"enabled": True, "devices": ["gniazdko"]},
         }
         by_id = {p["id"]: p for p in list_plugins(config_raw)}
-        assert by_id["tuya_cloud"]["enabled"] is True
-        assert by_id["tuya_cloud"]["configured"] is True
+        assert by_id["tuya_local"]["enabled"] is True
+        assert by_id["tuya_local"]["configured"] is True
         assert by_id["home_assistant"]["enabled"] is True
         assert by_id["mqtt_publish"]["enabled"] is True
         assert by_id["presence_simulation"]["enabled"] is True
@@ -2905,7 +2913,7 @@ class TestListPlugins:
     def test_toggleable_ids_match_expected_set(self):
         toggleable = {p["id"] for p in list_plugins({}) if p["toggleable"]}
         assert toggleable == {
-            "satel", "tuya_local", "tuya_cloud", "ebus", "home_assistant",
+            "satel", "tuya_local", "ebus", "home_assistant",
             "mqtt_publish", "unifi_protect", "homewhiz", "presence_simulation", "notifications",
             "mcp_server", "homekit",
         }
@@ -2930,7 +2938,7 @@ class TestListPlugins:
     def test_other_plugins_have_no_poll_interval_field(self):
         by_id = {p["id"]: p for p in list_plugins({})}
         for plugin_id in (
-            "tuya_zigbee", "tuya_cloud", "ebus", "home_assistant",
+            "ebus", "home_assistant",
             "mqtt_publish", "unifi_protect", "presence_simulation", "notifications",
         ):
             assert by_id[plugin_id]["has_poll_interval"] is False

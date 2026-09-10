@@ -779,9 +779,12 @@ class TestTuyaCloudPluginPage:
         assert resp.status_code == 302
         assert "/login" in resp.headers["Location"]
 
-    async def test_page_loads_when_authenticated(self, client):
-        resp = (await client.get("/plugins/tuya_cloud", headers=_basic_auth_header("test_haslo_123")))
-        assert resp.status_code == 200
+    async def test_page_redirects_to_merged_tuya_page(self, client):
+        resp = (await client.get(
+            "/plugins/tuya_cloud", headers=_basic_auth_header("test_haslo_123"), follow_redirects=False,
+        ))
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "/plugins/tuya"
 
     async def test_credentials_get_requires_auth_and_defaults(self, client):
         assert (await client.get("/api/plugins/tuya_cloud/credentials")).status_code == 401
@@ -852,27 +855,11 @@ class TestTuyaCloudPluginPage:
         saved = app_module.config_store.get("config")["tuya"]["cloud"]
         assert saved["access_key"] == "secret1"
 
-    async def test_settings_get_requires_auth_and_defaults(self, client):
-        assert (await client.get("/api/plugins/tuya_cloud/settings")).status_code == 401
+    async def test_settings_endpoint_no_longer_exists_separately(self, client):
+        # Tuya Cloud nie ma już własnego przełącznika włącz/wyłącz + poziom logowania -
+        # wtyczki zostały scalone w jedną ("tuya_local"), z jednym wspólnym ustawieniem.
         resp = (await client.get("/api/plugins/tuya_cloud/settings", headers=_basic_auth_header("test_haslo_123")))
-        assert resp.status_code == 200
-        assert await resp.get_json() == {"enabled": True, "log_level": ""}
-
-    async def test_settings_post_does_not_clobber_credentials(self, client):
-        import dashboard.app as app_module
-
-        (await client.post(
-            "/api/plugins/tuya_cloud/credentials", json={"access_id": "aid1", "access_key": "secret1"},
-            headers=_basic_auth_header("test_haslo_123"),
-        ))
-        resp = (await client.post(
-            "/api/plugins/tuya_cloud/settings", json={"log_level": "DEBUG"},
-            headers=_basic_auth_header("test_haslo_123"),
-        ))
-        assert resp.status_code == 200
-        saved = app_module.config_store.get("config")["tuya"]["cloud"]
-        assert saved["log_level"] == "DEBUG"
-        assert saved["access_id"] == "aid1"
+        assert resp.status_code == 404
 
     async def test_devices_get_requires_auth_and_empty_by_default(self, client):
         assert (await client.get("/api/plugins/tuya_cloud/devices")).status_code == 401
@@ -943,7 +930,7 @@ class TestTuyaCloudPluginPage:
             captured.update(api_region=api_region, access_id=access_id, access_key=access_key)
             return [{"id": "c1", "name": "Lampa", "local_key": "", "ip": "", "category": "kg"}]
 
-        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_tuya_cloud_devices", _fake_fetch)
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", _fake_fetch)
         (await client.post(
             "/api/plugins/tuya_cloud/credentials",
             json={"access_id": "aid1", "access_key": "secret1", "api_region": "us"},
@@ -960,7 +947,7 @@ class TestTuyaCloudPluginPage:
         def _fake_fetch(api_region, access_id, access_key, networks):
             raise ConnectionError("błąd logowania")
 
-        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_tuya_cloud_devices", _fake_fetch)
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", _fake_fetch)
         (await client.post(
             "/api/plugins/tuya_cloud/credentials",
             json={"access_id": "aid1", "access_key": "secret1"},
@@ -1009,7 +996,7 @@ class TestTuyaCloudPluginPage:
             assert device_ids == ["c1"]
             return {"c1": {"1": {"code": "manual_delay", "type": "Value", "values": "{}"}}}, {}
 
-        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_dp_schemas_for_devices", fake_fetch)
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_dp_schemas_for_devices", fake_fetch)
 
         resp = await client.post(
             "/api/plugins/tuya_cloud/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
@@ -1040,7 +1027,7 @@ class TestTuyaCloudPluginPage:
         def fake_fetch(api_region, access_id, access_key, device_ids):
             return {}, {"c1": "nie znaleziono urządzenia"}
 
-        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_dp_schemas_for_devices", fake_fetch)
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_dp_schemas_for_devices", fake_fetch)
 
         resp = await client.post(
             "/api/plugins/tuya_cloud/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
@@ -1065,7 +1052,7 @@ class TestTuyaCloudPluginPage:
         def fake_fetch(api_region, access_id, access_key, device_ids):
             raise ConnectionError("Błąd logowania do Tuya Cloud: bad credentials")
 
-        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_dp_schemas_for_devices", fake_fetch)
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_dp_schemas_for_devices", fake_fetch)
 
         resp = await client.post(
             "/api/plugins/tuya_cloud/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
@@ -1114,7 +1101,7 @@ class TestTuyaCloudPluginPage:
                 {"id": "c3", "name": "Nieznane", "local_key": "keyX", "ip": "192.168.1.99", "version": "3.3", "dp_schema": {}},
             ]
 
-        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_tuya_cloud_devices", _fake_fetch)
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", _fake_fetch)
         resp = await client.post(
             "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
         )
@@ -1141,7 +1128,7 @@ class TestTuyaCloudPluginPage:
         def _fake_fetch(api_region, access_id, access_key, networks):
             raise ConnectionError("Błąd logowania do Tuya Cloud: bad credentials")
 
-        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_tuya_cloud_devices", _fake_fetch)
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", _fake_fetch)
         resp = await client.post(
             "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
         )
