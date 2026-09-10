@@ -1006,6 +1006,147 @@ class TestTuyaCloudPluginPage:
         )
         assert resp.status_code == 502
 
+    async def test_rescan_requires_auth(self, client):
+        assert (await client.post("/api/plugins/tuya_cloud/devices/rescan")).status_code == 401
+
+    async def test_rescan_without_cloud_credentials_returns_400(self, client):
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+        assert "Tuya Cloud" in (await resp.get_json())["error"]
+
+    async def test_rescan_without_devices_returns_400(self, client):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    async def test_rescan_reports_devices_now_reachable_on_lan(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [
+                {"name": "lampa_taras", "id": "c1"}, {"name": "kamera", "id": "c2"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def _fake_fetch(api_region, access_id, access_key):
+            return [
+                {"id": "c1", "name": "Lampa", "local_key": "key1", "ip": "192.168.1.20", "version": "3.3", "dp_schema": {}},
+                {"id": "c2", "name": "Kamera", "local_key": "", "ip": "", "version": "", "dp_schema": {}},
+                {"id": "c3", "name": "Nieznane", "local_key": "keyX", "ip": "192.168.1.99", "version": "3.3", "dp_schema": {}},
+            ]
+
+        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_tuya_cloud_devices", _fake_fetch)
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        by_name = {d["name"]: d for d in data["devices"]}
+        assert set(by_name) == {"lampa_taras", "kamera"}
+        assert by_name["lampa_taras"]["can_move_to_local"] is True
+        assert by_name["lampa_taras"]["ip"] == "192.168.1.20"
+        assert by_name["kamera"]["can_move_to_local"] is False
+
+    async def test_rescan_connection_error_returns_502(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def _fake_fetch(api_region, access_id, access_key):
+            raise ConnectionError("Błąd logowania do Tuya Cloud: bad credentials")
+
+        monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_tuya_cloud_devices", _fake_fetch)
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 502
+
+    async def test_move_to_local_requires_auth(self, client):
+        assert (await client.post("/api/plugins/tuya_cloud/devices/move-to-local")).status_code == 401
+
+    async def test_move_to_local_requires_ip_and_local_key(self, client):
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/move-to-local", json={"name": "lampa_taras"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    async def test_move_to_local_unknown_device_returns_404(self, client):
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/move-to-local",
+            json={"name": "brak", "ip": "192.168.1.20", "local_key": "key1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 404
+
+    async def test_move_to_local_moves_device_between_sections(self, client):
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/move-to-local",
+            json={"name": "lampa_taras", "ip": "192.168.1.20", "local_key": "key1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+
+        cloud_after = await (await client.get(
+            "/api/plugins/tuya_cloud/devices", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert cloud_after["devices"] == []
+
+        local_after = await (await client.get(
+            "/api/plugins/tuya/devices", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        moved = next(d for d in local_after["devices"] if d["name"] == "lampa_taras")
+        assert moved["ip"] == "192.168.1.20"
+        assert moved["local_key"] == "key1"
+        assert moved["id"] == "c1"
+
+    async def test_move_to_local_rejects_name_collision_with_existing_local_device(self, client):
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya/devices",
+            json={"tuya_devices": [
+                {"name": "lampa_taras", "id": "cX", "ip": "192.168.1.5", "local_key": "kX"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/move-to-local",
+            json={"name": "lampa_taras", "ip": "192.168.1.20", "local_key": "key1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
 
 class TestHomeAssistantPluginPage:
     async def test_page_redirects_to_login_without_auth(self, client):

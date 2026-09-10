@@ -390,6 +390,19 @@ Skan sieci LAN (zakładka Tuya (LAN)) dopasowuje też odwrotnie - jeśli
 skanowane urządzenie ma ID znane z wcześniejszego importu Tuya Cloud,
 jego nazwa pojawia się automatycznie zamiast gołego ID.
 
+Urządzenie sterowane przez chmurę może z czasem stać się dostępne
+lokalnie (zmiana routera/WiFi, przeniesienie bridge'a do tej samej sieci
+co urządzenie) - zamiast robić import od nowa, w tabeli "Urządzenia
+sterowane przez chmurę" (zakładka ☁ Tuya Cloud) jest przycisk **"🔄
+Rescan - sprawdź, które można przenieść do lokalnych"**. Ponownie
+odpytuje Tuya Cloud i skanuje LAN wyłącznie dla już zapisanych niżej
+urządzeń chmurowych i pokazuje, dla których udało się teraz znaleźć
+komplet danych (adres IP + `local_key`) - przy każdym takim urządzeniu
+pojawia się przycisk **"➡ Przenieś do lokalnych"**, który jednym
+kliknięciem usuwa je z listy chmurowej i dodaje do zakładki 🔌 Tuya
+(LAN) z tym samym ID i pobranym `local_key`/adresem IP (opis pól DP,
+jeśli był już pobrany, przechodzi razem z urządzeniem).
+
 ### Częsty problem: import zwraca 0 urządzeń (albo błąd 401 na kamery) mimo poprawnych danych
 
 Najczęstsza przyczyna to **niedopasowanie regionu** - Tuya Cloud wymaga,
@@ -764,9 +777,11 @@ każdej integracji była w jednym, oczywistym miejscu):
   niżej. Każde skonfigurowane urządzenie od razu dostaje kartę na stronie
   głównej (nie dopiero po pierwszym udanym odpytaniu) - jeśli akurat nie
   odpowiada (zły `local_key`/IP/wersja protokołu, urządzenie offline),
-  karta zostaje widoczna z wartością "niedostępne" zamiast całkiem
+  karta zostaje widoczna z wartością "poza siecią" zamiast całkiem
   zniknąć, więc od razu widać, że urządzenie JEST skonfigurowane, tylko
-  coś jest z nim nie tak.
+  coś jest z nim nie tak. (Urządzenia sterowane przez Tuya Cloud, przy
+  błędzie komunikacji z chmurą Tuya, nadal dostają wartość "niedostępne" -
+  "poza siecią" dotyczy tylko urządzeń lokalnych LAN.)
 
 Każde pole zaczyna jako **nieaktywne** (nie ma go w konfiguracji), dopóki
 nie uzupełnisz wiersza (po odkryciu albo ręcznie) i nie klikniesz "Zapisz"
@@ -1759,7 +1774,8 @@ sekcji "1. Wejście" wybiera źródło:
   `zone_number` + `trigger_on` (naruszenie/ustanie).
 - **Tuya (stan urządzenia)** (`source: tuya_state`) - `source_device`
   (nazwa urządzenia Tuya) + `trigger_value` (wartość statusu, przy której
-  reguła ma zadziałać - lista wyboru: `włączone`/`wyłączone`/`niedostępne`).
+  reguła ma zadziałać - lista wyboru:
+  `włączone`/`wyłączone`/`niedostępne`/`poza siecią`).
 - **HomeWhiz (stan urządzenia AGD)** (`source: homewhiz_state`) -
   `source_device` (nazwa urządzenia HomeWhiz) + `trigger_value` (wartość
   statusu, przy której reguła ma zadziałać). Nazwy stanów są specyficzne dla
@@ -2434,8 +2450,9 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 
 Węzeł **Trigger** z wyzwalaczem "Konkretna wartość" ma pole "Wartość
 wyzwalająca" wybierane z listy zamiast wolnego tekstu - dla źródła Tuya
-(stan urządzenia) lista to `włączone`/`wyłączone`/`niedostępne` (dokładnie
-te wartości, jakie faktycznie publikuje `RulesEngine._apply_tuya_device_status`);
+(stan urządzenia) lista to `włączone`/`wyłączone`/`niedostępne`/`poza siecią`
+(dokładnie te wartości, jakie faktycznie publikuje
+`RulesEngine._apply_tuya_device_status`);
 dla HomeWhiz, po wybraniu urządzenia źródłowego, edytor pobiera na żywo z
 chmury HomeWhiz listę WSZYSTKICH możliwych stanów tego konkretnego modelu
 (ten sam endpoint i mechanizm co w źródle reguły ruchu, patrz wyżej

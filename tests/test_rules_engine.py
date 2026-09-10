@@ -1610,10 +1610,16 @@ class TestApplyTuyaDeviceStatus:
         statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
         assert statuses["tuya:kamera"] == "włączone"
 
-    async def test_unreachable_device_still_marked_niedostepne(self, engine):
+    async def test_unreachable_local_device_marked_poza_siecia(self, engine):
         await engine._apply_tuya_device_status("gniazdko_salon", None)
         statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
-        assert statuses["tuya:gniazdko_salon"] == "niedostępne"
+        assert statuses["tuya:gniazdko_salon"] == "poza siecią"
+
+    async def test_unreachable_cloud_device_still_marked_niedostepne(self, engine):
+        engine.config.tuya.setdefault("cloud_devices", {})["kamera"] = {"id": "c1"}
+        await engine._apply_tuya_device_status("kamera", None)
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:kamera"] == "niedostępne"
 
     async def test_sensor_readings_forwarded_to_homekit_even_without_switch_dp(self, engine):
         class FakeHomeKit:
