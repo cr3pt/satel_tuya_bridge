@@ -814,8 +814,10 @@ class RulesEngine:
 
     async def _apply_tuya_device_status(self, device_name: str, dps: dict | None) -> None:
         if dps is None:
-            self.history.set_status(f"tuya:{device_name}", "tuya", "niedostępne", label=device_name)
-            await self.handle_device_state("tuya_state", device_name, "niedostępne")
+            is_local = device_name in self.config.tuya.get("devices", {})
+            tuya_value = "poza siecią" if is_local else "niedostępne"
+            self.history.set_status(f"tuya:{device_name}", "tuya", tuya_value, label=device_name)
+            await self.handle_device_state("tuya_state", device_name, tuya_value)
             return
         local_cfg = self.config.tuya.get("devices", {}).get(device_name)
         cloud_cfg = self.config.tuya.get("cloud_devices", {}).get(device_name)

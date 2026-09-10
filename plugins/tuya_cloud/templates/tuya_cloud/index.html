@@ -181,6 +181,20 @@
     <button id="saveCloudDevicesBtn" type="button">Zapisz urządzenia chmurowe</button>
   </div>
   <div id="cloudDevicesMsg" class="msg-box"></div>
+
+  <div class="section-hint" style="margin-top:14px;">
+    Urządzenie sterowane przez chmurę może z czasem znaleźć się w tej samej
+    sieci LAN co bridge (np. po zmianie routera/WiFi) - "Rescan" ponownie
+    sprawdza zapisane niżej urządzenia (skan LAN + Tuya Cloud) i pokazuje,
+    które z nich da się teraz przenieść na szybsze sterowanie lokalne
+    (wymaga zapisanych poświadczeń Tuya Cloud wyżej i zapisanych urządzeń
+    niżej).
+  </div>
+  <div class="discover-row">
+    <button type="button" class="secondary" id="rescanCloudDevicesBtn">🔄 Rescan - sprawdź, które można przenieść do lokalnych</button>
+    <span class="discover-status" id="rescanCloudDevicesStatus"></span>
+  </div>
+  <div id="rescanResultsRows"></div>
 </div>
 
 <script>
@@ -376,6 +390,75 @@ document.getElementById('refreshCloudDpSchemaBtn').addEventListener('click', asy
     status.textContent = data.message + (data.failed.length ? ` Nie udało się dla: ${data.failed.join(', ')}.` : '');
     document.getElementById('cloudDevicesRows').innerHTML = '';
     await loadCloudDevices();
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function escapeHtml(s) {
+  return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderRescanResults(devices) {
+  const container = document.getElementById('rescanResultsRows');
+  container.innerHTML = '';
+  devices.forEach(d => {
+    const row = document.createElement('div');
+    row.className = 'repeatable-row';
+    if (d.can_move_to_local) {
+      row.innerHTML = `
+        <span style="flex:1;">✅ <strong>${escapeHtml(d.name)}</strong> - znaleziono w LAN: ${escapeHtml(d.ip)} (local_key odnaleziony)</span>
+        <button type="button" class="move-to-local-btn">➡ Przenieś do lokalnych</button>
+        <span class="discover-status move-status"></span>`;
+      const btn = row.querySelector('.move-to-local-btn');
+      const status = row.querySelector('.move-status');
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        status.textContent = 'Przenoszę...';
+        try {
+          const resp = await authorizedFetch('/api/plugins/tuya_cloud/devices/move-to-local', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: d.name, ip: d.ip, local_key: d.local_key, dp_schema: d.dp_schema }),
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            status.textContent = '❌ ' + (data.error || 'Błąd przenoszenia');
+            btn.disabled = false;
+            return;
+          }
+          status.textContent = '✅ ' + data.message;
+          document.getElementById('cloudDevicesRows').innerHTML = '';
+          await loadCloudDevices();
+        } catch (e) {
+          status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+          btn.disabled = false;
+        }
+      });
+    } else {
+      row.innerHTML = `<span style="flex:1;">⏳ <strong>${escapeHtml(d.name)}</strong> - wciąż niewidoczne w LAN (brak IP i/albo local_key), zostaje sterowane przez chmurę</span>`;
+    }
+    container.appendChild(row);
+  });
+}
+
+document.getElementById('rescanCloudDevicesBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('rescanCloudDevicesBtn');
+  const status = document.getElementById('rescanCloudDevicesStatus');
+  btn.disabled = true;
+  status.textContent = 'Skanuję sieć LAN i sprawdzam Tuya Cloud...';
+  document.getElementById('rescanResultsRows').innerHTML = '';
+  try {
+    const resp = await authorizedFetch('/api/plugins/tuya_cloud/devices/rescan', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = '❌ ' + (data.error || 'Błąd rescanu');
+      return;
+    }
+    status.textContent = data.message;
+    renderRescanResults(data.devices || []);
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
   } finally {

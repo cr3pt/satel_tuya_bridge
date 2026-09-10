@@ -180,6 +180,93 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             "message": f"Zaktualizowano opisy pól dla {len(updated)}/{len(device_ids)} urządzeń.",
         })
 
+    @app.route("/api/plugins/tuya_cloud/devices/rescan", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_tuya_cloud_rescan():
+        cloud = _get_cloud_section()
+        api_region = cloud.get("api_region", "")
+        access_id = cloud.get("access_id", "")
+        access_key = cloud.get("access_key", "")
+        if not api_region or not access_id or not access_key:
+            return jsonify({
+                "error": "Najpierw zapisz poświadczenia Tuya Cloud wyżej (region, Access ID, Access Secret).",
+            }), 400
+
+        cloud_devices = get_config_raw().get("tuya", {}).get("cloud_devices", {})
+        by_id = {cfg["id"]: name for name, cfg in cloud_devices.items() if cfg.get("id")}
+        if not by_id:
+            return jsonify({"error": "Brak skonfigurowanych urządzeń chmurowych do przeskanowania"}), 400
+
+        try:
+            devices = await asyncio.get_event_loop().run_in_executor(
+                None, fetch_tuya_cloud_devices, api_region, access_id, access_key,
+            )
+        except ConnectionError as exc:
+            return jsonify({"error": str(exc)}), 502
+        except Exception as exc:
+            return jsonify({"error": f"Błąd komunikacji z Tuya Cloud: {exc}"}), 502
+
+        results = []
+        for d in devices:
+            name = by_id.get(d.get("id", ""))
+            if not name:
+                continue
+            results.append({
+                "name": name,
+                "id": d.get("id", ""),
+                "ip": d.get("ip", ""),
+                "local_key": d.get("local_key", ""),
+                "version": d.get("version", ""),
+                "dp_schema": d.get("dp_schema", {}),
+                "can_move_to_local": bool(d.get("ip") and d.get("local_key")),
+            })
+        movable = sum(1 for r in results if r["can_move_to_local"])
+        return jsonify({
+            "devices": results,
+            "message": (
+                f"Przeskanowano {len(results)}/{len(by_id)} urządzeń chmurowych - "
+                f"{movable} może przejść na sterowanie lokalne."
+            ) if results else "Żadne ze skonfigurowanych urządzeń chmurowych nie zostało odnalezione w Tuya Cloud.",
+        })
+
+    @app.route("/api/plugins/tuya_cloud/devices/move-to-local", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_tuya_cloud_move_to_local():
+        form = await request.get_json(silent=True)
+        if not isinstance(form, dict):
+            return jsonify({"error": "Nieprawidłowe dane"}), 400
+        name = (form.get("name") or "").strip()
+        ip = (form.get("ip") or "").strip()
+        local_key = (form.get("local_key") or "").strip()
+        if not name or not ip or not local_key:
+            return jsonify({"error": "Nazwa, adres IP i local_key są wymagane"}), 400
+
+        tuya_devices = get_config_store().get("tuya_devices")
+        cloud_devices = tuya_devices.get("cloud_devices", {})
+        if name not in cloud_devices:
+            return jsonify({"error": f"Nieznane urządzenie chmurowe '{name}' (mogło już zostać przeniesione)"}), 404
+        local_devices = tuya_devices.setdefault("devices", {})
+        if name in local_devices:
+            return jsonify({
+                "error": f"Urządzenie lokalne o nazwie '{name}' już istnieje - zmień nazwę jednego z nich",
+            }), 400
+
+        cloud_cfg = cloud_devices.pop(name)
+        local_devices[name] = {
+            "id": cloud_cfg.get("id", ""),
+            "ip": ip,
+            "local_key": local_key,
+            "type": "socket",
+            "dp_schema": form.get("dp_schema") or cloud_cfg.get("dp_schema", {}),
+        }
+        tuya_devices["cloud_devices"] = cloud_devices
+        tuya_devices["devices"] = local_devices
+        get_config_store().set("tuya_devices", tuya_devices)
+        reload_bridge_config()
+        enqueue_bridge_reload()
+
+        return jsonify({"message": f"Przeniesiono '{name}' do sterowania lokalnego (zakładka 🔌 Tuya (LAN))."})
+
     register_settings_route(
         app, "tuya_cloud", require_auth=require_auth, get_auth_guard=get_auth_guard,
         get_section=_get_cloud_section, save_section=_save_cloud_section,
