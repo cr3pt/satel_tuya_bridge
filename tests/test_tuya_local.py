@@ -171,6 +171,21 @@ class TestScanNetwork:
         assert captured["maxretry"] == 3
         assert captured["poll"] is False
 
+    def test_default_scan_duration_matches_tinytuya_default_of_18s(self, monkeypatch):
+        # maxretry tinytuya odbiera jako "scantime" (sekundy nasłuchu broadcastu
+        # UDP, nie liczbę prób) - domyślne 1s regularnie przegapiało urządzenia,
+        # które widać przy ręcznym uruchomieniu tinytuya z jego własnym,
+        # 18-sekundowym domyślnym czasem nasłuchu (tinytuya.SCANTIME).
+        captured = {}
+
+        def fake_scan(**kwargs):
+            captured.update(kwargs)
+            return {}
+
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.deviceScan", fake_scan)
+        scan_network()
+        assert captured["maxretry"] == 18
+
     def test_networks_given_uses_forcescan_instead_of_broadcast_only(self, monkeypatch):
         captured = {}
 
@@ -268,6 +283,9 @@ class TestFetchCloudDevices:
         # "name" jest wymagane - tinytuya (scanner.py: found_key()) odczytuje
         # dev['name'] bez .get(), więc jego brak wywala aktywny skan KeyErrorem.
         assert captured["tuyadevices"] == [{"id": "d1", "key": "localkey1", "name": "Gniazdko"}]
+        # maxretry NIE jest już wymuszane na 1s (za krótko na złapanie
+        # broadcastu Tuya) - import korzysta z domyślnego czasu scan_network().
+        assert "maxretry" not in captured
 
     def test_lan_scan_failure_does_not_break_cloud_import(self, monkeypatch):
         monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[

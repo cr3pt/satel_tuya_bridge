@@ -542,7 +542,7 @@ document.getElementById('cloudImportBtn').addEventListener('click', async () => 
   const btn = document.getElementById('cloudImportBtn');
   const status = document.getElementById('cloudImportStatus');
   btn.disabled = true;
-  status.textContent = 'Pobieram listę urządzeń z Tuya Cloud...';
+  status.textContent = 'Pobieram listę urządzeń z Tuya Cloud (ok. 18s, obejmuje skan LAN)...';
   document.getElementById('importLocalResultsRows').innerHTML = '';
   try {
     const resp = await authorizedFetch('/api/plugins/tuya_cloud/cloud-import', { method: 'POST' });
