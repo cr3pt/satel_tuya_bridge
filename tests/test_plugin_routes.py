@@ -903,7 +903,10 @@ class TestTuyaCloudPluginPage:
             "/api/plugins/tuya_cloud/devices", headers=_basic_auth_header("test_haslo_123"),
         )).get_json()
         assert data["devices"] == [
-            {"name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1", "dp_schema": {}},
+            {
+                "name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1",
+                "local_key": "", "ip": "", "version": "", "dp_schema": {},
+            },
         ]
 
     async def test_devices_post_preserves_local_devices_and_gateways(self, client):

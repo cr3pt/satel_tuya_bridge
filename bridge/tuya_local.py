@@ -193,6 +193,8 @@ def fetch_cloud_devices(
         logger.warning("Skan LAN podczas importu z Tuya Cloud nie powiódł się - kontynuuję bez adresów IP", exc_info=True)
         lan_devices = {}
 
+    gateway_ids = {d.get("gateway_id") for d in result if d.get("gateway_id")}
+
     devices = []
     for d in result:
         dev_id = d.get("id", "")
@@ -216,6 +218,10 @@ def fetch_cloud_devices(
             "category": d.get("category", ""),
             "gateway_id": d.get("gateway_id", ""),
             "node_id": d.get("node_id", ""),
+            "sub": bool(d.get("sub", False)),
+            # Bramka Zigbee - wykryta bez zgadywania kodów kategorii Tuya: to urządzenie,
+            # na które w tym samym imporcie wskazuje pole gateway_id innego urządzenia.
+            "is_gateway": dev_id in gateway_ids,
             "dp_schema": dp_schema,
         })
     return devices

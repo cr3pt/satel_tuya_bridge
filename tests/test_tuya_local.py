@@ -243,17 +243,37 @@ class TestFetchCloudDevices:
         devices = fetch_cloud_devices("eu", "access_id", "access_secret")
         assert devices == [{
             "id": "d1", "name": "Gniazdko", "local_key": "localkey1", "ip": "", "version": "", "category": "",
-            "gateway_id": "", "node_id": "", "dp_schema": {},
+            "gateway_id": "", "node_id": "", "sub": False, "is_gateway": False, "dp_schema": {},
         }]
 
     def test_surfaces_gateway_id_and_node_id_for_zigbee_sub_devices(self, monkeypatch):
         monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
-            {"id": "sub1", "name": "Lampka Zigbee", "key": "", "gateway_id": "gw1", "node_id": "0011"},
+            {"id": "sub1", "name": "Lampka Zigbee", "key": "", "gateway_id": "gw1", "node_id": "0011", "sub": True},
         ]))
         monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
         devices = fetch_cloud_devices("eu", "access_id", "access_secret")
         assert devices[0]["gateway_id"] == "gw1"
         assert devices[0]["node_id"] == "0011"
+        assert devices[0]["sub"] is True
+
+    def test_marks_device_referenced_as_a_gateway_id_as_is_gateway(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
+            {"id": "gw1", "name": "Brama Zigbee", "key": "gwkey"},
+            {"id": "sub1", "name": "Lampka Zigbee", "key": "", "gateway_id": "gw1", "sub": True},
+        ]))
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
+        devices = fetch_cloud_devices("eu", "access_id", "access_secret")
+        by_id = {d["id"]: d for d in devices}
+        assert by_id["gw1"]["is_gateway"] is True
+        assert by_id["sub1"]["is_gateway"] is False
+
+    def test_device_without_any_sub_devices_is_not_a_gateway(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
+            {"id": "d1", "name": "Gniazdko", "key": "localkey1"},
+        ]))
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
+        devices = fetch_cloud_devices("eu", "access_id", "access_secret")
+        assert devices[0]["is_gateway"] is False
 
     def test_cross_references_lan_scan_by_id_for_ip(self, monkeypatch):
         monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[

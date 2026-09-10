@@ -736,6 +736,13 @@ def _build_cloud_devices(form: dict) -> dict:
         d["name"]: {
             "id": d["id"], "category": d.get("category", ""),
             "switch_code": (d.get("switch_code") or "switch_1").strip(),
+            # local_key/ip/version są zapisywane nawet dla urządzeń sterowanych
+            # chmurowo - Tuya Cloud zwraca je przy każdym imporcie za darmo, więc
+            # przełączenie tego urządzenia na sterowanie lokalne później (zakładka
+            # 🔌 Tuya (LAN)) nie wymaga ponownego pobierania danych.
+            "local_key": d.get("local_key", ""),
+            "ip": d.get("ip", ""),
+            "version": d.get("version", ""),
             "dp_schema": d.get("dp_schema") or {},
         }
         for d in form.get("cloud_devices", [])
@@ -1137,7 +1144,9 @@ def cloud_devices_to_rows(devices: dict) -> list[dict]:
     return [
         {
             "name": name, "id": cfg.get("id", ""), "category": cfg.get("category", ""),
-            "switch_code": cfg.get("switch_code", "switch_1"), "dp_schema": cfg.get("dp_schema", {}),
+            "switch_code": cfg.get("switch_code", "switch_1"),
+            "local_key": cfg.get("local_key", ""), "ip": cfg.get("ip", ""), "version": cfg.get("version", ""),
+            "dp_schema": cfg.get("dp_schema", {}),
         }
         for name, cfg in devices.items()
     ]

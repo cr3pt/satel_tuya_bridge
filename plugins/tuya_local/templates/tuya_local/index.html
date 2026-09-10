@@ -344,17 +344,24 @@ function addDeviceRow(initial) {
     </select>
     <input type="text" placeholder="DP jasności (tylko ściemniacz)" class="dev-dp" style="max-width: 140px; display:none;">
     <select class="dev-gateway" title="bramka Zigbee - wymagana, jeśli urządzenie nie ma IP/local_key"></select>
+    <input type="text" placeholder="cid (Zigbee, puste = ID urządzenia)" class="dev-cid" style="max-width: 160px; display:none;">
     <input type="text" placeholder="wersja (np. 3.4)" class="dev-version" title="wersja protokołu Tuya (puste = 3.4)" style="max-width: 90px;">
     <input type="hidden" class="dev-schema">
     <button type="button" class="row-remove">✕</button>`;
   const typeSelect = row.querySelector('.dev-type');
   const dpInput = row.querySelector('.dev-dp');
+  const gatewaySelect = row.querySelector('.dev-gateway');
+  const cidInput = row.querySelector('.dev-cid');
   typeSelect.addEventListener('change', () => {
     dpInput.style.display = typeSelect.value === 'dimmer' ? '' : 'none';
   });
+  gatewaySelect.addEventListener('change', () => {
+    cidInput.style.display = gatewaySelect.value ? '' : 'none';
+  });
   const gatewayNames = collectGateways().map(g => g.name);
   const defaultGateway = !initial && gatewayNames.length === 1 ? gatewayNames[0] : (initial ? initial.gateway ?? '' : '');
-  row.querySelector('.dev-gateway').innerHTML = gatewayOptionsHtml(defaultGateway);
+  gatewaySelect.innerHTML = gatewayOptionsHtml(defaultGateway);
+  cidInput.style.display = defaultGateway ? '' : 'none';
   if (initial) {
     row.querySelector('.dev-name').value = initial.name ?? '';
     row.querySelector('.dev-id').value = initial.id ?? '';
@@ -363,6 +370,7 @@ function addDeviceRow(initial) {
     typeSelect.value = initial.type || 'socket';
     dpInput.value = initial.dimmer_dp || '';
     dpInput.style.display = typeSelect.value === 'dimmer' ? '' : 'none';
+    cidInput.value = initial.cid ?? '';
     row.querySelector('.dev-version').value = initial.version ?? '';
     row.querySelector('.dev-schema').value = JSON.stringify(initial.dp_schema || {});
   }
@@ -383,6 +391,7 @@ function collectDevices() {
         local_key: row.querySelector('.dev-key').value.trim(),
         type: row.querySelector('.dev-type').value,
         gateway: row.querySelector('.dev-gateway').value.trim(),
+        cid: row.querySelector('.dev-cid').value.trim(),
         dimmer_dp: row.querySelector('.dev-dp').value.trim() || '1',
         version: row.querySelector('.dev-version').value.trim(),
         dp_schema,
@@ -487,58 +496,142 @@ document.getElementById('saveScanNetworksBtn').addEventListener('click', async (
   }
 });
 
-function renderImportLocalResults(devices) {
-  const container = document.getElementById('importLocalResultsRows');
-  container.innerHTML = '';
-  const existingIds = new Set(collectDevices().map(d => d.id));
-  devices.forEach(d => {
-    const row = document.createElement('div');
-    if (existingIds.has(d.id)) {
-      row.className = 'scan-result-known';
-      row.textContent = `🟠 ${d.name || d.id} (ID ${d.id}) - już skonfigurowane lokalnie`;
-      container.appendChild(row);
+function _importSectionHeader(text) {
+  const h = document.createElement('div');
+  h.style.cssText = 'font-weight:600; margin-top:10px;';
+  h.textContent = text;
+  return h;
+}
+
+function _renderGatewayCandidate(d, container) {
+  const existingGatewayIds = new Set(collectGateways().map(g => g.id));
+  const row = document.createElement('div');
+  if (existingGatewayIds.has(d.id)) {
+    row.className = 'scan-result-known';
+    row.textContent = `🟠 ${d.name || d.id} (ID ${d.id}) - już skonfigurowana jako bramka Zigbee`;
+    container.appendChild(row);
+    return;
+  }
+  if (!d.ip || !d.local_key) {
+    row.className = 'scan-result-new';
+    row.textContent = `⏳ ${d.name || d.id} (ID ${d.id}) - wygląda na bramkę Zigbee, ale nie odnaleziono jej w LAN - spróbuj ponownie za chwilę`;
+    container.appendChild(row);
+    return;
+  }
+  row.className = 'repeatable-row scan-result-new';
+  row.innerHTML = `
+    <span style="flex:1;">🌉 <strong>${escapeHtml(d.name || d.id)}</strong> (IP: ${escapeHtml(d.ip)}) - inne zaimportowane urządzenia wskazują na nią jako bramkę</span>
+    <button type="button" class="set-as-gateway-btn">🌉 Ustaw jako bramkę Zigbee</button>`;
+  row.querySelector('.set-as-gateway-btn').addEventListener('click', () => {
+    addGatewayRow({ name: d.name || d.id, id: d.id, ip: d.ip, local_key: d.local_key, version: d.version });
+    refreshGatewaySelects();
+    row.className = 'scan-result-known';
+    row.textContent = `🟠 ${d.name || d.id} - dodano jako bramkę poniżej, zapisz formularz (💾 Zapisz urządzenia)`;
+  });
+  container.appendChild(row);
+}
+
+function _renderZigbeeSubDeviceCandidate(d, container) {
+  const existingIds = new Set(collectDevices().map(dev => dev.id));
+  const row = document.createElement('div');
+  if (existingIds.has(d.id)) {
+    row.className = 'scan-result-known';
+    row.textContent = `🟠 ${d.name || d.id} (ID ${d.id}) - już skonfigurowane`;
+    container.appendChild(row);
+    return;
+  }
+  const matchedGateway = collectGateways().find(g => g.id === d.gateway_id);
+  if (!matchedGateway) {
+    row.className = 'scan-result-new';
+    row.textContent = `⏳ ${d.name || d.id} - łączy się przez bramkę, której jeszcze nie dodano - najpierw dodaj ją jako bramkę Zigbee (sekcja wyżej)`;
+    container.appendChild(row);
+    return;
+  }
+  row.className = 'repeatable-row scan-result-new';
+  row.innerHTML = `
+    <span style="flex:1;">📡 <strong>${escapeHtml(d.name || d.id)}</strong> - przez bramkę '${escapeHtml(matchedGateway.name)}'</span>
+    <button type="button" class="add-zigbee-btn">➡ Dodaj jako urządzenie Zigbee</button>`;
+  row.querySelector('.add-zigbee-btn').addEventListener('click', () => {
+    addDeviceRow({
+      name: d.name || d.id, id: d.id, gateway: matchedGateway.name,
+      cid: d.node_id || '', type: 'socket', dp_schema: d.dp_schema,
+    });
+    row.className = 'scan-result-known';
+    row.textContent = `🟠 ${d.name || d.id} - dodano poniżej, zapisz formularz (💾 Zapisz urządzenia)`;
+  });
+  container.appendChild(row);
+}
+
+function _renderLocalReadyCandidate(d, container) {
+  const existingIds = new Set(collectDevices().map(dev => dev.id));
+  const row = document.createElement('div');
+  if (existingIds.has(d.id)) {
+    row.className = 'scan-result-known';
+    row.textContent = `🟠 ${d.name || d.id} (ID ${d.id}) - już skonfigurowane lokalnie`;
+    container.appendChild(row);
+    return;
+  }
+  row.className = 'repeatable-row scan-result-new';
+  row.innerHTML = `
+    <span style="flex:1;">🟢 komplet danych (IP: ${escapeHtml(d.ip)}) dla ID <code>${escapeHtml(d.id)}</code></span>
+    <input type="text" class="import-local-name" placeholder="nazwa" style="max-width: 220px;">
+    <button type="button" class="add-to-local-btn">➡ Dodaj jako lokalne</button>
+    <span class="discover-status add-local-status"></span>`;
+  row.querySelector('.import-local-name').value = d.name || d.id;
+  const btn = row.querySelector('.add-to-local-btn');
+  const status = row.querySelector('.add-local-status');
+  btn.addEventListener('click', async () => {
+    const name = row.querySelector('.import-local-name').value.trim();
+    if (!name) {
+      status.textContent = '❌ Podaj nazwę';
       return;
     }
-    row.className = 'repeatable-row scan-result-new';
-    row.innerHTML = `
-      <span style="flex:1;">🟢 komplet danych (IP: ${escapeHtml(d.ip)}) dla ID <code>${escapeHtml(d.id)}</code></span>
-      <input type="text" class="import-local-name" placeholder="nazwa" style="max-width: 220px;">
-      <button type="button" class="add-to-local-btn">➡ Dodaj jako lokalne</button>
-      <span class="discover-status add-local-status"></span>`;
-    row.querySelector('.import-local-name').value = d.name || d.id;
-    const btn = row.querySelector('.add-to-local-btn');
-    const status = row.querySelector('.add-local-status');
-    btn.addEventListener('click', async () => {
-      const name = row.querySelector('.import-local-name').value.trim();
-      if (!name) {
-        status.textContent = '❌ Podaj nazwę';
+    btn.disabled = true;
+    status.textContent = 'Dodaję...';
+    try {
+      const resp = await authorizedFetch('/api/plugins/tuya_cloud/devices/add-to-local', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, id: d.id, ip: d.ip, local_key: d.local_key, version: d.version, dp_schema: d.dp_schema }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        status.textContent = '❌ ' + (data.error || 'Błąd dodawania');
+        btn.disabled = false;
         return;
       }
-      btn.disabled = true;
-      status.textContent = 'Dodaję...';
-      try {
-        const resp = await authorizedFetch('/api/plugins/tuya_cloud/devices/add-to-local', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, id: d.id, ip: d.ip, local_key: d.local_key, version: d.version, dp_schema: d.dp_schema }),
-        });
-        const data = await resp.json();
-        if (!resp.ok) {
-          status.textContent = '❌ ' + (data.error || 'Błąd dodawania');
-          btn.disabled = false;
-          return;
-        }
-        status.textContent = '✅ ' + data.message;
-        document.getElementById('gatewaysRows').innerHTML = '';
-        document.getElementById('devicesRows').innerHTML = '';
-        await loadTuyaDevices();
-      } catch (e) {
-        status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
-        btn.disabled = false;
-      }
-    });
-    container.appendChild(row);
+      status.textContent = '✅ ' + data.message;
+      document.getElementById('gatewaysRows').innerHTML = '';
+      document.getElementById('devicesRows').innerHTML = '';
+      await loadTuyaDevices();
+    } catch (e) {
+      status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+      btn.disabled = false;
+    }
   });
+  container.appendChild(row);
+}
+
+function renderImportResults(devices) {
+  const container = document.getElementById('importLocalResultsRows');
+  container.innerHTML = '';
+
+  const gateways = devices.filter(d => d.is_gateway);
+  const subDevices = devices.filter(d => d.gateway_id && !d.is_gateway);
+  const localReady = devices.filter(d => !d.is_gateway && !d.gateway_id && d.ip && d.local_key);
+
+  if (gateways.length) {
+    container.appendChild(_importSectionHeader('🌉 Wykryte bramki Zigbee'));
+    gateways.forEach(d => _renderGatewayCandidate(d, container));
+  }
+  if (subDevices.length) {
+    container.appendChild(_importSectionHeader('📡 Wykryte urządzenia Zigbee (łączące się przez bramkę)'));
+    subDevices.forEach(d => _renderZigbeeSubDeviceCandidate(d, container));
+  }
+  if (localReady.length) {
+    container.appendChild(_importSectionHeader('🔌 Wykryte urządzenia WiFi'));
+    localReady.forEach(d => _renderLocalReadyCandidate(d, container));
+  }
 }
 
 document.getElementById('cloudImportBtn').addEventListener('click', async () => {
@@ -555,12 +648,16 @@ document.getElementById('cloudImportBtn').addEventListener('click', async () => 
       return;
     }
     const devices = data.devices || [];
-    const localReady = devices.filter(d => d.ip && d.local_key);
-    const cloudOnly = devices.length - localReady.length;
-    renderImportLocalResults(localReady);
+    const gatewaysCount = devices.filter(d => d.is_gateway).length;
+    const subCount = devices.filter(d => d.gateway_id && !d.is_gateway).length;
+    const localReadyCount = devices.filter(d => !d.is_gateway && !d.gateway_id && d.ip && d.local_key).length;
+    const cloudOnly = devices.length - gatewaysCount - subCount - localReadyCount;
+    renderImportResults(devices);
     const parts = [];
-    if (localReady.length) parts.push(`${localReady.length} ma komplet danych (IP + local_key) - lista wyżej.`);
-    if (cloudOnly) parts.push(`${cloudOnly} bez local_key - skonfiguruj w zakładce ☁ Tuya Cloud (sterowanie chmurowe).`);
+    if (gatewaysCount) parts.push(`${gatewaysCount} wygląda na bramkę Zigbee.`);
+    if (subCount) parts.push(`${subCount} łączy się przez bramkę Zigbee.`);
+    if (localReadyCount) parts.push(`${localReadyCount} ma komplet danych (IP + local_key) do sterowania WiFi.`);
+    if (cloudOnly) parts.push(`${cloudOnly} bez IP/lokalnego klucza - zostają sterowane chmurowo (zakładka ☁ Tuya Cloud, local_key i tak jest już dla nich zapisywany na wypadek przełączenia na lokalne).`);
     status.textContent = parts.length ? parts.join(' ') : 'Brak urządzeń do zaimportowania.';
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
