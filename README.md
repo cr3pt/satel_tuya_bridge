@@ -350,16 +350,19 @@ pobiera listę urządzeń jednym kliknięciem, bez wpisywania ich ponownie.
 
 Import rozdziela urządzenia automatycznie:
 - **Komplet danych** (adres IP znaleziony w sieci LAN + `local_key`
-  zwrócony przez Tuya Cloud) → podpowiedź do skonfigurowania w zakładce
-  **🔌 Tuya (LAN)** - sterowanie lokalne jest szybsze i nie zależy od
-  internetu.
+  zwrócony przez Tuya Cloud) → pojawiają się nad tabelą chmurową z
+  przyciskiem **"➡ Dodaj jako lokalne"** (edytowalna nazwa, domyślnie
+  nazwa z Tuya Cloud) - jedno kliknięcie zapisuje urządzenie od razu w
+  zakładce **🔌 Tuya (LAN)**, sterowanie lokalne jest szybsze i nie
+  zależy od internetu.
 - **Niekompletne dane** (typowe - Tuya Cloud nie zawsze zwraca
   `local_key`, albo urządzenie nie jest w tej samej sieci LAN co bridge)
   → lądują w tabeli "Urządzenia sterowane przez chmurę" na tej samej
   stronie - sterowane przez Tuya Cloud REST API (wolniej, wymaga
   internetu), **jako fallback TYLKO dopóki** dane urządzenie nie zostanie
-  ręcznie skonfigurowane w zakładce Tuya (LAN) pod tą samą nazwą -
-  wtedy lokalne automatycznie przejmuje sterowanie.
+  ręcznie skonfigurowane w zakładce Tuya (LAN) pod tą samą nazwą (albo
+  przeniesione przyciskiem "🔄 Rescan" niżej) - wtedy lokalne
+  automatycznie przejmuje sterowanie.
 
 Sterowanie chmurowe jest na start ograniczone do prostych przełączników
 on/off (bez ściemniania). **"Kod przełącznika" jest wykrywany automatycznie**,

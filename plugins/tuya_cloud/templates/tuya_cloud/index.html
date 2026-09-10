@@ -142,16 +142,20 @@
   <h2>Import urządzeń</h2>
   <div class="section-hint">
     Pobiera WSZYSTKIE urządzenia podpięte do projektu Tuya Cloud, używając
-    poświadczeń zapisanych wyżej (zapisz je najpierw). Urządzenia z
-    kompletem danych (adres IP + local_key) trafiają jako podpowiedzi do
-    zakładki <a href="/plugins/tuya">🔌 Tuya (LAN)</a> - skonfiguruj je tam
-    dla szybszego, lokalnego sterowania. Reszta ląduje niżej, w tabeli
-    "Urządzenia sterowane przez chmurę".
+    poświadczeń zapisanych wyżej (zapisz je najpierw) - jeśli w sekcji
+    "Wykrywanie urządzeń" zakładki <a href="/plugins/tuya">🔌 Tuya
+    (LAN)</a> podałeś "Zakresy/adresy IP do skanowania", import od razu
+    aktywnie sprawdza te adresy (nie tylko broadcast), więc może znaleźć
+    komplet danych (adres IP + local_key) nawet gdy broadcast nie działa.
+    Urządzenia z kompletem danych pojawiają się niżej z przyciskiem "➡
+    Dodaj jako lokalne" - reszta ląduje w tabeli "Urządzenia sterowane
+    przez chmurę".
   </div>
   <div class="discover-row">
     <button type="button" class="secondary" id="cloudImportBtn">☁ Importuj z Tuya Cloud</button>
     <span class="discover-status" id="cloudImportStatus"></span>
   </div>
+  <div id="importLocalResultsRows"></div>
 </div>
 
 <div class="section" id="cloudDevicesSection">
@@ -466,11 +470,56 @@ document.getElementById('rescanCloudDevicesBtn').addEventListener('click', async
   }
 });
 
+function renderImportLocalResults(devices) {
+  const container = document.getElementById('importLocalResultsRows');
+  container.innerHTML = '';
+  devices.forEach(d => {
+    const row = document.createElement('div');
+    row.className = 'repeatable-row';
+    row.innerHTML = `
+      <span style="flex:1;">✅ komplet danych (IP: ${escapeHtml(d.ip)}) dla ID <code>${escapeHtml(d.id)}</code></span>
+      <input type="text" class="import-local-name" placeholder="nazwa" style="max-width: 220px;">
+      <button type="button" class="add-to-local-btn">➡ Dodaj jako lokalne</button>
+      <span class="discover-status add-local-status"></span>`;
+    row.querySelector('.import-local-name').value = d.name || d.id;
+    const btn = row.querySelector('.add-to-local-btn');
+    const status = row.querySelector('.add-local-status');
+    btn.addEventListener('click', async () => {
+      const name = row.querySelector('.import-local-name').value.trim();
+      if (!name) {
+        status.textContent = '❌ Podaj nazwę';
+        return;
+      }
+      btn.disabled = true;
+      status.textContent = 'Dodaję...';
+      try {
+        const resp = await authorizedFetch('/api/plugins/tuya_cloud/devices/add-to-local', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, id: d.id, ip: d.ip, local_key: d.local_key, dp_schema: d.dp_schema }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          status.textContent = '❌ ' + (data.error || 'Błąd dodawania');
+          btn.disabled = false;
+          return;
+        }
+        status.textContent = '✅ ' + data.message;
+      } catch (e) {
+        status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+        btn.disabled = false;
+      }
+    });
+    container.appendChild(row);
+  });
+}
+
 document.getElementById('cloudImportBtn').addEventListener('click', async () => {
   const btn = document.getElementById('cloudImportBtn');
   const status = document.getElementById('cloudImportStatus');
   btn.disabled = true;
   status.textContent = 'Pobieram listę urządzeń z Tuya Cloud...';
+  document.getElementById('importLocalResultsRows').innerHTML = '';
   try {
     const resp = await authorizedFetch('/api/plugins/tuya_cloud/cloud-import', { method: 'POST' });
     const data = await resp.json();
@@ -479,21 +528,21 @@ document.getElementById('cloudImportBtn').addEventListener('click', async () => 
       return;
     }
     const existingCloud = new Set(collectCloudDevices().map(d => d.id));
-    let addedLocal = 0, addedCloud = 0;
+    const localReady = [];
+    let addedCloud = 0;
     (data.devices || []).forEach(dev => {
       if (dev.ip && dev.local_key) {
-        
-        
-        addedLocal++;
+        localReady.push(dev);
         return;
       }
       if (existingCloud.has(dev.id)) return;
       addCloudDeviceRow({ name: dev.name || dev.id, id: dev.id, category: dev.category || '' });
       addedCloud++;
     });
+    if (localReady.length) renderImportLocalResults(localReady);
     const parts = [];
     if (addedCloud) parts.push(`${addedCloud} dodano niżej (sterowanie chmurowe) - zapisz.`);
-    if (addedLocal) parts.push(`${addedLocal} ma komplet danych (IP + local_key) - skonfiguruj je w zakładce 🔌 Tuya (LAN), tam skan LAN podpowie ich nazwę.`);
+    if (localReady.length) parts.push(`${localReady.length} ma komplet danych (IP + local_key) - patrz lista wyżej z przyciskiem "Dodaj jako lokalne".`);
     status.textContent = parts.length ? parts.join(' ') : 'Brak nowych urządzeń do zaimportowania.';
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
