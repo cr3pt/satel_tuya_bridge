@@ -18,10 +18,10 @@ class FakeTuya:
     def __init__(self):
         self.calls = []
 
-    async def turn_on(self, device, dimmer_level_percent=None):
+    async def turn_on(self, device, dimmer_level_percent=None, reason=None):
         self.calls.append(("on", device, dimmer_level_percent))
 
-    async def turn_off(self, device):
+    async def turn_off(self, device, reason=None):
         self.calls.append(("off", device))
 
 

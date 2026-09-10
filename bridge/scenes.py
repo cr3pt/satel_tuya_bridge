@@ -34,22 +34,23 @@ class SceneRunner:
         try:
             for action in scene.get("actions", []):
                 try:
-                    await self._run_action(action)
+                    await self._run_action(action, scene_name)
                 except Exception:
                     logger.exception("Błąd akcji w scenie '%s': %s", scene_name, action)
         finally:
             if self.history:
                 self.history.set_status(f"automation:{scene_name}", "automation", "bezczynna", label=scene_name)
 
-    async def _run_action(self, action: dict) -> None:
+    async def _run_action(self, action: dict, scene_name: str) -> None:
         kind = action["type"]
+        reason = f"scena '{scene_name}'"
         if kind == "tuya_on":
-            await self.tuya.turn_on(action["device"], action.get("dimmer_level_percent"))
+            await self.tuya.turn_on(action["device"], action.get("dimmer_level_percent"), reason=reason)
         elif kind == "tuya_off":
-            await self.tuya.turn_off(action["device"])
+            await self.tuya.turn_off(action["device"], reason=reason)
         elif kind == "tuya_on_for_duration":
             asyncio.create_task(self.tuya.turn_on_for_duration(
-                action["device"], action["duration_seconds"], action.get("dimmer_level_percent"),
+                action["device"], action["duration_seconds"], action.get("dimmer_level_percent"), reason=reason,
             ))
         elif kind == "satel_output":
             await self.satel.set_output(action["output_number"], action.get("state", True))

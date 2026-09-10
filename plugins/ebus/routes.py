@@ -29,6 +29,7 @@ META = PluginMeta(
     config_url="/plugins/ebus",
     config_key="ebus",
     describe_state=describe_state,
+    category="Dom",
 )
 
 _background_discovery = BackgroundTopicDiscovery()

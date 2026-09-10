@@ -869,6 +869,14 @@ class TestPluginsEndpoint:
         assert by_id["homekit"]["config_url"] == "/plugins/homekit"
         assert by_id["tuya_zigbee"]["config_url"] == "/plugins/tuya"
 
+    async def test_get_includes_category_per_plugin(self, client):
+        by_id = {p["id"]: p for p in await (await client.get("/api/plugins", headers=_basic_auth_header("test_haslo_123"))).get_json()}
+        assert by_id["satel"]["category"] == "Ochrona"
+        assert by_id["unifi_protect"]["category"] == "Ochrona"
+        assert by_id["tuya_local"]["category"] == "Tuya"
+        assert by_id["tuya_cloud"]["category"] == "Tuya"
+        assert by_id["home_assistant"]["category"] == "Dom"
+
     async def test_load_errors_endpoint_requires_auth(self, client):
         assert (await client.get("/api/plugins/load-errors")).status_code == 401
 

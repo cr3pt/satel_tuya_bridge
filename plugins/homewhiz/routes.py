@@ -30,6 +30,7 @@ META = PluginMeta(
     config_url="/plugins/homewhiz",
     config_key="homewhiz",
     describe_state=describe_state,
+    category="Dom",
 )
 
 

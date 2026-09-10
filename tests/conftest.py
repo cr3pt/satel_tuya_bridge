@@ -20,26 +20,31 @@ class FakeTuya:
 
     def __init__(self):
         self.calls: list[tuple] = []
+        self.reasons: list = []
         self.fail_devices: set[str] = set()
         self.devices_cfg: dict = {}
 
-    async def turn_on(self, device, dimmer_level_percent=None):
+    async def turn_on(self, device, dimmer_level_percent=None, reason=None):
         if device in self.fail_devices:
             raise ConnectionError(f"symulowana awaria: {device}")
         self.calls.append(("on", device, dimmer_level_percent))
+        self.reasons.append(reason)
 
-    async def turn_off(self, device):
+    async def turn_off(self, device, reason=None):
         if device in self.fail_devices:
             raise ConnectionError(f"symulowana awaria: {device}")
         self.calls.append(("off", device))
+        self.reasons.append(reason)
 
-    async def toggle(self, device):
+    async def toggle(self, device, reason=None):
         if device in self.fail_devices:
             raise ConnectionError(f"symulowana awaria: {device}")
         self.calls.append(("toggle", device))
+        self.reasons.append(reason)
 
-    async def turn_on_for_duration(self, device, duration, dimmer_level_percent=None):
+    async def turn_on_for_duration(self, device, duration, dimmer_level_percent=None, reason=None):
         self.calls.append(("on_for", device, duration, dimmer_level_percent))
+        self.reasons.append(reason)
 
     async def get_status(self, device):
         return {"1": device not in self.fail_devices}
@@ -47,8 +52,9 @@ class FakeTuya:
     async def get_all_statuses(self):
         return {name: await self.get_status(name) for name in self.devices_cfg}
 
-    async def set_dp(self, device, dp_code, value):
+    async def set_dp(self, device, dp_code, value, reason=None):
         self.calls.append(("set_dp", device, dp_code, value))
+        self.reasons.append(reason)
 
 
 class FakeSatel:

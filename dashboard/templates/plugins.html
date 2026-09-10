@@ -23,6 +23,11 @@
   .hint { color: var(--muted); font-size: 13px; margin-bottom: 18px; line-height: 1.5; }
   .hint code { background: #262a32; padding: 1px 5px; border-radius: 4px; }
   .plugin-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+  .plugin-category-header {
+    font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.04em; margin: 10px 0 -2px; padding-left: 2px;
+  }
+  .plugin-category-header:first-child { margin-top: 0; }
   .plugin-row {
     background: var(--card); border: 1px solid var(--border); border-radius: 10px;
     overflow: hidden;
@@ -341,19 +346,36 @@ function renderPlugin(p) {
   return row;
 }
 
+const CATEGORY_ORDER = ['Ochrona', 'Tuya', 'Dom', 'Inne'];
+const CATEGORY_ICONS = { 'Ochrona': '🛡️', 'Tuya': '🧩', 'Dom': '🏠', 'Inne': '📦' };
+
+function renderGroupedByCategory(containerEl, pluginsList) {
+  containerEl.innerHTML = '';
+  const byCategory = {};
+  pluginsList.forEach(p => {
+    const cat = p.category || 'Inne';
+    (byCategory[cat] = byCategory[cat] || []).push(p);
+  });
+  const categories = CATEGORY_ORDER.filter(c => byCategory[c])
+    .concat(Object.keys(byCategory).filter(c => !CATEGORY_ORDER.includes(c)));
+  categories.forEach(cat => {
+    const header = document.createElement('div');
+    header.className = 'plugin-category-header';
+    header.textContent = `${CATEGORY_ICONS[cat] || '📦'} ${cat}`;
+    containerEl.appendChild(header);
+    byCategory[cat].forEach(p => containerEl.appendChild(renderPlugin(p)));
+  });
+}
+
 async function loadPlugins() {
   const plugins = await (await fetch('/api/plugins')).json();
   const enabled = plugins.filter(p => p.enabled);
   const disabled = plugins.filter(p => !p.enabled);
 
-  const list = document.getElementById('pluginList');
-  list.innerHTML = '';
-  enabled.forEach(p => list.appendChild(renderPlugin(p)));
+  renderGroupedByCategory(document.getElementById('pluginList'), enabled);
 
   const disabledDetails = document.getElementById('pluginsDisabledDetails');
-  const disabledList = document.getElementById('pluginListDisabled');
-  disabledList.innerHTML = '';
-  disabled.forEach(p => disabledList.appendChild(renderPlugin(p)));
+  renderGroupedByCategory(document.getElementById('pluginListDisabled'), disabled);
   document.getElementById('pluginsDisabledCount').textContent = disabled.length;
   disabledDetails.hidden = disabled.length === 0;
 }

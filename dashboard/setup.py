@@ -1073,6 +1073,7 @@ def list_plugins(config_raw: dict) -> list[dict]:
             "name": meta.name,
             "icon": meta.icon,
             "description": meta.description,
+            "category": meta.category,
             "config_url": meta.config_url,
             "toggleable": meta.toggleable,
             "restart_required": meta.restart_required,

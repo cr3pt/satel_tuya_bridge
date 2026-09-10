@@ -23,6 +23,7 @@ META = PluginMeta(
     restart_required=False,
     toggle_route="automations",
     describe_state=describe_state,
+    category="Dom",
 )
 
 

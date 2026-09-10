@@ -8,13 +8,13 @@ class FakeSubController:
         self.devices_cfg = devices_cfg
         self.calls: list[tuple] = []
 
-    async def turn_on(self, device_name, dimmer_level_percent=None):
+    async def turn_on(self, device_name, dimmer_level_percent=None, reason=None):
         self.calls.append(("turn_on", device_name, dimmer_level_percent))
 
-    async def turn_off(self, device_name):
+    async def turn_off(self, device_name, reason=None):
         self.calls.append(("turn_off", device_name))
 
-    async def toggle(self, device_name):
+    async def toggle(self, device_name, reason=None):
         self.calls.append(("toggle", device_name))
 
     async def get_status(self, device_name):
@@ -24,10 +24,10 @@ class FakeSubController:
     async def get_all_statuses(self):
         return {name: {"1": True} for name in self.devices_cfg}
 
-    async def turn_on_for_duration(self, device_name, duration_seconds, dimmer_level_percent=None):
+    async def turn_on_for_duration(self, device_name, duration_seconds, dimmer_level_percent=None, reason=None):
         self.calls.append(("turn_on_for_duration", device_name, duration_seconds, dimmer_level_percent))
 
-    async def set_dp(self, device_name, dp_code, value):
+    async def set_dp(self, device_name, dp_code, value, reason=None):
         self.calls.append(("set_dp", device_name, dp_code, value))
 
 

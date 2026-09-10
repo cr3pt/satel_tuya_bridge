@@ -62,6 +62,11 @@ async def test_scene_executes_actions_in_order(runner, fake_tuya, fake_satel):
     assert fake_satel.calls == [("output", 1, True), ("output", 17, True)]
 
 
+async def test_scene_passes_scene_name_as_reason(runner, fake_tuya):
+    await runner.run("wykryto_intruza")
+    assert fake_tuya.reasons == ["scena 'wykryto_intruza'", "scena 'wykryto_intruza'"]
+
+
 async def test_unknown_action_is_skipped_not_fatal(runner, fake_tuya):
     await runner.run("z_nieznana_akcja")
     assert fake_tuya.calls == [("off", "gniazdko_salon")]

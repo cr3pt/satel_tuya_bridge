@@ -28,6 +28,7 @@ META = PluginMeta(
     config_url="/plugins/tuya_cloud",
     toggle_route="connections_restart",
     describe_state=describe_state,
+    category="Tuya",
 )
 
 

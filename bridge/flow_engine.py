@@ -356,7 +356,8 @@ class FlowEngine:
             value = str(c.get("value", "on")).lower()
             on = None if value == "toggle" else value not in ("off", "false", "0")
             dimmer = c.get("dimmer_level_percent")
-            await self._set_target_state(target_system, device, on, dimmer)
+            reason = f"flow '{flow.get('name')}'" if flow.get("name") else None
+            await self._set_target_state(target_system, device, on, dimmer, reason=reason)
             return [msg]
 
         if ntype == "scene":
@@ -375,7 +376,8 @@ class FlowEngine:
                 )
                 return [msg]
             value = _resolve_template(c.get("value"), msg)
-            await self._set_tuya_dp(c.get("target_device"), c.get("dp_code"), value)
+            reason = f"flow '{flow.get('name')}'" if flow.get("name") else None
+            await self._set_tuya_dp(c.get("target_device"), c.get("dp_code"), value, reason=reason)
             return [msg]
 
         if ntype == "delay":

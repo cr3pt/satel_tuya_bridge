@@ -173,6 +173,11 @@ class TestMotionRules:
         await engine.handle_motion("satel_zone", 15, trigger="restored")
         assert ("off", "gniazdko_salon") in fake_tuya.calls
 
+    async def test_named_rule_passes_reason_to_tuya(self, engine, fake_tuya):
+        await engine.handle_motion("satel_zone", 12)
+        await asyncio.sleep(0)
+        assert "reguła ruchu 'regula_zone_12'" in fake_tuya.reasons
+
     async def test_turn_off_rule_does_not_fire_on_violated_trigger(self, engine, fake_tuya):
         await engine.handle_motion("satel_zone", 15, trigger="violated")
         assert fake_tuya.calls == []
@@ -1218,6 +1223,13 @@ class TestExecuteCommandTuya:
         await engine._execute_command(cmd)
 
         assert scheduled == ["gniazdko_salon"]
+
+    async def test_tuya_on_passes_panel_reason(self, engine, fake_tuya):
+        cmd_id = engine.history.enqueue_command("tuya_on", {"name": "gniazdko_salon"})
+        cmd = engine.history.get_command(cmd_id)
+        await engine._execute_command(cmd)
+
+        assert "panel (ręcznie)" in fake_tuya.reasons
 
 
 class TestScheduleTuyaStatusRefresh:

@@ -22,6 +22,7 @@ META = PluginMeta(
     config_url="/plugins/mqtt_publish",
     toggle_route="connections_restart",
     describe_state=describe_state,
+    category="Dom",
 )
 
 
