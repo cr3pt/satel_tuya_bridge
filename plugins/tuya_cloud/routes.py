@@ -126,9 +126,10 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
                 "error": "Najpierw zapisz poświadczenia Tuya Cloud wyżej (region, Access ID, Access Secret).",
             }), 400
 
+        scan_networks = get_config_raw().get("tuya", {}).get("scan_networks") or []
         try:
             devices = await asyncio.get_event_loop().run_in_executor(
-                None, fetch_tuya_cloud_devices, api_region, access_id, access_key,
+                None, fetch_tuya_cloud_devices, api_region, access_id, access_key, scan_networks,
             )
         except ConnectionError as exc:
             return jsonify({"error": str(exc)}), 502
@@ -196,10 +197,11 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         by_id = {cfg["id"]: name for name, cfg in cloud_devices.items() if cfg.get("id")}
         if not by_id:
             return jsonify({"error": "Brak skonfigurowanych urządzeń chmurowych do przeskanowania"}), 400
+        scan_networks = get_config_raw().get("tuya", {}).get("scan_networks") or []
 
         try:
             devices = await asyncio.get_event_loop().run_in_executor(
-                None, fetch_tuya_cloud_devices, api_region, access_id, access_key,
+                None, fetch_tuya_cloud_devices, api_region, access_id, access_key, scan_networks,
             )
         except ConnectionError as exc:
             return jsonify({"error": str(exc)}), 502

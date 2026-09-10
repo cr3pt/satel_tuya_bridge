@@ -357,17 +357,80 @@ class TestTuyaLocalPluginPage:
         assert any(d["name"] == "lampa_taras" for d in cloud_after["devices"])
 
     async def test_scan_requires_auth(self, client, monkeypatch):
-        monkeypatch.setattr("plugins.tuya_local.routes.scan_tuya_network", lambda: [{"id": "d1", "ip": "1.2.3.4"}])
+        monkeypatch.setattr("plugins.tuya_local.routes.scan_tuya_network", lambda **kw: [{"id": "d1", "ip": "1.2.3.4"}])
         assert (await client.post("/api/plugins/tuya/scan")).status_code == 401
         resp = (await client.post("/api/plugins/tuya/scan", headers=_basic_auth_header("test_haslo_123")))
         assert resp.status_code == 200
         assert (await resp.get_json())["devices"] == [{"id": "d1", "ip": "1.2.3.4", "known_name": "gniazdko"}]
 
     async def test_scan_known_name_empty_when_no_id_match(self, client, monkeypatch):
-        monkeypatch.setattr("plugins.tuya_local.routes.scan_tuya_network", lambda: [{"id": "nieznany", "ip": "1.2.3.9"}])
+        monkeypatch.setattr("plugins.tuya_local.routes.scan_tuya_network", lambda **kw: [{"id": "nieznany", "ip": "1.2.3.9"}])
         resp = (await client.post("/api/plugins/tuya/scan", headers=_basic_auth_header("test_haslo_123")))
         assert resp.status_code == 200
         assert (await resp.get_json())["devices"] == [{"id": "nieznany", "ip": "1.2.3.9", "known_name": ""}]
+
+    async def test_scan_passes_configured_networks_and_known_local_devices_as_tuyadevices(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya/scan-networks", json={"scan_networks": ["192.168.1.0/24"]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        captured = {}
+
+        def fake_scan(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr("plugins.tuya_local.routes.scan_tuya_network", fake_scan)
+        resp = await client.post("/api/plugins/tuya/scan", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert captured["networks"] == ["192.168.1.0/24"]
+        assert {"id": "d1", "key": "k", "name": "gniazdko"} in captured["tuyadevices"]
+
+    async def test_scan_networks_requires_auth_to_save(self, client):
+        assert (await client.post("/api/plugins/tuya/scan-networks", json={"scan_networks": []})).status_code == 401
+
+    async def test_scan_networks_get_defaults_to_empty_list(self, client):
+        resp = await client.get("/api/plugins/tuya/scan-networks", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert (await resp.get_json())["scan_networks"] == []
+
+    async def test_scan_networks_rejects_invalid_entry(self, client):
+        resp = await client.post(
+            "/api/plugins/tuya/scan-networks", json={"scan_networks": ["not-an-ip"]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    async def test_scan_networks_accepts_cidr_and_plain_ip_and_round_trips(self, client):
+        resp = await client.post(
+            "/api/plugins/tuya/scan-networks",
+            json={"scan_networks": ["192.168.1.0/24", "192.168.1.50", ""]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert (await resp.get_json())["scan_networks"] == ["192.168.1.0/24", "192.168.1.50"]
+
+        get_resp = await client.get("/api/plugins/tuya/scan-networks", headers=_basic_auth_header("test_haslo_123"))
+        assert (await get_resp.get_json())["scan_networks"] == ["192.168.1.0/24", "192.168.1.50"]
+
+    async def test_cloud_import_passes_configured_scan_networks(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya/scan-networks", json={"scan_networks": ["10.0.0.0/24"]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        captured = {}
+
+        def fake_fetch(api_region, access_id, access_key, networks):
+            captured["networks"] = networks
+            return []
+
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", fake_fetch)
+        payload = {"api_region": "eu", "access_id": "aid", "access_key": "akey"}
+        resp = await client.post(
+            "/api/plugins/tuya/cloud-import", json=payload, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert captured["networks"] == ["10.0.0.0/24"]
 
     async def test_cloud_import_missing_credentials_returns_400(self, client):
         resp = (await client.post(
@@ -379,7 +442,7 @@ class TestTuyaLocalPluginPage:
     async def test_cloud_import_requires_auth(self, client, monkeypatch):
         monkeypatch.setattr(
             "plugins.tuya_local.routes.fetch_tuya_cloud_devices",
-            lambda region, aid, akey: [{"id": "d9", "name": "Nowe", "local_key": "k9", "ip": "1.2.3.9"}],
+            lambda region, aid, akey, networks: [{"id": "d9", "name": "Nowe", "local_key": "k9", "ip": "1.2.3.9"}],
         )
         payload = {"api_region": "eu", "access_id": "aid", "access_key": "akey"}
         assert (await client.post("/api/plugins/tuya/cloud-import", json=payload)).status_code == 401
@@ -873,7 +936,7 @@ class TestTuyaCloudPluginPage:
     async def test_cloud_import_uses_stored_credentials(self, client, monkeypatch):
         captured = {}
 
-        def _fake_fetch(api_region, access_id, access_key):
+        def _fake_fetch(api_region, access_id, access_key, networks):
             captured.update(api_region=api_region, access_id=access_id, access_key=access_key)
             return [{"id": "c1", "name": "Lampa", "local_key": "", "ip": "", "category": "kg"}]
 
@@ -891,7 +954,7 @@ class TestTuyaCloudPluginPage:
         assert (await resp.get_json())["devices"][0]["name"] == "Lampa"
 
     async def test_cloud_import_connection_error_returns_502(self, client, monkeypatch):
-        def _fake_fetch(api_region, access_id, access_key):
+        def _fake_fetch(api_region, access_id, access_key, networks):
             raise ConnectionError("błąd logowania")
 
         monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_tuya_cloud_devices", _fake_fetch)
@@ -1041,7 +1104,7 @@ class TestTuyaCloudPluginPage:
             headers=_basic_auth_header("test_haslo_123"),
         )
 
-        def _fake_fetch(api_region, access_id, access_key):
+        def _fake_fetch(api_region, access_id, access_key, networks):
             return [
                 {"id": "c1", "name": "Lampa", "local_key": "key1", "ip": "192.168.1.20", "version": "3.3", "dp_schema": {}},
                 {"id": "c2", "name": "Kamera", "local_key": "", "ip": "", "version": "", "dp_schema": {}},
@@ -1072,7 +1135,7 @@ class TestTuyaCloudPluginPage:
             headers=_basic_auth_header("test_haslo_123"),
         )
 
-        def _fake_fetch(api_region, access_id, access_key):
+        def _fake_fetch(api_region, access_id, access_key, networks):
             raise ConnectionError("Błąd logowania do Tuya Cloud: bad credentials")
 
         monkeypatch.setattr("plugins.tuya_cloud.routes.fetch_tuya_cloud_devices", _fake_fetch)

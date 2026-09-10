@@ -115,6 +115,27 @@
     <button type="button" class="secondary" id="scanLanBtn">🔍 Skanuj sieć LAN</button>
     <span class="discover-status" id="scanLanStatus"></span>
   </div>
+
+  <div class="section-hint" style="margin-top:14px;">
+    Broadcast UDP nie zawsze dociera do bridge'a (kontener Docker bez trybu
+    <code>network: host</code>, VLAN-y, bridge w innej podsieci niż
+    urządzenia) - jeśli skan wyżej nic nie znajduje mimo działających
+    urządzeń, podaj tu adresy IP i/albo zakresy CIDR do aktywnego
+    przeskanowania (np. <code>192.168.1.0/24</code> albo pojedynczy adres
+    <code>192.168.1.50</code>). Dotyczy to WYŁĄCZNIE urządzeń, których
+    ID+<code>local_key</code> już znamy (skonfigurowanych niżej albo
+    zaimportowanych z Tuya Cloud) - to metoda na odnalezienie ich adresu
+    IP, nie na wykrycie zupełnie nowych, nieznanych urządzeń.
+  </div>
+  <div class="field-group">
+    <label>Zakresy/adresy IP do skanowania (zostaw puste, żeby używać tylko broadcastu)</label>
+    <div id="scanNetworksRows"></div>
+    <button type="button" class="add-row-btn" id="addScanNetworkBtn">+ Dodaj zakres/adres</button>
+  </div>
+  <div class="actions-bar">
+    <button id="saveScanNetworksBtn" type="button">Zapisz zakresy skanowania</button>
+  </div>
+  <div id="scanNetworksMsg" class="msg-box"></div>
 </div>
 
 <div class="section" id="devicesSection">
@@ -375,6 +396,49 @@ document.getElementById('scanLanBtn').addEventListener('click', async () => {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
   } finally {
     btn.disabled = false;
+  }
+});
+
+function addScanNetworkRow(value) {
+  const container = document.getElementById('scanNetworksRows');
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="np. 192.168.1.0/24 albo 192.168.1.50" class="scan-network-value">
+    <button type="button" class="row-remove">✕</button>`;
+  row.querySelector('.scan-network-value').value = value ?? '';
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+document.getElementById('addScanNetworkBtn').addEventListener('click', () => addScanNetworkRow());
+
+function collectScanNetworks() {
+  return Array.from(document.querySelectorAll('#scanNetworksRows .scan-network-value'))
+    .map(el => el.value.trim())
+    .filter(v => v);
+}
+
+async function loadScanNetworks() {
+  const data = await (await fetch('/api/plugins/tuya/scan-networks')).json();
+  (data.scan_networks || []).forEach(v => addScanNetworkRow(v));
+}
+loadScanNetworks();
+
+document.getElementById('saveScanNetworksBtn').addEventListener('click', async () => {
+  try {
+    const resp = await authorizedFetch('/api/plugins/tuya/scan-networks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scan_networks: collectScanNetworks() }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('scanNetworksMsg', false, data.error || 'Błąd zapisu');
+    } else {
+      showMsg('scanNetworksMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('scanNetworksMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
 
