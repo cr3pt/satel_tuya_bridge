@@ -507,7 +507,7 @@ class TuyaLocalController:
         self._gateways: dict[str, tinytuya.Device] = {}
         for name, cfg in self.zigbee_gateways_cfg.items():
             gw = tinytuya.Device(cfg["id"], cfg["ip"], cfg["local_key"])
-            gw.set_version(cfg.get("version", 3.4))
+            gw.set_version(cfg.get("version") or 3.4)
             self._gateways[name] = gw
 
         self._devices: dict[str, tinytuya.Device] = {}
@@ -527,7 +527,7 @@ class TuyaLocalController:
                 )
             else:
                 dev = tinytuya.OutletDevice(cfg["id"], cfg["ip"], cfg["local_key"])
-                dev.set_version(cfg.get("version", 3.4))
+                dev.set_version(cfg.get("version") or 3.4)
             self._devices[name] = dev
 
     async def _call_with_retry(self, device_name: str, func, *args):

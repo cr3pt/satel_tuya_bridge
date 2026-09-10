@@ -322,6 +322,32 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         assert devices["devices"]["d"]["dimmer_dp"] == "3"
         assert devices["devices"]["d"]["dimmer_range"] == [10, 1000]
 
+    def test_build_tuya_devices_empty_string_version_falls_back_to_3_4(self):
+        form = {"tuya_devices": [
+            {"name": "gniazdko", "id": "d1", "ip": "1.2.3.4", "local_key": "k", "version": "", "type": "socket"},
+        ]}
+        devices = build_tuya_devices_dict(form)
+        assert devices["devices"]["gniazdko"]["version"] == 3.4
+
+    def test_build_tuya_devices_explicit_version_is_preserved(self):
+        form = {"tuya_devices": [
+            {"name": "gniazdko", "id": "d1", "ip": "1.2.3.4", "local_key": "k", "version": "3.3", "type": "socket"},
+        ]}
+        devices = build_tuya_devices_dict(form)
+        assert devices["devices"]["gniazdko"]["version"] == 3.3
+
+    def test_build_zigbee_gateway_empty_string_version_falls_back_to_3_4(self):
+        form = {"zigbee_gateways": [
+            {"name": "brama", "id": "gw1", "ip": "1.2.3.4", "local_key": "gwkey", "version": ""},
+        ]}
+        result = build_tuya_devices_dict(form)
+        assert result["zigbee_gateways"]["brama"]["version"] == 3.4
+
+    def test_tuya_devices_to_rows_round_trips_version(self):
+        devices = {"gniazdko": {"id": "d1", "ip": "1.2.3.4", "local_key": "k", "version": 3.3, "type": "socket"}}
+        rows = tuya_devices_to_rows(devices)
+        assert rows[0]["version"] == 3.3
+
     def test_build_tuya_devices_empty_form(self):
         assert build_tuya_devices_dict({}) == {"devices": {}, "zigbee_gateways": {}, "cloud_devices": {}}
 

@@ -709,7 +709,7 @@ def _build_tuya_devices(form: dict) -> dict:
         else:
             entry = {
                 "id": d["id"], "ip": d["ip"], "local_key": d["local_key"],
-                "version": float(d.get("version", 3.4)), "type": d.get("type", "socket"),
+                "version": float(d.get("version") or 3.4), "type": d.get("type", "socket"),
             }
         if d.get("type") == "dimmer":
             entry["dimmer_dp"] = d["dimmer_dp"]
@@ -724,7 +724,7 @@ def _build_zigbee_gateways(form: dict) -> dict:
     return {
         g["name"]: {
             "id": g["id"], "ip": g["ip"], "local_key": g["local_key"],
-            "version": float(g.get("version", 3.4)),
+            "version": float(g.get("version") or 3.4),
         }
         for g in form.get("zigbee_gateways", [])
         if g.get("name") and g.get("id") and g.get("ip") and g.get("local_key")
@@ -1116,6 +1116,7 @@ def tuya_devices_to_rows(devices: dict) -> list[dict]:
             "local_key": cfg.get("local_key", ""), "type": cfg.get("type", "socket"),
             "dimmer_dp": cfg.get("dimmer_dp", ""),
             "gateway": cfg.get("gateway", ""), "cid": cfg.get("cid", ""),
+            "version": cfg.get("version", ""),
             "dp_schema": cfg.get("dp_schema") or {},
         }
         for name, cfg in devices.items()

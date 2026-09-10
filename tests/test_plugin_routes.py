@@ -329,7 +329,7 @@ class TestTuyaLocalPluginPage:
         data = await (await client.get("/api/plugins/tuya/devices", headers=_basic_auth_header("test_haslo_123"))).get_json()
         assert {
             "name": "lampka_zigbee", "id": "sub1", "gateway": "brama_salon", "cid": "node1",
-            "type": "socket", "ip": "", "local_key": "", "dimmer_dp": "", "dp_schema": {},
+            "type": "socket", "ip": "", "local_key": "", "dimmer_dp": "", "version": "", "dp_schema": {},
         } in data["devices"]
         assert {"name": "brama_salon", "id": "gw1", "ip": "1.2.3.9", "local_key": "gwkey", "version": 3.4} \
             in data["zigbee_gateways"]
@@ -1188,6 +1188,27 @@ class TestTuyaCloudPluginPage:
         assert moved["ip"] == "192.168.1.20"
         assert moved["local_key"] == "key1"
         assert moved["id"] == "c1"
+        assert moved["version"] == 3.4
+
+    async def test_move_to_local_stores_detected_protocol_version(self, client):
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/move-to-local",
+            json={"name": "lampa_taras", "ip": "192.168.1.20", "local_key": "key1", "version": "3.3"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+
+        local_after = await (await client.get(
+            "/api/plugins/tuya/devices", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        moved = next(d for d in local_after["devices"] if d["name"] == "lampa_taras")
+        assert moved["version"] == 3.3
 
     async def test_move_to_local_rejects_name_collision_with_existing_local_device(self, client):
         await client.post(
@@ -1235,6 +1256,21 @@ class TestTuyaCloudPluginPage:
         assert added["ip"] == "192.168.1.20"
         assert added["local_key"] == "key1"
         assert added["id"] == "c1"
+        assert added["version"] == 3.4
+
+    async def test_add_to_local_stores_detected_protocol_version(self, client):
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/add-to-local",
+            json={"name": "lampa_taras", "id": "c1", "ip": "192.168.1.20", "local_key": "key1", "version": "3.2"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+
+        local_after = await (await client.get(
+            "/api/plugins/tuya/devices", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        added = next(d for d in local_after["devices"] if d["name"] == "lampa_taras")
+        assert added["version"] == 3.2
 
     async def test_add_to_local_rejects_name_collision(self, client):
         await client.post(

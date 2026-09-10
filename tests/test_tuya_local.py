@@ -867,6 +867,40 @@ class TestZigbeeGateways:
         assert "lampka" not in ctrl._devices
         assert "gniazdko_salon" in ctrl._devices
 
+
+class TestProtocolVersionFallback:
+    """Config przechowuje version="" gdy pole w formularzu było puste - to nie może
+    zostać przekazane wprost do tinytuya (błędnie zinterpretowane jako brak wersji =
+    domyślne 3.1, zamiast prawdziwego "użyj 3.4 jako sensownego fallbacku")."""
+
+    def test_regular_device_with_empty_string_version_falls_back_to_3_4(self):
+        devices_cfg = {
+            "gniazdko": {"id": "dev1", "ip": "192.168.1.50", "local_key": "key1", "version": ""},
+        }
+        ctrl = TuyaLocalController(devices_cfg)
+        assert ctrl._devices["gniazdko"].version == 3.4
+
+    def test_regular_device_with_explicit_version_is_used(self):
+        devices_cfg = {
+            "gniazdko": {"id": "dev1", "ip": "192.168.1.50", "local_key": "key1", "version": 3.3},
+        }
+        ctrl = TuyaLocalController(devices_cfg)
+        assert ctrl._devices["gniazdko"].version == 3.3
+
+    def test_regular_device_without_version_key_falls_back_to_3_4(self):
+        devices_cfg = {
+            "gniazdko": {"id": "dev1", "ip": "192.168.1.50", "local_key": "key1"},
+        }
+        ctrl = TuyaLocalController(devices_cfg)
+        assert ctrl._devices["gniazdko"].version == 3.4
+
+    def test_gateway_with_empty_string_version_falls_back_to_3_4(self):
+        gateways_cfg = {
+            "brama_salon": {"id": "gw1", "ip": "192.168.1.60", "local_key": "gwkey", "version": ""},
+        }
+        ctrl = TuyaLocalController({}, gateways_cfg)
+        assert ctrl._gateways["brama_salon"].version == 3.4
+
     def test_zigbee_gateways_cfg_defaults_to_empty_when_omitted(self):
         ctrl = TuyaLocalController(DEVICES_CFG)
         assert ctrl._gateways == {}

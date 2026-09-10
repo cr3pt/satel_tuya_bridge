@@ -344,6 +344,7 @@ function addDeviceRow(initial) {
     </select>
     <input type="text" placeholder="DP jasności (tylko ściemniacz)" class="dev-dp" style="max-width: 140px; display:none;">
     <select class="dev-gateway" title="bramka Zigbee - wymagana, jeśli urządzenie nie ma IP/local_key"></select>
+    <input type="text" placeholder="wersja (np. 3.4)" class="dev-version" title="wersja protokołu Tuya (puste = 3.4)" style="max-width: 90px;">
     <input type="hidden" class="dev-schema">
     <button type="button" class="row-remove">✕</button>`;
   const typeSelect = row.querySelector('.dev-type');
@@ -362,6 +363,7 @@ function addDeviceRow(initial) {
     typeSelect.value = initial.type || 'socket';
     dpInput.value = initial.dimmer_dp || '';
     dpInput.style.display = typeSelect.value === 'dimmer' ? '' : 'none';
+    row.querySelector('.dev-version').value = initial.version ?? '';
     row.querySelector('.dev-schema').value = JSON.stringify(initial.dp_schema || {});
   }
   row.querySelector('.row-remove').addEventListener('click', () => row.remove());
@@ -382,6 +384,7 @@ function collectDevices() {
         type: row.querySelector('.dev-type').value,
         gateway: row.querySelector('.dev-gateway').value.trim(),
         dimmer_dp: row.querySelector('.dev-dp').value.trim() || '1',
+        version: row.querySelector('.dev-version').value.trim(),
         dp_schema,
       };
     })
@@ -427,7 +430,7 @@ document.getElementById('scanLanBtn').addEventListener('click', async () => {
     let added = 0;
     devices.forEach(dev => {
       if (existing.has(dev.id) || dev.known_name) return;
-      addDeviceRow({ name: dev.known_name || dev.id, id: dev.id, ip: dev.ip, type: 'socket' });
+      addDeviceRow({ name: dev.known_name || dev.id, id: dev.id, ip: dev.ip, type: 'socket', version: dev.version });
       added++;
     });
     renderScanLanResults(devices, existing);
@@ -517,7 +520,7 @@ function renderImportLocalResults(devices) {
         const resp = await authorizedFetch('/api/plugins/tuya_cloud/devices/add-to-local', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, id: d.id, ip: d.ip, local_key: d.local_key, dp_schema: d.dp_schema }),
+          body: JSON.stringify({ name, id: d.id, ip: d.ip, local_key: d.local_key, version: d.version, dp_schema: d.dp_schema }),
         });
         const data = await resp.json();
         if (!resp.ok) {

@@ -504,7 +504,7 @@ function renderRescanResults(devices) {
           const resp = await authorizedFetch('/api/plugins/tuya_cloud/devices/move-to-local', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: d.name, ip: d.ip, local_key: d.local_key, dp_schema: d.dp_schema }),
+            body: JSON.stringify({ name: d.name, ip: d.ip, local_key: d.local_key, version: d.version, dp_schema: d.dp_schema }),
           });
           const data = await resp.json();
           if (!resp.ok) {
@@ -586,7 +586,7 @@ async function renderImportLocalResults(devices) {
         const resp = await authorizedFetch('/api/plugins/tuya_cloud/devices/add-to-local', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, id: d.id, ip: d.ip, local_key: d.local_key, dp_schema: d.dp_schema }),
+          body: JSON.stringify({ name, id: d.id, ip: d.ip, local_key: d.local_key, version: d.version, dp_schema: d.dp_schema }),
         });
         const data = await resp.json();
         if (!resp.ok) {
