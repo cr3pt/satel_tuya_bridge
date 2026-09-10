@@ -668,6 +668,36 @@ class TestAutomationContextEndpoint:
         )).get_json()
         assert data["homewhiz_appliances"] == []
 
+    async def test_context_includes_tuya_dp_options_for_cloud_devices(self, client):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [{"name": "nawadnianie", "id": "c1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def fake_fetch(api_region, access_id, access_key, device_ids):
+            return {"c1": {"1": {"code": "manual_delay", "type": "Value", "values": "{}"}}}, {}
+
+        import plugins.tuya_cloud.routes as tuya_cloud_routes
+        original = tuya_cloud_routes.fetch_dp_schemas_for_devices
+        tuya_cloud_routes.fetch_dp_schemas_for_devices = fake_fetch
+        try:
+            await client.post(
+                "/api/plugins/tuya_cloud/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+            )
+        finally:
+            tuya_cloud_routes.fetch_dp_schemas_for_devices = original
+
+        data = await (await client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert data["tuya_dp_options"]["nawadnianie"] == [{"code": "manual_delay", "label": "opóźnienie ręczne"}]
+
 
 class TestAutomationsEndpoint:
     async def test_get_automations_requires_auth(self, client):

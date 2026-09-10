@@ -166,6 +166,17 @@
   </div>
   <div id="cloudDevicesRows"></div>
   <button type="button" class="add-row-btn" id="addCloudDeviceBtn">+ Dodaj urządzenie</button>
+
+  <div class="section-hint" style="margin-top:14px;">
+    Urządzenia inne niż zwykły włącznik (czujniki, liczniki, sterowniki
+    nawadniania...) pokazują tylko surowe numery pól, dopóki nie pobierzesz
+    ich opisu - wymaga zapisanych poświadczeń wyżej.
+  </div>
+  <div class="discover-row">
+    <button type="button" class="secondary" id="refreshCloudDpSchemaBtn">🔍 Pobierz opisy pól (Tuya Cloud)</button>
+    <span class="discover-status" id="refreshCloudDpSchemaStatus"></span>
+  </div>
+
   <div class="actions-bar">
     <button id="saveCloudDevicesBtn" type="button">Zapisz urządzenia chmurowe</button>
   </div>
@@ -292,12 +303,14 @@ function addCloudDeviceRow(initial) {
     <input type="text" placeholder="ID urządzenia" class="cd-id">
     <input type="text" placeholder="kategoria (opcjonalnie)" class="cd-category">
     <input type="text" placeholder="kod przełącznika" class="cd-switch-code" style="max-width: 150px;">
+    <input type="hidden" class="cd-schema">
     <button type="button" class="row-remove">✕</button>`;
   if (initial) {
     row.querySelector('.cd-name').value = initial.name ?? '';
     row.querySelector('.cd-id').value = initial.id ?? '';
     row.querySelector('.cd-category').value = initial.category ?? '';
     row.querySelector('.cd-switch-code').value = initial.switch_code || 'switch_1';
+    row.querySelector('.cd-schema').value = JSON.stringify(initial.dp_schema || {});
   } else {
     row.querySelector('.cd-switch-code').value = 'switch_1';
   }
@@ -308,12 +321,17 @@ document.getElementById('addCloudDeviceBtn').addEventListener('click', () => add
 
 function collectCloudDevices() {
   return Array.from(document.querySelectorAll('#cloudDevicesRows .repeatable-row'))
-    .map(row => ({
-      name: row.querySelector('.cd-name').value.trim(),
-      id: row.querySelector('.cd-id').value.trim(),
-      category: row.querySelector('.cd-category').value.trim(),
-      switch_code: row.querySelector('.cd-switch-code').value.trim() || 'switch_1',
-    }))
+    .map(row => {
+      let dp_schema = {};
+      try { dp_schema = JSON.parse(row.querySelector('.cd-schema').value || '{}'); } catch (e) {  }
+      return {
+        name: row.querySelector('.cd-name').value.trim(),
+        id: row.querySelector('.cd-id').value.trim(),
+        category: row.querySelector('.cd-category').value.trim(),
+        switch_code: row.querySelector('.cd-switch-code').value.trim() || 'switch_1',
+        dp_schema,
+      };
+    })
     .filter(d => d.name);
 }
 
@@ -342,6 +360,28 @@ document.getElementById('saveCloudDevicesBtn').addEventListener('click', async (
   }
 });
 
+
+document.getElementById('refreshCloudDpSchemaBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('refreshCloudDpSchemaBtn');
+  const status = document.getElementById('refreshCloudDpSchemaStatus');
+  btn.disabled = true;
+  status.textContent = 'Pobieram opisy pól...';
+  try {
+    const resp = await authorizedFetch('/api/plugins/tuya_cloud/devices/refresh-dp-schema', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = '❌ ' + (data.error || 'Błąd pobierania opisów pól');
+      return;
+    }
+    status.textContent = data.message + (data.failed.length ? ` Nie udało się dla: ${data.failed.join(', ')}.` : '');
+    document.getElementById('cloudDevicesRows').innerHTML = '';
+    await loadCloudDevices();
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 document.getElementById('cloudImportBtn').addEventListener('click', async () => {
   const btn = document.getElementById('cloudImportBtn');

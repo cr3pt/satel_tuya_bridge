@@ -166,6 +166,7 @@
       <button type="button" class="secondary" data-node-type="schedule">📅 Harmonogram</button>
       <button type="button" class="secondary" data-node-type="escalation">📈 Eskalacja</button>
       <button type="button" class="secondary" data-node-type="tuya_dp">🔧 Ustaw pole Tuya</button>
+      <button type="button" class="secondary" data-node-type="stop">🛑 Zakończ</button>
     </div>
     <div class="canvas-wrap" id="canvasWrap">
       <div class="canvas" id="canvas">
@@ -243,6 +244,7 @@ const NODE_DEFS = {
   state:      { label: 'Warunek stanu', icon: '🔍', outputs: ['spełniony', 'inaczej'] },
   condition_group: { label: 'Warunek złożony', icon: '🧩', outputs: ['spełniony', 'inaczej'] },
   tuya_dp: { label: 'Ustaw pole Tuya', icon: '🔧', outputs: [''] },
+  stop: { label: 'Zakończ', icon: '🛑', outputs: [] },
 };
 
 let context = {};
@@ -307,6 +309,7 @@ function nodeLabel(node) {
     const fieldLabel = found ? found.label : (c.dp_code || '(brak pola)');
     return `${c.target_device || '(brak urządzenia)'}: ${fieldLabel} = ${c.value ?? ''}`;
   }
+  if (node.type === 'stop') return 'kończy gałąź';
   return '';
 }
 
@@ -924,9 +927,11 @@ function renderNodeFields(node) {
       </select>`);
     } else {
       html += field(`<label>Kod pola (DP)</label><input type="text" data-field="dp_code" placeholder="np. manual_delay" value="${escapeHtml(c.dp_code || '')}">`);
-      html += `<div class="empty-hint" style="margin:-4px 0 8px;">Brak odkrytych opisów pól dla tego urządzenia - użyj "🔍 Pobierz opisy pól" na stronie Tuya (LAN), żeby wybierać z listy zamiast wpisywać kod ręcznie.</div>`;
+      html += `<div class="empty-hint" style="margin:-4px 0 8px;">Brak odkrytych opisów pól dla tego urządzenia - użyj "🔍 Pobierz opisy pól" na stronie Tuya (LAN) albo Tuya Cloud, żeby wybierać z listy zamiast wpisywać kod ręcznie.</div>`;
     }
     html += field(`<label>Wartość</label><input type="text" data-field="value" placeholder="np. 1 (dni), true, nazwa trybu..." value="${escapeHtml(c.value ?? '')}">`);
+  } else if (node.type === 'stop') {
+    html += `<div class="empty-hint">Węzeł bez ustawień i bez wyjścia - kończy przetwarzanie tej gałęzi grafu (nic dalej się nie wykona).</div>`;
   }
   el.innerHTML = html;
   if (node.type === 'condition_group') {

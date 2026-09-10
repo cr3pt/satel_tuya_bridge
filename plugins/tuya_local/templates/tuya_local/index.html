@@ -128,8 +128,10 @@
     <label>Urządzenia</label>
     <div class="section-hint" style="margin-top:0;">
       Zwykłe urządzenie WiFi ma własne IP + local_key. Podurządzenie Zigbee
-      zamiast tego wskazuje nazwę bramki wyżej (pole "bramka") - IP/klucz
-      zostają puste.
+      zamiast tego WYMAGA wybrania bramki z listy w polu "bramka" (jak jest
+      tylko jedna skonfigurowana bramka, zaznacza się sama) - wtedy IP/klucz
+      zostają puste. Bez adresu IP/local_key ANI wybranej bramki zapis się
+      nie powiedzie.
     </div>
     <div id="devicesRows"></div>
     <button type="button" class="add-row-btn" id="addDeviceBtn">+ Dodaj urządzenie</button>
@@ -191,6 +193,10 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 
 const PLUGIN_ID = 'tuya_local';
 
@@ -242,7 +248,8 @@ function addGatewayRow(initial) {
     row.querySelector('.gw-key').value = initial.local_key ?? '';
     row.querySelector('.gw-version').value = initial.version ?? '3.4';
   }
-  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  row.querySelector('.row-remove').addEventListener('click', () => { row.remove(); refreshGatewaySelects(); });
+  row.querySelector('.gw-name').addEventListener('input', () => refreshGatewaySelects());
   container.appendChild(row);
 }
 document.getElementById('addGatewayBtn').addEventListener('click', () => addGatewayRow());
@@ -257,6 +264,20 @@ function collectGateways() {
       version: row.querySelector('.gw-version').value.trim() || '3.4',
     }))
     .filter(g => g.name);
+}
+
+function gatewayOptionsHtml(selected) {
+  const names = collectGateways().map(g => g.name);
+  return `<option value="">(brak - urządzenie WiFi)</option>` + names.map(n =>
+    `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`
+  ).join('');
+}
+
+function refreshGatewaySelects() {
+  document.querySelectorAll('#devicesRows .dev-gateway').forEach(select => {
+    const current = select.value;
+    select.innerHTML = gatewayOptionsHtml(current);
+  });
 }
 
 
@@ -276,7 +297,7 @@ function addDeviceRow(initial) {
       <option value="dimmer">Ściemniacz</option>
     </select>
     <input type="text" placeholder="DP jasności (tylko ściemniacz)" class="dev-dp" style="max-width: 140px; display:none;">
-    <input type="text" placeholder="bramka Zigbee (opcjonalnie)" class="dev-gateway">
+    <select class="dev-gateway" title="bramka Zigbee - wymagana, jeśli urządzenie nie ma IP/local_key"></select>
     <input type="hidden" class="dev-schema">
     <button type="button" class="row-remove">✕</button>`;
   const typeSelect = row.querySelector('.dev-type');
@@ -284,6 +305,9 @@ function addDeviceRow(initial) {
   typeSelect.addEventListener('change', () => {
     dpInput.style.display = typeSelect.value === 'dimmer' ? '' : 'none';
   });
+  const gatewayNames = collectGateways().map(g => g.name);
+  const defaultGateway = !initial && gatewayNames.length === 1 ? gatewayNames[0] : (initial ? initial.gateway ?? '' : '');
+  row.querySelector('.dev-gateway').innerHTML = gatewayOptionsHtml(defaultGateway);
   if (initial) {
     row.querySelector('.dev-name').value = initial.name ?? '';
     row.querySelector('.dev-id').value = initial.id ?? '';
@@ -292,7 +316,6 @@ function addDeviceRow(initial) {
     typeSelect.value = initial.type || 'socket';
     dpInput.value = initial.dimmer_dp || '';
     dpInput.style.display = typeSelect.value === 'dimmer' ? '' : 'none';
-    row.querySelector('.dev-gateway').value = initial.gateway ?? '';
     row.querySelector('.dev-schema').value = JSON.stringify(initial.dp_schema || {});
   }
   row.querySelector('.row-remove').addEventListener('click', () => row.remove());

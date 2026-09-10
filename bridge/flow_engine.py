@@ -95,6 +95,10 @@ class FlowEngine:
                 warunek" reguły ruchu. Zamiast łańcucha kilku węzłów
                 Warunek stanu (co daje tylko AND) pozwala złożyć
                 jednym węzłem np. "A i (B lub C)"
+      stop      {}  - węzeł terminalny bez wyjścia: jawnie kończy przetwarzanie
+                danej gałęzi grafu (funkcjonalnie równoważne pozostawieniu
+                wyjścia niepodłączonego do niczego, ale czytelniejsze na
+                canvasie niż "urwany" przewód)
       tuya_dp   {target_device, dp_code, value}  - ustawia DOWOLNE pole (DP)
                 urządzenia Tuya (lokalnego lub Cloud) po kodzie - generyczny
                 odpowiednik przycisków w apce Tuya, których nie ma jako
@@ -103,8 +107,9 @@ class FlowEngine:
                 jako tekst jest konwertowane na bool/int/float, jeśli się da
                 (patrz bridge.tuya_local.coerce_dp_value), inaczej wysyłane
                 jako string. Kod pola wybiera się z listy odkrytej przez
-                "🔍 Pobierz opisy pól" na stronie Tuya (LAN) - bez tego
-                trzeba go wpisać ręcznie.
+                "🔍 Pobierz opisy pól" na stronie Tuya (LAN) albo Tuya
+                Cloud (zależnie, czy urządzenie jest sterowane lokalnie czy
+                przez chmurę) - bez tego trzeba go wpisać ręcznie.
     """
 
     def __init__(
@@ -359,6 +364,9 @@ class FlowEngine:
             if scene_name:
                 await self._run_scene(scene_name)
             return [msg]
+
+        if ntype == "stop":
+            return []
 
         if ntype == "tuya_dp":
             if self._set_tuya_dp is None:
