@@ -50,6 +50,16 @@
   .plugin-row-body[hidden] { display: none; }
   .plugin-icon { font-size: 22px; line-height: 1; flex-shrink: 0; }
   .plugin-name { font-size: 16px; font-weight: 600; }
+  .plugin-quick-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+  .quick-action-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 6px; background: transparent;
+    border: 1px solid transparent; color: var(--muted); font-size: 13px;
+    cursor: pointer; text-decoration: none; padding: 0; line-height: 1;
+  }
+  .quick-action-btn:hover { background: #262a32; border-color: var(--border); color: var(--text); }
+  .quick-action-btn.power-on { color: var(--ok); }
+  .quick-action-btn.power-off { color: var(--muted); }
   .plugin-desc { color: var(--muted); font-size: 13.5px; line-height: 1.4; padding-top: 10px; }
   .plugin-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 6px; }
   .status-pill {
@@ -235,11 +245,23 @@ function renderPlugin(p) {
   const linkHtml = p.config_url ? `<a class="plugin-link" href="${p.config_url}"><span class="link-icon">🔧</span>Konfiguruj →</a>` : '';
   const restartBadge = p.restart_required ? '<span class="restart-badge">wymaga restartu</span>' : '';
 
+  const powerBtnHtml = p.toggleable
+    ? `<button type="button" class="quick-action-btn qa-power ${p.enabled ? 'power-on' : 'power-off'}"
+         title="${p.enabled ? 'Włączona - kliknij, żeby wyłączyć' : 'Wyłączona - kliknij, żeby włączyć'}">⏻</button>`
+    : '';
+  const configBtnHtml = p.config_url
+    ? `<a class="quick-action-btn qa-config" href="${p.config_url}" title="Konfiguracja" onclick="event.stopPropagation()">⚙️</a>`
+    : '';
+  const logsBtnHtml = p.logger
+    ? `<a class="quick-action-btn qa-logs" href="/system?logger=${encodeURIComponent(p.logger)}#logsSection" title="Logi" onclick="event.stopPropagation()">📜</a>`
+    : '';
+
   row.innerHTML = `
     <div class="plugin-row-header">
       <div class="plugin-row-left">
         <span class="plugin-icon">${p.icon}</span>
         <span class="plugin-name">${p.name}</span>
+        <div class="plugin-quick-actions">${powerBtnHtml}${configBtnHtml}${logsBtnHtml}</div>
       </div>
       <div class="plugin-row-right" tabindex="0" role="button" aria-expanded="${isExpanded ? 'true' : 'false'}">
         <span class="status-pill ${pillClass}">${pillText}</span>
@@ -302,9 +324,21 @@ function renderPlugin(p) {
 
   if (p.toggleable) {
     const checkbox = row.querySelector('.plugin-toggle');
+    const powerBtn = row.querySelector('.qa-power');
+    const syncPowerBtn = (checked) => {
+      powerBtn.classList.toggle('power-on', checked);
+      powerBtn.classList.toggle('power-off', !checked);
+      powerBtn.title = checked ? 'Włączona - kliknij, żeby wyłączyć' : 'Wyłączona - kliknij, żeby włączyć';
+    };
     checkbox.addEventListener('change', () => {
       setPendingField(p.id, 'enabled', checkbox.checked, p.enabled);
       row.classList.toggle('on', checkbox.checked);
+      syncPowerBtn(checkbox.checked);
+    });
+    powerBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      checkbox.checked = !checkbox.checked;
+      checkbox.dispatchEvent(new Event('change'));
     });
   }
 

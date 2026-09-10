@@ -522,9 +522,14 @@ async function loadLoggerOptions() {
 
   const resp = await authorizedFetch('/api/system/logs/loggers?' + params.toString());
   const loggers = await resp.json();
+  // Zachowaj obecnie wybrany logger jako opcję nawet, jeśli lista znanych
+  // loggerów go jeszcze nie zawiera (np. link "Logi" z karty wtyczki
+  // odesłany tu zanim ta wtyczka cokolwiek zalogowała) - inaczej filtr
+  // po dociągnięciu listy cichnie wracał do "wszystkie loggery".
+  const options = current && !loggers.includes(current) ? [current, ...loggers] : loggers;
   select.innerHTML = '<option value="">wszystkie loggery</option>' +
-    loggers.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
-  if (loggers.includes(current)) select.value = current;
+    options.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  select.value = current;
 }
 
 async function loadLogs() {
@@ -567,6 +572,15 @@ function setupAutoRefresh() {
 }
 document.getElementById('autoRefreshLogs').addEventListener('change', setupAutoRefresh);
 setupAutoRefresh();
+
+// Wejście z linku "Logi" na karcie wtyczki (/plugins) - ?logger=bridge.xyz
+// wstępnie ustawia filtr loggera, zanim jeszcze znamy pełną listę loggerów.
+const initialLogger = new URLSearchParams(location.search).get('logger');
+if (initialLogger) {
+  const select = document.getElementById('logLogger');
+  select.innerHTML = `<option value="${escapeHtml(initialLogger)}">${escapeHtml(initialLogger)}</option>`;
+  select.value = initialLogger;
+}
 loadLoggerOptions();
 loadLogs();
 </script>

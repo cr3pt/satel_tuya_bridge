@@ -877,6 +877,12 @@ class TestPluginsEndpoint:
         assert by_id["tuya_cloud"]["category"] == "Tuya"
         assert by_id["home_assistant"]["category"] == "Dom"
 
+    async def test_get_includes_logger_per_plugin_for_logs_deep_link(self, client):
+        by_id = {p["id"]: p for p in await (await client.get("/api/plugins", headers=_basic_auth_header("test_haslo_123"))).get_json()}
+        assert by_id["satel"]["logger"] == "bridge.satel"
+        assert by_id["tuya_local"]["logger"] == "bridge.tuya_local"
+        assert by_id["tuya_cloud"]["logger"] == "bridge.tuya_cloud"
+
     async def test_load_errors_endpoint_requires_auth(self, client):
         assert (await client.get("/api/plugins/load-errors")).status_code == 401
 
