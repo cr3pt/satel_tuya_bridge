@@ -403,6 +403,25 @@ kliknięciem usuwa je z listy chmurowej i dodaje do zakładki 🔌 Tuya
 (LAN) z tym samym ID i pobranym `local_key`/adresem IP (opis pól DP,
 jeśli był już pobrany, przechodzi razem z urządzeniem).
 
+**Skan LAN (broadcast UDP) nie zawsze dociera do bridge'a** - typowo, gdy
+bridge działa w kontenerze Docker bez trybu `network: host`, albo gdy
+urządzenia Tuya są w innej podsieci/VLAN-ie niż bridge. W takiej sytuacji
+"🔍 Skanuj sieć LAN" (zakładka 🔌 Tuya (LAN)) i "🔄 Rescan" (zakładka ☁
+Tuya Cloud) nic nie znajdą, mimo że urządzenia normalnie działają. Sekcja
+**"Zakresy/adresy IP do skanowania"** na dole zakładki 🔌 Tuya (LAN)
+pozwala podać ręcznie adresy IP i/albo zakresy CIDR (np.
+`192.168.1.0/24`, albo pojedynczy adres `192.168.1.50`) - z takim
+zakresem oba przyciski skanowania (LAN i Rescan) dodatkowo aktywnie
+łączą się (TCP) z każdym adresem w zakresie zamiast polegać wyłącznie na
+broadcaście (`tinytuya` `forcescan`). Dotyczy to WYŁĄCZNIE urządzeń,
+których ID+`local_key` już znamy (skonfigurowanych w zakładce Tuya (LAN)
+albo zaimportowanych z Tuya Cloud) - to metoda na odnalezienie adresu IP
+znanego urządzenia, nie na wykrycie zupełnie nowych, nieznanych urządzeń
+(do tego nadal służy zwykły skan broadcastu). Skan aktywnego zakresu jest
+wolniejszy niż sam broadcast (łączy się po kolei z każdym adresem w
+zakresie), więc warto podawać możliwie wąski zakres (konkretny adres albo
+mała podsieć) zamiast całego `/16`.
+
 ### Częsty problem: import zwraca 0 urządzeń (albo błąd 401 na kamery) mimo poprawnych danych
 
 Najczęstsza przyczyna to **niedopasowanie regionu** - Tuya Cloud wymaga,

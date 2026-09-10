@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 
 from quart import Quart, jsonify, render_template, request
 
@@ -116,20 +117,60 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
     async def api_plugin_tuya_scan():
         tuya = get_config_raw().get("tuya", {})
         known_by_id: dict[str, str] = {}
+        tuyadevices_for_scan = []
         for name, cfg in tuya.get("cloud_devices", {}).items():
             if cfg.get("id"):
                 known_by_id[cfg["id"]] = name
         for name, cfg in tuya.get("devices", {}).items():
             if cfg.get("id"):
                 known_by_id[cfg["id"]] = name
+            if cfg.get("id") and cfg.get("local_key"):
+                tuyadevices_for_scan.append({"id": cfg["id"], "key": cfg["local_key"], "name": name})
+        scan_networks = tuya.get("scan_networks") or []
 
         try:
-            devices = await asyncio.get_event_loop().run_in_executor(None, scan_tuya_network)
+            devices = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: scan_tuya_network(networks=scan_networks, tuyadevices=tuyadevices_for_scan),
+            )
         except Exception as exc:
             return jsonify({"error": f"Błąd skanowania: {exc}"}), 502
         for d in devices:
             d["known_name"] = known_by_id.get(d.get("id"), "")
         return jsonify({"devices": devices})
+
+    @app.route("/api/plugins/tuya/scan-networks", methods=["GET"])
+    async def api_plugin_tuya_scan_networks_get():
+        tuya = get_config_raw().get("tuya", {})
+        return jsonify({"scan_networks": tuya.get("scan_networks") or []})
+
+    @app.route("/api/plugins/tuya/scan-networks", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_tuya_scan_networks_post():
+        form = await request.get_json(silent=True)
+        if not isinstance(form, dict) or not isinstance(form.get("scan_networks"), list):
+            return jsonify({"error": "Nieprawidłowe dane - oczekiwano listy 'scan_networks'"}), 400
+
+        networks = []
+        for entry in form["scan_networks"]:
+            value = (entry or "").strip() if isinstance(entry, str) else ""
+            if not value:
+                continue
+            try:
+                ipaddress.ip_network(value, strict=False)
+            except ValueError:
+                return jsonify({"error": f"Nieprawidłowy adres IP albo zakres CIDR: '{value}'"}), 400
+            networks.append(value)
+
+        current = get_config_store().get("config")
+        current.setdefault("tuya", {})["scan_networks"] = networks
+        get_config_store().set("config", current)
+        reload_bridge_config()
+        enqueue_bridge_reload()
+
+        return jsonify({
+            "scan_networks": networks,
+            "message": "Zapisano. Zmiana zadziała przy następnym skanowaniu, bez restartu procesu.",
+        })
 
     @app.route("/api/plugins/tuya/cloud-import", methods=["POST"])
     async def api_plugin_tuya_cloud_import():
@@ -140,9 +181,10 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         if not api_region or not access_id or not access_key:
             return jsonify({"error": "Region, Access ID i Access Secret są wymagane"}), 400
 
+        scan_networks = get_config_raw().get("tuya", {}).get("scan_networks") or []
         try:
             devices = await asyncio.get_event_loop().run_in_executor(
-                None, fetch_tuya_cloud_devices, api_region, access_id, access_key,
+                None, fetch_tuya_cloud_devices, api_region, access_id, access_key, scan_networks,
             )
         except ConnectionError as exc:
             return jsonify({"error": str(exc)}), 502

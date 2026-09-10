@@ -171,6 +171,30 @@ class TestScanNetwork:
         assert captured["maxretry"] == 3
         assert captured["poll"] is False
 
+    def test_networks_given_uses_forcescan_instead_of_broadcast_only(self, monkeypatch):
+        captured = {}
+
+        def fake_devices(**kwargs):
+            captured.update(kwargs)
+            return {"192.168.1.50": {"gwId": "dev1", "version": "3.4"}}
+
+        monkeypatch.setattr("tinytuya.scanner.devices", fake_devices)
+        devices = scan_network(
+            maxretry=2, networks=["192.168.1.0/24"], tuyadevices=[{"id": "dev1", "key": "key1"}],
+        )
+        assert captured["forcescan"] == ["192.168.1.0/24"]
+        assert captured["tuyadevices"] == [{"id": "dev1", "key": "key1"}]
+        assert captured["scantime"] == 2
+        assert {"id": "dev1", "ip": "192.168.1.50", "version": "3.4"} in devices
+
+    def test_no_networks_does_not_touch_scanner_module(self, monkeypatch):
+        def fail(**kwargs):
+            raise AssertionError("scanner.devices should not be called without networks")
+
+        monkeypatch.setattr("tinytuya.scanner.devices", fail)
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.deviceScan", lambda **kw: {})
+        assert scan_network() == []
+
 
 class FakeCloud:
 
@@ -226,6 +250,22 @@ class TestFetchCloudDevices:
         devices = fetch_cloud_devices("eu", "access_id", "access_secret")
         assert devices[0]["ip"] == "192.168.1.50"
         assert devices[0]["version"] == "3.4"
+
+    def test_passes_networks_and_builds_tuyadevices_from_cloud_result(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
+            {"id": "d1", "name": "Gniazdko", "key": "localkey1"},
+            {"id": "d2", "name": "Bez klucza", "key": ""},
+        ]))
+        captured = {}
+
+        def fake_scan_network(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr("bridge.tuya_local.scan_network", fake_scan_network)
+        fetch_cloud_devices("eu", "access_id", "access_secret", networks=["192.168.1.0/24"])
+        assert captured["networks"] == ["192.168.1.0/24"]
+        assert captured["tuyadevices"] == [{"id": "d1", "key": "localkey1"}]
 
     def test_lan_scan_failure_does_not_break_cloud_import(self, monkeypatch):
         monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[

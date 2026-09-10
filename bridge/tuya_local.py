@@ -84,8 +84,28 @@ def _decode_phase_raw(value: str) -> str | None:
     return f"{voltage:g}V {current:g}A {power}W"
 
 
-def scan_network(maxretry: int = 1) -> list[dict]:
-    raw = tinytuya.deviceScan(verbose=False, maxretry=maxretry, poll=False)
+def scan_network(
+    maxretry: int = 1, networks: list[str] | None = None, tuyadevices: list[dict] | None = None,
+) -> list[dict]:
+    """Skanuje LAN w poszukiwaniu urządzeń Tuya.
+
+    Domyślnie (bez `networks`) słucha tylko broadcastu UDP, tak jak
+    dotychczas - to zawodzi, gdy broadcast nie dociera do bridge'a (Docker
+    bez trybu `network: host`, VLAN-y, osobna podsieć routera). Podanie
+    `networks` (lista adresów IP i/albo zakresów CIDR) włącza aktywne
+    skanowanie TCP tych adresów przez tinytuya (`forcescan`) - wymaga
+    listy znanych par ID+`local_key` (`tuyadevices`), bo tinytuya identyfikuje
+    urządzenie próbą uzgodnienia (handshake) danym kluczem, a nie samym
+    nasłuchem broadcastu.
+    """
+    if networks:
+        from tinytuya import scanner as tinytuya_scanner
+        raw = tinytuya_scanner.devices(
+            scantime=maxretry, poll=False, forcescan=list(networks),
+            tuyadevices=list(tuyadevices or []), verbose=False, color=False, discover=True,
+        ) or {}
+    else:
+        raw = tinytuya.deviceScan(verbose=False, maxretry=maxretry, poll=False)
     devices = []
     for ip, info in raw.items():
         devices.append({
@@ -118,7 +138,9 @@ def _login_cloud(api_region: str, access_id: str, access_key: str) -> tinytuya.C
     return cloud
 
 
-def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> list[dict]:
+def fetch_cloud_devices(
+    api_region: str, access_id: str, access_key: str, networks: list[str] | None = None,
+) -> list[dict]:
     cloud = _login_cloud(api_region, access_id, access_key)
 
     try:
@@ -145,7 +167,14 @@ def fetch_cloud_devices(api_region: str, access_id: str, access_key: str) -> lis
             )
 
     try:
-        lan_devices = {d["id"]: d for d in scan_network(maxretry=1) if d.get("id")}
+        tuyadevices_for_scan = [
+            {"id": d["id"], "key": d["key"]} for d in result if d.get("id") and d.get("key")
+        ]
+        lan_devices = {
+            d["id"]: d
+            for d in scan_network(maxretry=1, networks=networks, tuyadevices=tuyadevices_for_scan)
+            if d.get("id")
+        }
     except Exception:
         logger.warning("Skan LAN podczas importu z Tuya Cloud nie powiódł się - kontynuuję bez adresów IP", exc_info=True)
         lan_devices = {}
