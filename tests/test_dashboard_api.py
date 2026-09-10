@@ -683,15 +683,15 @@ class TestAutomationContextEndpoint:
         def fake_fetch(api_region, access_id, access_key, device_ids):
             return {"c1": {"1": {"code": "manual_delay", "type": "Value", "values": "{}"}}}, {}
 
-        import plugins.tuya_cloud.routes as tuya_cloud_routes
-        original = tuya_cloud_routes.fetch_dp_schemas_for_devices
-        tuya_cloud_routes.fetch_dp_schemas_for_devices = fake_fetch
+        import plugins.tuya_local.routes as tuya_routes
+        original = tuya_routes.fetch_dp_schemas_for_devices
+        tuya_routes.fetch_dp_schemas_for_devices = fake_fetch
         try:
             await client.post(
                 "/api/plugins/tuya_cloud/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
             )
         finally:
-            tuya_cloud_routes.fetch_dp_schemas_for_devices = original
+            tuya_routes.fetch_dp_schemas_for_devices = original
 
         data = await (await client.get(
             "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
@@ -867,21 +867,19 @@ class TestPluginsEndpoint:
         by_id = {p["id"]: p for p in await (await client.get("/api/plugins", headers=_basic_auth_header("test_haslo_123"))).get_json()}
         assert by_id["satel"]["config_url"] == "/plugins/satel"
         assert by_id["homekit"]["config_url"] == "/plugins/homekit"
-        assert by_id["tuya_zigbee"]["config_url"] == "/plugins/tuya"
+        assert by_id["tuya_local"]["config_url"] == "/plugins/tuya"
 
     async def test_get_includes_category_per_plugin(self, client):
         by_id = {p["id"]: p for p in await (await client.get("/api/plugins", headers=_basic_auth_header("test_haslo_123"))).get_json()}
         assert by_id["satel"]["category"] == "Ochrona"
         assert by_id["unifi_protect"]["category"] == "Ochrona"
         assert by_id["tuya_local"]["category"] == "Tuya"
-        assert by_id["tuya_cloud"]["category"] == "Tuya"
         assert by_id["home_assistant"]["category"] == "Dom"
 
     async def test_get_includes_logger_per_plugin_for_logs_deep_link(self, client):
         by_id = {p["id"]: p for p in await (await client.get("/api/plugins", headers=_basic_auth_header("test_haslo_123"))).get_json()}
         assert by_id["satel"]["logger"] == "bridge.satel"
         assert by_id["tuya_local"]["logger"] == "bridge.tuya_local"
-        assert by_id["tuya_cloud"]["logger"] == "bridge.tuya_cloud"
 
     async def test_load_errors_endpoint_requires_auth(self, client):
         assert (await client.get("/api/plugins/load-errors")).status_code == 401

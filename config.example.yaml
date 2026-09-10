@@ -17,10 +17,10 @@
 # przyjmuje teraz też pola "enabled: true/false" i "log_level: DEBUG/INFO/
 # WARNING/ERROR/CRITICAL" - w praktyce ustawia się je z panelu (zakładka
 # 🧩 Wtyczki albo sekcja "⚙ Ustawienia wtyczki" na stronie każdej wtyczki,
-# patrz README), nie ręczną edycją tego pliku. Wyjątek: tuya_zigbee (dzieli
-# sekcję "tuya" z Tuya lokalnie, nie ma własnego enabled) i
-# presence_simulation (żyje w automations.yaml/dokumencie "automations",
-# nie tutaj).
+# patrz README), nie ręczną edycją tego pliku. Wyjątek: presence_simulation
+# (żyje w automations.yaml/dokumencie "automations", nie tutaj). Tuya
+# lokalnie/Zigbee/Cloud to teraz jedna wtyczka ("tuya"), z jednym wspólnym
+# "enabled"/"log_level" w sekcji "tuya" niżej.
 # ============================================================================
 
 # Domyślny poziom logowania (nadpisywany per wtyczka polem "log_level"
