@@ -2,60 +2,32 @@
    (Jinja szuka szablonów najpierw w dashboard/templates/, więc {% include
    "_nav.html" %} działa też ze stron wtyczek w plugins/<id>/templates/).
 
-   Wcześniej każda strona (17 szablonów) miała WŁASNY, ręcznie skopiowany
-   rządek linków (⚙ Ustawienia czujników eBUS / 🧩 Wtyczki / 🎬 Automatyzacje
-   / ⚙ Ustawienia ogólne) - cztery osobne pozycje najwyższego poziomu, z
-   których DWIE nazywały się "Ustawienia" (co innego), tworząc chaos. Teraz
-   jest JEDNA pozycja "⚙ Ustawienia" z rozwijanym menu.
-
-   Dawna pozycja "📡 Czujniki eBUS" (-> /config, wspólna strona z
-   czujnikami eBUS, polami Satela i urządzeniami Tuya naraz) została
-   USUNIĘTA - każda z tych trzech integracji ma teraz WŁASNĄ stronę pod
-   🧩 Wtyczki (host/port/klucze + strefy/czujniki/urządzenia w jednym
-   miejscu), więc osobna pozycja menu na to była zdublowanym wejściem do
-   tych samych danych (patrz zgłoszenie: rozdzielić Połączenia na właściwe
-   wtyczki). Lokalizacja (wschód/zachód słońca) przeniesiona do
-   🎬 Automatyzacje, restart/kopia zapasowa do ⚙ Ogólne.
+   Pozycje menu (Wtyczki/Automatyzacje/Flow/Ogólne) renderowane jako
+   osobne przyciski z ikoną po lewej stronie, zamiast ukryte pod
+   rozwijanym "⚙ Ustawienia ▾" - każda widoczna od razu, bez dodatkowego
+   kliknięcia.
 
    `request` jest dostępne w Jinja automatycznie (Flask wstrzykuje je do
    każdego kontekstu szablonu) - używane tu tylko do ukrycia linku "Wróć do
    panelu" na stronie głównej i podświetlenia aktywnej pozycji w menu. #}
 <div class="nav">
   {% if request.path != '/' %}<a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; {% endif %}
-  <span class="settings-menu">
-    <a href="#" class="settings-menu-btn" onclick="toggleSettingsMenu(event); return false;">⚙ Ustawienia ▾</a>
-    <span class="settings-menu-panel" id="settingsMenuPanel">
-      <a href="/plugins" class="{{ 'active' if request.path.startswith('/plugins') else '' }}">🧩 Wtyczki</a>
-      <a href="/automations" class="{{ 'active' if request.path == '/automations' else '' }}">🎬 Automatyzacje</a>
-      <a href="/flows" class="{{ 'active' if request.path == '/flows' else '' }}">🔀 Flow</a>
-      <a href="/system" class="{{ 'active' if request.path == '/system' else '' }}">⚙ Ogólne</a>
-    </span>
-  </span>
+  <a href="/plugins" class="nav-btn {{ 'active' if request.path.startswith('/plugins') else '' }}"><span class="nav-icon">🧩</span>Wtyczki</a>
+  <a href="/automations" class="nav-btn {{ 'active' if request.path == '/automations' else '' }}"><span class="nav-icon">🎬</span>Automatyzacje</a>
+  <a href="/flows" class="nav-btn {{ 'active' if request.path == '/flows' else '' }}"><span class="nav-icon">🔀</span>Flow</a>
+  <a href="/system" class="nav-btn {{ 'active' if request.path == '/system' else '' }}"><span class="nav-icon">⚙</span>Ogólne</a>
   &nbsp;·&nbsp;
   <a id="authNavLink" href="/login"></a>
 </div>
 <style>
-  .nav { margin-bottom: 16px; }
+  .nav { margin-bottom: 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   .nav a { color: var(--accent); text-decoration: none; font-size: 13px; }
-  .settings-menu { position: relative; display: inline-block; }
-  .settings-menu-btn { color: var(--accent); }
-  .settings-menu-panel {
-    display: none; position: absolute; top: 100%; left: 0; margin-top: 6px;
-    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-    padding: 6px; min-width: 190px; z-index: 50; box-shadow: 0 4px 16px rgba(0, 0, 0, .4);
+  .nav-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; font-size: 13px;
   }
-  .settings-menu-panel.open { display: block; }
-  .settings-menu-panel a { display: block; padding: 6px 10px; border-radius: 6px; font-size: 13px; }
-  .settings-menu-panel a:hover { background: var(--border); }
-  .settings-menu-panel a.active { color: var(--text); font-weight: 600; }
+  .nav-btn:hover { background: var(--border); }
+  .nav-btn.active { color: var(--text); font-weight: 600; border-color: var(--accent); }
+  .nav-icon { font-size: 14px; line-height: 1; }
 </style>
-<script>
-  function toggleSettingsMenu(ev) {
-    ev.stopPropagation();
-    document.getElementById('settingsMenuPanel').classList.toggle('open');
-  }
-  document.addEventListener('click', function () {
-    var panel = document.getElementById('settingsMenuPanel');
-    if (panel) panel.classList.remove('open');
-  });
-</script>

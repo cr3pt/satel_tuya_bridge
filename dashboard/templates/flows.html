@@ -542,6 +542,41 @@ function sourceDeviceOptions(selected, source) {
     `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`
   ).join('');
 }
+const homewhizStatesCache = {};
+function fetchHomewhizStates(applianceName) {
+  if (!applianceName) return Promise.resolve([]);
+  if (!(applianceName in homewhizStatesCache)) {
+    homewhizStatesCache[applianceName] = fetch(`/api/plugins/homewhiz/appliances/${encodeURIComponent(applianceName)}/states`)
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(data => Array.isArray(data.states) ? data.states : [])
+      .catch(() => []);
+  }
+  return homewhizStatesCache[applianceName];
+}
+function triggerValueFieldHtml(source, selectedValue, homewhizStates) {
+  let options = null;
+  if (source === 'tuya_state') {
+    options = STATE_VALUE_OPTIONS.tuya;
+  } else if (source === 'homewhiz_state' && Array.isArray(homewhizStates) && homewhizStates.length > 0) {
+    options = homewhizStates;
+  }
+  if (!options) {
+    const placeholder = source === 'homewhiz_state'
+      ? (Array.isArray(homewhizStates)
+          ? 'nie udało się pobrać listy stanów z chmury - wpisz ręcznie'
+          : 'ładowanie listy stanów z chmury HomeWhiz...')
+      : 'wartość wyzwalająca';
+    return `<input type="text" data-field="trigger_value" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(selectedValue || '')}">`;
+  }
+  const hasSelected = selectedValue && options.includes(selectedValue);
+  const extra = (selectedValue && !hasSelected)
+    ? `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>` : '';
+  return `<select data-field="trigger_value">
+    <option value="">(wybierz wartość)</option>
+    ${options.map(v => `<option value="${escapeHtml(v)}" ${v === selectedValue ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
+    ${extra}
+  </select>`;
+}
 function targetDeviceOptions(selected, system) {
   const list = system === 'satel_output' ? (context.satel_outputs || [])
     : system === 'satel_virtual_input' ? (context.virtual_inputs || [])
@@ -618,19 +653,20 @@ function stateOpOptionsHtml(selectedOp) {
 function stateOpSymbol(op) {
   return (STATE_OPS.find(o => o.value === op) || STATE_OPS[0]).symbol;
 }
-function stateValueFieldHtml(category, selectedValue) {
-  const options = STATE_VALUE_OPTIONS[category];
-  if (!options) {
-    return `<input type="text" class="state-value" placeholder="wartość" value="${escapeHtml(selectedValue || '')}">`;
-  }
+function stateValueOptionsHtml(category, selectedValue) {
+  const options = STATE_VALUE_OPTIONS[category] || [];
   const hasSelected = selectedValue && options.includes(selectedValue);
   const extra = (selectedValue && !hasSelected)
     ? `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>` : '';
-  return `<select class="state-value">
-    <option value="">(wybierz wartość)</option>
-    ${options.map(v => `<option value="${escapeHtml(v)}" ${v === selectedValue ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
-    ${extra}
-  </select>`;
+  return `<option value="">(wybierz wartość)</option>` +
+    options.map(v => `<option value="${escapeHtml(v)}" ${v === selectedValue ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('') +
+    extra;
+}
+function stateValueFieldHtml(category, selectedValue) {
+  if (!STATE_VALUE_OPTIONS[category]) {
+    return `<input type="text" class="state-value" placeholder="wartość" value="${escapeHtml(selectedValue || '')}">`;
+  }
+  return `<select class="state-value">${stateValueOptionsHtml(category, selectedValue)}</select>`;
 }
 function sceneOptions(selected) {
   const names = context.scene_names || [];
@@ -848,7 +884,7 @@ function renderNodeFields(node) {
         <option value="violated" ${c.op === 'violated' ? 'selected' : ''}>Konkretna wartość</option>
       </select>`);
       if (c.op === 'violated') {
-        html += field(`<label>Wartość wyzwalająca</label><input type="text" data-field="trigger_value" value="${escapeHtml(c.trigger_value || '')}">`);
+        html += field(`<label>Wartość wyzwalająca</label><span class="trigger-value-wrap">${triggerValueFieldHtml(c.source, c.trigger_value)}</span>`);
       }
     }
   } else if (node.type === 'condition') {
@@ -955,6 +991,24 @@ function renderNodeFields(node) {
       renderSidePanel();
     });
   });
+  if (node.type === 'trigger' && c.source === 'homewhiz_state' && c.op === 'violated' && c.source_device) {
+    const deviceName = c.source_device;
+    fetchHomewhizStates(deviceName).then(states => {
+      if (c.source !== 'homewhiz_state' || c.source_device !== deviceName || c.op !== 'violated') return;
+      const wrap = el.querySelector('.trigger-value-wrap');
+      if (!wrap) return;
+      const curValue = (wrap.querySelector('[data-field="trigger_value"]') || {}).value;
+      wrap.innerHTML = triggerValueFieldHtml(c.source, curValue || c.trigger_value, states);
+      const newField = wrap.querySelector('[data-field="trigger_value"]');
+      if (newField) {
+        newField.addEventListener('change', () => {
+          c.trigger_value = newField.value;
+          renderCanvas();
+          renderSidePanel();
+        });
+      }
+    });
+  }
   if (node.type === 'schedule') {
     wireTimeSpecToggles(el);
     el.querySelectorAll('.sched-start-type, .sched-start-fixed, .sched-start-offset').forEach(input => {
