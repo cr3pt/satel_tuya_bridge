@@ -173,6 +173,19 @@ class TestMotionRules:
         await engine.handle_motion("satel_zone", 15, trigger="restored")
         assert ("off", "gniazdko_salon") in fake_tuya.calls
 
+    async def test_turn_off_action_updates_cached_tuya_status_immediately(self, engine, fake_tuya):
+        engine.history.set_status("tuya:gniazdko_salon", "tuya", "włączone", label="gniazdko_salon")
+        await engine.handle_motion("satel_zone", 15, trigger="restored")
+        assert engine.history.get_status_value("tuya:gniazdko_salon") == "wyłączone"
+
+    async def test_until_restored_rule_updates_cached_tuya_status_immediately(self, engine, fake_tuya):
+        # Regula strefy 16 (bez duration_seconds/action) trzyma urządzenie włączone
+        # dopóki trwa naruszenie - to właśnie ten kształt reguły odpowiadał za
+        # wielokrotne wysyłanie tej samej komendy Tuya, gdy strefa zgłaszała kolejne
+        # zdarzenia "naruszona" zanim nadszedł realny poll/push z potwierdzeniem stanu.
+        await engine.handle_motion("satel_zone", 16, trigger="violated")
+        assert engine.history.get_status_value("tuya:gniazdko_salon") == "włączone"
+
     async def test_named_rule_passes_reason_to_tuya(self, engine, fake_tuya):
         await engine.handle_motion("satel_zone", 12)
         await asyncio.sleep(0)

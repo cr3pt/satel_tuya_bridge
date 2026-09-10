@@ -433,7 +433,12 @@ znanego urządzenia, nie na wykrycie zupełnie nowych, nieznanych urządzeń
 (do tego nadal służy zwykły skan broadcastu). Skan aktywnego zakresu jest
 wolniejszy niż sam broadcast (łączy się po kolei z każdym adresem w
 zakresie), więc warto podawać możliwie wąski zakres (konkretny adres albo
-mała podsieć) zamiast całego `/16`.
+mała podsieć) zamiast całego `/16` - a nawet zamiast całego `/24` (256
+adresów): tak szeroki, aktywny skan potrafi na chwilę zakłócić komunikację
+z już połączonymi urządzeniami Tuya (błędy typu "Check device key or
+version" na innych urządzeniach w trakcie skanowania). Zapis zakresu
+szerszego niż 64 adresy (mniej niż `/26`) pokazuje o tym ostrzeżenie, ale
+nadal pozwala go zapisać.
 
 ### Częsty problem: import zwraca 0 urządzeń (albo błąd 401 na kamery) mimo poprawnych danych
 
@@ -989,6 +994,19 @@ Przynależność do grupy ustala pole `category` na `PluginMeta` każdej
 wtyczki (`plugins/<id>/routes.py`) - nowa integracja bez podanego
 `category` trafia automatycznie do grupy "Inne".
 
+### Szybkie akcje na karcie wtyczki
+
+Po lewej stronie każdej karty (obok nazwy) są trzy małe ikony pozwalające
+na akcję bez rozwijania karty: **⏻** włącza/wyłącza wtyczkę (to samo pole
+co przełącznik w rozwiniętej karcie - zmiana nadal wymaga kliknięcia
+"Zapisz zmiany" u dołu strony), **⚙️** prowadzi od razu do strony
+konfiguracji wtyczki (to samo co link "⚙ Konfiguruj"), **📜** prowadzi do
+zakładki ⚙ Ustawienia ogólne → sekcja Logi z góry ustawionym filtrem na
+logger tej wtyczki (`/system?logger=bridge.<nazwa>#logsSection`) - działa
+nawet, zanim dana wtyczka cokolwiek zaloguje (filtr się nie resetuje).
+Ikona ⏻ pojawia się tylko dla przełączalnych wtyczek, ⚙️/📜 tylko gdy
+wtyczka ma odpowiednio własną stronę konfiguracji/dedykowany logger.
+
 ### Jak wtyczki są wykrywane (auto-discovery)
 
 Lista wtyczek na `/plugins` **nie jest hardkodowana** - każdy podkatalog
@@ -1034,6 +1052,17 @@ panelu (`panel (ręcznie)`), Home Assistant (MQTT) i HomeKit. Reguły/flow
 bez nadanej nazwy nie dodają dopisku - warto nazwać regułę/flow, jeśli
 zależy Ci na czytelnym śledzeniu w logach, która automatyzacja coś
 zrobiła.
+
+**Powtarzające się identyczne komendy mimo warunku stanu.** Węzeł "Warunek
+stanu" (Flow) i pole "dodatkowy warunek" reguły ruchu porównują z
+zapamiętanym stanem urządzenia Tuya - ten stan aktualizuje się dopiero, gdy
+przyjdzie potwierdzenie z kolejnego odpytania/Pulsara (dla Tuya Cloud to
+może potrwać kilka-kilkanaście sekund). Żeby strefa ruchu zgłaszająca
+"naruszona" wielokrotnie pod rząd (typowe dla PIR, dopóki trwa ruch) nie
+wysyłała tej samej komendy do Tuya za każdym razem, bridge aktualizuje
+zapamiętany stan OD RAZU po udanym wysłaniu turn_on/turn_off (zanim jeszcze
+przyjdzie realne potwierdzenie) - kolejne odpalenie tej samej reguły/flow w
+międzyczasie widzi już właściwy stan i nic nie wysyła.
 
 **Interwał odpytywania (Satel i Tuya lokalnie).** Te dwie karty mają
 dodatkowo pole "Interwał odpytywania" - jak często bridge SAM dopytuje o

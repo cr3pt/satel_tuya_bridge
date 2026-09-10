@@ -1061,13 +1061,14 @@ def build_location_patch(form: dict, existing: dict) -> dict:
 
 
 def list_plugins(config_raw: dict) -> list[dict]:
-    from bridge.logging_config import plugin_config_section
+    from bridge.logging_config import PLUGIN_LOGGERS, plugin_config_section
 
     metas, _errors = plugins.discover_plugin_metas()
 
     result = []
     for meta in metas:
         state = meta.describe_state(config_raw) if meta.describe_state else {"enabled": False, "configured": False, "detail": ""}
+        logger_names = PLUGIN_LOGGERS.get(meta.id) or []
         result.append({
             "id": meta.id,
             "name": meta.name,
@@ -1081,6 +1082,7 @@ def list_plugins(config_raw: dict) -> list[dict]:
             "has_poll_interval": meta.has_poll_interval,
             "min_poll_interval_seconds": meta.min_poll_interval_seconds,
             "log_level": plugin_config_section(config_raw, meta.id).get("log_level") or "",
+            "logger": logger_names[0] if logger_names else "",
             **state,
         })
     return result
