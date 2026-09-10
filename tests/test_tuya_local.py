@@ -265,7 +265,9 @@ class TestFetchCloudDevices:
         monkeypatch.setattr("bridge.tuya_local.scan_network", fake_scan_network)
         fetch_cloud_devices("eu", "access_id", "access_secret", networks=["192.168.1.0/24"])
         assert captured["networks"] == ["192.168.1.0/24"]
-        assert captured["tuyadevices"] == [{"id": "d1", "key": "localkey1"}]
+        # "name" jest wymagane - tinytuya (scanner.py: found_key()) odczytuje
+        # dev['name'] bez .get(), więc jego brak wywala aktywny skan KeyErrorem.
+        assert captured["tuyadevices"] == [{"id": "d1", "key": "localkey1", "name": "Gniazdko"}]
 
     def test_lan_scan_failure_does_not_break_cloud_import(self, monkeypatch):
         monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[

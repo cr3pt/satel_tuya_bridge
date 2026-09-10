@@ -440,6 +440,14 @@ version" na innych urządzeniach w trakcie skanowania). Zapis zakresu
 szerszego niż 64 adresy (mniej niż `/26`) pokazuje o tym ostrzeżenie, ale
 nadal pozwala go zapisać.
 
+Jeśli skan aktywnego zakresu kończy się w logu wpisem "Skan LAN podczas
+importu z Tuya Cloud nie powiódł się" z `KeyError: 'name'` w środku
+tracebacku (biblioteka `tinytuya`, `scanner.py: found_key()`) - to nasz
+błąd, nie ograniczenie samej biblioteki: `tinytuya` odczytuje pole `name`
+z listy znanych urządzeń bez zabezpieczenia `.get()`, a bridge do niedawna
+budował tę listę bez tego pola. Naprawione - import od razu przekazuje
+komplet danych (`id`, `key`, `name`) każdego znanego urządzenia.
+
 ### Częsty problem: import zwraca 0 urządzeń (albo błąd 401 na kamery) mimo poprawnych danych
 
 Najczęstsza przyczyna to **niedopasowanie regionu** - Tuya Cloud wymaga,

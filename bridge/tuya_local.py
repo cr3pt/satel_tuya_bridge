@@ -173,7 +173,8 @@ def fetch_cloud_devices(
 
     try:
         tuyadevices_for_scan = [
-            {"id": d["id"], "key": d["key"]} for d in result if d.get("id") and d.get("key")
+            {"id": d["id"], "key": d["key"], "name": d.get("name", "")}
+            for d in result if d.get("id") and d.get("key")
         ]
         lan_devices = {
             d["id"]: d
