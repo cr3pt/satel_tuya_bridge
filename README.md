@@ -2432,6 +2432,17 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 | 📈 Eskalacja | rozgałęzienie | próg (liczba naruszeń) i okno czasowe (sekundy) - dwa wyjścia: "normalnie" (poniżej progu) / "eskalacja" (próg przekroczony, licznik się zeruje) |
 | 🛑 Zakończ | terminalny | brak konfiguracji i brak wyjścia - jawnie kończy przetwarzanie danej gałęzi grafu (funkcjonalnie równoważne pozostawieniu wyjścia niepodłączonego, ale czytelniejsze na canvasie niż "urwany" przewód) |
 
+Węzeł **Trigger** z wyzwalaczem "Konkretna wartość" ma pole "Wartość
+wyzwalająca" wybierane z listy zamiast wolnego tekstu - dla źródła Tuya
+(stan urządzenia) lista to `włączone`/`wyłączone`/`niedostępne` (dokładnie
+te wartości, jakie faktycznie publikuje `RulesEngine._apply_tuya_device_status`);
+dla HomeWhiz, po wybraniu urządzenia źródłowego, edytor pobiera na żywo z
+chmury HomeWhiz listę WSZYSTKICH możliwych stanów tego konkretnego modelu
+(ten sam endpoint i mechanizm co w źródle reguły ruchu, patrz wyżej
+"Wejście reguły ruchu: Satel, albo stan urządzenia Tuya/HomeWhiz") -
+zamiast wpisywać nazwę stanu (np. `finished`) na pamięć. Gdyby pobranie
+listy się nie udało, pole spada z powrotem na wolny tekst.
+
 Węzeł **Urządzenie** z systemem "Satel (wirtualne wejście)" wywołuje
 DOKŁADNIE ten sam kod co akcja `virtual_input` reguły ruchu
 (`RulesEngine._set_target_state` obsługuje `target_system:
