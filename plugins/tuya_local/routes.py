@@ -153,14 +153,17 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             return jsonify({"error": "Nieprawidłowe dane - oczekiwano listy 'scan_networks'"}), 400
 
         networks = []
+        wide_ranges = []
         for entry in form["scan_networks"]:
             value = (entry or "").strip() if isinstance(entry, str) else ""
             if not value:
                 continue
             try:
-                ipaddress.ip_network(value, strict=False)
+                net = ipaddress.ip_network(value, strict=False)
             except ValueError:
                 return jsonify({"error": f"Nieprawidłowy adres IP albo zakres CIDR: '{value}'"}), 400
+            if net.num_addresses > 64:
+                wide_ranges.append(f"{value} ({net.num_addresses} adresów)")
             networks.append(value)
 
         current = get_config_store().get("config")
@@ -169,9 +172,18 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         reload_bridge_config()
         enqueue_bridge_reload()
 
+        message = "Zapisano. Zmiana zadziała przy następnym skanowaniu, bez restartu procesu."
+        if wide_ranges:
+            message += (
+                " ⚠️ Bardzo szeroki zakres: " + ", ".join(wide_ranges) + " - aktywny skan tylu adresów "
+                "naraz jest wolny i może chwilowo zakłócić komunikację z już połączonymi urządzeniami "
+                "Tuya (błędy typu \"Check device key or version\" na innych urządzeniach w trakcie "
+                "skanowania) - rozważ węższy zakres albo pojedyncze adresy zamiast całej podsieci."
+            )
+
         return jsonify({
             "scan_networks": networks,
-            "message": "Zapisano. Zmiana zadziała przy następnym skanowaniu, bez restartu procesu.",
+            "message": message,
         })
 
     @app.route("/api/plugins/tuya/cloud-import", methods=["POST"])
