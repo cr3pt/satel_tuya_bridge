@@ -92,6 +92,22 @@ async def test_set_dp_sends_code_and_coerced_value(controller):
     assert fake.sent_commands == [("cloud1", {"commands": [{"code": "manual_delay", "value": 2}]})]
 
 
+async def test_turn_off_logs_reason_when_given(controller, caplog):
+    fake = FakeTinytuyaCloud()
+    controller._cloud = fake
+    with caplog.at_level("INFO", logger="bridge.tuya_cloud"):
+        await controller.turn_off("lampa_taras", reason="reguła ruchu 'garaz_wylacz'")
+    assert "reguła ruchu 'garaz_wylacz'" in caplog.text
+
+
+async def test_turn_off_omits_reason_suffix_when_not_given(controller, caplog):
+    fake = FakeTinytuyaCloud()
+    controller._cloud = fake
+    with caplog.at_level("INFO", logger="bridge.tuya_cloud"):
+        await controller.turn_off("lampa_taras")
+    assert caplog.records[-1].getMessage() == "Wyłączono 'lampa_taras' przez Tuya Cloud (switch_1)"
+
+
 async def test_toggle_reads_current_status_and_inverts(controller):
     fake = FakeTinytuyaCloud()
     fake.status_by_device["cloud1"] = [{"code": "switch_1", "value": True}]

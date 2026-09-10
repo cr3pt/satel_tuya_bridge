@@ -56,8 +56,9 @@ class FakeAiohttpSession:
 def _engine(flows=None, **kwargs):
     calls = {"set_target_state": [], "run_scene": []}
 
-    async def set_target_state(target_system, device, on, dimmer=None):
+    async def set_target_state(target_system, device, on, dimmer=None, reason=None):
         calls["set_target_state"].append((target_system, device, on, dimmer))
+        calls.setdefault("reasons", []).append(reason)
 
     async def run_scene(name):
         calls["run_scene"].append(name)
@@ -133,6 +134,7 @@ class TestDeviceNode:
         await engine.handle_motion("satel_zone", 5, trigger="violated")
         await asyncio.sleep(0.01)
         assert calls["set_target_state"] == [("tuya", "lampa", True, 40)]
+        assert calls["reasons"] == ["flow 'f'"]
 
     async def test_turns_off(self):
         flow = {
@@ -178,7 +180,7 @@ class TestTuyaDpNode:
     async def test_calls_set_tuya_dp_with_target_device_code_and_value(self):
         calls = []
 
-        async def set_tuya_dp(device, dp_code, value):
+        async def set_tuya_dp(device, dp_code, value, reason=None):
             calls.append((device, dp_code, value))
 
         flow = {
@@ -196,7 +198,7 @@ class TestTuyaDpNode:
     async def test_value_supports_value_template_from_triggering_message(self):
         calls = []
 
-        async def set_tuya_dp(device, dp_code, value):
+        async def set_tuya_dp(device, dp_code, value, reason=None):
             calls.append((device, dp_code, value))
 
         flow = {

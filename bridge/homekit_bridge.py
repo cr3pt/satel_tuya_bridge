@@ -39,7 +39,7 @@ def _stable_aid(key: str) -> int:
 
 def _make_on_off_setter(tuya, loop, name: str):
     def _setter(value: bool) -> None:
-        coro = tuya.turn_on(name) if value else tuya.turn_off(name)
+        coro = tuya.turn_on(name, reason="HomeKit") if value else tuya.turn_off(name, reason="HomeKit")
         loop.create_task(coro)
     return _setter
 
@@ -82,7 +82,7 @@ def _build_lightbulb(acc, tuya, loop, name: str, is_dimmer: bool) -> dict:
         level_char.set_value(100)
 
         def _level_setter(value: int) -> None:
-            loop.create_task(tuya.turn_on(name, dimmer_level_percent=value))
+            loop.create_task(tuya.turn_on(name, dimmer_level_percent=value, reason="HomeKit"))
 
         level_char.setter_callback = _level_setter
         chars["level"] = level_char
@@ -106,7 +106,7 @@ def _build_fan(acc, tuya, loop, name: str, is_dimmer: bool) -> dict:
         level_char.set_value(100)
 
         def _level_setter(value: float) -> None:
-            loop.create_task(tuya.turn_on(name, dimmer_level_percent=round(value)))
+            loop.create_task(tuya.turn_on(name, dimmer_level_percent=round(value), reason="HomeKit"))
 
         level_char.setter_callback = _level_setter
         chars["level"] = level_char
@@ -126,7 +126,7 @@ def _build_garage_door(acc, tuya, loop, name: str, is_dimmer: bool) -> dict:
     obstruction_char.set_value(False)
 
     def _setter(value: int) -> None:
-        coro = tuya.turn_on(name) if value == _DOOR_OPEN else tuya.turn_off(name)
+        coro = tuya.turn_on(name, reason="HomeKit") if value == _DOOR_OPEN else tuya.turn_off(name, reason="HomeKit")
         loop.create_task(coro)
 
     target_char.setter_callback = _setter
@@ -149,7 +149,7 @@ def _build_window_covering(acc, tuya, loop, name: str, is_dimmer: bool) -> dict:
     state_char.set_value(_POSITION_STOPPED)
 
     def _setter(value: int) -> None:
-        coro = tuya.turn_off(name) if value <= 0 else tuya.turn_on(name, dimmer_level_percent=value)
+        coro = tuya.turn_off(name, reason="HomeKit") if value <= 0 else tuya.turn_on(name, dimmer_level_percent=value, reason="HomeKit")
         loop.create_task(coro)
 
     target_char.setter_callback = _setter
@@ -173,7 +173,7 @@ def _build_valve(acc, tuya, loop, name: str, is_dimmer: bool) -> dict:
     type_char.set_value(0)
 
     def _setter(value: int) -> None:
-        coro = tuya.turn_on(name) if value else tuya.turn_off(name)
+        coro = tuya.turn_on(name, reason="HomeKit") if value else tuya.turn_off(name, reason="HomeKit")
         loop.create_task(coro)
 
     active_char.setter_callback = _setter
@@ -194,7 +194,7 @@ def _build_lock(acc, tuya, loop, name: str, is_dimmer: bool) -> dict:
     target_char.set_value(1)
 
     def _setter(value: int) -> None:
-        coro = tuya.turn_on(name) if value == 1 else tuya.turn_off(name)
+        coro = tuya.turn_on(name, reason="HomeKit") if value == 1 else tuya.turn_off(name, reason="HomeKit")
         loop.create_task(coro)
 
     target_char.setter_callback = _setter

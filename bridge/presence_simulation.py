@@ -32,9 +32,9 @@ class PresenceSimulation:
                 turn_on = random.random() < 0.5
                 try:
                     if turn_on:
-                        await self.tuya.turn_on(device)
+                        await self.tuya.turn_on(device, reason="symulacja obecności")
                     else:
-                        await self.tuya.turn_off(device)
+                        await self.tuya.turn_off(device, reason="symulacja obecności")
                     logger.info("Symulacja obecności: %s -> %s", device, "włączone" if turn_on else "wyłączone")
                     if self.history:
                         self.history.write_event(

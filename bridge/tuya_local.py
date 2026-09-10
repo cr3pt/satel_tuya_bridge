@@ -10,6 +10,11 @@ import tinytuya
 
 logger = logging.getLogger("bridge.tuya_local")
 
+
+def _reason_suffix(reason: str | None) -> str:
+    return f" - {reason}" if reason else ""
+
+
 DP_LABEL_TRANSLATIONS = {
     "switch": "włącznik", "switch_1": "włącznik",
     "va_temperature": "temperatura", "temp_current": "temperatura",
@@ -547,10 +552,13 @@ class TuyaLocalController:
         else:
             await self._call_with_retry(device_name, dev.set_status, value, keys[0])
 
-    async def turn_on(self, device_name: str, dimmer_level_percent: int | None = None) -> None:
+    async def turn_on(
+        self, device_name: str, dimmer_level_percent: int | None = None, reason: str | None = None,
+    ) -> None:
         cfg = self.devices_cfg[device_name]
         dev = self._devices[device_name]
         switch_keys = self._switch_keys(device_name)
+        suffix = _reason_suffix(reason)
 
         if cfg.get("type") == "dimmer" and dimmer_level_percent is not None:
             dp = cfg["dimmer_dp"]
@@ -561,25 +569,28 @@ class TuyaLocalController:
             else:
                 await self._call_with_retry(device_name, dev.set_status, True, "1")
             await self._call_with_retry(device_name, dev.set_value, dp, value)
-            logger.info("Ustawiono '%s' na %s%% jasności (DP=%s)", device_name, dimmer_level_percent, value)
+            logger.info(
+                "Ustawiono '%s' na %s%% jasności (DP=%s)%s", device_name, dimmer_level_percent, value, suffix,
+            )
         elif switch_keys:
             await self._set_switch_value(device_name, dev, switch_keys, True)
-            logger.info("Włączono '%s' (DP: %s)", device_name, ", ".join(switch_keys))
+            logger.info("Włączono '%s' (DP: %s)%s", device_name, ", ".join(switch_keys), suffix)
         else:
             await self._call_with_retry(device_name, dev.turn_on)
-            logger.info("Włączono '%s'", device_name)
+            logger.info("Włączono '%s'%s", device_name, suffix)
 
-    async def turn_off(self, device_name: str) -> None:
+    async def turn_off(self, device_name: str, reason: str | None = None) -> None:
         dev = self._devices[device_name]
         switch_keys = self._switch_keys(device_name)
+        suffix = _reason_suffix(reason)
         if switch_keys:
             await self._set_switch_value(device_name, dev, switch_keys, False)
-            logger.info("Wyłączono '%s' (DP: %s)", device_name, ", ".join(switch_keys))
+            logger.info("Wyłączono '%s' (DP: %s)%s", device_name, ", ".join(switch_keys), suffix)
         else:
             await self._call_with_retry(device_name, dev.turn_off)
-            logger.info("Wyłączono '%s'", device_name)
+            logger.info("Wyłączono '%s'%s", device_name, suffix)
 
-    async def toggle(self, device_name: str) -> None:
+    async def toggle(self, device_name: str, reason: str | None = None) -> None:
         dev = self._devices[device_name]
         switch_keys = self._switch_keys(device_name)
         dps = await self.get_status(device_name)
@@ -591,7 +602,7 @@ class TuyaLocalController:
             await self._call_with_retry(device_name, dev.turn_on)
         else:
             await self._call_with_retry(device_name, dev.turn_off)
-        logger.info("Zmieniono stan '%s' na %s (DP: %s)", device_name, new_value, key)
+        logger.info("Zmieniono stan '%s' na %s (DP: %s)%s", device_name, new_value, key, _reason_suffix(reason))
 
     def _resolve_dp_id(self, device_name: str, dp_code: str) -> str:
         schema = self.devices_cfg.get(device_name, {}).get("dp_schema") or {}
@@ -603,12 +614,15 @@ class TuyaLocalController:
         # to samo, gdy schemat jest niepełny).
         return dp_code
 
-    async def set_dp(self, device_name: str, dp_code: str, value: object) -> None:
+    async def set_dp(self, device_name: str, dp_code: str, value: object, reason: str | None = None) -> None:
         dev = self._devices[device_name]
         dp_id = self._resolve_dp_id(device_name, dp_code)
         coerced = coerce_dp_value(value)
         await self._call_with_retry(device_name, dev.set_value, dp_id, coerced)
-        logger.info("Ustawiono pole '%s' (DP=%s) urządzenia '%s' na %r", dp_code, dp_id, device_name, coerced)
+        logger.info(
+            "Ustawiono pole '%s' (DP=%s) urządzenia '%s' na %r%s",
+            dp_code, dp_id, device_name, coerced, _reason_suffix(reason),
+        )
 
     async def get_status(self, device_name: str) -> dict:
         dev = self._devices[device_name]
@@ -626,14 +640,15 @@ class TuyaLocalController:
         return results
 
     async def turn_on_for_duration(
-        self, device_name: str, duration_seconds: int, dimmer_level_percent: int | None = None
+        self, device_name: str, duration_seconds: int, dimmer_level_percent: int | None = None,
+        reason: str | None = None,
     ) -> None:
         try:
-            await self.turn_on(device_name, dimmer_level_percent)
+            await self.turn_on(device_name, dimmer_level_percent, reason=reason)
         except ConnectionError:
             pass
         await asyncio.sleep(duration_seconds)
         try:
-            await self.turn_off(device_name)
+            await self.turn_off(device_name, reason=reason)
         except ConnectionError:
             logger.error("Nie udało się wyłączyć '%s' po czasie - sprawdź urządzenie ręcznie", device_name)

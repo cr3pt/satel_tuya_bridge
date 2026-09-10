@@ -302,6 +302,8 @@ class RulesEngine:
         self, rule: dict, rule_key: str, source: str, zone_or_device_id,
         trigger: str = "violated", _chain_depth: int = 0,
     ) -> None:
+        rule_name = rule.get("name")
+        reason = f"reguła ruchu '{rule_name}'" if rule_name else None
         escalation_cfg = rule.get("escalation")
         if escalation_cfg:
             history = self._escalation_history.setdefault(rule_key, [])
@@ -340,7 +342,7 @@ class RulesEngine:
         if rule.get("action") == "turn_off":
             for target in targets:
                 device, target_system = self._resolve_target(target, rule)
-                await self._set_target_state(target_system, device, False)
+                await self._set_target_state(target_system, device, False, reason=reason)
                 logger.info(
                     "Reguła ruchu: %s(%s) -> wyłączenie %s (%s)",
                     source, zone_or_device_id, device, target_system,
@@ -356,7 +358,7 @@ class RulesEngine:
             for target in targets:
                 device, target_system = self._resolve_target(target, rule)
                 dimmer = target.get("dimmer_level_percent", rule.get("dimmer_level_percent"))
-                await self._set_target_state(target_system, device, trigger != "restored", dimmer)
+                await self._set_target_state(target_system, device, trigger != "restored", dimmer, reason=reason)
                 logger.info(
                     "Reguła ruchu: %s(%s) -> %s %s (%s, do ustania naruszenia)",
                     source, zone_or_device_id, "wyłączenie" if trigger == "restored" else "włączenie",
@@ -373,7 +375,6 @@ class RulesEngine:
             return
 
         duration = rule.get("duration_seconds")
-        rule_name = rule.get("name")
         if len(targets) == 1:
             # Ścieżka identyczna z tą sprzed wsparcia wielu akcji - bez dodatkowej
             # warstwy asyncio.gather, żeby nie zmieniać liczby "przełączeń" event loopa
@@ -424,11 +425,14 @@ class RulesEngine:
 
     async def _set_target_state(
         self, target_system: str, device: str, on: bool | None, dimmer: int | None = None,
+        reason: str | None = None,
     ) -> None:
         """`on=None` oznacza "zmiana stanu" (toggle) - odwrócenie AKTUALNEGO stanu
         celu zamiast wymuszenia konkretnego. Dla `satel_output` i `satel_virtual_input`
         (tryb library) stan aktualny czytamy z `SatelIntegraClient.violated_outputs`
-        (na żywo, bez zapytania) - dla Tuya przez `TuyaController.toggle`."""
+        (na żywo, bez zapytania) - dla Tuya przez `TuyaController.toggle`. `reason`
+        trafia do logu Tuya (np. nazwa reguły ruchu/flow/sceny), żeby dało się
+        ustalić, co wyzwoliło daną komendę."""
         if target_system == "satel_output":
             output_number = self.satel.monitored_outputs.get(device)
             if output_number is None:
@@ -443,31 +447,34 @@ class RulesEngine:
         elif target_system == "satel_virtual_input":
             await self._trigger_virtual_input(device, on)
         elif on is None:
-            await self.tuya.toggle(device)
+            await self.tuya.toggle(device, reason=reason)
         elif on:
-            await self.tuya.turn_on(device, dimmer)
+            await self.tuya.turn_on(device, dimmer, reason=reason)
         else:
-            await self.tuya.turn_off(device)
+            await self.tuya.turn_off(device, reason=reason)
 
-    async def _set_tuya_dp(self, device: str, dp_code: str, value: object) -> None:
+    async def _set_tuya_dp(self, device: str, dp_code: str, value: object, reason: str | None = None) -> None:
         """Wrapper wołany przez FlowEngine (węzeł "Ustaw pole Tuya") - jak
         _set_target_state, dereferencjonuje self.tuya na bieżąco (a nie w
         momencie budowy FlowEngine), żeby przetrwać podmianę self.tuya przy
         reload_config()."""
-        await self.tuya.set_dp(device, dp_code, value)
+        await self.tuya.set_dp(device, dp_code, value, reason=reason)
 
     async def _run_on_for_duration(
         self, target_system: str, device: str, duration: float, dimmer: int | None, rule_name: str | None,
+        reason: str | None = None,
     ) -> None:
+        if reason is None:
+            reason = f"reguła ruchu '{rule_name}'" if rule_name else None
         if rule_name:
             self.history.set_status(f"automation:{rule_name}", "automation", "uruchomiona", label=rule_name)
         try:
             if target_system in ("satel_output", "satel_virtual_input"):
-                await self._set_target_state(target_system, device, True)
+                await self._set_target_state(target_system, device, True, reason=reason)
                 await asyncio.sleep(duration)
-                await self._set_target_state(target_system, device, False)
+                await self._set_target_state(target_system, device, False, reason=reason)
             else:
-                await self.tuya.turn_on_for_duration(device, duration, dimmer)
+                await self.tuya.turn_on_for_duration(device, duration, dimmer, reason=reason)
         finally:
             if rule_name:
                 self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)
@@ -475,13 +482,14 @@ class RulesEngine:
     async def _run_targets_for_duration(
         self, targets: list[dict], rule: dict, duration: float, rule_name: str | None,
     ) -> None:
+        reason = f"reguła ruchu '{rule_name}'" if rule_name else None
         if rule_name:
             self.history.set_status(f"automation:{rule_name}", "automation", "uruchomiona", label=rule_name)
         try:
             async def _run_one(target: dict):
                 device, target_system = self._resolve_target(target, rule)
                 dimmer = target.get("dimmer_level_percent", rule.get("dimmer_level_percent"))
-                await self._run_on_for_duration(target_system, device, duration, dimmer, None)
+                await self._run_on_for_duration(target_system, device, duration, dimmer, None, reason=reason)
 
             await asyncio.gather(*(_run_one(target) for target in targets))
         finally:
@@ -700,12 +708,12 @@ class RulesEngine:
                 self.history.mark_command_done(cmd["id"], {"message": f"Aktywowano wirtualne wejście '{name}'"})
             elif cmd["command"] == "tuya_on":
                 name = cmd["params"]["name"]
-                await self.tuya.turn_on(name)
+                await self.tuya.turn_on(name, reason="panel (ręcznie)")
                 self.history.mark_command_done(cmd["id"], {"message": f"Włączono '{name}'"})
                 self._schedule_tuya_status_refresh(name)
             elif cmd["command"] == "tuya_off":
                 name = cmd["params"]["name"]
-                await self.tuya.turn_off(name)
+                await self.tuya.turn_off(name, reason="panel (ręcznie)")
                 self.history.mark_command_done(cmd["id"], {"message": f"Wyłączono '{name}'"})
                 self._schedule_tuya_status_refresh(name)
             elif cmd["command"] == "run_scene":
@@ -1144,9 +1152,9 @@ class RulesEngine:
             def _make_tuya_handler(name):
                 async def _handler(payload: str) -> None:
                     if payload.upper() == "ON":
-                        await self.tuya.turn_on(name)
+                        await self.tuya.turn_on(name, reason="Home Assistant (MQTT)")
                     else:
-                        await self.tuya.turn_off(name)
+                        await self.tuya.turn_off(name, reason="Home Assistant (MQTT)")
                     self.ha_mqtt.publish_state(f"{self._ha_topic_prefix}/tuya/{name}/state", payload.upper())
                 return _handler
 

@@ -12,6 +12,10 @@ logger = logging.getLogger("bridge.tuya_cloud")
 _FALLBACK_SWITCH_CODES = ["switch_1"]
 
 
+def _reason_suffix(reason: str | None) -> str:
+    return f" - {reason}" if reason else ""
+
+
 class TuyaCloudController:
     def __init__(self, devices_cfg: dict, credentials: dict, retries: int = 2, retry_delay: float = 1.5):
         self.devices_cfg = devices_cfg
@@ -90,29 +94,38 @@ class TuyaCloudController:
         self._switch_codes_cache[device_name] = codes
         return codes
 
-    async def turn_on(self, device_name: str, dimmer_level_percent: int | None = None) -> None:
+    async def turn_on(
+        self, device_name: str, dimmer_level_percent: int | None = None, reason: str | None = None,
+    ) -> None:
         cfg = self.devices_cfg[device_name]
         client = self._client()
         codes = await self._switch_codes(device_name)
         commands = {"commands": [{"code": code, "value": True} for code in codes]}
         await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
-        logger.info("Włączono '%s' przez Tuya Cloud (%s)", device_name, ", ".join(codes))
+        logger.info(
+            "Włączono '%s' przez Tuya Cloud (%s)%s", device_name, ", ".join(codes), _reason_suffix(reason),
+        )
 
-    async def turn_off(self, device_name: str) -> None:
+    async def turn_off(self, device_name: str, reason: str | None = None) -> None:
         cfg = self.devices_cfg[device_name]
         client = self._client()
         codes = await self._switch_codes(device_name)
         commands = {"commands": [{"code": code, "value": False} for code in codes]}
         await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
-        logger.info("Wyłączono '%s' przez Tuya Cloud (%s)", device_name, ", ".join(codes))
+        logger.info(
+            "Wyłączono '%s' przez Tuya Cloud (%s)%s", device_name, ", ".join(codes), _reason_suffix(reason),
+        )
 
-    async def set_dp(self, device_name: str, dp_code: str, value: object) -> None:
+    async def set_dp(self, device_name: str, dp_code: str, value: object, reason: str | None = None) -> None:
         cfg = self.devices_cfg[device_name]
         client = self._client()
         coerced = coerce_dp_value(value)
         commands = {"commands": [{"code": dp_code, "value": coerced}]}
         await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
-        logger.info("Ustawiono pole '%s' urządzenia '%s' na %r przez Tuya Cloud", dp_code, device_name, coerced)
+        logger.info(
+            "Ustawiono pole '%s' urządzenia '%s' na %r przez Tuya Cloud%s",
+            dp_code, device_name, coerced, _reason_suffix(reason),
+        )
 
     async def get_status(self, device_name: str) -> dict:
         cfg = self.devices_cfg[device_name]
@@ -121,7 +134,7 @@ class TuyaCloudController:
         items = result.get("result", []) if isinstance(result, dict) else []
         return {item["code"]: item.get("value") for item in items if item.get("code")}
 
-    async def toggle(self, device_name: str) -> None:
+    async def toggle(self, device_name: str, reason: str | None = None) -> None:
         cfg = self.devices_cfg[device_name]
         client = self._client()
         codes = await self._switch_codes(device_name)
@@ -129,7 +142,10 @@ class TuyaCloudController:
         new_value = not bool(status.get(codes[0]))
         commands = {"commands": [{"code": code, "value": new_value} for code in codes]}
         await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
-        logger.info("Zmieniono stan '%s' na %s przez Tuya Cloud (%s)", device_name, new_value, ", ".join(codes))
+        logger.info(
+            "Zmieniono stan '%s' na %s przez Tuya Cloud (%s)%s",
+            device_name, new_value, ", ".join(codes), _reason_suffix(reason),
+        )
 
     async def get_all_statuses(self) -> dict[str, dict | None]:
         names = list(self.devices_cfg)
@@ -142,15 +158,16 @@ class TuyaCloudController:
         return results
 
     async def turn_on_for_duration(
-        self, device_name: str, duration_seconds: int, dimmer_level_percent: int | None = None
+        self, device_name: str, duration_seconds: int, dimmer_level_percent: int | None = None,
+        reason: str | None = None,
     ) -> None:
         try:
-            await self.turn_on(device_name, dimmer_level_percent)
+            await self.turn_on(device_name, dimmer_level_percent, reason=reason)
         except ConnectionError:
             pass
         await asyncio.sleep(duration_seconds)
         try:
-            await self.turn_off(device_name)
+            await self.turn_off(device_name, reason=reason)
         except ConnectionError:
             logger.error(
                 "Nie udało się wyłączyć '%s' po czasie (Tuya Cloud) - sprawdź urządzenie ręcznie", device_name,
