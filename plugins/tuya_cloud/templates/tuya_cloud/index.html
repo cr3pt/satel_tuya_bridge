@@ -51,6 +51,12 @@
   button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
   .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
   .discover-status { font-size: 12.5px; color: var(--muted); }
+  .scan-result-known, .scan-result-new {
+    border-radius: 8px; padding: 8px 10px; margin-bottom: 8px;
+  }
+  .scan-result-known { background: #3a2c13; border: 1px solid #e8a94e; color: #e8d6ae; }
+  .scan-result-new { background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  .scan-result-known code, .scan-result-new code { color: inherit; background: rgba(255,255,255,0.12); padding: 1px 5px; border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -138,24 +144,53 @@
   <div id="credentialsMsg" class="msg-box"></div>
 </div>
 
+<div class="section" id="scanNetworksSection">
+  <h2>Zakresy/adresy IP do skanowania</h2>
+  <div class="section-hint">
+    Broadcast UDP (wykorzystywany przez skan LAN w zakładce
+    <a href="/plugins/tuya">🔌 Tuya (LAN)</a>) nie zawsze dociera do
+    bridge'a (kontener Docker bez trybu <code>network: host</code>,
+    VLAN-y, bridge w innej podsieci niż urządzenia) - podaj tu adresy IP
+    i/albo zakresy CIDR do aktywnego przeskanowania (np.
+    <code>192.168.1.0/24</code> albo pojedynczy adres
+    <code>192.168.1.50</code>). Dotyczy to WYŁĄCZNIE urządzeń, których
+    ID+<code>local_key</code> już znamy (skonfigurowanych w zakładce
+    🔌 Tuya (LAN) albo poniższym importem) - import niżej i "Rescan"
+    wykorzystują te same zakresy do aktywnego sprawdzenia adresu IP.
+    Te same zakresy widać i da się je edytować też w zakładce
+    <a href="/plugins/tuya">🔌 Tuya (LAN)</a> - to jedno wspólne
+    ustawienie używane przez obie strony.
+  </div>
+  <div class="field-group">
+    <label>Zakresy/adresy IP do skanowania (zostaw puste, żeby używać tylko broadcastu)</label>
+    <div id="scanNetworksRows"></div>
+    <button type="button" class="add-row-btn" id="addScanNetworkBtn">+ Dodaj zakres/adres</button>
+  </div>
+  <div class="actions-bar">
+    <button id="saveScanNetworksBtn" type="button">Zapisz zakresy skanowania</button>
+  </div>
+  <div id="scanNetworksMsg" class="msg-box"></div>
+</div>
+
 <div class="section" id="importSection">
   <h2>Import urządzeń</h2>
   <div class="section-hint">
     Pobiera WSZYSTKIE urządzenia podpięte do projektu Tuya Cloud, używając
     poświadczeń zapisanych wyżej (zapisz je najpierw) - jeśli w sekcji
-    "Wykrywanie urządzeń" zakładki <a href="/plugins/tuya">🔌 Tuya
-    (LAN)</a> podałeś "Zakresy/adresy IP do skanowania", import od razu
+    "Zakresy/adresy IP do skanowania" wyżej podałeś adresy, import od razu
     aktywnie sprawdza te adresy (nie tylko broadcast), więc może znaleźć
     komplet danych (adres IP + local_key) nawet gdy broadcast nie działa.
     Urządzenia z kompletem danych pojawiają się niżej z przyciskiem "➡
-    Dodaj jako lokalne" - reszta ląduje w tabeli "Urządzenia sterowane
-    przez chmurę".
+    Dodaj jako lokalne" (🟢 nowe, 🟠 już skonfigurowane lokalnie) - reszta
+    ląduje w tabeli "Urządzenia sterowane przez chmurę" (też oznaczona
+    🟢/🟠).
   </div>
   <div class="discover-row">
     <button type="button" class="secondary" id="cloudImportBtn">☁ Importuj z Tuya Cloud</button>
     <span class="discover-status" id="cloudImportStatus"></span>
   </div>
   <div id="importLocalResultsRows"></div>
+  <div id="importCloudOnlyResultsRows"></div>
 </div>
 
 <div class="section" id="cloudDevicesSection">
@@ -308,6 +343,50 @@ document.getElementById('saveCredentialsBtn').addEventListener('click', async ()
     }
   } catch (e) {
     showMsg('credentialsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+
+function addScanNetworkRow(value) {
+  const container = document.getElementById('scanNetworksRows');
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="np. 192.168.1.0/24 albo 192.168.1.50" class="scan-network-value">
+    <button type="button" class="row-remove">✕</button>`;
+  row.querySelector('.scan-network-value').value = value ?? '';
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+document.getElementById('addScanNetworkBtn').addEventListener('click', () => addScanNetworkRow());
+
+function collectScanNetworks() {
+  return Array.from(document.querySelectorAll('#scanNetworksRows .scan-network-value'))
+    .map(el => el.value.trim())
+    .filter(v => v);
+}
+
+async function loadScanNetworks() {
+  const data = await (await fetch('/api/plugins/tuya/scan-networks')).json();
+  (data.scan_networks || []).forEach(v => addScanNetworkRow(v));
+}
+loadScanNetworks();
+
+document.getElementById('saveScanNetworksBtn').addEventListener('click', async () => {
+  try {
+    const resp = await authorizedFetch('/api/plugins/tuya/scan-networks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scan_networks: collectScanNetworks() }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('scanNetworksMsg', false, data.error || 'Błąd zapisu');
+    } else {
+      showMsg('scanNetworksMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('scanNetworksMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
 
@@ -470,14 +549,25 @@ document.getElementById('rescanCloudDevicesBtn').addEventListener('click', async
   }
 });
 
-function renderImportLocalResults(devices) {
+async function renderImportLocalResults(devices) {
   const container = document.getElementById('importLocalResultsRows');
   container.innerHTML = '';
+  let existingLocalIds = new Set();
+  try {
+    const localData = await (await fetch('/api/plugins/tuya/devices')).json();
+    existingLocalIds = new Set((localData.devices || []).map(d => d.id).filter(Boolean));
+  } catch (e) {  }
   devices.forEach(d => {
     const row = document.createElement('div');
-    row.className = 'repeatable-row';
+    if (existingLocalIds.has(d.id)) {
+      row.className = 'scan-result-known';
+      row.textContent = `🟠 ${d.name || d.id} (ID ${d.id}) - już skonfigurowane lokalnie`;
+      container.appendChild(row);
+      return;
+    }
+    row.className = 'repeatable-row scan-result-new';
     row.innerHTML = `
-      <span style="flex:1;">✅ komplet danych (IP: ${escapeHtml(d.ip)}) dla ID <code>${escapeHtml(d.id)}</code></span>
+      <span style="flex:1;">🟢 komplet danych (IP: ${escapeHtml(d.ip)}) dla ID <code>${escapeHtml(d.id)}</code></span>
       <input type="text" class="import-local-name" placeholder="nazwa" style="max-width: 220px;">
       <button type="button" class="add-to-local-btn">➡ Dodaj jako lokalne</button>
       <span class="discover-status add-local-status"></span>`;
@@ -520,6 +610,7 @@ document.getElementById('cloudImportBtn').addEventListener('click', async () => 
   btn.disabled = true;
   status.textContent = 'Pobieram listę urządzeń z Tuya Cloud...';
   document.getElementById('importLocalResultsRows').innerHTML = '';
+  document.getElementById('importCloudOnlyResultsRows').innerHTML = '';
   try {
     const resp = await authorizedFetch('/api/plugins/tuya_cloud/cloud-import', { method: 'POST' });
     const data = await resp.json();
@@ -529,21 +620,30 @@ document.getElementById('cloudImportBtn').addEventListener('click', async () => 
     }
     const existingCloud = new Set(collectCloudDevices().map(d => d.id));
     const localReady = [];
+    const cloudOnlyContainer = document.getElementById('importCloudOnlyResultsRows');
     let addedCloud = 0;
     (data.devices || []).forEach(dev => {
       if (dev.ip && dev.local_key) {
         localReady.push(dev);
         return;
       }
-      if (existingCloud.has(dev.id)) return;
-      addCloudDeviceRow({ name: dev.name || dev.id, id: dev.id, category: dev.category || '' });
-      addedCloud++;
+      const row = document.createElement('div');
+      if (existingCloud.has(dev.id)) {
+        row.className = 'scan-result-known';
+        row.textContent = `🟠 ${dev.name || dev.id} (ID ${dev.id}) - już znane (sterowanie chmurowe)`;
+      } else {
+        row.className = 'scan-result-new';
+        row.textContent = `🟢 ${dev.name || dev.id} (ID ${dev.id}) - nowe, dodano niżej (sterowanie chmurowe)`;
+        addCloudDeviceRow({ name: dev.name || dev.id, id: dev.id, category: dev.category || '' });
+        addedCloud++;
+      }
+      cloudOnlyContainer.appendChild(row);
     });
-    if (localReady.length) renderImportLocalResults(localReady);
+    if (localReady.length) await renderImportLocalResults(localReady);
     const parts = [];
-    if (addedCloud) parts.push(`${addedCloud} dodano niżej (sterowanie chmurowe) - zapisz.`);
+    if (addedCloud) parts.push(`${addedCloud} nowych dodano niżej (sterowanie chmurowe) - zapisz.`);
     if (localReady.length) parts.push(`${localReady.length} ma komplet danych (IP + local_key) - patrz lista wyżej z przyciskiem "Dodaj jako lokalne".`);
-    status.textContent = parts.length ? parts.join(' ') : 'Brak nowych urządzeń do zaimportowania.';
+    status.textContent = parts.length ? parts.join(' ') : (data.devices || []).length ? 'Wszystkie znalezione urządzenia są już znane.' : 'Brak urządzeń do zaimportowania.';
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
   } finally {
