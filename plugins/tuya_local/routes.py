@@ -183,70 +183,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             "message": message,
         })
 
-    @app.route("/api/plugins/tuya/cloud-import", methods=["POST"])
-    async def api_plugin_tuya_cloud_import():
-        payload = await request.get_json(silent=True) or {}
-        api_region = (payload.get("api_region") or "").strip()
-        access_id = (payload.get("access_id") or "").strip()
-        access_key = (payload.get("access_key") or "").strip()
-        if not api_region or not access_id or not access_key:
-            return jsonify({"error": "Region, Access ID i Access Secret są wymagane"}), 400
-
-        scan_networks = get_config_raw().get("tuya", {}).get("scan_networks") or []
-        try:
-            devices = await asyncio.get_event_loop().run_in_executor(
-                None, fetch_tuya_cloud_devices, api_region, access_id, access_key, scan_networks,
-            )
-        except ConnectionError as exc:
-            return jsonify({"error": str(exc)}), 502
-        except Exception as exc:
-            return jsonify({"error": f"Błąd importu z Tuya Cloud: {exc}"}), 502
-        return jsonify({"devices": devices})
-
-    @app.route("/api/plugins/tuya/devices/refresh-dp-schema", methods=["POST"])
-    @require_auth(get_guard=get_auth_guard)
-    async def api_plugin_tuya_refresh_dp_schema():
-        cloud_cfg = get_config_raw().get("tuya", {}).get("cloud", {}) or {}
-        api_region = cloud_cfg.get("api_region", "")
-        access_id = cloud_cfg.get("access_id", "")
-        access_key = cloud_cfg.get("access_key", "")
-        if not api_region or not access_id or not access_key:
-            return jsonify({
-                "error": "Najpierw zapisz poświadczenia Tuya Cloud wyżej (region, Access ID, Access Secret).",
-            }), 400
-
-        devices = {name: dict(cfg) for name, cfg in get_config_raw().get("tuya", {}).get("devices", {}).items()}
-        device_ids = {name: cfg["id"] for name, cfg in devices.items() if cfg.get("id")}
-        if not device_ids:
-            return jsonify({"error": "Brak skonfigurowanych urządzeń z ID do opisania"}), 400
-
-        try:
-            schemas, fetch_errors = await asyncio.get_event_loop().run_in_executor(
-                None, fetch_dp_schemas_for_devices, api_region, access_id, access_key, list(device_ids.values()),
-            )
-        except ConnectionError as exc:
-            return jsonify({"error": str(exc)}), 502
-        except Exception as exc:
-            return jsonify({"error": f"Błąd komunikacji z Tuya Cloud: {exc}"}), 502
-
-        updated, failed = [], []
-        for name, dev_id in device_ids.items():
-            if dev_id in schemas and schemas[dev_id]:
-                devices[name]["dp_schema"] = schemas[dev_id]
-                updated.append(name)
-            else:
-                failed.append(name)
-        existing = get_config_store().get("tuya_devices")
-        existing["devices"] = devices
-        get_config_store().set("tuya_devices", existing)
-        reload_bridge_config()
-        enqueue_bridge_reload()
-
-        return jsonify({
-            "updated": updated, "failed": failed,
-            "message": f"Zaktualizowano opisy pól dla {len(updated)}/{len(device_ids)} urządzeń.",
-        })
-
     @app.route("/api/plugins/tuya_cloud/credentials", methods=["GET"])
     async def api_plugin_tuya_cloud_credentials_get():
         cloud = _get_cloud_section()
@@ -338,9 +274,29 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             return jsonify({"error": f"Błąd importu z Tuya Cloud: {exc}"}), 502
         return jsonify({"devices": devices})
 
-    @app.route("/api/plugins/tuya_cloud/devices/refresh-dp-schema", methods=["POST"])
+    async def _refresh_dp_schema(devices: dict, api_region: str, access_id: str, access_key: str):
+        """Pobiera z Tuya Cloud opisy pól (dp_schema) dla przekazanego słownika
+        urządzeń (kluczowanego nazwą) i nadpisuje w miejscu pole "dp_schema" -
+        wspólne dla urządzeń lokalnych/Zigbee (tuya.devices) i chmurowych
+        (tuya.cloud_devices), bo obie sekcje przechowują dp_schema identycznie."""
+        device_ids = {name: cfg["id"] for name, cfg in devices.items() if cfg.get("id")}
+        if not device_ids:
+            return [], []
+        schemas, _fetch_errors = await asyncio.get_event_loop().run_in_executor(
+            None, fetch_dp_schemas_for_devices, api_region, access_id, access_key, list(device_ids.values()),
+        )
+        updated, failed = [], []
+        for name, dev_id in device_ids.items():
+            if dev_id in schemas and schemas[dev_id]:
+                devices[name]["dp_schema"] = schemas[dev_id]
+                updated.append(name)
+            else:
+                failed.append(name)
+        return updated, failed
+
+    @app.route("/api/plugins/tuya/devices/refresh-dp-schema", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    async def api_plugin_tuya_cloud_refresh_dp_schema():
+    async def api_plugin_tuya_refresh_dp_schema():
         cloud = _get_cloud_section()
         api_region = cloud.get("api_region", "")
         access_id = cloud.get("access_id", "")
@@ -350,36 +306,31 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
                 "error": "Najpierw zapisz poświadczenia Tuya Cloud wyżej (region, Access ID, Access Secret).",
             }), 400
 
-        devices = {name: dict(cfg) for name, cfg in get_config_raw().get("tuya", {}).get("cloud_devices", {}).items()}
-        device_ids = {name: cfg["id"] for name, cfg in devices.items() if cfg.get("id")}
-        if not device_ids:
+        tuya = get_config_raw().get("tuya", {})
+        local_devices = {name: dict(cfg) for name, cfg in tuya.get("devices", {}).items()}
+        cloud_devices = {name: dict(cfg) for name, cfg in tuya.get("cloud_devices", {}).items()}
+        if not local_devices and not cloud_devices:
             return jsonify({"error": "Brak skonfigurowanych urządzeń z ID do opisania"}), 400
 
         try:
-            schemas, fetch_errors = await asyncio.get_event_loop().run_in_executor(
-                None, fetch_dp_schemas_for_devices, api_region, access_id, access_key, list(device_ids.values()),
-            )
+            local_updated, local_failed = await _refresh_dp_schema(local_devices, api_region, access_id, access_key)
+            cloud_updated, cloud_failed = await _refresh_dp_schema(cloud_devices, api_region, access_id, access_key)
         except ConnectionError as exc:
             return jsonify({"error": str(exc)}), 502
         except Exception as exc:
             return jsonify({"error": f"Błąd komunikacji z Tuya Cloud: {exc}"}), 502
 
-        updated, failed = [], []
-        for name, dev_id in device_ids.items():
-            if dev_id in schemas and schemas[dev_id]:
-                devices[name]["dp_schema"] = schemas[dev_id]
-                updated.append(name)
-            else:
-                failed.append(name)
-        existing = get_config_store().get("tuya_devices")
-        existing["cloud_devices"] = devices
-        get_config_store().set("tuya_devices", existing)
+        tuya_devices = get_config_store().get("tuya_devices")
+        tuya_devices["devices"] = local_devices
+        tuya_devices["cloud_devices"] = cloud_devices
+        get_config_store().set("tuya_devices", tuya_devices)
         reload_bridge_config()
         enqueue_bridge_reload()
 
+        updated, failed = local_updated + cloud_updated, local_failed + cloud_failed
         return jsonify({
             "updated": updated, "failed": failed,
-            "message": f"Zaktualizowano opisy pól dla {len(updated)}/{len(device_ids)} urządzeń.",
+            "message": f"Zaktualizowano opisy pól dla {len(updated)}/{len(updated) + len(failed)} urządzeń.",
         })
 
     @app.route("/api/plugins/tuya_cloud/devices/rescan", methods=["POST"])
@@ -431,76 +382,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
                 f"{movable} może przejść na sterowanie lokalne."
             ) if results else "Żadne ze skonfigurowanych urządzeń chmurowych nie zostało odnalezione w Tuya Cloud.",
         })
-
-    @app.route("/api/plugins/tuya_cloud/devices/move-to-local", methods=["POST"])
-    @require_auth(get_guard=get_auth_guard)
-    async def api_plugin_tuya_cloud_move_to_local():
-        form = await request.get_json(silent=True)
-        if not isinstance(form, dict):
-            return jsonify({"error": "Nieprawidłowe dane"}), 400
-        name = (form.get("name") or "").strip()
-        ip = (form.get("ip") or "").strip()
-        local_key = (form.get("local_key") or "").strip()
-        if not name or not ip or not local_key:
-            return jsonify({"error": "Nazwa, adres IP i local_key są wymagane"}), 400
-
-        tuya_devices = get_config_store().get("tuya_devices")
-        cloud_devices = tuya_devices.get("cloud_devices", {})
-        if name not in cloud_devices:
-            return jsonify({"error": f"Nieznane urządzenie chmurowe '{name}' (mogło już zostać przeniesione)"}), 404
-        local_devices = tuya_devices.setdefault("devices", {})
-        if name in local_devices:
-            return jsonify({
-                "error": f"Urządzenie lokalne o nazwie '{name}' już istnieje - zmień nazwę jednego z nich",
-            }), 400
-
-        cloud_cfg = cloud_devices.pop(name)
-        local_devices[name] = {
-            "id": cloud_cfg.get("id", ""),
-            "ip": ip,
-            "local_key": local_key,
-            "version": float(form.get("version") or 3.4),
-            "type": "socket",
-            "dp_schema": form.get("dp_schema") or cloud_cfg.get("dp_schema", {}),
-        }
-        tuya_devices["cloud_devices"] = cloud_devices
-        tuya_devices["devices"] = local_devices
-        get_config_store().set("tuya_devices", tuya_devices)
-        reload_bridge_config()
-        enqueue_bridge_reload()
-
-        return jsonify({"message": f"Przeniesiono '{name}' do sterowania lokalnego (sekcja 'Urządzenia lokalne' wyżej)."})
-
-    @app.route("/api/plugins/tuya_cloud/devices/add-to-local", methods=["POST"])
-    @require_auth(get_guard=get_auth_guard)
-    async def api_plugin_tuya_cloud_add_to_local():
-        form = await request.get_json(silent=True)
-        if not isinstance(form, dict):
-            return jsonify({"error": "Nieprawidłowe dane"}), 400
-        name = (form.get("name") or "").strip()
-        device_id = (form.get("id") or "").strip()
-        ip = (form.get("ip") or "").strip()
-        local_key = (form.get("local_key") or "").strip()
-        if not name or not device_id or not ip or not local_key:
-            return jsonify({"error": "Nazwa, ID, adres IP i local_key są wymagane"}), 400
-
-        tuya_devices = get_config_store().get("tuya_devices")
-        local_devices = tuya_devices.setdefault("devices", {})
-        cloud_devices = tuya_devices.get("cloud_devices", {})
-        if name in local_devices or name in cloud_devices:
-            return jsonify({"error": f"Nazwa '{name}' jest już użyta - zmień nazwę"}), 400
-
-        local_devices[name] = {
-            "id": device_id, "ip": ip, "local_key": local_key,
-            "version": float(form.get("version") or 3.4), "type": "socket",
-            "dp_schema": form.get("dp_schema") or {},
-        }
-        tuya_devices["devices"] = local_devices
-        get_config_store().set("tuya_devices", tuya_devices)
-        reload_bridge_config()
-        enqueue_bridge_reload()
-
-        return jsonify({"message": f"Dodano '{name}' do sterowania lokalnego (sekcja 'Urządzenia lokalne' wyżej)."})
 
     def _get_tuya_section() -> dict:
         return get_config_store().get("config").get("tuya", {})

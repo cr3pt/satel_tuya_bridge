@@ -688,7 +688,7 @@ class TestAutomationContextEndpoint:
         tuya_routes.fetch_dp_schemas_for_devices = fake_fetch
         try:
             await client.post(
-                "/api/plugins/tuya_cloud/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+                "/api/plugins/tuya/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
             )
         finally:
             tuya_routes.fetch_dp_schemas_for_devices = original

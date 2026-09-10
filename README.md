@@ -341,36 +341,36 @@ zapisywane** - używane jednorazowo do pobrania listy urządzeń, potem
 zapominane (w przeciwieństwie do `tuya.cloud` w `config.yaml`, gdzie
 zostają trwale, jeśli włączysz integrację kamer).
 
-### Import urządzeń i sterowanie przez chmurę (po pierwszej konfiguracji)
+### Import urządzeń i sterowanie lokalnie/przez chmurę (po pierwszej konfiguracji)
 
-Po skonfigurowaniu bridge'a import urządzeń przenosi się do zakładki
-**☁ Tuya Cloud** (🧩 Wtyczki → Tuya Cloud) - zapisz tam poświadczenia
-(Access ID/Secret/region) RAZ, potem przycisk **☁ Importuj z Tuya Cloud**
-pobiera listę urządzeń jednym kliknięciem, bez wpisywania ich ponownie.
-Ten sam przycisk (korzystający z tych samych, raz zapisanych poświadczeń)
-jest też dostępny w zakładce **🔌 Tuya (LAN)** - można zrobić import i
-dodać urządzenie jako lokalne z obu stron, bez przełączania kart.
+Po skonfigurowaniu bridge'a import i zarządzanie urządzeniami Tuya odbywa
+się na jednej stronie **🧩 Wtyczki → Tuya** (`/plugins/tuya`) - jedna
+wspólna tabela **Urządzenia**, bez podziału na osobne zakładki/tabele dla
+LAN i chmury. Zapisz tam poświadczenia Tuya Cloud (Access ID/Secret/region)
+RAZ, potem przycisk **☁ Importuj z Tuya Cloud** pobiera listę urządzeń
+jednym kliknięciem, bez wpisywania ich ponownie.
 
 Wyniki skanowania/importu są kolorowane: **🟠 pomarańczowy** - urządzenie
-już znane (skonfigurowane lokalnie albo w tabeli chmurowej), **🟢 zielony**
-- nowe, jeszcze nieskonfigurowane. Dotyczy to zarówno skanu LAN
-(zakładka Tuya (LAN)), jak i importu z Tuya Cloud (obie zakładki).
+już znane (istnieje w tabeli Urządzenia), **🟢 zielony** - nowe, jeszcze
+nieskonfigurowane. Dotyczy to zarówno skanu LAN, jak i importu z Tuya
+Cloud.
 
-Import rozdziela urządzenia automatycznie:
+Każde nowo znalezione urządzenie dodaje wiersz do tabeli **Urządzenia**
+z polem **"Tryb sterowania"** (Lokalnie WiFi / Lokalnie Zigbee / Przez
+chmurę), które decyduje, jakie kolumny są widoczne/wymagane w tym wierszu:
 - **Komplet danych** (adres IP znaleziony w sieci LAN + `local_key`
-  zwrócony przez Tuya Cloud) → pojawiają się nad tabelą chmurową z
-  przyciskiem **"➡ Dodaj jako lokalne"** (edytowalna nazwa, domyślnie
-  nazwa z Tuya Cloud) - jedno kliknięcie zapisuje urządzenie od razu w
-  zakładce **🔌 Tuya (LAN)**, sterowanie lokalne jest szybsze i nie
-  zależy od internetu.
+  zwrócony przez Tuya Cloud) → wiersz od razu w trybie **"Lokalnie
+  (WiFi)"** - sterowanie lokalne jest szybsze i nie zależy od internetu.
 - **Niekompletne dane** (typowe - Tuya Cloud nie zawsze zwraca
   `local_key`, albo urządzenie nie jest w tej samej sieci LAN co bridge)
-  → lądują w tabeli "Urządzenia sterowane przez chmurę" na tej samej
-  stronie - sterowane przez Tuya Cloud REST API (wolniej, wymaga
-  internetu), **jako fallback TYLKO dopóki** dane urządzenie nie zostanie
-  ręcznie skonfigurowane w zakładce Tuya (LAN) pod tą samą nazwą (albo
-  przeniesione przyciskiem "🔄 Rescan" niżej) - wtedy lokalne
-  automatycznie przejmuje sterowanie.
+  → wiersz w trybie **"Przez chmurę"** - sterowane przez Tuya Cloud REST
+  API (wolniej, wymaga internetu), **jako fallback TYLKO dopóki** dane
+  urządzenie nie zostanie ręcznie przełączone na tryb lokalny (albo
+  przełączone automatycznie przyciskiem "🔄 Rescan" niżej).
+
+Żadna z tych operacji (import, skan LAN) nie zapisuje niczego od razu -
+dopiero jeden przycisk **"💾 Zapisz urządzenia"** na dole strony zapisuje
+całą tabelę naraz, niezależnie od trybu poszczególnych wierszy.
 
 Sterowanie chmurowe jest na start ograniczone do prostych przełączników
 on/off (bez ściemniania). **"Kod przełącznika" jest wykrywany automatycznie**,
@@ -397,29 +397,27 @@ wymusić dokładnie jeden konkretny kod (np. gdy zależy Ci na sterowaniu
 tylko JEDNYM z kilku obwodów) - sprawdź faktyczne kody w zakładce
 **Cloud Debugging** na developer.tuya.com, wybierając swoje urządzenie.
 
-Skan sieci LAN (zakładka Tuya (LAN)) dopasowuje też odwrotnie - jeśli
-skanowane urządzenie ma ID znane z wcześniejszego importu Tuya Cloud,
-jego nazwa pojawia się automatycznie zamiast gołego ID.
+Skan sieci LAN dopasowuje też odwrotnie - jeśli skanowane urządzenie ma ID
+znane z wcześniejszego importu Tuya Cloud, jego nazwa pojawia się
+automatycznie zamiast gołego ID.
 
 Urządzenie sterowane przez chmurę może z czasem stać się dostępne
 lokalnie (zmiana routera/WiFi, przeniesienie bridge'a do tej samej sieci
-co urządzenie) - zamiast robić import od nowa, w tabeli "Urządzenia
-sterowane przez chmurę" (zakładka ☁ Tuya Cloud) jest przycisk **"🔄
-Rescan - sprawdź, które można przenieść do lokalnych"**. Ponownie
-odpytuje Tuya Cloud i skanuje LAN wyłącznie dla już zapisanych niżej
-urządzeń chmurowych i pokazuje, dla których udało się teraz znaleźć
-komplet danych (adres IP + `local_key`) - przy każdym takim urządzeniu
-pojawia się przycisk **"➡ Przenieś do lokalnych"**, który jednym
-kliknięciem usuwa je z listy chmurowej i dodaje do zakładki 🔌 Tuya
-(LAN) z tym samym ID i pobranym `local_key`/adresem IP (opis pól DP,
-jeśli był już pobrany, przechodzi razem z urządzeniem).
+co urządzenie) - zamiast robić import od nowa, na tej samej stronie jest
+przycisk **"🔄 Rescan"**. Ponownie odpytuje Tuya Cloud i skanuje LAN
+wyłącznie dla wierszy w trybie "Przez chmurę" i dla każdego, dla którego
+udało się teraz znaleźć komplet danych (adres IP + `local_key`),
+automatycznie przełącza tryb sterowania tego wiersza na "Lokalnie
+(WiFi)" i wypełnia adres IP/`local_key`/wersję protokołu (opis pól DP,
+jeśli był już pobrany, zostaje przy urządzeniu) - wystarczy potem
+kliknąć **"💾 Zapisz urządzenia"**.
 
 **Skan trwa ok. 18 sekund - to normalne, nie oznacza zawieszenia.**
 Tuya rozgłasza się w sieci LAN cyklicznie, nie w sposób ciągły, więc
 skan musi nasłuchiwać broadcastu UDP przez pewien czas, żeby złapać
 wszystkie urządzenia (dokładnie tak samo działa ręczne uruchomienie
 `python -m tinytuya scan` - jego domyślny czas nasłuchu to też 18s).
-Każdy z trzech przycisków skanujących sieć (🔍 Skanuj sieć LAN, ☁
+Każdy z trzech przycisków skanujących sieć (🔍 Skanuj sieć, ☁
 Importuj z Tuya Cloud, 🔄 Rescan) rzeczywiście tyle czeka - jeśli
 wcześniej u Ciebie kończyły się od razu z pustym wynikiem mimo
 działających urządzeń widocznych w samym `tinytuya`, to był błąd w
@@ -428,18 +426,16 @@ bridge'u (czas nasłuchu skrócony do 1s zamiast 18s), naprawiony.
 **Skan LAN (broadcast UDP) nie zawsze dociera do bridge'a** - typowo, gdy
 bridge działa w kontenerze Docker bez trybu `network: host`, albo gdy
 urządzenia Tuya są w innej podsieci/VLAN-ie niż bridge. W takiej sytuacji
-"🔍 Skanuj sieć LAN" (zakładka 🔌 Tuya (LAN)) i "🔄 Rescan" (zakładka ☁
-Tuya Cloud) nic nie znajdą, mimo że urządzenia normalnie działają. Sekcja
-**"Zakresy/adresy IP do skanowania"** (dostępna zarówno w zakładce
-🔌 Tuya (LAN), jak i ☁ Tuya Cloud - to jedno wspólne ustawienie,
-edytowalne z obu miejsc) pozwala podać ręcznie adresy IP i/albo
-zakresy CIDR (np.
+"🔍 Skanuj sieć" i "🔄 Rescan" nic nie znajdą, mimo że urządzenia
+normalnie działają. Sekcja **"Zakresy/adresy IP do skanowania"** (jedno
+wspólne ustawienie na tej samej stronie) pozwala podać ręcznie adresy IP
+i/albo zakresy CIDR (np.
 `192.168.1.0/24`, albo pojedynczy adres `192.168.1.50`) - z takim
 zakresem oba przyciski skanowania (LAN i Rescan) dodatkowo aktywnie
 łączą się (TCP) z każdym adresem w zakresie zamiast polegać wyłącznie na
 broadcaście (`tinytuya` `forcescan`). Dotyczy to WYŁĄCZNIE urządzeń,
-których ID+`local_key` już znamy (skonfigurowanych w zakładce Tuya (LAN)
-albo zaimportowanych z Tuya Cloud) - to metoda na odnalezienie adresu IP
+których ID+`local_key` już znamy (skonfigurowanych ręcznie albo
+zaimportowanych z Tuya Cloud) - to metoda na odnalezienie adresu IP
 znanego urządzenia, nie na wykrycie zupełnie nowych, nieznanych urządzeń
 (do tego nadal służy zwykły skan broadcastu). Skan aktywnego zakresu jest
 wolniejszy niż sam broadcast (łączy się po kolei z każdym adresem w
@@ -1649,8 +1645,7 @@ sterowania systemem alarmowym.
      wilgotność, zalanie, kontaktron) wykrywane są automatycznie** na
      podstawie tego, co faktycznie zgłasza urządzenie Tuya (opis pól DP
      dla urządzeń lokalnych - przycisk "🔍 Pobierz opisy pól" na stronie
-     🧩 Wtyczki -> Tuya (LAN); kategoria urządzenia dla urządzeń Tuya
-     Cloud) - taki wykryty rodzaj jest od razu preselekcjonowany w liście
+     🧩 Wtyczki -> Tuya; kategoria urządzenia dla urządzeń Tuya Cloud) - taki wykryty rodzaj jest od razu preselekcjonowany w liście
      (widać podpowiedź "🔍 wykryto: ..." pod polem) i urządzenie jest od
      razu udostępnione, bez klikania czegokolwiek. Można to w każdej
      chwili ręcznie nadpisać (inny rodzaj, albo "-- nie eksportuj --",
@@ -1713,7 +1708,7 @@ sterowania systemem alarmowym.
 **Jak działa auto-detekcja czujników.** `bridge/tuya_local.py:
 detect_tuya_sensor_type()` sprawdza, jakie kody DP (data point) zgłasza
 urządzenie: dla urządzeń lokalnych - z zapisanego opisu pól (`dp_schema`,
-patrz "🔍 Pobierz opisy pól" na stronie Tuya (LAN)); dla urządzeń Tuya
+patrz "🔍 Pobierz opisy pól" na stronie Tuya); dla urządzeń Tuya
 Cloud - z kategorii urządzenia (np. `wsdcg` = czujnik temperatury i
 wilgotności, `sj` = czujnik zalania, `mcs` = kontaktron), bez potrzeby
 żadnego dodatkowego kroku. Rozpoznawane kody: `va_temperature`/
@@ -1792,7 +1787,7 @@ strefy, sceny, zmiana portu/nazwy mostu, włączenie/wyłączenie wtyczki)
 działają bez restartu procesu bridge'a.** Akcesoria HAP-python są
 budowane raz przy starcie i nie da się ich dodawać/usuwać na żywo w
 ramach jednej instancji mostu - dlatego każde przeładowanie konfiguracji
-(np. po zapisaniu urządzeń w zakładce 🔌 Tuya (LAN)) buduje nową
+(np. po zapisaniu urządzeń na stronie 🧩 Wtyczki → Tuya) buduje nową
 instancję mostu HomeKit i podmienia starą, zamiast zostawiać stary,
 nieaktualny zestaw akcesoriów. Parowanie przechodzi przez tę podmianę
 bez problemu (stan parowania w `homekit_state.json` jest niezależny od
@@ -2165,11 +2160,10 @@ DP i jest po cichu ignorowana - urządzenie "nie włącza się" mimo braku
 błędu w logach.
 
 **Rozwiązanie: pobierz opis pól (`dp_schema`)** dla takiego urządzenia -
-przycisk "🔍 Pobierz opisy pól (Tuya Cloud)" na stronie 🧩 Wtyczki → Tuya
-(LAN) - albo, dla urządzeń sterowanych przez chmurę, ten sam przycisk na
-stronie ☁ Tuya Cloud (obie wersje wymagają zapisanych poświadczeń Tuya
-Cloud, patrz wyżej "Konto Tuya Cloud") - odtąd bridge zna realne kody DP
-tego urządzenia i **sam
+jeden przycisk **"🔍 Pobierz opisy pól"** na stronie 🧩 Wtyczki → Tuya,
+działający dla wszystkich urządzeń naraz (lokalnych i chmurowych, wymaga
+zapisanych poświadczeń Tuya Cloud, patrz wyżej "Konto Tuya Cloud") -
+odtąd bridge zna realne kody DP tego urządzenia i **sam
 odnajduje wszystkie DP pasujące do wzorca przełącznika** (`switch_N`,
 `switch_led`), sterując nimi **wszystkimi naraz** w jednej komendzie
 (`set_multiple_values`) zamiast zgadywać DP `"1"`. Bez pobranego opisu
@@ -2185,22 +2179,20 @@ mają jednego pola "włączone/wyłączone" - `RulesEngine._apply_tuya_device_st
 pokazuje wtedy wszystkie pola raportowane przez urządzenie jako czytelny
 tekst (`etykieta: wartość | etykieta: wartość`) zamiast samego "?".
 
-- Urządzenia sterowane przez **Tuya Cloud** (zakładka ☁ Tuya Cloud) dostają
-  to za darmo - chmura sama zwraca pola z nazwą (`code`, np. `va_temperature`,
-  `co2_value`).
+- Urządzenia sterowane przez **Tuya Cloud** dostają to za darmo - chmura
+  sama zwraca pola z nazwą (`code`, np. `va_temperature`, `co2_value`).
 - Urządzenia **lokalne** (LAN/Zigbee) znają tylko surowe numery pól (DP) bez
   nazw - dopóki nie pobierzesz ich opisu, karta pokaże surowe
-  `numer_pola: wartość`. Przycisk **"🔍 Pobierz opisy pól (Tuya Cloud)"** na
-  stronie 🧩 Wtyczki → Tuya (LAN) pobiera dla wszystkich skonfigurowanych
-  urządzeń ich opis pól z Tuya Cloud (`devices/{id}/specifications`, wymaga
-  zapisanych poświadczeń w zakładce ☁ Tuya Cloud) i zapisuje go trwale przy
-  urządzeniu (`dp_schema`) - odtąd karta pokazuje nazwane, przeskalowane
-  wartości (np. `temperatura: 23.5C`) zamiast numerów.
-- Urządzenia sterowane przez **Tuya Cloud** bez pól o znanej nazwie (np.
-  sterowniki nawodnienia z niestandardowymi kodami) mają dokładnie ten sam
-  przycisk **"🔍 Pobierz opisy pól (Tuya Cloud)"** na stronie ☁ Tuya Cloud,
-  pod listą "Urządzenia sterowane przez chmurę" - działa analogicznie, tylko
-  dla urządzeń chmurowych zamiast lokalnych.
+  `numer_pola: wartość`. Przycisk **"🔍 Pobierz opisy pól"** na stronie
+  🧩 Wtyczki → Tuya pobiera dla wszystkich skonfigurowanych urządzeń
+  (lokalnych i chmurowych naraz) ich opis pól z Tuya Cloud
+  (`devices/{id}/specifications`, wymaga zapisanych poświadczeń Tuya Cloud)
+  i zapisuje go trwale przy urządzeniu (`dp_schema`) - odtąd karta pokazuje
+  nazwane, przeskalowane wartości (np. `temperatura: 23.5C`) zamiast
+  numerów.
+- To samo dotyczy urządzeń sterowanych przez **Tuya Cloud** bez pól o
+  znanej nazwie (np. sterowniki nawodnienia z niestandardowymi kodami) -
+  ten sam przycisk działa analogicznie dla urządzeń chmurowych.
 
 ### Eskalacja przy powtarzających się naruszeniach
 
@@ -2736,7 +2728,7 @@ podlewanie): flow **Harmonogram (rano) -> Warunek stanu
 (`weather:precipitation_probability_percent gte 60`) -> Ustaw pole Tuya
 (urządzenie: sterownik nawadniania, pole: "Opóźnienie ręczne", wartość: 1)**
 odkłada podlewanie o dzień, gdy prognoza zapowiada deszcz. Kod pola wybiera
-się z listy odkrytej przez **"🔍 Pobierz opisy pól"** na stronie Tuya (LAN)
+się z listy odkrytej przez **"🔍 Pobierz opisy pól"** na stronie Tuya
 - bez tego (albo dla urządzeń Cloud bez zapisanego opisu) trzeba wpisać kod
 ręcznie (widoczny w apce producenta albo w dokumentacji API Tuya dla danej
 kategorii urządzenia). Wartość wpisywana jako tekst jest automatycznie
