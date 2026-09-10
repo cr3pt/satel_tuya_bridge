@@ -1778,9 +1778,19 @@ mostkowaną Dockera - dlatego usługa `bridge` w `docker-compose.yml` ma
 `network_mode: host` ustawione od razu, bez potrzeby ręcznej edycji. Na
 Mac/Windows (Docker Desktop nie obsługuje tego trybu) trzeba tę linię
 zakomentować - wtedy reszta integracji działa normalnie, ale most
-HomeKit nie da się sparować. Zmiana portu, nazwy mostu, oraz
-włączenie/wyłączenie wtyczki wymagają pełnego restartu procesu bridge'a
-(jak reszta zmian sieciowych).
+HomeKit nie da się sparować.
+
+**Zmiany w konfiguracji HomeKit (dodanie/usunięcie urządzenia Tuya,
+strefy, sceny, zmiana portu/nazwy mostu, włączenie/wyłączenie wtyczki)
+działają bez restartu procesu bridge'a.** Akcesoria HAP-python są
+budowane raz przy starcie i nie da się ich dodawać/usuwać na żywo w
+ramach jednej instancji mostu - dlatego każde przeładowanie konfiguracji
+(np. po zapisaniu urządzeń w zakładce 🔌 Tuya (LAN)) buduje nową
+instancję mostu HomeKit i podmienia starą, zamiast zostawiać stary,
+nieaktualny zestaw akcesoriów. Parowanie przechodzi przez tę podmianę
+bez problemu (stan parowania w `homekit_state.json` jest niezależny od
+tego, które konkretnie akcesoria most aktualnie wystawia), ale aplikacja
+Dom może na chwilę pokazać most jako rozłączony w trakcie przeładowania.
 
 ## Automatyzacje: sceny, harmonogramy, eskalacja, warunki, łańcuchy, symulacja obecności
 
