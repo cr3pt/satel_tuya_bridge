@@ -269,6 +269,36 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
 
         return jsonify({"message": f"Przeniesiono '{name}' do sterowania lokalnego (zakładka 🔌 Tuya (LAN))."})
 
+    @app.route("/api/plugins/tuya_cloud/devices/add-to-local", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_tuya_cloud_add_to_local():
+        form = await request.get_json(silent=True)
+        if not isinstance(form, dict):
+            return jsonify({"error": "Nieprawidłowe dane"}), 400
+        name = (form.get("name") or "").strip()
+        device_id = (form.get("id") or "").strip()
+        ip = (form.get("ip") or "").strip()
+        local_key = (form.get("local_key") or "").strip()
+        if not name or not device_id or not ip or not local_key:
+            return jsonify({"error": "Nazwa, ID, adres IP i local_key są wymagane"}), 400
+
+        tuya_devices = get_config_store().get("tuya_devices")
+        local_devices = tuya_devices.setdefault("devices", {})
+        cloud_devices = tuya_devices.get("cloud_devices", {})
+        if name in local_devices or name in cloud_devices:
+            return jsonify({"error": f"Nazwa '{name}' jest już użyta - zmień nazwę"}), 400
+
+        local_devices[name] = {
+            "id": device_id, "ip": ip, "local_key": local_key, "type": "socket",
+            "dp_schema": form.get("dp_schema") or {},
+        }
+        tuya_devices["devices"] = local_devices
+        get_config_store().set("tuya_devices", tuya_devices)
+        reload_bridge_config()
+        enqueue_bridge_reload()
+
+        return jsonify({"message": f"Dodano '{name}' do sterowania lokalnego (zakładka 🔌 Tuya (LAN))."})
+
     register_settings_route(
         app, "tuya_cloud", require_auth=require_auth, get_auth_guard=get_auth_guard,
         get_section=_get_cloud_section, save_section=_save_cloud_section,

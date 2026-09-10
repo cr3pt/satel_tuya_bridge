@@ -1210,6 +1210,47 @@ class TestTuyaCloudPluginPage:
         )
         assert resp.status_code == 400
 
+    async def test_add_to_local_requires_auth(self, client):
+        assert (await client.post("/api/plugins/tuya_cloud/devices/add-to-local")).status_code == 401
+
+    async def test_add_to_local_requires_all_fields(self, client):
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/add-to-local", json={"name": "lampa_taras", "id": "c1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    async def test_add_to_local_adds_device_without_prior_cloud_entry(self, client):
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/add-to-local",
+            json={"name": "lampa_taras", "id": "c1", "ip": "192.168.1.20", "local_key": "key1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+
+        local_after = await (await client.get(
+            "/api/plugins/tuya/devices", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        added = next(d for d in local_after["devices"] if d["name"] == "lampa_taras")
+        assert added["ip"] == "192.168.1.20"
+        assert added["local_key"] == "key1"
+        assert added["id"] == "c1"
+
+    async def test_add_to_local_rejects_name_collision(self, client):
+        await client.post(
+            "/api/plugins/tuya/devices",
+            json={"tuya_devices": [
+                {"name": "lampa_taras", "id": "cX", "ip": "192.168.1.5", "local_key": "kX"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/add-to-local",
+            json={"name": "lampa_taras", "id": "c1", "ip": "192.168.1.20", "local_key": "key1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
 
 class TestHomeAssistantPluginPage:
     async def test_page_redirects_to_login_without_auth(self, client):
