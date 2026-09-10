@@ -913,6 +913,29 @@ publikacja stanu do MQTT/Home Assistant (patrz sekcje wyżej) - nie trzeba
 niczego konfigurować inaczej tylko dlatego, że urządzenie jest po Zigbee, a
 nie po WiFi.
 
+**Bramkę można dodać, zanim jej adres IP jest znany.** Import z Tuya Cloud
+rozpoznaje bramkę po tym, że inne zaimportowane urządzenia wskazują na nią
+jako `gateway_id` - jeśli bramka akurat nie odpowiedziała na skan LAN (bo
+jest offline, w innej podsieci, albo po prostu jeszcze się uruchamia),
+przycisk pod nią to teraz **"🌉 Dodaj bramkę bez adresu IP"** zamiast
+głuchego komunikatu "spróbuj ponownie za chwilę" - `id`/`local_key` z Tuya
+Cloud wystarczą, żeby zapisać bramkę i WSZYSTKIE podpięte pod nią
+podurządzenia Zigbee od razu (bez tego reszta importu też była
+zablokowana, bo podurządzenie bez istniejącej bramki nie miało jak się
+zapisać). Bramka bez adresu IP po prostu nie działa, dopóki się go nie
+uzupełni - ręcznie w polu "adres IP" w sekcji "🐝 Bramki Zigbee", albo
+przyciskiem **"🔍 Skanuj sieć"** (sekcja LAN wyżej), który rozpoznaje już
+zapisaną bramkę po ID i sam wpisuje znaleziony adres IP zamiast dodawać
+duplikat jako zwykłe urządzenie.
+
+To samo działa w drugą stronę: jeśli **"🔍 Skanuj sieć"** znajdzie
+urządzenie, które jeszcze nie jest nigdzie skonfigurowane, a wiesz że to
+akurat bramka Zigbee (a nie zwykłe gniazdko/przełącznik) - przycisk
+**"🌉 To raczej bramka Zigbee"** przy takim wyniku przenosi je z listy
+"Urządzenia" do sekcji "🐝 Bramki Zigbee" (z odnalezionym adresem IP;
+`local_key` i nazwę uzupełnij ręcznie, tak jak dla zwykłego urządzenia
+znalezionego samym skanem LAN).
+
 ### Zmiany działają od razu - bez restartu Dockera
 
 Zapis czujników eBUS, pól Satela, urządzeń Tuya (sekcje na stronach

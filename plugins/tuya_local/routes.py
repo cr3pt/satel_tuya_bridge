@@ -116,6 +116,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
     async def api_plugin_tuya_scan():
         tuya = get_config_raw().get("tuya", {})
         known_by_id: dict[str, str] = {}
+        known_gateway_by_id: dict[str, str] = {}
         tuyadevices_for_scan = []
         for name, cfg in tuya.get("cloud_devices", {}).items():
             if cfg.get("id"):
@@ -123,6 +124,11 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         for name, cfg in tuya.get("devices", {}).items():
             if cfg.get("id"):
                 known_by_id[cfg["id"]] = name
+            if cfg.get("id") and cfg.get("local_key"):
+                tuyadevices_for_scan.append({"id": cfg["id"], "key": cfg["local_key"], "name": name})
+        for name, cfg in tuya.get("zigbee_gateways", {}).items():
+            if cfg.get("id"):
+                known_gateway_by_id[cfg["id"]] = name
             if cfg.get("id") and cfg.get("local_key"):
                 tuyadevices_for_scan.append({"id": cfg["id"], "key": cfg["local_key"], "name": name})
         scan_networks = tuya.get("scan_networks") or []
@@ -135,6 +141,11 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             return jsonify({"error": f"Błąd skanowania: {exc}"}), 502
         for d in devices:
             d["known_name"] = known_by_id.get(d.get("id"), "")
+            # Bramka Zigbee zapisana już wcześniej (np. bez adresu IP, dopóki nie
+            # odpowiadała w sieci) - osobne pole niż known_name, żeby panel mógł
+            # od razu zaproponować uzupełnienie jej adresu IP zamiast dodawać
+            # duplikat jako zwykłe urządzenie.
+            d["known_gateway_name"] = known_gateway_by_id.get(d.get("id"), "")
         return jsonify({"devices": devices})
 
     @app.route("/api/plugins/tuya/scan-networks", methods=["GET"])

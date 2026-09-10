@@ -605,16 +605,38 @@ async function loadTuyaDevices() {
 }
 loadTuyaDevices();
 
-function renderScanLanResults(devices, existingIds) {
+function renderScanLanResults(devices, existingIds, updatedGatewayNames) {
   const container = document.getElementById('scanLanResultsRows');
   container.innerHTML = '';
   devices.forEach(dev => {
+    const gatewayName = updatedGatewayNames.get(dev.id);
     const known = existingIds.has(dev.id) || !!dev.known_name;
     const row = document.createElement('div');
-    row.className = known ? 'scan-result-known' : 'scan-result-new';
-    row.textContent = known
-      ? `🟠 ${dev.known_name || dev.id} (ID ${dev.id}) - już znane, IP: ${dev.ip}`
-      : `🟢 nowe urządzenie (ID ${dev.id}) - IP: ${dev.ip}, dodano niżej - uzupełnij local_key`;
+    if (gatewayName) {
+      row.className = 'scan-result-known';
+      row.textContent = `🌉 ${gatewayName} (ID ${dev.id}) - to skonfigurowana bramka Zigbee, uzupełniono adres IP: ${dev.ip}`;
+      container.appendChild(row);
+      return;
+    }
+    if (known) {
+      row.className = 'scan-result-known';
+      row.textContent = `🟠 ${dev.known_name || dev.id} (ID ${dev.id}) - już znane, IP: ${dev.ip}`;
+      container.appendChild(row);
+      return;
+    }
+    row.className = 'repeatable-row scan-result-new';
+    row.innerHTML = `
+      <span style="flex:1;">🟢 nowe urządzenie (ID ${escapeHtml(dev.id)}) - IP: ${escapeHtml(dev.ip)}, dodano niżej jako urządzenie - uzupełnij local_key</span>
+      <button type="button" class="mark-gateway-btn">🌉 To raczej bramka Zigbee</button>`;
+    row.querySelector('.mark-gateway-btn').addEventListener('click', () => {
+      document.querySelectorAll('#devicesRows .repeatable-row').forEach(r => {
+        if (r.querySelector('.dev-id').value.trim() === dev.id) r.remove();
+      });
+      addGatewayRow({ name: dev.id, id: dev.id, ip: dev.ip, local_key: '', version: dev.version });
+      refreshGatewaySelects();
+      row.className = 'scan-result-known';
+      row.textContent = `🌉 ${dev.id} - przeniesiono do bramek Zigbee wyżej (uzupełnij local_key i nazwę), zapisz formularz (💾 Zapisz urządzenia)`;
+    });
     container.appendChild(row);
   });
 }
@@ -634,15 +656,36 @@ document.getElementById('scanLanBtn').addEventListener('click', async () => {
     }
     const devices = data.devices || [];
     const existing = new Set(collectDevices().map(d => d.id));
+    const gatewayRowsById = new Map(collectGateways().map(g => [g.id, g]));
+    const updatedGatewayNames = new Map();
     let added = 0;
     devices.forEach(dev => {
+      // Urządzenie już dodane jako bramka Zigbee (np. zaimportowana z Tuya Cloud
+      // bez znanego wtedy adresu IP) - zamiast dublować jako zwykłe urządzenie,
+      // uzupełniamy jej adres IP teraz, gdy odpowiedziała w sieci.
+      const gatewayRow = gatewayRowsById.get(dev.id);
+      if (gatewayRow || dev.known_gateway_name) {
+        const gatewayName = gatewayRow ? gatewayRow.name : dev.known_gateway_name;
+        document.querySelectorAll('#gatewaysRows .repeatable-row').forEach(row => {
+          if (row.querySelector('.gw-id').value.trim() === dev.id) {
+            if (!row.querySelector('.gw-ip').value.trim()) row.querySelector('.gw-ip').value = dev.ip;
+            if (!row.querySelector('.gw-version').value.trim()) row.querySelector('.gw-version').value = dev.version || '3.4';
+          }
+        });
+        updatedGatewayNames.set(dev.id, gatewayName);
+        return;
+      }
       if (existing.has(dev.id) || dev.known_name) return;
       addDeviceRow({ name: dev.known_name || dev.id, id: dev.id, mode: 'local_wifi', ip: dev.ip, type: 'socket', version: dev.version });
       added++;
     });
-    renderScanLanResults(devices, existing);
+    renderScanLanResults(devices, existing, updatedGatewayNames);
+    const gwUpdated = updatedGatewayNames.size;
+    const knownCount = devices.length - added - gwUpdated;
     status.textContent = devices.length
-      ? `Znaleziono ${devices.length} urządzeń (${added} nowych, ${devices.length - added} już znanych) - local_key NIE jest rozgłaszany, uzupełnij go ręcznie albo zaimportuj z Tuya Cloud.`
+      ? `Znaleziono ${devices.length} urządzeń (${added} nowych, ${knownCount} już znanych` +
+        (gwUpdated ? `, ${gwUpdated} to bramka Zigbee - uzupełniono adres IP` : '') +
+        `) - local_key NIE jest rozgłaszany, uzupełnij go ręcznie albo zaimportuj z Tuya Cloud. Jeśli wśród nowych jest bramka Zigbee, oznacz ją przyciskiem niżej.`
       : 'Nie znaleziono żadnych urządzeń w sieci.';
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
@@ -650,6 +693,8 @@ document.getElementById('scanLanBtn').addEventListener('click', async () => {
     btn.disabled = false;
   }
 });
+
+let lastImportDevices = [];
 
 function _importSectionHeader(text) {
   const h = document.createElement('div');
@@ -667,21 +712,20 @@ function _renderGatewayCandidate(d, container) {
     container.appendChild(row);
     return;
   }
-  if (!d.ip || !d.local_key) {
-    row.className = 'scan-result-new';
-    row.textContent = `⏳ ${d.name || d.id} (ID ${d.id}) - wygląda na bramkę Zigbee, ale nie odnaleziono jej w LAN - spróbuj ponownie za chwilę`;
-    container.appendChild(row);
-    return;
-  }
+  const hasIp = !!d.ip;
   row.className = 'repeatable-row scan-result-new';
-  row.innerHTML = `
-    <span style="flex:1;">🌉 <strong>${escapeHtml(d.name || d.id)}</strong> (IP: ${escapeHtml(d.ip)}) - inne zaimportowane urządzenia wskazują na nią jako bramkę</span>
-    <button type="button" class="set-as-gateway-btn">🌉 Ustaw jako bramkę Zigbee</button>`;
+  row.innerHTML = hasIp
+    ? `<span style="flex:1;">🌉 <strong>${escapeHtml(d.name || d.id)}</strong> (IP: ${escapeHtml(d.ip)}) - inne zaimportowane urządzenia wskazują na nią jako bramkę</span>
+       <button type="button" class="set-as-gateway-btn">🌉 Ustaw jako bramkę Zigbee</button>`
+    : `<span style="flex:1;">⏳ <strong>${escapeHtml(d.name || d.id)}</strong> (ID ${escapeHtml(d.id)}) - wygląda na bramkę Zigbee, ale nie odnaleziono jej w LAN - można dodać już teraz i uzupełnić adres IP później (ręcznie albo przyciskiem "🔍 Skanuj sieć" niżej)</span>
+       <button type="button" class="set-as-gateway-btn">🌉 Dodaj bramkę bez adresu IP</button>`;
   row.querySelector('.set-as-gateway-btn').addEventListener('click', () => {
-    addGatewayRow({ name: d.name || d.id, id: d.id, ip: d.ip, local_key: d.local_key, version: d.version });
+    addGatewayRow({ name: d.name || d.id, id: d.id, ip: d.ip || '', local_key: d.local_key, version: d.version });
     refreshGatewaySelects();
-    row.className = 'scan-result-known';
-    row.textContent = `🟠 ${d.name || d.id} - dodano jako bramkę wyżej, zapisz formularz (💾 Zapisz urządzenia)`;
+    // Pełne przerysowanie zamiast tylko tego wiersza: podurządzenia Zigbee
+    // wskazujące na tę bramkę mogły wcześniej pokazywać "brakuje bramki" -
+    // teraz, gdy bramka istnieje (nawet bez IP), dostają przycisk dodania.
+    renderImportResults(lastImportDevices);
   });
   container.appendChild(row);
 }
@@ -776,6 +820,7 @@ document.getElementById('cloudImportBtn').addEventListener('click', async () => 
       return;
     }
     const devices = data.devices || [];
+    lastImportDevices = devices;
     const gatewaysCount = devices.filter(d => d.is_gateway).length;
     const subCount = devices.filter(d => d.gateway_id && !d.is_gateway).length;
     const localReadyCount = devices.filter(d => !d.is_gateway && !d.gateway_id && d.ip && d.local_key).length;
