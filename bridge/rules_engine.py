@@ -432,7 +432,14 @@ class RulesEngine:
         (tryb library) stan aktualny czytamy z `SatelIntegraClient.violated_outputs`
         (na żywo, bez zapytania) - dla Tuya przez `TuyaController.toggle`. `reason`
         trafia do logu Tuya (np. nazwa reguły ruchu/flow/sceny), żeby dało się
-        ustalić, co wyzwoliło daną komendę."""
+        ustalić, co wyzwoliło daną komendę.
+
+        Po udanym turn_on/turn_off aktualizujemy status "tuya:<device>" w historii
+        OD RAZU (zanim przyjdzie potwierdzenie z kolejnego pollingu/Pulsara) - bez
+        tego węzeł "Warunek stanu" reguły/flow odpalonej wielokrotnie pod rząd (np.
+        strefa ruchu zgłaszająca "naruszona" co kilka sekund, dopóki trwa ruch)
+        czytałby wciąż nieaktualny, stary stan i wysyłał tę samą komendę do Tuya
+        wielokrotnie zamiast raz."""
         if target_system == "satel_output":
             output_number = self.satel.monitored_outputs.get(device)
             if output_number is None:
@@ -450,8 +457,10 @@ class RulesEngine:
             await self.tuya.toggle(device, reason=reason)
         elif on:
             await self.tuya.turn_on(device, dimmer, reason=reason)
+            self.history.set_status(f"tuya:{device}", "tuya", "włączone", label=device)
         else:
             await self.tuya.turn_off(device, reason=reason)
+            self.history.set_status(f"tuya:{device}", "tuya", "wyłączone", label=device)
 
     async def _set_tuya_dp(self, device: str, dp_code: str, value: object, reason: str | None = None) -> None:
         """Wrapper wołany przez FlowEngine (węzeł "Ustaw pole Tuya") - jak
