@@ -1697,6 +1697,65 @@ class TestApplyTuyaDeviceStatus:
         assert engine.homekit.sensor_calls == []
 
 
+class TestHomeKitReload:
+    """reload_config() musi podmienić instancję HomeKitBridge na nową zbudowaną
+    z przeładowanej konfiguracji - inaczej dodanie/usunięcie urządzenia Tuya (albo
+    strefy/sceny) w configu nigdy nie pojawi się w Home.app bez pełnego restartu
+    procesu (akcesoria HAP-python są budowane raz w konstruktorze)."""
+
+    class _FakeHomeKit:
+        def __init__(self, label):
+            self.label = label
+            self.started = False
+            self.stopped = False
+
+        async def async_start(self):
+            self.started = True
+
+        async def async_stop(self):
+            self.stopped = True
+
+    async def test_reload_rebuilds_and_swaps_homekit_instance(self, engine, monkeypatch):
+        old = self._FakeHomeKit("old")
+        new = self._FakeHomeKit("new")
+        engine.homekit = old
+        monkeypatch.setattr(engine, "_build_homekit", lambda config: new)
+
+        await engine.reload_config()
+
+        assert old.stopped is True
+        assert engine.homekit is new
+        assert new.started is True
+
+    async def test_reload_starts_homekit_when_newly_enabled(self, engine, monkeypatch):
+        engine.homekit = None
+        new = self._FakeHomeKit("new")
+        monkeypatch.setattr(engine, "_build_homekit", lambda config: new)
+
+        await engine.reload_config()
+
+        assert engine.homekit is new
+        assert new.started is True
+
+    async def test_reload_stops_homekit_when_newly_disabled(self, engine, monkeypatch):
+        old = self._FakeHomeKit("old")
+        engine.homekit = old
+        monkeypatch.setattr(engine, "_build_homekit", lambda config: None)
+
+        await engine.reload_config()
+
+        assert old.stopped is True
+        assert engine.homekit is None
+
+    async def test_reload_is_a_noop_when_homekit_stays_disabled(self, engine, monkeypatch):
+        engine.homekit = None
+        monkeypatch.setattr(engine, "_build_homekit", lambda config: None)
+
+        await engine.reload_config()
+
+        assert engine.homekit is None
+
+
 class TestTuyaStatusPollLoop:
 
     async def test_cloud_only_device_does_not_crash_loop_for_other_devices(self, engine, fake_tuya):

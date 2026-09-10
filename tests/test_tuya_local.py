@@ -243,17 +243,37 @@ class TestFetchCloudDevices:
         devices = fetch_cloud_devices("eu", "access_id", "access_secret")
         assert devices == [{
             "id": "d1", "name": "Gniazdko", "local_key": "localkey1", "ip": "", "version": "", "category": "",
-            "gateway_id": "", "node_id": "", "dp_schema": {},
+            "gateway_id": "", "node_id": "", "sub": False, "is_gateway": False, "dp_schema": {},
         }]
 
     def test_surfaces_gateway_id_and_node_id_for_zigbee_sub_devices(self, monkeypatch):
         monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
-            {"id": "sub1", "name": "Lampka Zigbee", "key": "", "gateway_id": "gw1", "node_id": "0011"},
+            {"id": "sub1", "name": "Lampka Zigbee", "key": "", "gateway_id": "gw1", "node_id": "0011", "sub": True},
         ]))
         monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
         devices = fetch_cloud_devices("eu", "access_id", "access_secret")
         assert devices[0]["gateway_id"] == "gw1"
         assert devices[0]["node_id"] == "0011"
+        assert devices[0]["sub"] is True
+
+    def test_marks_device_referenced_as_a_gateway_id_as_is_gateway(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
+            {"id": "gw1", "name": "Brama Zigbee", "key": "gwkey"},
+            {"id": "sub1", "name": "Lampka Zigbee", "key": "", "gateway_id": "gw1", "sub": True},
+        ]))
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
+        devices = fetch_cloud_devices("eu", "access_id", "access_secret")
+        by_id = {d["id"]: d for d in devices}
+        assert by_id["gw1"]["is_gateway"] is True
+        assert by_id["sub1"]["is_gateway"] is False
+
+    def test_device_without_any_sub_devices_is_not_a_gateway(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
+            {"id": "d1", "name": "Gniazdko", "key": "localkey1"},
+        ]))
+        monkeypatch.setattr("bridge.tuya_local.scan_network", lambda **kw: [])
+        devices = fetch_cloud_devices("eu", "access_id", "access_secret")
+        assert devices[0]["is_gateway"] is False
 
     def test_cross_references_lan_scan_by_id_for_ip(self, monkeypatch):
         monkeypatch.setattr("bridge.tuya_local.tinytuya.Cloud", lambda **kw: FakeCloud(devices=[
@@ -866,6 +886,40 @@ class TestZigbeeGateways:
         ctrl = TuyaLocalController(devices_cfg, self.GATEWAYS_CFG)
         assert "lampka" not in ctrl._devices
         assert "gniazdko_salon" in ctrl._devices
+
+
+class TestProtocolVersionFallback:
+    """Config przechowuje version="" gdy pole w formularzu było puste - to nie może
+    zostać przekazane wprost do tinytuya (błędnie zinterpretowane jako brak wersji =
+    domyślne 3.1, zamiast prawdziwego "użyj 3.4 jako sensownego fallbacku")."""
+
+    def test_regular_device_with_empty_string_version_falls_back_to_3_4(self):
+        devices_cfg = {
+            "gniazdko": {"id": "dev1", "ip": "192.168.1.50", "local_key": "key1", "version": ""},
+        }
+        ctrl = TuyaLocalController(devices_cfg)
+        assert ctrl._devices["gniazdko"].version == 3.4
+
+    def test_regular_device_with_explicit_version_is_used(self):
+        devices_cfg = {
+            "gniazdko": {"id": "dev1", "ip": "192.168.1.50", "local_key": "key1", "version": 3.3},
+        }
+        ctrl = TuyaLocalController(devices_cfg)
+        assert ctrl._devices["gniazdko"].version == 3.3
+
+    def test_regular_device_without_version_key_falls_back_to_3_4(self):
+        devices_cfg = {
+            "gniazdko": {"id": "dev1", "ip": "192.168.1.50", "local_key": "key1"},
+        }
+        ctrl = TuyaLocalController(devices_cfg)
+        assert ctrl._devices["gniazdko"].version == 3.4
+
+    def test_gateway_with_empty_string_version_falls_back_to_3_4(self):
+        gateways_cfg = {
+            "brama_salon": {"id": "gw1", "ip": "192.168.1.60", "local_key": "gwkey", "version": ""},
+        }
+        ctrl = TuyaLocalController({}, gateways_cfg)
+        assert ctrl._gateways["brama_salon"].version == 3.4
 
     def test_zigbee_gateways_cfg_defaults_to_empty_when_omitted(self):
         ctrl = TuyaLocalController(DEVICES_CFG)

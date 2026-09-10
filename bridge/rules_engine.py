@@ -134,21 +134,30 @@ class RulesEngine:
                 entities=[], history=self.history, notify_cfg=notify_cfg, grace_seconds=grace_seconds,
             )
 
-        self.homekit: HomeKitBridge | None = None
+        self.homekit: HomeKitBridge | None = self._build_homekit(config)
+
+    def _build_homekit(self, config: BridgeConfig) -> HomeKitBridge | None:
+        """Buduje świeżą instancję HomeKitBridge (i jej akcesoria) z aktualnej
+        konfiguracji. Akcesoria HAP-python są budowane raz w konstruktorze i nie
+        da się ich potem dodawać/usuwać na żywo - jedyny sposób, żeby dodanie albo
+        usunięcie urządzenia Tuya (albo strefy/sceny) faktycznie pojawiło się w
+        Home.app bez pełnego restartu procesu, to zbudowanie nowej instancji i
+        podmiana starej (patrz reload_config: stop starej, potem start nowej)."""
         homekit_cfg = config.raw.get("homekit", {})
-        if homekit_cfg.get("enabled"):
-            resolved = resolve_homekit_config(config.raw)
-            enabled_partitions = {
-                name: info["number"] for name, info in resolved["partitions"].items() if info["enabled"]
-            }
-            exposed_devices = {name: info for name, info in resolved["devices"].items() if info["type"]}
-            exposed_scene_names = {name for name, info in resolved["scenes"].items() if info["enabled"]}
-            self.homekit = HomeKitBridge(
-                homekit_cfg, self.satel, self.tuya, self.scenes,
-                enabled_partitions, exposed_devices, exposed_scene_names,
-                persist_path=config.db_path.parent / "homekit_state.json",
-                loop=self._loop, history=self.history,
-            )
+        if not homekit_cfg.get("enabled"):
+            return None
+        resolved = resolve_homekit_config(config.raw)
+        enabled_partitions = {
+            name: info["number"] for name, info in resolved["partitions"].items() if info["enabled"]
+        }
+        exposed_devices = {name: info for name, info in resolved["devices"].items() if info["type"]}
+        exposed_scene_names = {name for name, info in resolved["scenes"].items() if info["enabled"]}
+        return HomeKitBridge(
+            homekit_cfg, self.satel, self.tuya, self.scenes,
+            enabled_partitions, exposed_devices, exposed_scene_names,
+            persist_path=config.db_path.parent / "homekit_state.json",
+            loop=self._loop, history=self.history,
+        )
 
     def _build_rule_name_index(self) -> dict[str, int]:
         return {
@@ -796,6 +805,18 @@ class RulesEngine:
 
         self.presence_simulation.cfg = new_config.raw.get("presence_simulation", {})
         self.presence_simulation.location_cfg = self._location_cfg
+
+        # Akcesoria HAP-python (urządzenia/strefy/sceny wystawione do Home.app) są
+        # budowane raz przy tworzeniu HomeKitBridge - jedyny sposób, żeby dodanie
+        # albo usunięcie urządzenia Tuya faktycznie zniknęło/pojawiło się w
+        # Home.app bez pełnego restartu procesu, to zbudowanie nowej instancji
+        # (z już przeładowanym self.tuya/self.scenes) i podmiana starej.
+        old_homekit = self.homekit
+        if old_homekit is not None:
+            await old_homekit.async_stop()
+        self.homekit = self._build_homekit(new_config)
+        if self.homekit is not None:
+            await self.homekit.async_start()
 
         if self.ebus_listener is not None:
             self.ebus_listener.update_sensors(new_config.ebus)

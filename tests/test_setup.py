@@ -322,6 +322,32 @@ class TestSatelFieldsAndTuyaDevicesBuilders:
         assert devices["devices"]["d"]["dimmer_dp"] == "3"
         assert devices["devices"]["d"]["dimmer_range"] == [10, 1000]
 
+    def test_build_tuya_devices_empty_string_version_falls_back_to_3_4(self):
+        form = {"tuya_devices": [
+            {"name": "gniazdko", "id": "d1", "ip": "1.2.3.4", "local_key": "k", "version": "", "type": "socket"},
+        ]}
+        devices = build_tuya_devices_dict(form)
+        assert devices["devices"]["gniazdko"]["version"] == 3.4
+
+    def test_build_tuya_devices_explicit_version_is_preserved(self):
+        form = {"tuya_devices": [
+            {"name": "gniazdko", "id": "d1", "ip": "1.2.3.4", "local_key": "k", "version": "3.3", "type": "socket"},
+        ]}
+        devices = build_tuya_devices_dict(form)
+        assert devices["devices"]["gniazdko"]["version"] == 3.3
+
+    def test_build_zigbee_gateway_empty_string_version_falls_back_to_3_4(self):
+        form = {"zigbee_gateways": [
+            {"name": "brama", "id": "gw1", "ip": "1.2.3.4", "local_key": "gwkey", "version": ""},
+        ]}
+        result = build_tuya_devices_dict(form)
+        assert result["zigbee_gateways"]["brama"]["version"] == 3.4
+
+    def test_tuya_devices_to_rows_round_trips_version(self):
+        devices = {"gniazdko": {"id": "d1", "ip": "1.2.3.4", "local_key": "k", "version": 3.3, "type": "socket"}}
+        rows = tuya_devices_to_rows(devices)
+        assert rows[0]["version"] == 3.3
+
     def test_build_tuya_devices_empty_form(self):
         assert build_tuya_devices_dict({}) == {"devices": {}, "zigbee_gateways": {}, "cloud_devices": {}}
 
@@ -389,12 +415,27 @@ class TestCloudDevicesBuilder:
     def test_build_cloud_devices_requires_only_name_and_id(self):
         form = {"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]}
         devices = build_tuya_devices_dict(form)["cloud_devices"]
-        assert devices == {"lampa_taras": {"id": "c1", "category": "", "switch_code": "switch_1", "dp_schema": {}}}
+        assert devices == {
+            "lampa_taras": {
+                "id": "c1", "category": "", "switch_code": "switch_1",
+                "local_key": "", "ip": "", "version": "", "dp_schema": {},
+            },
+        }
 
     def test_build_cloud_devices_keeps_category_and_switch_code(self):
         form = {"cloud_devices": [{"name": "wentylator", "id": "c2", "category": "fs", "switch_code": "switch"}]}
         devices = build_tuya_devices_dict(form)["cloud_devices"]
-        assert devices["wentylator"] == {"id": "c2", "category": "fs", "switch_code": "switch", "dp_schema": {}}
+        assert devices["wentylator"]["category"] == "fs"
+        assert devices["wentylator"]["switch_code"] == "switch"
+
+    def test_build_cloud_devices_keeps_local_key_ip_version(self):
+        form = {"cloud_devices": [
+            {"name": "wentylator", "id": "c2", "local_key": "k2", "ip": "192.168.1.30", "version": "3.3"},
+        ]}
+        devices = build_tuya_devices_dict(form)["cloud_devices"]
+        assert devices["wentylator"]["local_key"] == "k2"
+        assert devices["wentylator"]["ip"] == "192.168.1.30"
+        assert devices["wentylator"]["version"] == "3.3"
 
     def test_build_cloud_devices_preserves_dp_schema(self):
         schema = {"1": {"code": "manual_delay", "type": "Value", "values": "{}"}}
@@ -423,8 +464,18 @@ class TestCloudDevicesBuilder:
     def test_cloud_devices_to_rows_roundtrip(self):
         devices = {"lampa_taras": {"id": "c1", "category": "kg", "switch_code": "switch_1"}}
         assert cloud_devices_to_rows(devices) == [
-            {"name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1", "dp_schema": {}},
+            {
+                "name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1",
+                "local_key": "", "ip": "", "version": "", "dp_schema": {},
+            },
         ]
+
+    def test_cloud_devices_to_rows_includes_local_key_ip_version(self):
+        devices = {"lampa_taras": {"id": "c1", "local_key": "k1", "ip": "192.168.1.40", "version": 3.3}}
+        rows = cloud_devices_to_rows(devices)
+        assert rows[0]["local_key"] == "k1"
+        assert rows[0]["ip"] == "192.168.1.40"
+        assert rows[0]["version"] == 3.3
 
     def test_cloud_devices_to_rows_includes_dp_schema(self):
         schema = {"1": {"code": "manual_delay", "type": "Value", "values": "{}"}}

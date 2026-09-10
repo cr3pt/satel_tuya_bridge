@@ -259,6 +259,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             "id": cloud_cfg.get("id", ""),
             "ip": ip,
             "local_key": local_key,
+            "version": float(form.get("version") or 3.4),
             "type": "socket",
             "dp_schema": form.get("dp_schema") or cloud_cfg.get("dp_schema", {}),
         }
@@ -290,7 +291,8 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             return jsonify({"error": f"Nazwa '{name}' jest już użyta - zmień nazwę"}), 400
 
         local_devices[name] = {
-            "id": device_id, "ip": ip, "local_key": local_key, "type": "socket",
+            "id": device_id, "ip": ip, "local_key": local_key,
+            "version": float(form.get("version") or 3.4), "type": "socket",
             "dp_schema": form.get("dp_schema") or {},
         }
         tuya_devices["devices"] = local_devices
