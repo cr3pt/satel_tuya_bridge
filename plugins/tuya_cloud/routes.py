@@ -124,7 +124,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         access_key = cloud.get("access_key", "")
         if not api_region or not access_id or not access_key:
             return jsonify({
-                "error": "Najpierw zapisz poświadczenia Tuya Cloud wyżej (region, Access ID, Access Secret).",
+                "error": "Najpierw zapisz poświadczenia Tuya Cloud (zakładka ☁ Tuya Cloud - region, Access ID, Access Secret).",
             }), 400
 
         scan_networks = get_config_raw().get("tuya", {}).get("scan_networks") or []
@@ -147,7 +147,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         access_key = cloud.get("access_key", "")
         if not api_region or not access_id or not access_key:
             return jsonify({
-                "error": "Najpierw zapisz poświadczenia Tuya Cloud wyżej (region, Access ID, Access Secret).",
+                "error": "Najpierw zapisz poświadczenia Tuya Cloud (zakładka ☁ Tuya Cloud - region, Access ID, Access Secret).",
             }), 400
 
         devices = {name: dict(cfg) for name, cfg in get_config_raw().get("tuya", {}).get("cloud_devices", {}).items()}
@@ -191,7 +191,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         access_key = cloud.get("access_key", "")
         if not api_region or not access_id or not access_key:
             return jsonify({
-                "error": "Najpierw zapisz poświadczenia Tuya Cloud wyżej (region, Access ID, Access Secret).",
+                "error": "Najpierw zapisz poświadczenia Tuya Cloud (zakładka ☁ Tuya Cloud - region, Access ID, Access Secret).",
             }), 400
 
         cloud_devices = get_config_raw().get("tuya", {}).get("cloud_devices", {})

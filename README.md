@@ -347,6 +347,14 @@ Po skonfigurowaniu bridge'a import urządzeń przenosi się do zakładki
 **☁ Tuya Cloud** (🧩 Wtyczki → Tuya Cloud) - zapisz tam poświadczenia
 (Access ID/Secret/region) RAZ, potem przycisk **☁ Importuj z Tuya Cloud**
 pobiera listę urządzeń jednym kliknięciem, bez wpisywania ich ponownie.
+Ten sam przycisk (korzystający z tych samych, raz zapisanych poświadczeń)
+jest też dostępny w zakładce **🔌 Tuya (LAN)** - można zrobić import i
+dodać urządzenie jako lokalne z obu stron, bez przełączania kart.
+
+Wyniki skanowania/importu są kolorowane: **🟠 pomarańczowy** - urządzenie
+już znane (skonfigurowane lokalnie albo w tabeli chmurowej), **🟢 zielony**
+- nowe, jeszcze nieskonfigurowane. Dotyczy to zarówno skanu LAN
+(zakładka Tuya (LAN)), jak i importu z Tuya Cloud (obie zakładki).
 
 Import rozdziela urządzenia automatycznie:
 - **Komplet danych** (adres IP znaleziony w sieci LAN + `local_key`
@@ -411,8 +419,10 @@ bridge działa w kontenerze Docker bez trybu `network: host`, albo gdy
 urządzenia Tuya są w innej podsieci/VLAN-ie niż bridge. W takiej sytuacji
 "🔍 Skanuj sieć LAN" (zakładka 🔌 Tuya (LAN)) i "🔄 Rescan" (zakładka ☁
 Tuya Cloud) nic nie znajdą, mimo że urządzenia normalnie działają. Sekcja
-**"Zakresy/adresy IP do skanowania"** na dole zakładki 🔌 Tuya (LAN)
-pozwala podać ręcznie adresy IP i/albo zakresy CIDR (np.
+**"Zakresy/adresy IP do skanowania"** (dostępna zarówno w zakładce
+🔌 Tuya (LAN), jak i ☁ Tuya Cloud - to jedno wspólne ustawienie,
+edytowalne z obu miejsc) pozwala podać ręcznie adresy IP i/albo
+zakresy CIDR (np.
 `192.168.1.0/24`, albo pojedynczy adres `192.168.1.50`) - z takim
 zakresem oba przyciski skanowania (LAN i Rescan) dodatkowo aktywnie
 łączą się (TCP) z każdym adresem w zakresie zamiast polegać wyłącznie na
