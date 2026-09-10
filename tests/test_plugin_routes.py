@@ -361,13 +361,50 @@ class TestTuyaLocalPluginPage:
         assert (await client.post("/api/plugins/tuya/scan")).status_code == 401
         resp = (await client.post("/api/plugins/tuya/scan", headers=_basic_auth_header("test_haslo_123")))
         assert resp.status_code == 200
-        assert (await resp.get_json())["devices"] == [{"id": "d1", "ip": "1.2.3.4", "known_name": "gniazdko"}]
+        assert (await resp.get_json())["devices"] == [
+            {"id": "d1", "ip": "1.2.3.4", "known_name": "gniazdko", "known_gateway_name": ""},
+        ]
 
     async def test_scan_known_name_empty_when_no_id_match(self, client, monkeypatch):
         monkeypatch.setattr("plugins.tuya_local.routes.scan_tuya_network", lambda **kw: [{"id": "nieznany", "ip": "1.2.3.9"}])
         resp = (await client.post("/api/plugins/tuya/scan", headers=_basic_auth_header("test_haslo_123")))
         assert resp.status_code == 200
-        assert (await resp.get_json())["devices"] == [{"id": "nieznany", "ip": "1.2.3.9", "known_name": ""}]
+        assert (await resp.get_json())["devices"] == [
+            {"id": "nieznany", "ip": "1.2.3.9", "known_name": "", "known_gateway_name": ""},
+        ]
+
+    async def test_scan_known_gateway_name_set_for_configured_zigbee_gateway(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya/devices",
+            json={"tuya_devices": [], "zigbee_gateways": [
+                {"name": "brama", "id": "gw1", "ip": "", "local_key": "gwkey"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        monkeypatch.setattr("plugins.tuya_local.routes.scan_tuya_network", lambda **kw: [{"id": "gw1", "ip": "1.2.3.5"}])
+        resp = await client.post("/api/plugins/tuya/scan", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        devices = (await resp.get_json())["devices"]
+        assert devices[0]["known_gateway_name"] == "brama"
+
+    async def test_scan_passes_zigbee_gateway_key_as_known_tuyadevice(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya/devices",
+            json={"tuya_devices": [], "zigbee_gateways": [
+                {"name": "brama", "id": "gw1", "ip": "", "local_key": "gwkey"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        captured = {}
+
+        def fake_scan(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr("plugins.tuya_local.routes.scan_tuya_network", fake_scan)
+        resp = await client.post("/api/plugins/tuya/scan", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert {"id": "gw1", "key": "gwkey", "name": "brama"} in captured["tuyadevices"]
 
     async def test_scan_passes_configured_networks_and_known_local_devices_as_tuyadevices(self, client, monkeypatch):
         await client.post(

@@ -60,9 +60,14 @@ def validate_satel_fields(form: dict) -> list[str]:
 
 def validate_tuya_devices(form: dict) -> list[str]:
     errors = []
+    # Adres IP bramki celowo NIE jest tu wymagany: bramka wykryta importem z Tuya
+    # Cloud, ale jeszcze nieodnaleziona w LAN, musi dać się zapisać (z pustym IP)
+    # razem ze wszystkimi podurządzeniami Zigbee, które przez nią działają - inaczej
+    # użytkownik nie ma jak zapisać reszty konfiguracji, dopóki bramka nie odpowie
+    # na skan sieci. IP uzupełnia się później ręcznie albo przez "🔍 Skanuj sieć".
     gateway_names = {
         g["name"].strip() for g in form.get("zigbee_gateways", [])
-        if g.get("name") and g.get("id") and g.get("ip") and g.get("local_key")
+        if g.get("name") and g.get("id") and g.get("local_key")
     }
     for i, device in enumerate(form.get("tuya_devices", [])):
         label = f"Urządzenie Tuya #{i + 1}"
@@ -79,8 +84,8 @@ def validate_tuya_devices(form: dict) -> list[str]:
             errors.append(f"{label}: nazwa, ID, adres IP i local_key są wymagane")
 
     for i, gateway in enumerate(form.get("zigbee_gateways", [])):
-        if not gateway.get("name") or not gateway.get("id") or not gateway.get("ip") or not gateway.get("local_key"):
-            errors.append(f"Bramka Zigbee #{i + 1}: nazwa, ID, adres IP i local_key są wymagane")
+        if not gateway.get("name") or not gateway.get("id") or not gateway.get("local_key"):
+            errors.append(f"Bramka Zigbee #{i + 1}: nazwa, ID i local_key są wymagane (adres IP można uzupełnić później)")
     return errors
 
 
@@ -723,11 +728,12 @@ def _build_tuya_devices(form: dict) -> dict:
 def _build_zigbee_gateways(form: dict) -> dict:
     return {
         g["name"]: {
-            "id": g["id"], "ip": g["ip"], "local_key": g["local_key"],
+            "id": g["id"], "ip": g.get("ip", ""), "local_key": g["local_key"],
             "version": float(g.get("version") or 3.4),
         }
         for g in form.get("zigbee_gateways", [])
-        if g.get("name") and g.get("id") and g.get("ip") and g.get("local_key")
+        # IP celowo nieobowiązkowe - patrz komentarz w validate_tuya_devices().
+        if g.get("name") and g.get("id") and g.get("local_key")
     }
 
 
