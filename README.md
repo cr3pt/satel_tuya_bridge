@@ -414,6 +414,17 @@ kliknięciem usuwa je z listy chmurowej i dodaje do zakładki 🔌 Tuya
 (LAN) z tym samym ID i pobranym `local_key`/adresem IP (opis pól DP,
 jeśli był już pobrany, przechodzi razem z urządzeniem).
 
+**Skan trwa ok. 18 sekund - to normalne, nie oznacza zawieszenia.**
+Tuya rozgłasza się w sieci LAN cyklicznie, nie w sposób ciągły, więc
+skan musi nasłuchiwać broadcastu UDP przez pewien czas, żeby złapać
+wszystkie urządzenia (dokładnie tak samo działa ręczne uruchomienie
+`python -m tinytuya scan` - jego domyślny czas nasłuchu to też 18s).
+Każdy z trzech przycisków skanujących sieć (🔍 Skanuj sieć LAN, ☁
+Importuj z Tuya Cloud, 🔄 Rescan) rzeczywiście tyle czeka - jeśli
+wcześniej u Ciebie kończyły się od razu z pustym wynikiem mimo
+działających urządzeń widocznych w samym `tinytuya`, to był błąd w
+bridge'u (czas nasłuchu skrócony do 1s zamiast 18s), naprawiony.
+
 **Skan LAN (broadcast UDP) nie zawsze dociera do bridge'a** - typowo, gdy
 bridge działa w kontenerze Docker bez trybu `network: host`, albo gdy
 urządzenia Tuya są w innej podsieci/VLAN-ie niż bridge. W takiej sytuacji
@@ -439,6 +450,14 @@ z już połączonymi urządzeniami Tuya (błędy typu "Check device key or
 version" na innych urządzeniach w trakcie skanowania). Zapis zakresu
 szerszego niż 64 adresy (mniej niż `/26`) pokazuje o tym ostrzeżenie, ale
 nadal pozwala go zapisać.
+
+Jeśli skan aktywnego zakresu kończy się w logu wpisem "Skan LAN podczas
+importu z Tuya Cloud nie powiódł się" z `KeyError: 'name'` w środku
+tracebacku (biblioteka `tinytuya`, `scanner.py: found_key()`) - to nasz
+błąd, nie ograniczenie samej biblioteki: `tinytuya` odczytuje pole `name`
+z listy znanych urządzeń bez zabezpieczenia `.get()`, a bridge do niedawna
+budował tę listę bez tego pola. Naprawione - import od razu przekazuje
+komplet danych (`id`, `key`, `name`) każdego znanego urządzenia.
 
 ### Częsty problem: import zwraca 0 urządzeń (albo błąd 401 na kamery) mimo poprawnych danych
 

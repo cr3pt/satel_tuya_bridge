@@ -90,7 +90,7 @@ def _decode_phase_raw(value: str) -> str | None:
 
 
 def scan_network(
-    maxretry: int = 1, networks: list[str] | None = None, tuyadevices: list[dict] | None = None,
+    maxretry: int = 18, networks: list[str] | None = None, tuyadevices: list[dict] | None = None,
 ) -> list[dict]:
     """Skanuje LAN w poszukiwaniu urządzeń Tuya.
 
@@ -102,6 +102,14 @@ def scan_network(
     listy znanych par ID+`local_key` (`tuyadevices`), bo tinytuya identyfikuje
     urządzenie próbą uzgodnienia (handshake) danym kluczem, a nie samym
     nasłuchem broadcastu.
+
+    `maxretry` nazwą myli - to NIE liczba prób, tylko `scantime` tinytuya:
+    ile sekund nasłuchiwać broadcastu UDP (Tuya rozgłasza się cyklicznie,
+    nie w sposób ciągły, więc zbyt krótki czas nasłuchu regularnie przegapia
+    urządzenia, które widać w samym `tinytuya`/`python -m tinytuya scan`
+    uruchomionym ręcznie z dłuższym czasem). Domyślne 18s pokrywa się z
+    własnym domyślnym `tinytuya.SCANTIME` i z czasem obiecanym w UI ("ok.
+    18s") - NIE zaniżać bez zmiany tekstu w UI.
     """
     if networks:
         from tinytuya import scanner as tinytuya_scanner
@@ -173,11 +181,12 @@ def fetch_cloud_devices(
 
     try:
         tuyadevices_for_scan = [
-            {"id": d["id"], "key": d["key"]} for d in result if d.get("id") and d.get("key")
+            {"id": d["id"], "key": d["key"], "name": d.get("name", "")}
+            for d in result if d.get("id") and d.get("key")
         ]
         lan_devices = {
             d["id"]: d
-            for d in scan_network(maxretry=1, networks=networks, tuyadevices=tuyadevices_for_scan)
+            for d in scan_network(networks=networks, tuyadevices=tuyadevices_for_scan)
             if d.get("id")
         }
     except Exception:
