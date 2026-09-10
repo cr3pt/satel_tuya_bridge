@@ -30,6 +30,7 @@ META = PluginMeta(
     config_key="homekit",
     toggle_route="toggle_no_prereq",
     describe_state=describe_state,
+    category="Dom",
 )
 
 _DEFAULT_PORT = 51826

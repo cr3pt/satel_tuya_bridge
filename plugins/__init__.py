@@ -27,6 +27,10 @@ class PluginMeta:
     min_poll_interval_seconds: int | None = None
     toggle_route: str = "toggle_prereq"
     describe_state: Callable[[dict], dict] | None = None
+    category: str = "Inne"
+
+
+PLUGIN_CATEGORIES = ["Ochrona", "Tuya", "Dom", "Inne"]
 
 
 @dataclass(frozen=True)

@@ -35,6 +35,7 @@ META = PluginMeta(
     min_poll_interval_seconds=2,
     toggle_route="toggle_prereq_connections_live",
     describe_state=describe_state,
+    category="Ochrona",
 )
 
 _background_scan = BackgroundZoneOutputScan()

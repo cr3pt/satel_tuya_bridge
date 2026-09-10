@@ -967,6 +967,18 @@ pełnym restarcie procesu (`wymaga restartu`) pozostaje tam trwale, bo o
 przynależności decyduje zapisany stan w `config.db`, a nie chwilowy stan
 procesu.
 
+### Grupowanie tematyczne wtyczek
+
+Zarówno lista włączonych, jak i zwijana lista "Wtyczki do włączenia" dzielą
+karty na tematyczne grupy z nagłówkiem: 🛡️ **Ochrona** (Satel, UniFi
+Protect), 🧩 **Tuya** (Tuya lokalnie/Zigbee, Tuya Cloud), 🏠 **Dom**
+(pozostałe integracje domowe - eBUS, Home Assistant, publikacja MQTT,
+symulacja obecności, powiadomienia, HomeKit, MCP Server, HomeWhiz) i 📦
+**Inne** jako domyślna kategoria dla wtyczek bez przypisanej grupy.
+Przynależność do grupy ustala pole `category` na `PluginMeta` każdej
+wtyczki (`plugins/<id>/routes.py`) - nowa integracja bez podanego
+`category` trafia automatycznie do grupy "Inne".
+
 ### Jak wtyczki są wykrywane (auto-discovery)
 
 Lista wtyczek na `/plugins` **nie jest hardkodowana** - każdy podkatalog
@@ -1001,6 +1013,17 @@ jedną integracją (np. `DEBUG` dla Tuya lokalnie) bez zalewania logów
 szczegółami reszty systemu. Działa na żywo, bez restartu procesu (patrz
 `bridge/logging_config.py: apply_log_levels`, wywoływane przy starcie i
 przy każdym przeładowaniu konfiguracji).
+
+**Logi komend Tuya pokazują, co je wywołało.** Wpisy w logu przy
+włączeniu/wyłączeniu/zmianie stanu urządzenia Tuya (lokalnie i przez
+chmurę) kończą się dopiskiem `- <przyczyna>`, np. `Wyłączono 'Garaż góra'
+przez Tuya Cloud (switch_1) - reguła ruchu 'wylacz_noca'` - dotyczy reguł
+ruchu (z nazwą reguły, jeśli ją nadano), węzłów Flow (`flow '<nazwa>'`),
+scen (`scena '<nazwa>'`), symulacji obecności, sterowania ręcznego z
+panelu (`panel (ręcznie)`), Home Assistant (MQTT) i HomeKit. Reguły/flow
+bez nadanej nazwy nie dodają dopisku - warto nazwać regułę/flow, jeśli
+zależy Ci na czytelnym śledzeniu w logach, która automatyzacja coś
+zrobiła.
 
 **Interwał odpytywania (Satel i Tuya lokalnie).** Te dwie karty mają
 dodatkowo pole "Interwał odpytywania" - jak często bridge SAM dopytuje o

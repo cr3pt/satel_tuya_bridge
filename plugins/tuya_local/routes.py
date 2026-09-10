@@ -56,6 +56,7 @@ META = PluginMeta(
     min_poll_interval_seconds=3,
     toggle_route="toggle_prereq_connections_live",
     describe_state=describe_state,
+    category="Tuya",
 )
 
 ZIGBEE_META = PluginMeta(
@@ -68,6 +69,7 @@ ZIGBEE_META = PluginMeta(
     toggleable=False,
     restart_required=False,
     describe_state=describe_zigbee_state,
+    category="Tuya",
 )
 
 METAS = [META, ZIGBEE_META]

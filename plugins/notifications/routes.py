@@ -22,6 +22,7 @@ META = PluginMeta(
     config_url="/plugins/notifications",
     config_key="notifications",
     describe_state=describe_state,
+    category="Dom",
 )
 
 

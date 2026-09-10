@@ -24,6 +24,7 @@ META = PluginMeta(
     config_url="/plugins/unifi_protect",
     config_key="unifi_protect",
     describe_state=describe_state,
+    category="Ochrona",
 )
 
 _client_cache: dict[tuple, object] = {}

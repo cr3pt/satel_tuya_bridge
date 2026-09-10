@@ -33,6 +33,7 @@ META = PluginMeta(
     restart_required=False,
     toggle_route="toggle_no_prereq",
     describe_state=describe_state,
+    category="Dom",
 )
 
 PROTOCOL_VERSION = "2024-11-05"
