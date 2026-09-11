@@ -1089,6 +1089,45 @@ class TestTuyaCloudPluginPage:
         assert by_name["lampa_taras"]["ip"] == "192.168.1.20"
         assert by_name["kamera"]["can_move_to_local"] is False
 
+    async def test_rescan_reports_devices_movable_to_configured_gateway(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya/devices",
+            json={"zigbee_gateways": [{"name": "brama_salon", "id": "gw1", "ip": "192.168.1.5", "local_key": "gwkey"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [
+                {"name": "czujnik_ruchu", "id": "c1"}, {"name": "kamera", "id": "c2"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def _fake_fetch(api_region, access_id, access_key, networks):
+            return [
+                {"id": "c1", "name": "Czujnik", "local_key": "", "ip": "", "version": "",
+                 "gateway_id": "gw1", "node_id": "0x01", "dp_schema": {}},
+                {"id": "c2", "name": "Kamera", "local_key": "", "ip": "", "version": "",
+                 "gateway_id": "", "node_id": "", "dp_schema": {}},
+            ]
+
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", _fake_fetch)
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        by_name = {d["name"]: d for d in data["devices"]}
+        assert by_name["czujnik_ruchu"]["can_move_to_gateway"] is True
+        assert by_name["czujnik_ruchu"]["gateway_name"] == "brama_salon"
+        assert by_name["czujnik_ruchu"]["cid"] == "0x01"
+        assert by_name["kamera"]["can_move_to_gateway"] is False
+
     async def test_rescan_connection_error_returns_502(self, client, monkeypatch):
         await client.post(
             "/api/plugins/tuya_cloud/credentials",

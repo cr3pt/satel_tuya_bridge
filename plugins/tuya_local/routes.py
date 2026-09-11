@@ -361,6 +361,11 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         if not by_id:
             return jsonify({"error": "Brak skonfigurowanych urządzeń chmurowych do przeskanowania"}), 400
         scan_networks = get_config_raw().get("tuya", {}).get("scan_networks") or []
+        # Bramki Zigbee już dodane ręcznie/z importu - potrzebne, żeby rozpoznać,
+        # które chmurowe urządzenie jest podurządzeniem Zigbee wskazującym na JUŻ
+        # skonfigurowaną bramkę (a nie tylko "widziane" przez Tuya Cloud).
+        zigbee_gateways = get_config_raw().get("tuya", {}).get("zigbee_gateways", {})
+        gateway_id_to_name = {cfg["id"]: name for name, cfg in zigbee_gateways.items() if cfg.get("id")}
 
         try:
             devices = await asyncio.get_event_loop().run_in_executor(
@@ -376,6 +381,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             name = by_id.get(d.get("id", ""))
             if not name:
                 continue
+            gateway_name = gateway_id_to_name.get(d.get("gateway_id") or "", "")
             results.append({
                 "name": name,
                 "id": d.get("id", ""),
@@ -384,13 +390,18 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
                 "version": d.get("version", ""),
                 "dp_schema": d.get("dp_schema", {}),
                 "can_move_to_local": bool(d.get("ip") and d.get("local_key")),
+                "can_move_to_gateway": bool(gateway_name),
+                "gateway_name": gateway_name,
+                "cid": d.get("node_id") or d.get("id", ""),
             })
-        movable = sum(1 for r in results if r["can_move_to_local"])
+        movable_local = sum(1 for r in results if r["can_move_to_local"])
+        movable_gateway = sum(1 for r in results if r["can_move_to_gateway"])
         return jsonify({
             "devices": results,
             "message": (
                 f"Przeskanowano {len(results)}/{len(by_id)} urządzeń chmurowych - "
-                f"{movable} może przejść na sterowanie lokalne."
+                f"{movable_local} może przejść na sterowanie lokalne (WiFi), "
+                f"{movable_gateway} na bramkę Zigbee."
             ) if results else "Żadne ze skonfigurowanych urządzeń chmurowych nie zostało odnalezione w Tuya Cloud.",
         })
 
