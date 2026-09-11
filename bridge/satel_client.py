@@ -306,10 +306,14 @@ class SatelIntegraClient:
                  virtual_inputs: dict | None = None, encryption_key: str | None = None,
                  history=None, notify_cfg: dict | None = None, grace_seconds: float = 120,
                  status_poll_interval_seconds: float = 3.0):
-        self.host = host
+        # .strip() - config może pochodzić z importu paczki YAML/ręcznej edycji,
+        # nie tylko z panelu (gdzie te pola są już przycięte w JS) - niewidoczna
+        # spacja w kodzie integracji/kluczu szyfrowania psuje uzbrajanie/rozbrajanie
+        # albo połączenie z centralą bez żadnego czytelnego komunikatu o przyczynie.
+        self.host = (host or "").strip()
         self.port = port
-        self.integration_key = integration_key
-        self.encryption_key = encryption_key
+        self.integration_key = (integration_key or "").strip()
+        self.encryption_key = (encryption_key or "").strip() or None
         self.partition = partition
         self.monitored_zones = monitored_zones or {}
         self.monitored_outputs = monitored_outputs or {}

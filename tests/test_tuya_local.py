@@ -977,6 +977,43 @@ class TestGatewayCallSerialization:
         assert tracker.max_seen == 3
 
 
+class TestCredentialWhitespaceStripping:
+    """Config może pochodzić z importu paczki YAML albo ręcznej edycji, nie tylko
+    z panelu (gdzie pola id/ip/local_key są już przycięte w JS) - niewidoczna
+    spacja/nowa linia na końcu local_key wygląda identycznie jak poprawny klucz,
+    ale tinytuya zgłasza to jako mylące "Check device key or version"."""
+
+    def test_plain_wifi_device_credentials_are_stripped(self):
+        devices_cfg = {
+            "gniazdko": {"id": " dev1\n", "ip": " 192.168.1.50 ", "local_key": " key1\t"},
+        }
+        ctrl = TuyaLocalController(devices_cfg)
+        dev = ctrl._devices["gniazdko"]
+        assert dev.id == "dev1"
+        assert dev.address == "192.168.1.50"
+        assert dev.local_key == b"key1"
+
+    def test_gateway_credentials_are_stripped(self):
+        gateways_cfg = {
+            "brama": {"id": " gw1\n", "ip": " 192.168.1.60 ", "local_key": " gwkey\t"},
+        }
+        ctrl = TuyaLocalController({}, gateways_cfg)
+        gw = ctrl._gateways["brama"]
+        assert gw.id == "gw1"
+        assert gw.address == "192.168.1.60"
+        assert gw.local_key == b"gwkey"
+
+    def test_zigbee_sub_device_id_and_cid_are_stripped(self):
+        devices_cfg = {
+            "lampka": {"id": " sub1\n", "gateway": "brama", "cid": " node1\t"},
+        }
+        gateways_cfg = {"brama": {"id": "gw1", "ip": "192.168.1.60", "local_key": "gwkey"}}
+        ctrl = TuyaLocalController(devices_cfg, gateways_cfg)
+        dev = ctrl._devices["lampka"]
+        assert dev.id == "sub1"
+        assert dev.cid == "node1"
+
+
 class TestProtocolVersionFallback:
     """Config przechowuje version="" gdy pole w formularzu było puste - to nie może
     zostać przekazane wprost do tinytuya (błędnie zinterpretowane jako brak wersji =

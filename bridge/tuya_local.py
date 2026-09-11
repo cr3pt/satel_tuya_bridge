@@ -141,8 +141,13 @@ TUYA_CLOUD_REGIONS = {
 
 
 def _login_cloud(api_region: str, access_id: str, access_key: str) -> tinytuya.Cloud:
+    # .strip() - wklejony Access ID/Secret z konsoli Tuya IoT często niesie ze sobą
+    # niewidoczną spację/nową linię, co Tuya Cloud zwraca jako mylące błędy logowania
+    # zamiast jasno powiedzieć "sprawdź białe znaki".
     try:
-        cloud = tinytuya.Cloud(apiRegion=api_region, apiKey=access_id, apiSecret=access_key)
+        cloud = tinytuya.Cloud(
+            apiRegion=(api_region or "").strip(), apiKey=(access_id or "").strip(), apiSecret=(access_key or "").strip(),
+        )
     except Exception as exc:
         raise ConnectionError(f"Błąd logowania do Tuya Cloud: {exc}") from exc
     if getattr(cloud, "error", None):
@@ -522,7 +527,12 @@ class TuyaLocalController:
         # bramki i zwykłe urządzenia WiFi nadal działają w pełni równolegle).
         self._gateway_locks: dict[str, asyncio.Lock] = {}
         for name, cfg in self.zigbee_gateways_cfg.items():
-            gw = tinytuya.Device(cfg["id"], cfg["ip"], cfg["local_key"])
+            # .strip() na ID/IP/local_key: config może pochodzić nie tylko z panelu
+            # (gdzie pola są już przycięte w JS), ale też z importu paczki YAML albo
+            # ręcznej edycji configu - niewidoczna spacja/nowa linia na końcu
+            # local_key wygląda identycznie jak poprawny klucz, a tinytuya i tak
+            # zgłasza to jako mylące "Check device key or version".
+            gw = tinytuya.Device(cfg["id"].strip(), (cfg.get("ip") or "").strip(), cfg["local_key"].strip())
             gw.set_version(cfg.get("version") or 3.4)
             self._gateways[name] = gw
             self._gateway_locks[name] = asyncio.Lock()
@@ -539,11 +549,12 @@ class TuyaLocalController:
                         name, gateway_name,
                     )
                     continue
+                dev_id = cfg["id"].strip()
                 dev = tinytuya.Device(
-                    cfg["id"], cid=cfg.get("cid") or cfg["id"], dev_type="zigbee", parent=gateway,
+                    dev_id, cid=(cfg.get("cid") or dev_id).strip(), dev_type="zigbee", parent=gateway,
                 )
             else:
-                dev = tinytuya.OutletDevice(cfg["id"], cfg["ip"], cfg["local_key"])
+                dev = tinytuya.OutletDevice(cfg["id"].strip(), cfg["ip"].strip(), cfg["local_key"].strip())
                 dev.set_version(cfg.get("version") or 3.4)
             self._devices[name] = dev
 

@@ -71,6 +71,33 @@ def test_client_uses_configured_api_region(monkeypatch):
     assert captured["apiRegion"] == "us"
 
 
+def test_device_id_with_surrounding_whitespace_is_stripped():
+    """Config może pochodzić z importu YAML/ręcznej edycji, nie tylko z panelu (gdzie
+    pole jest już przycięte w JS) - niewidoczna spacja w ID psuje każde polecenie."""
+    devices_cfg = {"lampa": {"id": "  cloud1  \n", "category": "kg", "switch_code": "switch_1"}}
+    controller = TuyaCloudController(devices_cfg, CREDENTIALS)
+    assert controller.devices_cfg["lampa"]["id"] == "cloud1"
+
+
+def test_credentials_with_surrounding_whitespace_are_stripped(monkeypatch):
+    captured = {}
+
+    def fake_cloud_ctor(apiRegion=None, apiKey=None, apiSecret=None):
+        captured["apiRegion"] = apiRegion
+        captured["apiKey"] = apiKey
+        captured["apiSecret"] = apiSecret
+        return FakeTinytuyaCloud()
+
+    import bridge.tuya_cloud as tuya_cloud_module
+    monkeypatch.setattr(tuya_cloud_module.tinytuya, "Cloud", fake_cloud_ctor)
+
+    controller = TuyaCloudController(
+        DEVICES_CFG, {"api_region": " eu\n", "access_id": " aid ", "access_key": " akey\t"},
+    )
+    controller._client()
+    assert captured == {"apiRegion": "eu", "apiKey": "aid", "apiSecret": "akey"}
+
+
 async def test_turn_on_sends_switch_code_true(controller):
     fake = FakeTinytuyaCloud()
     controller._cloud = fake
