@@ -5,14 +5,40 @@ import base64
 import json
 import logging
 import re
+import socket
 
 import tinytuya
 
 logger = logging.getLogger("bridge.tuya_local")
 
+_TUYA_LOCAL_PORT = 6668
+_DIAGNOSTIC_PROBE_TIMEOUT = 2.0
+
 
 def _reason_suffix(reason: str | None) -> str:
     return f" - {reason}" if reason else ""
+
+
+def _tcp_probe(host: str, port: int = _TUYA_LOCAL_PORT, timeout: float = _DIAGNOSTIC_PROBE_TIMEOUT) -> str:
+    """Szybki test TCP na porcie lokalnego protokołu Tuya, niezależny od tinytuya -
+    wyłącznie do diagnostyki w logu (nigdy do sterowania), żeby przy "Network
+    Error: Unable to Connect" od razu było widać, czy problem jest w ogóle
+    sieciowy (host nieosiągalny/offline) czy leży gdzie indziej (klucz,
+    wersja protokołu)."""
+    if not host:
+        return "brak skonfigurowanego adresu IP"
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return (
+                f"{host}:{port} ODPOWIADA (TCP OK) - problem raczej nie jest w samej "
+                "dostępności sieciowej, sprawdź local_key/wersję protokołu"
+            )
+    except (socket.timeout, TimeoutError):
+        return f"{host}:{port} nie odpowiada w {timeout:.0f}s (timeout) - urządzenie offline albo poza zasięgiem/inną podsiecią"
+    except ConnectionRefusedError:
+        return f"{host}:{port} aktywnie ODRZUCA połączenie - urządzenie żyje w sieci, ale nic nie nasłuchuje na tym porcie (restart w toku?)"
+    except OSError as exc:
+        return f"{host}:{port} nieosiągalny: {exc}"
 
 
 DP_LABEL_TRANSLATIONS = {
@@ -562,6 +588,28 @@ class TuyaLocalController:
         gateway_name = self.devices_cfg.get(device_name, {}).get("gateway")
         return self._gateway_locks.get(gateway_name) if gateway_name else None
 
+    def _diagnose_connection(self, device_name: str) -> str:
+        """Buduje jedno-liniową diagnozę do logu po wyczerpaniu prób: dla
+        urządzenia Zigbee sonduje adres IP BRAMKI (to przez nią faktycznie
+        idzie cały ruch sieciowy podurządzenia - tinytuya deleguje connect
+        do `parent`), dla zwykłego urządzenia WiFi - jego własny adres IP."""
+        cfg = self.devices_cfg.get(device_name, {})
+        gateway_name = cfg.get("gateway")
+        if gateway_name:
+            gw_cfg = self.zigbee_gateways_cfg.get(gateway_name, {})
+            host = (gw_cfg.get("ip") or "").strip()
+            probe = _tcp_probe(host)
+            return (
+                f"urządzenie Zigbee przez bramkę '{gateway_name}' (IP bramki: {host or '(brak)'}) - {probe}. "
+                "Cały ruch tego urządzenia idzie przez bramkę, więc jeśli inne urządzenia pod tą samą "
+                "bramką TEŻ nie odpowiadają, sprawdź zasilanie/adres IP samej bramki (🧩 Wtyczki -> Tuya, "
+                "sekcja \"Bramki Zigbee\") - \"🔍 Skanuj sieć\" tam odnajdzie nowy adres, jeśli się zmienił "
+                "(np. po restarcie routera/DHCP)."
+            )
+        host = (cfg.get("ip") or "").strip()
+        probe = _tcp_probe(host)
+        return f"urządzenie WiFi (IP: {host or '(brak)'}) - {probe}."
+
     async def _call_with_retry(self, device_name: str, func, *args):
         loop = asyncio.get_event_loop()
         gateway_lock = self._gateway_lock_for(device_name)
@@ -585,7 +633,11 @@ class TuyaLocalController:
                         device_name, attempt + 1, self.retries + 1, exc,
                     )
                     await asyncio.sleep(self.retry_delay)
-        logger.error("Tuya '%s': wyczerpano próby (%s), ostatni błąd: %s", device_name, self.retries + 1, last_error)
+        diagnosis = await loop.run_in_executor(None, self._diagnose_connection, device_name)
+        logger.error(
+            "Tuya '%s': wyczerpano próby (%s), ostatni błąd: %s - diagnostyka: %s",
+            device_name, self.retries + 1, last_error, diagnosis,
+        )
         raise ConnectionError(f"Nie udało się skomunikować z urządzeniem Tuya '{device_name}': {last_error}")
 
     def _switch_keys(self, device_name: str) -> list[str]:
