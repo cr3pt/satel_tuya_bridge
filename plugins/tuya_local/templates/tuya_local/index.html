@@ -68,12 +68,15 @@
   urządzenie ma pole <strong>"tryb sterowania"</strong> - lokalnie przez WiFi
   (tinytuya, szybciej, bez internetu), lokalnie przez bramkę Zigbee, albo
   przez Tuya Cloud (dla urządzeń, których nie da się skonfigurować lokalnie).
-  Import z Cloud w jednym kroku rozpoznaje bramkę Zigbee, podurządzenie
-  Zigbee, urządzenie WiFi i urządzenie tylko-chmurowe, i dodaje je od razu z
-  właściwym trybem - a jeśli urządzenie później pojawi się w LAN (np. po
-  zmianie routera), wystarczy przełączyć tryb w tej samej liście, bez
-  ponownego importu. <strong>Wymagane zalogowanie administratora panelu</strong>
-  - dotyczy zarówno przeglądania tej strony, jak i zapisu.
+  Import z Cloud rozpoznaje bramkę Zigbee, podurządzenie Zigbee i urządzenie
+  WiFi z kompletem danych, ale <strong>o niczym sam nie decyduje</strong> -
+  każde urządzenie (poza samą bramką) trafia na listę domyślnie w trybie
+  <em>"Przez chmurę"</em>, niezależnie od wykrytych możliwości lokalnych.
+  Świadome przełączenie na sterowanie lokalne/bramkę Zigbee to Twoja
+  decyzja, podejmowana później w tej samej liście przyciskami "🔄/🌉
+  Rescan" - import jej nie narzuca. <strong>Wymagane zalogowanie
+  administratora panelu</strong> - dotyczy zarówno przeglądania tej strony,
+  jak i zapisu.
 </div>
 
 <div class="section" id="pluginSettingsSection">
@@ -192,14 +195,15 @@
     "Zakresy/adresy IP do skanowania" wyżej podałeś adresy, import od razu
     aktywnie sprawdza te adresy (nie tylko broadcast), więc może znaleźć
     komplet danych (adres IP + local_key) nawet gdy broadcast nie działa.
-    Wynik jest automatycznie podzielony na cztery grupy: wykryte bramki
-    Zigbee (przycisk "Ustaw jako bramkę Zigbee"), podurządzenia Zigbee
-    (przycisk "Dodaj", aktywny gdy bramka jest już dodana), urządzenia WiFi z
-    kompletem danych i reszta - sterowana wyłącznie przez chmurę - obie te
-    grupy trafiają jednym przyciskiem "Dodaj" od razu do listy "Urządzenia"
-    niżej, z właściwie ustawionym trybem sterowania. local_key jest
-    zapisywany we wszystkich przypadkach, więc przełączenie trybu
-    sterowania później (patrz "Rescan" w liście urządzeń) nie wymaga
+    Wynik jest opisowo podzielony na grupy (wykryte bramki Zigbee,
+    podurządzenia Zigbee, urządzenia WiFi z kompletem danych, reszta) -
+    to tylko informacja o wykrytych możliwościach, NIE decyzja: bramkę
+    dodajesz osobno przyciskiem "Ustaw jako bramkę Zigbee" (opcjonalnie,
+    można to zrobić też później), a każde pozostałe urządzenie trafia do
+    listy "Urządzenia" niżej przyciskiem "Dodaj" ZAWSZE w trybie "Przez
+    chmurę", niezależnie od wykrytych możliwości lokalnych. local_key jest
+    zapisywany we wszystkich przypadkach, więc świadome przełączenie trybu
+    sterowania później (patrz "🔄/🌉 Rescan" w liście urządzeń) nie wymaga
     ponownego importu.
   </div>
   <div class="discover-row">
@@ -761,7 +765,7 @@ function _renderGatewayCandidate(d, container) {
   container.appendChild(row);
 }
 
-function _renderDeviceCandidate(d, container, { mode, label }) {
+function _renderDeviceCandidate(d, container, { label }) {
   const existingIds = new Set(collectDevices().map(dev => dev.id));
   const row = document.createElement('div');
   if (existingIds.has(d.id)) {
@@ -770,33 +774,29 @@ function _renderDeviceCandidate(d, container, { mode, label }) {
     container.appendChild(row);
     return;
   }
-  let matchedGateway = null;
-  if (mode === 'local_zigbee') {
-    matchedGateway = collectGateways().find(g => g.id === d.gateway_id);
-    if (!matchedGateway) {
-      row.className = 'scan-result-new';
-      row.textContent = `⏳ ${d.name || d.id} - łączy się przez bramkę, której jeszcze nie dodano - najpierw dodaj ją jako bramkę Zigbee (sekcja wyżej)`;
-      container.appendChild(row);
-      return;
-    }
-  }
   row.className = 'repeatable-row scan-result-new';
   row.innerHTML = `
     <span style="flex:1;">${label}</span>
     <input type="text" class="import-dev-name" placeholder="nazwa" style="max-width: 220px;">
-    <button type="button" class="add-dev-btn">➡ Dodaj</button>`;
+    <button type="button" class="add-dev-btn">➡ Dodaj (przez chmurę)</button>`;
   row.querySelector('.import-dev-name').value = d.name || d.id;
   row.querySelector('.add-dev-btn').addEventListener('click', () => {
     const name = row.querySelector('.import-dev-name').value.trim();
     if (!name) return;
+    // Import ZAWSZE dodaje w trybie "Przez chmurę", niezależnie od tego, czy
+    // urządzenie ma komplet danych do sterowania lokalnego (IP+local_key)
+    // albo widoczną bramkę Zigbee - świadome przełączenie na sterowanie
+    // lokalne/bramkę to decyzja użytkownika, podejmowana później
+    // przyciskami "🔄/🌉 Rescan" w sekcji "Urządzenia", nigdy przez sam
+    // import. local_key/IP i tak zostają zapisane przy urządzeniu, więc
+    // Rescan ma z czego skorzystać bez ponownego pobierania z Tuya Cloud.
     addDeviceRow({
-      name, id: d.id, mode,
-      ip: d.ip, local_key: d.local_key, version: d.version,
-      gateway: matchedGateway ? matchedGateway.name : '', cid: d.node_id || '',
-      category: d.category || '', type: 'socket', dp_schema: d.dp_schema,
+      name, id: d.id, mode: 'cloud',
+      local_key: d.local_key, ip: d.ip, version: d.version,
+      category: d.category || '', dp_schema: d.dp_schema,
     });
     row.className = 'scan-result-known';
-    row.textContent = `🟠 ${name} - dodano do listy "Urządzenia" wyżej, zapisz formularz (💾 Zapisz urządzenia)`;
+    row.textContent = `🟠 ${name} - dodano do listy "Urządzenia" wyżej (sterowanie przez chmurę), zapisz formularz (💾 Zapisz urządzenia)`;
   });
   container.appendChild(row);
 }
@@ -815,24 +815,27 @@ function renderImportResults(devices) {
     gateways.forEach(d => _renderGatewayCandidate(d, container));
   }
   if (subDevices.length) {
-    container.appendChild(_importSectionHeader('📡 Wykryte urządzenia Zigbee (łączące się przez bramkę)'));
+    container.appendChild(_importSectionHeader(
+      '📡 Wygląda na urządzenia Zigbee przez bramkę - dodawane domyślnie przez chmurę',
+    ));
     subDevices.forEach(d => _renderDeviceCandidate(d, container, {
-      mode: 'local_zigbee',
-      label: `📡 <strong>${escapeHtml(d.name || d.id)}</strong> - przez bramkę`,
+      label: `📡 <strong>${escapeHtml(d.name || d.id)}</strong> - wygląda na urządzenie Zigbee przez bramkę `
+        + `(po dodaniu, jeśli chcesz sterowania lokalnego, użyj "🌉 Rescan" niżej w sekcji "Urządzenia")`,
     }));
   }
   if (localReady.length) {
-    container.appendChild(_importSectionHeader('🔌 Wykryte urządzenia WiFi'));
+    container.appendChild(_importSectionHeader(
+      '🔌 Mają komplet danych w LAN - dodawane domyślnie przez chmurę',
+    ));
     localReady.forEach(d => _renderDeviceCandidate(d, container, {
-      mode: 'local_wifi',
-      label: `🟢 komplet danych (IP: ${escapeHtml(d.ip)}) dla ID <code>${escapeHtml(d.id)}</code>`,
+      label: `🟢 komplet danych w LAN (IP: ${escapeHtml(d.ip)}) dla ID <code>${escapeHtml(d.id)}</code> `
+        + `(po dodaniu, jeśli chcesz sterowania lokalnego, użyj "🔄 Rescan" niżej w sekcji "Urządzenia")`,
     }));
   }
   if (cloudOnly.length) {
-    container.appendChild(_importSectionHeader('☁ Urządzenia sterowane przez chmurę'));
+    container.appendChild(_importSectionHeader('☁ Nie odnaleziono lokalnie - sterowane przez chmurę'));
     cloudOnly.forEach(d => _renderDeviceCandidate(d, container, {
-      mode: 'cloud',
-      label: `☁ nie odnaleziono w LAN dla ID <code>${escapeHtml(d.id)}</code> - zostaje sterowane przez chmurę`,
+      label: `☁ nie odnaleziono w LAN dla ID <code>${escapeHtml(d.id)}</code>`,
     }));
   }
 }
@@ -858,10 +861,13 @@ document.getElementById('cloudImportBtn').addEventListener('click', async () => 
     const cloudOnly = devices.length - gatewaysCount - subCount - localReadyCount;
     renderImportResults(devices);
     const parts = [];
-    if (gatewaysCount) parts.push(`${gatewaysCount} wygląda na bramkę Zigbee.`);
-    if (subCount) parts.push(`${subCount} łączy się przez bramkę Zigbee.`);
-    if (localReadyCount) parts.push(`${localReadyCount} ma komplet danych (IP + local_key) do sterowania WiFi.`);
-    if (cloudOnly) parts.push(`${cloudOnly} nie odnaleziono w LAN - zostają jako sterowane chmurowo.`);
+    if (gatewaysCount) parts.push(`${gatewaysCount} wygląda na bramkę Zigbee (dodaj ręcznie przyciskiem "Ustaw jako bramkę").`);
+    if (subCount) parts.push(`${subCount} wygląda na urządzenie Zigbee przez bramkę.`);
+    if (localReadyCount) parts.push(`${localReadyCount} ma komplet danych (IP + local_key) w LAN.`);
+    if (cloudOnly) parts.push(`${cloudOnly} nie odnaleziono w LAN.`);
+    if (subCount + localReadyCount + cloudOnly > 0) {
+      parts.push('Wszystkie urządzenia (niezależnie od wykrytych możliwości) dodawane są domyślnie w trybie "Przez chmurę" - na lokalne/bramkę przełączasz je sam później przyciskami "🔄/🌉 Rescan".');
+    }
     status.textContent = parts.length ? parts.join(' ') : 'Brak urządzeń do zaimportowania.';
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
