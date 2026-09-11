@@ -1128,6 +1128,75 @@ class TestTuyaCloudPluginPage:
         assert by_name["czujnik_ruchu"]["cid"] == "0x01"
         assert by_name["kamera"]["can_move_to_gateway"] is False
 
+    async def test_rescan_flags_mismatched_cid_on_already_configured_zigbee_device(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya/devices",
+            json={
+                "zigbee_gateways": [{"name": "brama_salon", "id": "gw1", "ip": "192.168.1.5", "local_key": "gwkey"}],
+                "tuya_devices": [
+                    {"name": "czujnik_ruchu", "id": "sub1", "gateway": "brama_salon", "cid": "0xSTALE"},
+                    {"name": "lampka", "id": "sub2", "gateway": "brama_salon", "cid": "0x02"},
+                ],
+            },
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def _fake_fetch(api_region, access_id, access_key, networks):
+            return [
+                {"id": "sub1", "name": "Czujnik", "local_key": "", "ip": "", "version": "",
+                 "gateway_id": "gw1", "node_id": "0xFRESH", "dp_schema": {}},
+                {"id": "sub2", "name": "Lampka", "local_key": "", "ip": "", "version": "",
+                 "gateway_id": "gw1", "node_id": "0x02", "dp_schema": {}},
+            ]
+
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", _fake_fetch)
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        by_name = {c["name"]: c for c in data["zigbee_cid_checks"]}
+        assert by_name["czujnik_ruchu"]["mismatch"] is True
+        assert by_name["czujnik_ruchu"]["current_cid"] == "0xSTALE"
+        assert by_name["czujnik_ruchu"]["cloud_cid"] == "0xFRESH"
+        assert by_name["lampka"]["mismatch"] is False
+        assert "nieaktualny cid" in data["message"]
+
+    async def test_rescan_works_with_only_zigbee_devices_and_no_cloud_devices(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/credentials",
+            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya/devices",
+            json={
+                "zigbee_gateways": [{"name": "brama_salon", "id": "gw1", "ip": "192.168.1.5", "local_key": "gwkey"}],
+                "tuya_devices": [{"name": "czujnik_ruchu", "id": "sub1", "gateway": "brama_salon", "cid": "0x01"}],
+            },
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def _fake_fetch(api_region, access_id, access_key, networks):
+            return [
+                {"id": "sub1", "name": "Czujnik", "local_key": "", "ip": "", "version": "",
+                 "gateway_id": "gw1", "node_id": "0x01", "dp_schema": {}},
+            ]
+
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", _fake_fetch)
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data["devices"] == []
+        assert data["zigbee_cid_checks"][0]["mismatch"] is False
+
     async def test_rescan_connection_error_returns_502(self, client, monkeypatch):
         await client.post(
             "/api/plugins/tuya_cloud/credentials",
