@@ -605,16 +605,23 @@ async function loadTuyaDevices() {
 }
 loadTuyaDevices();
 
-function renderScanLanResults(devices, existingIds, updatedGatewayNames) {
+function renderScanLanResults(devices, existingIds, updatedGatewayNames, updatedDeviceNames) {
   const container = document.getElementById('scanLanResultsRows');
   container.innerHTML = '';
   devices.forEach(dev => {
     const gatewayName = updatedGatewayNames.get(dev.id);
+    const deviceName = updatedDeviceNames.get(dev.id);
     const known = existingIds.has(dev.id) || !!dev.known_name;
     const row = document.createElement('div');
     if (gatewayName) {
       row.className = 'scan-result-known';
       row.textContent = `🌉 ${gatewayName} (ID ${dev.id}) - to skonfigurowana bramka Zigbee, uzupełniono adres IP: ${dev.ip}`;
+      container.appendChild(row);
+      return;
+    }
+    if (deviceName) {
+      row.className = 'scan-result-known';
+      row.textContent = `☁➡🔌 ${deviceName} (ID ${dev.id}) - dane z Tuya Cloud (nazwa/local_key/kategoria) bez zmian, uzupełniono adres IP: ${dev.ip} - przełączono na sterowanie lokalne`;
       container.appendChild(row);
       return;
     }
@@ -658,6 +665,7 @@ document.getElementById('scanLanBtn').addEventListener('click', async () => {
     const existing = new Set(collectDevices().map(d => d.id));
     const gatewayRowsById = new Map(collectGateways().map(g => [g.id, g]));
     const updatedGatewayNames = new Map();
+    const updatedDeviceNames = new Map();
     let added = 0;
     devices.forEach(dev => {
       // Urządzenie już dodane jako bramka Zigbee (np. zaimportowana z Tuya Cloud
@@ -675,16 +683,40 @@ document.getElementById('scanLanBtn').addEventListener('click', async () => {
         updatedGatewayNames.set(dev.id, gatewayName);
         return;
       }
+      // Porównanie ID ze skanu LAN z ID już dodanego wiersza urządzenia (np.
+      // sterowanego przez chmurę, bo import nie znalazł wtedy adresu IP) -
+      // uzupełniamy WYŁĄCZNIE adres IP/wersję protokołu, nie ruszając nazwy,
+      // local_key ani kategorii - te dane pochodzą z Tuya Cloud i mają
+      // pierwszeństwo, skan LAN tylko dokłada to, czego chmura nie ma.
+      let mergedIntoExisting = false;
+      document.querySelectorAll('#devicesRows .repeatable-row').forEach(row => {
+        if (row.querySelector('.dev-id').value.trim() !== dev.id) return;
+        mergedIntoExisting = true;
+        const ipInput = row.querySelector('.dev-ip');
+        const modeSelect = row.querySelector('.dev-mode');
+        if (ipInput.value.trim() || !dev.ip) return;
+        ipInput.value = dev.ip;
+        const versionInput = row.querySelector('.dev-version');
+        if (!versionInput.value.trim()) versionInput.value = dev.version || '3.4';
+        if (modeSelect.value === 'cloud') {
+          modeSelect.value = 'local_wifi';
+          _applyDeviceModeVisibility(row);
+        }
+        updatedDeviceNames.set(dev.id, row.querySelector('.dev-name').value.trim() || dev.id);
+      });
+      if (mergedIntoExisting) return;
       if (existing.has(dev.id) || dev.known_name) return;
       addDeviceRow({ name: dev.known_name || dev.id, id: dev.id, mode: 'local_wifi', ip: dev.ip, type: 'socket', version: dev.version });
       added++;
     });
-    renderScanLanResults(devices, existing, updatedGatewayNames);
+    renderScanLanResults(devices, existing, updatedGatewayNames, updatedDeviceNames);
     const gwUpdated = updatedGatewayNames.size;
-    const knownCount = devices.length - added - gwUpdated;
+    const devUpdated = updatedDeviceNames.size;
+    const knownCount = devices.length - added - gwUpdated - devUpdated;
     status.textContent = devices.length
       ? `Znaleziono ${devices.length} urządzeń (${added} nowych, ${knownCount} już znanych` +
         (gwUpdated ? `, ${gwUpdated} to bramka Zigbee - uzupełniono adres IP` : '') +
+        (devUpdated ? `, ${devUpdated} znane z Tuya Cloud - uzupełniono adres IP i przełączono na lokalne` : '') +
         `) - local_key NIE jest rozgłaszany, uzupełnij go ręcznie albo zaimportuj z Tuya Cloud. Jeśli wśród nowych jest bramka Zigbee, oznacz ją przyciskiem niżej.`
       : 'Nie znaleziono żadnych urządzeń w sieci.';
   } catch (e) {

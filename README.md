@@ -960,6 +960,18 @@ akurat bramka Zigbee (a nie zwykłe gniazdko/przełącznik) - przycisk
 `local_key` i nazwę uzupełnij ręcznie, tak jak dla zwykłego urządzenia
 znalezionego samym skanem LAN).
 
+**Skan LAN uzupełnia też zwykłe urządzenia sterowane przez chmurę, po tym
+samym ID.** Jeśli w tabeli "Urządzenia" jest wiersz w trybie "Przez chmurę"
+(bo import z Tuya Cloud nie znalazł wtedy jego adresu IP), a **"🔍 Skanuj
+sieć"** teraz go odnajdzie po tym samym ID - wiersz dostaje adres IP/wersję
+protokołu i tryb sterowania sam przełącza się na "Lokalnie (WiFi)".
+**Dane z Tuya Cloud (nazwa, `local_key`, kategoria) mają pierwszeństwo i
+zostają nietknięte** - skan LAN dokłada wyłącznie to, czego chmura nie ma
+(adres IP), nigdy nie nadpisuje tego, co już wypełniła. Dotyczy to samego
+przycisku "🔍 Skanuj sieć" (nie wymaga osobnego "🔄 Rescan", które i tak
+robi to samo, ale ponownie odpytując Tuya Cloud - przydatne, gdy lista
+urządzeń w tabeli nie jest jeszcze zapisana).
+
 **Wszystkie podurządzenia jednej bramki dzielą jedno połączenie TCP - ich
 odpytywanie jest teraz zserializowane.** Biblioteka `tinytuya` reprezentuje
 podurządzenie Zigbee jako osobny obiekt, ale komunikacja i tak zawsze
