@@ -511,10 +511,21 @@ class TuyaLocalController:
         self.retry_delay = retry_delay
 
         self._gateways: dict[str, tinytuya.Device] = {}
+        # Jeden asyncio.Lock na bramkę: wszystkie podurządzenia Zigbee pod tą samą
+        # bramką dzielą JEDEN obiekt tinytuya.Device (i jego jedno gniazdo TCP) jako
+        # `parent` - tinytuya nie jest bezpieczne wątkowo, więc równoległe odpytanie
+        # (get_all_statuses robi to przez asyncio.gather na wielu wątkach naraz)
+        # dwóch podurządzeń tej samej bramki w tym samym momencie psuje współdzielone
+        # gniazdo obu wywołaniom na raz - stąd masowe, pozornie przypadkowe błędy
+        # "Check device key or version"/"Network Error" na wszystkich urządzeniach
+        # danej bramki jednocześnie. Blokada serializuje ruch per bramka (różne
+        # bramki i zwykłe urządzenia WiFi nadal działają w pełni równolegle).
+        self._gateway_locks: dict[str, asyncio.Lock] = {}
         for name, cfg in self.zigbee_gateways_cfg.items():
             gw = tinytuya.Device(cfg["id"], cfg["ip"], cfg["local_key"])
             gw.set_version(cfg.get("version") or 3.4)
             self._gateways[name] = gw
+            self._gateway_locks[name] = asyncio.Lock()
 
         self._devices: dict[str, tinytuya.Device] = {}
         for name, cfg in devices_cfg.items():
@@ -536,12 +547,21 @@ class TuyaLocalController:
                 dev.set_version(cfg.get("version") or 3.4)
             self._devices[name] = dev
 
+    def _gateway_lock_for(self, device_name: str) -> asyncio.Lock | None:
+        gateway_name = self.devices_cfg.get(device_name, {}).get("gateway")
+        return self._gateway_locks.get(gateway_name) if gateway_name else None
+
     async def _call_with_retry(self, device_name: str, func, *args):
         loop = asyncio.get_event_loop()
+        gateway_lock = self._gateway_lock_for(device_name)
         last_error = None
         for attempt in range(self.retries + 1):
             try:
-                result = await loop.run_in_executor(None, func, *args)
+                if gateway_lock is not None:
+                    async with gateway_lock:
+                        result = await loop.run_in_executor(None, func, *args)
+                else:
+                    result = await loop.run_in_executor(None, func, *args)
                 if isinstance(result, dict) and "Error" in result:
                     last_error = result["Error"]
                     raise RuntimeError(last_error)
