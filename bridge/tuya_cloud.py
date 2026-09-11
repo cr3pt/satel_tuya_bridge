@@ -18,7 +18,12 @@ def _reason_suffix(reason: str | None) -> str:
 
 class TuyaCloudController:
     def __init__(self, devices_cfg: dict, credentials: dict, retries: int = 2, retry_delay: float = 1.5):
-        self.devices_cfg = devices_cfg
+        # .strip() na ID: config może pochodzić z importu paczki YAML/ręcznej edycji,
+        # nie tylko z panelu (gdzie pola są już przycięte w JS) - niewidoczna spacja
+        # na końcu ID psuje każde polecenie do Tuya Cloud dla tego urządzenia.
+        self.devices_cfg = {
+            name: {**cfg, "id": (cfg.get("id") or "").strip()} for name, cfg in devices_cfg.items()
+        }
         self.credentials = credentials
         self.retries = retries
         self.retry_delay = retry_delay
@@ -27,10 +32,12 @@ class TuyaCloudController:
 
     def _client(self) -> tinytuya.Cloud:
         if self._cloud is None:
+            # .strip() z tego samego powodu co ID wyżej - wklejone z konsoli Tuya IoT
+            # Access ID/Secret często niosą niewidoczne białe znaki.
             self._cloud = tinytuya.Cloud(
-                apiRegion=self.credentials.get("api_region") or "eu",
-                apiKey=self.credentials.get("access_id", ""),
-                apiSecret=self.credentials.get("access_key", ""),
+                apiRegion=(self.credentials.get("api_region") or "eu").strip() or "eu",
+                apiKey=(self.credentials.get("access_id") or "").strip(),
+                apiSecret=(self.credentials.get("access_key") or "").strip(),
             )
         return self._cloud
 

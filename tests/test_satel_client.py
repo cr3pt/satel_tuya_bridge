@@ -183,6 +183,27 @@ class TestSatelIntegraClientConnect:
         assert fakes[0].encryption_key == "AESKEY"
         assert client.integration_key == "kod_uzytkownika"
 
+    async def test_host_and_keys_with_surrounding_whitespace_are_stripped(self, monkeypatch):
+        """Config może pochodzić z importu YAML/ręcznej edycji, nie tylko z panelu
+        (gdzie pola są już przycięte w JS) - niewidoczna spacja w kodzie/kluczu
+        psuje połączenie albo uzbrajanie bez czytelnego komunikatu o przyczynie."""
+        fakes = _patch_async_satel(monkeypatch)
+        client = SatelIntegraClient(
+            " 127.0.0.1 \n", 7094, " kod_uzytkownika\t", encryption_key=" AESKEY \n",
+        )
+        assert client.host == "127.0.0.1"
+        assert client.integration_key == "kod_uzytkownika"
+        assert client.encryption_key == "AESKEY"
+        await client.connect()
+        assert fakes[0].encryption_key == "AESKEY"
+
+    async def test_encryption_key_of_only_whitespace_becomes_none(self, monkeypatch):
+        fakes = _patch_async_satel(monkeypatch)
+        client = SatelIntegraClient("127.0.0.1", 7094, "key", encryption_key="   ")
+        assert client.encryption_key is None
+        await client.connect()
+        assert fakes[0].encryption_key is None
+
     async def test_no_encryption_key_configured_means_cleartext(self, monkeypatch):
         fakes = _patch_async_satel(monkeypatch)
         client = SatelIntegraClient("127.0.0.1", 7094, "key")

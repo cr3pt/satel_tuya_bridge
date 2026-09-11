@@ -479,6 +479,30 @@ Sprawdź też:
    dole pokaże dokładną odpowiedź serwera (kod błędu Tuya, treść komunikatu)
    zamiast tylko "0 urządzeń", co zwykle od razu wskazuje przyczynę.
 
+### Częsty problem: "Check device key or version" mimo poprawnego local_key
+
+Dwie niezależne przyczyny dają dokładnie ten sam, mylący komunikat z
+biblioteki `tinytuya` (`Check device key or version` - biblioteka nie
+odróżnia złego klucza od złej wersji protokołu):
+
+1. **Wyścig na współdzielonym połączeniu bramki Zigbee** - jeśli błąd
+   pojawia się MASOWO, na wszystkich urządzeniach jednej bramki naraz, w
+   KAŻDYM cyklu odpytywania - to był realny bug w tym projekcie (naprawiony):
+   podurządzenia jednej bramki dzielą jedno gniazdo TCP, a bez serializacji
+   dwa równoległe odpytania psuły sobie nawzajem połączenie. Upewnij się, że
+   masz wersję z tą poprawką (`TuyaLocalController` blokuje ruch per bramka).
+2. **Niewidoczna spacja/nowa linia w `id`/`local_key`/adresie IP** -
+   szczególnie łatwe do złapania przy kopiowaniu z konsoli Tuya IoT, wyniku
+   `python -m tinytuya wizard`, albo przy edycji/imporcie paczki YAML z
+   kopii zapasowej (import YAML **nie przechodzi** przez te same pola
+   formularza co panel, więc automatyczne przycinanie białych znaków w
+   przeglądarce go nie obejmuje). Bridge sam przycina (`.strip()`) `id`,
+   `local_key` i adres IP tuż przed przekazaniem ich do `tinytuya` - dla
+   urządzeń lokalnych, bramek Zigbee i danych logowania do Tuya Cloud - więc
+   to konkretne źródło błędu jest wyeliminowane niezależnie od tego, skąd
+   pochodzi config. To samo dotyczy kodu integracji/klucza szyfrowania
+   Satela (`SatelIntegraClient`).
+
 ## Lokalny broker MQTT
 
 Zarówno eBUS (`ebusd`), jak i opcjonalnie Home Assistant potrzebują
