@@ -228,9 +228,21 @@ def validate_flows(flows: list[dict], scene_names: set[str]) -> list[str]:
             node_label = f"{label} ('{name or '?'}'), węzeł #{j + 1}"
             errors.extend(_validate_flow_node(node, node_label, scene_names))
 
-        if nodes and not any(n.get("type") in ("trigger", "mqttIn") for n in nodes):
+        # "Warunek złożony" bez podłączonego wejścia (nikt do niego nie
+        # prowadzi przewodem w tym Flow) też liczy się jako węzeł wejściowy -
+        # FlowEngine odpytuje go samodzielnie jak trigger, patrz
+        # flow_engine._check_condition_group_entrypoints.
+        incoming_ids: set = set()
+        for n in nodes:
+            for port_wires in n.get("wires") or []:
+                incoming_ids.update(port_wires)
+        has_entry_node = any(n.get("type") in ("trigger", "mqttIn") for n in nodes) or any(
+            n.get("type") == "condition_group" and n.get("id") not in incoming_ids for n in nodes
+        )
+        if nodes and not has_entry_node:
             errors.append(
-                f"{label} ('{name or '?'}'): potrzebuje co najmniej jednego węzła wejściowego (trigger/mqttIn)"
+                f"{label} ('{name or '?'}'): potrzebuje co najmniej jednego węzła wejściowego "
+                f"(trigger/mqttIn, albo Warunek złożony bez podłączonego wejścia)"
             )
     return errors
 

@@ -516,6 +516,54 @@ class TestRunFlow:
         with pytest.raises(ValueError):
             await engine.run_flow("nope")
 
+    async def test_manually_runs_entry_condition_group(self):
+        condition = {"type": "state", "key": "tuya:garaz", "equals": "zamknięte"}
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [["dev"], ["dev_else"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+                {"id": "dev_else", "type": "device", "config": {"target_device": "inna", "value": "on"}, "wires": []},
+            ],
+        }
+        values = {"tuya:garaz": "zamknięte"}
+        engine, calls = _engine([flow], get_status_value=lambda key: values.get(key))
+        await engine.run_flow("f1")
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
+
+    async def test_manual_run_of_condition_group_reflects_real_state_not_forced_true(self):
+        condition = {"type": "state", "key": "tuya:garaz", "equals": "zamknięte"}
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [["dev"], ["dev_else"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+                {"id": "dev_else", "type": "device", "config": {"target_device": "inna", "value": "on"}, "wires": []},
+            ],
+        }
+        values = {"tuya:garaz": "otwarte"}
+        engine, calls = _engine([flow], get_status_value=lambda key: values.get(key))
+        await engine.run_flow("f1")
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "inna", True, None)]
+
+    async def test_condition_group_with_incoming_wire_not_run_manually(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["cg"]]},
+                {"id": "cg", "type": "condition_group", "config": {"condition": {"type": "state", "key": "k", "equals": "v"}}, "wires": [["dev"], []]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, calls = _engine([flow], get_status_value=lambda key: "v")
+        await engine.run_flow("f1")
+        await asyncio.sleep(0.01)
+        # Trigger node itself fires with payload None (its normal manual-test
+        # behavior) - but "cg" (fed by a wire) must not be independently run.
+        assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
+
 
 class TestStateNode:
     async def test_passes_when_status_matches(self):
@@ -738,6 +786,96 @@ class TestConditionGroupNode:
         await engine.handle_motion("satel_zone", 5)
         await asyncio.sleep(0.01)
         assert calls["set_target_state"] == [("tuya", "inna", True, None)]
+
+
+class TestConditionGroupAsTrigger:
+    """"Warunek złożony" bez podłączonego wejścia (nikt do niego nie
+    prowadzi przewodem w tym Flow) działa jak trigger - odpytywany
+    samodzielnie przy każdym handle_motion/handle_device_state, odpala flow
+    na zboczu niespełniony -> spełniony, nie ponownie dopóki trwa."""
+
+    def _entry_flow(self, condition, values):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [["dev"], []]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        return flow
+
+    async def test_fires_on_transition_to_true(self):
+        condition = {
+            "type": "and",
+            "conditions": [
+                {"type": "state", "key": "satel_input:9", "equals": "naruszone"},
+                {"type": "state", "key": "tuya:garaz", "equals": "zamknięte"},
+            ],
+        }
+        values = {"satel_input:9": "OK", "tuya:garaz": "zamknięte"}
+        flow = self._entry_flow(condition, values)
+        engine, calls = _engine([flow], get_status_value=lambda key: values.get(key))
+
+        await engine.handle_motion("satel_zone", 99)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == []
+
+        values["satel_input:9"] = "naruszone"
+        await engine.handle_motion("satel_zone", 99)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
+
+    async def test_does_not_refire_while_condition_stays_true(self):
+        condition = {"type": "state", "key": "tuya:garaz", "equals": "zamknięte"}
+        values = {"tuya:garaz": "zamknięte"}
+        flow = self._entry_flow(condition, values)
+        engine, calls = _engine([flow], get_status_value=lambda key: values.get(key))
+
+        await engine.handle_device_state("tuya_state", "unrelated", "x")
+        await engine.handle_device_state("tuya_state", "unrelated", "y")
+        await asyncio.sleep(0.01)
+        assert len(calls["set_target_state"]) == 1
+
+    async def test_refires_after_condition_goes_false_and_true_again(self):
+        condition = {"type": "state", "key": "tuya:garaz", "equals": "zamknięte"}
+        values = {"tuya:garaz": "otwarte"}
+        flow = self._entry_flow(condition, values)
+        engine, calls = _engine([flow], get_status_value=lambda key: values.get(key))
+
+        values["tuya:garaz"] = "zamknięte"
+        await engine.handle_device_state("tuya_state", "x", "y")
+        await asyncio.sleep(0.01)
+        values["tuya:garaz"] = "otwarte"
+        await engine.handle_device_state("tuya_state", "x", "y")
+        await asyncio.sleep(0.01)
+        values["tuya:garaz"] = "zamknięte"
+        await engine.handle_device_state("tuya_state", "x", "y")
+        await asyncio.sleep(0.01)
+        assert len(calls["set_target_state"]) == 2
+
+    async def test_node_fed_by_an_incoming_wire_is_not_independently_polled(self):
+        condition = {"type": "state", "key": "tuya:garaz", "equals": "zamknięte"}
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["cg"]]},
+                {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [["dev"], []]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        values = {"tuya:garaz": "zamknięte"}
+        engine, calls = _engine([flow], get_status_value=lambda key: values.get(key))
+
+        # Zdarzenie niezwiązane z prawdziwym triggerem (zona 5) - "cg" ma
+        # podłączone wejście, więc NIE wolno go traktować jak niezależny
+        # punkt wejściowy, mimo że jego warunek już jest spełniony.
+        await engine.handle_motion("satel_zone", 99)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == []
+
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+        assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
 
 
 class TestScheduleNode:

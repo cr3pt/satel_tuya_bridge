@@ -113,7 +113,12 @@
   warunki gałęziowe (jedna trasa gdy warunek spełniony, inna gdy nie),
   MQTT i wywołania HTTP. Węzeł <strong>Trigger</strong> lub
   <strong>MQTT in</strong> to wejście grafu (to, co go uruchamia) -
-  reszta węzłów wykonuje się po kolei wzdłuż połączeń. Żeby połączyć
+  reszta węzłów wykonuje się po kolei wzdłuż połączeń.
+  <strong>Warunek złożony</strong> też może być wejściem: zostawiony bez
+  podłączonego wejścia sam się odpytuje przy każdej zmianie stanu i
+  odpala flow, gdy przechodzi z niespełnionego na spełniony - przydatne,
+  żeby złożyć warunek typu "A i (B lub C)" jako sam trigger, bez
+  osobnego węzła Trigger przed nim. Żeby połączyć
   dwa węzły: kliknij kropkę wyjścia (prawa krawędź) węzła źródłowego,
   potem kropkę wejścia (lewa krawędź) węzła docelowego - drugie
   kliknięcie tej samej kropki wyjścia anuluje. Węzeł
@@ -155,7 +160,7 @@
       <button type="button" class="secondary" data-node-type="trigger">⚡ Trigger</button>
       <button type="button" class="secondary" data-node-type="condition">❓ Warunek</button>
       <button type="button" class="secondary" data-node-type="state">🔍 Warunek stanu</button>
-      <button type="button" class="secondary" data-node-type="condition_group">🧩 Warunek złożony</button>
+      <button type="button" class="secondary" data-node-type="condition_group" title="Może też działać jako trigger - zostaw wejście niepodłączone, żeby sam odpalał flow">🧩 Warunek złożony</button>
       <button type="button" class="secondary" data-node-type="device">🔌 Urządzenie</button>
       <button type="button" class="secondary" data-node-type="scene">🎬 Scena</button>
       <button type="button" class="secondary" data-node-type="delay">⏱ Opóźnienie</button>
@@ -945,6 +950,10 @@ function renderNodeFields(node) {
     html += field(`<label>Okno czasowe (sekundy)</label><input type="number" min="1" step="1" data-field="window_seconds" value="${c.window_seconds ?? 120}">`);
   } else if (node.type === 'condition_group') {
     html += `<div class="field"><label>Warunek (zagnieżdżone AND/OR/NOT)</label><div class="cond-group-container"></div></div>`;
+    html += `<div class="empty-hint" style="margin:6px 0 0;">Może być też węzłem WEJŚCIOWYM (triggerem) - jeśli zostawisz `
+      + `port wejścia (po lewej) niepodłączony, ten węzeł sam się odpytuje przy każdej zmianie stanu i odpala flow `
+      + `wyjściem "spełniony" w momencie, gdy warunek przechodzi z niespełnionego na spełniony (nie ponownie, dopóki `
+      + `trwa). Jeśli natomiast podłączysz coś do jego wejścia, działa jak zwykła bramka warunkowa w środku grafu.</div>`;
   } else if (node.type === 'tuya_dp') {
     const tuyaDevices = context.tuya_devices || [];
     html += field(`<label>Urządzenie Tuya</label><select data-field="target_device">

@@ -94,7 +94,16 @@ class FlowEngine:
                 (bridge.conditions.evaluate_condition) co "dodatkowy
                 warunek" reguły ruchu. Zamiast łańcucha kilku węzłów
                 Warunek stanu (co daje tylko AND) pozwala złożyć
-                jednym węzłem np. "A i (B lub C)"
+                jednym węzłem np. "A i (B lub C)". MOŻE też być węzłem
+                WEJŚCIOWYM grafu (bez podłączonego wejścia) - patrz
+                _check_condition_group_entrypoints niżej: taki węzeł jest
+                wtedy odpytywany przy każdym zdarzeniu handle_motion/
+                handle_device_state (dokładnie tak samo jak liście "state",
+                z których się składa) i odpala flow wyjściem "spełniony"
+                w momencie, gdy cały złożony warunek przechodzi z
+                niespełnionego na spełniony (zbocze, jak trigger o op
+                != "changes" - nie odpala ponownie, dopóki warunek nie
+                stanie się niespełniony i znów spełniony).
       stop      {}  - węzeł terminalny bez wyjścia: jawnie kończy przetwarzanie
                 danej gałęzi grafu (funkcjonalnie równoważne pozostawieniu
                 wyjścia niepodłączonego do niczego, ale czytelniejsze na
@@ -176,6 +185,7 @@ class FlowEngine:
                     "source": f"flow:{flow.get('name')}",
                 }
                 asyncio.create_task(self._propagate(flow, node, msg, 0))
+            self._check_condition_group_entrypoints(flow)
 
     async def handle_device_state(self, source: str, device_name: str, value: str) -> None:
         for flow in self.flows:
@@ -199,6 +209,49 @@ class FlowEngine:
                     continue
                 msg = {"payload": value, "key": device_name, "source": f"flow:{flow.get('name')}"}
                 asyncio.create_task(self._propagate(flow, node, msg, 0))
+            self._check_condition_group_entrypoints(flow)
+
+    @staticmethod
+    def _flow_entry_node_ids(flow: dict) -> set:
+        """Węzły, na które nic w tym Flow nie wskazuje przewodem - czyli
+        punkty startowe grafu (tak jak trigger/mqttIn, które z definicji
+        nigdy nie mają wejścia podłączonego)."""
+        incoming: set = set()
+        for node in flow.get("nodes", []):
+            for port_wires in node.get("wires") or []:
+                incoming.update(port_wires)
+        return {n.get("id") for n in flow.get("nodes", []) if n.get("id") not in incoming}
+
+    def _check_condition_group_entrypoints(self, flow: dict) -> None:
+        """"Warunek złożony" bez podłączonego wejścia działa jak trigger:
+        odpytywany przy każdym zdarzeniu handle_motion/handle_device_state
+        (bo jego liście "state" mogą odnosić się do dowolnego z nich), a flow
+        odpala się wyjściem "spełniony" wyłącznie na zboczu - w momencie
+        przejścia z niespełnionego na spełniony, nigdy przy każdym zdarzeniu
+        z osobna, żeby nie uruchamiać flow wielokrotnie, dopóki warunek trwa."""
+        entry_ids = self._flow_entry_node_ids(flow)
+        for node in flow.get("nodes", []):
+            if node.get("type") != "condition_group" or node.get("id") not in entry_ids:
+                continue
+            c = node.get("config") or {}
+            try:
+                passed = bool(evaluate_condition(
+                    c.get("condition"), get_status_value=self._get_status_value,
+                    location_cfg=self.location_cfg, now=dt.datetime.now(),
+                ))
+            except Exception:
+                logger.exception(
+                    "Flow '%s': błąd ewaluacji węzła Warunek złożony (jako trigger) - pomijam",
+                    flow.get("name"),
+                )
+                continue
+            state_key = f"{flow.get('id')}:{node.get('id')}"
+            fire = passed and not self._trigger_state.get(state_key, False)
+            self._trigger_state[state_key] = passed
+            if not fire:
+                continue
+            msg = {"payload": True, "key": None, "source": f"flow:{flow.get('name')}"}
+            asyncio.create_task(self._propagate(flow, node, msg, 0))
 
     # ── MQTT (opcjonalne - tylko gdy flow zawiera węzeł mqttIn/mqttOut) ──
 
@@ -420,11 +473,18 @@ class FlowEngine:
 
     async def run_flow(self, flow_id: str) -> None:
         """Ręczne uruchomienie flow (przycisk "Testuj" w edytorze) - odpala
-        wszystkie jego węzły wejściowe (trigger/mqttIn) z payloadem None."""
+        wszystkie jego węzły wejściowe: trigger/mqttIn z payloadem None, oraz
+        "Warunek złożony" bez podłączonego wejścia - dla tego ostatniego
+        odpalenie i tak przechodzi przez normalną ewaluację w _exec_node, więc
+        pokazuje TERAŹNIEJSZY wynik (spełniony/inaczej), a nie sztucznie
+        wymuszone "spełniony"."""
         flow = next((f for f in self.flows if f.get("id") == flow_id), None)
         if flow is None:
             raise ValueError(f"Nieznane flow: {flow_id!r}")
+        entry_ids = self._flow_entry_node_ids(flow)
         for node in flow.get("nodes", []):
-            if node.get("type") in _TRIGGER_TYPES:
-                msg = {"payload": None, "key": None, "source": f"flow-test:{flow.get('name')}"}
-                await self._propagate(flow, node, msg, 0)
+            is_entry_condition_group = node.get("type") == "condition_group" and node.get("id") in entry_ids
+            if node.get("type") not in _TRIGGER_TYPES and not is_entry_condition_group:
+                continue
+            msg = {"payload": None, "key": None, "source": f"flow-test:{flow.get('name')}"}
+            await self._propagate(flow, node, msg, 0)

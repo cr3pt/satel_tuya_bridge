@@ -2694,7 +2694,7 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 | 📥 MQTT in | wejście grafu | temat MQTT (drugie możliwe wejście obok Trigger) |
 | ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania (payload wiadomości) - dwa wyjścia: "spełniony"/"inaczej" |
 | 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`, wybierany dwustopniowo: System -> Status) + operator (równa się/różna od/większe/większe-równe/mniejsze/mniejsze-równe) - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
-| 🧩 Warunek złożony | rozgałęzienie | zagnieżdżone drzewo AND/OR/NOT z liśćmi Warunek stanu / Okno czasowe - dwa wyjścia: "spełniony"/"inaczej" (patrz niżej) |
+| 🧩 Warunek złożony | rozgałęzienie **albo wejście grafu** | zagnieżdżone drzewo AND/OR/NOT z liśćmi Warunek stanu / Okno czasowe - dwa wyjścia: "spełniony"/"inaczej" (patrz niżej); zostawiony bez podłączonego wejścia działa jak trzecie możliwe wejście grafu, obok Trigger/MQTT in (patrz niżej) |
 | 🔌 Urządzenie | akcja | system (Tuya / Satel wyjście / Satel wirtualne wejście), urządzenie docelowe, wartość (włącz/wyłącz/zmiana stanu, jasność dla ściemniaczy Tuya) |
 | 🔧 Ustaw pole Tuya | akcja | urządzenie Tuya, kod pola (DP) wybierany z listy odkrytej przez "🔍 Pobierz opisy pól" (albo wpisany ręcznie), wartość - generyczny odpowiednik przycisków w apce Tuya, których nie ma jako osobnej akcji (patrz niżej) |
 | 🎬 Scena | akcja | uruchamia istniejącą scenę po nazwie |
@@ -2838,6 +2838,26 @@ usuwanie liści i podgrup, wybór statusu z listy) - żeby edycja jednego
 skomplikowanego warunku nie gubiła zaznaczenia przy każdej zmianie, zmiany
 w drzewie aktualizują tylko podgląd węzła na canvasie, bez przerysowania
 całego panelu bocznego.
+
+**Warunek złożony może też być wejściem grafu (trigerem), nie tylko
+rozgałęzieniem w środku.** Jeśli zostawisz jego port wejścia (lewa
+krawędź) niepodłączony do niczego, FlowEngine sam go odpytuje przy
+każdej zmianie stanu (dokładnie te same zdarzenia, co Trigger/Warunek
+stanu) i odpala flow wyjściem "spełniony" w momencie, gdy cały złożony
+warunek przechodzi z niespełnionego na spełniony - **na zboczu, nie
+ponownie przy każdym zdarzeniu, dopóki warunek trwa** (tak samo jak
+Trigger z wyzwalaczem innym niż "Każda zmiana"). Dzięki temu warunek
+typu "A i (B lub C)" da się złożyć jako sam trigger, bez osobnego węzła
+Trigger przed nim - przydatne, gdy żadne pojedyncze zdarzenie źródłowe
+nie pasuje jeden-do-jednego (np. "gdy garaż jest zamknięty ORAZ ruch w
+ogrodzie", gdzie żadne z tych dwóch osobno nie powinno odpalać flow).
+Jeśli natomiast podłączysz coś do jego wejścia (np. Trigger), węzeł
+wraca do roli zwykłej bramki warunkowej w środku grafu - żadna
+"podwójna" logika się nie uruchamia, bo FlowEngine odpytuje samodzielnie
+WYŁĄCZNIE węzły bez podłączonego wejścia. Przycisk **"▶ Testuj"** w
+edytorze też to uwzględnia - dla niepodłączonego Warunku złożonego
+pokazuje PRAWDZIWY, bieżący wynik ewaluacji (spełniony/inaczej), a nie
+sztucznie wymuszone "spełniony".
 
 ### Prognoza pogody i blokowanie podlewania (np. deszcz)
 
