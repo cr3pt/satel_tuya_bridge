@@ -358,8 +358,20 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
 
         cloud_devices = get_config_raw().get("tuya", {}).get("cloud_devices", {})
         by_id = {cfg["id"]: name for name, cfg in cloud_devices.items() if cfg.get("id")}
-        if not by_id:
-            return jsonify({"error": "Brak skonfigurowanych urządzeń chmurowych do przeskanowania"}), 400
+        # Urządzenia JUŻ w trybie "Lokalnie (Zigbee)" - ich "cid" (node_id w sieci
+        # Zigbee danej bramki) wpisuje się raz, ręcznie albo przy imporcie, i nic
+        # później nie sprawdza, czy wciąż się zgadza z tym, co faktycznie zna Tuya
+        # Cloud - stąd druga, niezależna funkcja tego samego przycisku: weryfikacja
+        # (nigdy automatyczna korekta bez kliknięcia) już skonfigurowanych urządzeń.
+        zigbee_devices = {
+            name: cfg for name, cfg in get_config_raw().get("tuya", {}).get("devices", {}).items()
+            if cfg.get("gateway") and cfg.get("id")
+        }
+        zigbee_by_id = {cfg["id"]: name for name, cfg in zigbee_devices.items()}
+        if not by_id and not zigbee_by_id:
+            return jsonify({
+                "error": "Brak skonfigurowanych urządzeń chmurowych ani urządzeń Zigbee do przeskanowania",
+            }), 400
         scan_networks = get_config_raw().get("tuya", {}).get("scan_networks") or []
         # Bramki Zigbee już dodane ręcznie/z importu - potrzebne, żeby rozpoznać,
         # które chmurowe urządzenie jest podurządzeniem Zigbee wskazującym na JUŻ
@@ -377,32 +389,57 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             return jsonify({"error": f"Błąd komunikacji z Tuya Cloud: {exc}"}), 502
 
         results = []
+        cid_checks = []
         for d in devices:
-            name = by_id.get(d.get("id", ""))
-            if not name:
-                continue
-            gateway_name = gateway_id_to_name.get(d.get("gateway_id") or "", "")
-            results.append({
-                "name": name,
-                "id": d.get("id", ""),
-                "ip": d.get("ip", ""),
-                "local_key": d.get("local_key", ""),
-                "version": d.get("version", ""),
-                "dp_schema": d.get("dp_schema", {}),
-                "can_move_to_local": bool(d.get("ip") and d.get("local_key")),
-                "can_move_to_gateway": bool(gateway_name),
-                "gateway_name": gateway_name,
-                "cid": d.get("node_id") or d.get("id", ""),
-            })
+            dev_id = d.get("id", "")
+            cloud_cid = d.get("node_id") or dev_id
+
+            name = by_id.get(dev_id)
+            if name:
+                gateway_name = gateway_id_to_name.get(d.get("gateway_id") or "", "")
+                results.append({
+                    "name": name,
+                    "id": dev_id,
+                    "ip": d.get("ip", ""),
+                    "local_key": d.get("local_key", ""),
+                    "version": d.get("version", ""),
+                    "dp_schema": d.get("dp_schema", {}),
+                    "can_move_to_local": bool(d.get("ip") and d.get("local_key")),
+                    "can_move_to_gateway": bool(gateway_name),
+                    "gateway_name": gateway_name,
+                    "cid": cloud_cid,
+                })
+
+            zigbee_name = zigbee_by_id.get(dev_id)
+            if zigbee_name:
+                current_cid = (zigbee_devices[zigbee_name].get("cid") or dev_id).strip()
+                cid_checks.append({
+                    "name": zigbee_name,
+                    "id": dev_id,
+                    "current_cid": current_cid,
+                    "cloud_cid": cloud_cid,
+                    "mismatch": current_cid != cloud_cid,
+                })
+
         movable_local = sum(1 for r in results if r["can_move_to_local"])
         movable_gateway = sum(1 for r in results if r["can_move_to_gateway"])
-        return jsonify({
-            "devices": results,
-            "message": (
+        mismatched_cid = sum(1 for c in cid_checks if c["mismatch"])
+        message_parts = []
+        if by_id:
+            message_parts.append(
                 f"Przeskanowano {len(results)}/{len(by_id)} urządzeń chmurowych - "
                 f"{movable_local} może przejść na sterowanie lokalne (WiFi), "
                 f"{movable_gateway} na bramkę Zigbee."
-            ) if results else "Żadne ze skonfigurowanych urządzeń chmurowych nie zostało odnalezione w Tuya Cloud.",
+            )
+        if zigbee_by_id:
+            message_parts.append(
+                f"Sprawdzono cid {len(cid_checks)}/{len(zigbee_by_id)} urządzeń Zigbee - "
+                f"{mismatched_cid} ma nieaktualny cid względem Tuya Cloud."
+            )
+        return jsonify({
+            "devices": results,
+            "zigbee_cid_checks": cid_checks,
+            "message": " ".join(message_parts) if message_parts else "Nic nie odnaleziono w Tuya Cloud.",
         })
 
     def _get_tuya_section() -> dict:

@@ -540,6 +540,12 @@ function addDeviceRow(initial) {
     modeSelect.value = initial.mode || 'local_wifi';
     row.querySelector('.dev-ip').value = initial.ip ?? '';
     row.querySelector('.dev-key').value = initial.local_key ?? '';
+    // BUG realny do niedawna: to pole nigdy nie było wypełniane z initial.cid,
+    // więc każde wczytanie strony pokazywało puste "cid" mimo zapisanej
+    // wartości w configu - a kolejny zapis formularza (np. po dodaniu innego
+    // urządzenia) cichcem nadpisywał ją pustym stringiem (collectDevices()
+    // czyta zawsze bieżącą wartość pola, patrz niżej).
+    row.querySelector('.dev-cid').value = initial.cid ?? '';
     typeSelect.value = initial.type || 'socket';
     row.querySelector('.dev-dp').value = initial.dimmer_dp || '';
     row.querySelector('.dev-version').value = initial.version ?? '';
@@ -788,12 +794,15 @@ function _renderDeviceCandidate(d, container, { label }) {
     // albo widoczną bramkę Zigbee - świadome przełączenie na sterowanie
     // lokalne/bramkę to decyzja użytkownika, podejmowana później
     // przyciskami "🔄/🌉 Rescan" w sekcji "Urządzenia", nigdy przez sam
-    // import. local_key/IP i tak zostają zapisane przy urządzeniu, więc
-    // Rescan ma z czego skorzystać bez ponownego pobierania z Tuya Cloud.
+    // import. local_key/IP/cid i tak zostają zapisane (w ukrytych polach)
+    // przy urządzeniu, więc nic z tego, co Tuya Cloud już zwróciła, nie
+    // ginie - Rescan ma z czego skorzystać bez ponownego pobierania.
+    const matchedGateway = d.gateway_id ? collectGateways().find(g => g.id === d.gateway_id) : null;
     addDeviceRow({
       name, id: d.id, mode: 'cloud',
       local_key: d.local_key, ip: d.ip, version: d.version,
       category: d.category || '', dp_schema: d.dp_schema,
+      gateway: matchedGateway ? matchedGateway.name : '', cid: d.node_id || '',
     });
     row.className = 'scan-result-known';
     row.textContent = `🟠 ${name} - dodano do listy "Urządzenia" wyżej (sterowanie przez chmurę), zapisz formularz (💾 Zapisz urządzenia)`;
@@ -931,9 +940,27 @@ async function runDeviceRescan(kind) {
       _applyDeviceModeVisibility(row);
       switched++;
     });
+    // Druga, niezależna funkcja tego samego przycisku (tylko dla bramki/Zigbee):
+    // weryfikacja cid urządzeń JUŻ będących w trybie "Lokalnie (Zigbee)" wobec
+    // tego, co faktycznie zna Tuya Cloud - nigdy nie działa się to samo z siebie,
+    // tylko po tym samym jawnym kliknięciu "🌉 Rescan".
+    let cidFixed = 0;
+    if (kind === 'gateway') {
+      (data.zigbee_cid_checks || []).forEach(c => {
+        if (!c.mismatch) return;
+        const row = Array.from(document.querySelectorAll('#devicesRows .repeatable-row'))
+          .find(r => r.querySelector('.dev-id').value.trim() === c.id);
+        if (!row) return;
+        row.querySelector('.dev-cid').value = c.cloud_cid;
+        cidFixed++;
+      });
+    }
     const modeLabel = kind === 'gateway' ? 'Lokalnie (Zigbee)' : 'Lokalnie (WiFi)';
-    status.textContent = switched
-      ? `${switched} urządzeń przełączono w tabeli wyżej na "${modeLabel}" - kliknij "💾 Zapisz urządzenia", żeby to utrwalić.`
+    const parts = [];
+    if (switched) parts.push(`${switched} urządzeń przełączono w tabeli wyżej na "${modeLabel}"`);
+    if (cidFixed) parts.push(`${cidFixed} urządzeń Zigbee dostało poprawiony cid (był nieaktualny względem Tuya Cloud)`);
+    status.textContent = parts.length
+      ? parts.join(', ') + ' - kliknij "💾 Zapisz urządzenia", żeby to utrwalić.'
       : (data.message || 'Żadne urządzenie chmurowe nie kwalifikuje się jeszcze do przełączenia.');
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;

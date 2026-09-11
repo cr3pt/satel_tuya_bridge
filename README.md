@@ -975,6 +975,16 @@ mechanizm co Home Assistant).
    bramkę - albo w projekcie na developer.tuya.com (Tuya Cloud, ta sama
    ścieżka co import zwykłych urządzeń, patrz krok 2 kreatora wyżej).
 
+**Jak zweryfikować `cid` już skonfigurowanego podurządzenia** (np. gdy nie
+odpowiada, mimo że diagnostyka pokazuje bramkę jako osiągalną) - panel nie
+ma osobnego przycisku "sprawdź cid", ale robi to przy okazji przycisku
+**"🌉 Rescan - sprawdź, które można przełączyć na bramkę"** w sekcji
+"Urządzenia": oprócz migracji urządzeń chmurowych, ten sam klik odpytuje
+Tuya Cloud i porównuje `node_id` KAŻDEGO już skonfigurowanego podurządzenia
+Zigbee z zapisanym `cid` - jeśli się różnią, pole `cid` w wierszu zostaje
+od razu poprawione (jak zawsze: wymaga potem kliknięcia "💾 Zapisz
+urządzenia", żadna zmiana nie dzieje się bez tego kliknięcia).
+
 Zapisane podurządzenie działa dalej jak każde inne urządzenie Tuya w tym
 projekcie - reguły ruchu, sceny, harmonogramy, symulacja obecności,
 publikacja stanu do MQTT/Home Assistant (patrz sekcje wyżej) - nie trzeba
