@@ -897,6 +897,31 @@ class RulesEngine:
                 f"tuya:{device_name}:soil_humidity", "tuya", f"{sensor_readings['soil_humidity_percent']}%",
                 label=f"{device_name} (wilgotność gleby)",
             )
+        if "humidity_percent" in sensor_readings:
+            self.history.set_status(
+                f"tuya:{device_name}:humidity", "tuya", f"{sensor_readings['humidity_percent']}%",
+                label=f"{device_name} (wilgotność)",
+            )
+        if "temperature_celsius" in sensor_readings:
+            self.history.set_status(
+                f"tuya:{device_name}:temperature", "tuya", f"{sensor_readings['temperature_celsius']}°C",
+                label=f"{device_name} (temperatura)",
+            )
+        if "contact_open" in sensor_readings:
+            self.history.set_status(
+                f"tuya:{device_name}:contact", "tuya", "tak" if sensor_readings["contact_open"] else "nie",
+                label=f"{device_name} (kontaktron)",
+            )
+        if "leak_detected" in sensor_readings:
+            self.history.set_status(
+                f"tuya:{device_name}:leak", "tuya", "tak" if sensor_readings["leak_detected"] else "nie",
+                label=f"{device_name} (czujnik zalania)",
+            )
+        if "battery_percent" in sensor_readings:
+            self.history.set_status(
+                f"tuya:{device_name}:battery", "tuya", f"{sensor_readings['battery_percent']}%",
+                label=f"{device_name} (bateria)",
+            )
         if self.homekit and sensor_readings:
             self.homekit.update_tuya_sensor_state(device_name, sensor_readings)
 

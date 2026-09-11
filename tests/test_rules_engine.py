@@ -1681,6 +1681,50 @@ class TestApplyTuyaDeviceStatus:
         statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
         assert "tuya:gniazdko_salon:soil_humidity" not in statuses
 
+    async def test_contact_published_as_separate_tak_nie_status_key(self, engine):
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "1": {"code": "doorcontact_state", "type": "Boolean", "values": "{}"},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"1": True})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon:contact"] == "tak"
+
+        await engine._apply_tuya_device_status("gniazdko_salon", {"1": False})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon:contact"] == "nie"
+
+    async def test_leak_published_as_separate_tak_nie_status_key(self, engine):
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "1": {"code": "watersensor_state", "type": "Boolean", "values": "{}"},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"1": True})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon:leak"] == "tak"
+
+    async def test_battery_published_as_separate_status_key(self, engine):
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "1": {"code": "battery_percentage", "type": "Value", "values": "{}"},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"1": 87})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon:battery"] == "87.0%"
+
+    async def test_humidity_published_as_separate_status_key(self, engine):
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "5": {"code": "va_humidity", "type": "Value", "values": "{}"},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"5": 55})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon:humidity"] == "55.0%"
+
+    async def test_temperature_published_as_separate_status_key(self, engine):
+        engine.config.tuya["devices"]["gniazdko_salon"]["dp_schema"] = {
+            "4": {"code": "va_temperature", "type": "Value", "values": '{"scale":1,"unit":"C"}'},
+        }
+        await engine._apply_tuya_device_status("gniazdko_salon", {"4": 235})
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:gniazdko_salon:temperature"] == "23.5°C"
+
     async def test_no_sensor_call_when_no_recognized_sensor_dps(self, engine):
         class FakeHomeKit:
             def __init__(self):

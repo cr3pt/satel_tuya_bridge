@@ -668,11 +668,15 @@ function stateOpOptionsHtml(selectedOp) {
   const op = selectedOp || 'equals';
   return STATE_OPS.map(o => `<option value="${o.value}" ${o.value === op ? 'selected' : ''}>${o.label}</option>`).join('');
 }
-function stateValueFieldHtml(category, selectedValue) {
-  const options = STATE_VALUE_OPTIONS[category];
-  if (!options) {
-    return `<input type="text" class="cond-state-value" placeholder="wartość (np. liczba dla kotła)" value="${escapeHtml(selectedValue || '')}">`;
-  }
+const STATE_VALUE_BOOLEAN_KEY_SUFFIXES = [':contact', ':leak'];
+const STATE_VALUE_NUMERIC_KEY_SUFFIXES = [':battery', ':humidity', ':soil_humidity', ':temperature', ':brightness'];
+function stateValueKindForKey(key) {
+  if (!key) return null;
+  if (STATE_VALUE_BOOLEAN_KEY_SUFFIXES.some(suffix => key.endsWith(suffix))) return 'boolean';
+  if (STATE_VALUE_NUMERIC_KEY_SUFFIXES.some(suffix => key.endsWith(suffix))) return 'numeric';
+  return null;
+}
+function stateValueSelectHtml(options, selectedValue) {
   const hasSelected = selectedValue && options.includes(selectedValue);
   const extra = (selectedValue && !hasSelected)
     ? `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>` : '';
@@ -681,6 +685,20 @@ function stateValueFieldHtml(category, selectedValue) {
     ${options.map(v => `<option value="${escapeHtml(v)}" ${v === selectedValue ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
     ${extra}
   </select>`;
+}
+function stateValueFieldHtml(category, selectedValue, key) {
+  const kind = stateValueKindForKey(key);
+  if (kind === 'boolean') {
+    return stateValueSelectHtml(['tak', 'nie'], selectedValue);
+  }
+  if (kind === 'numeric') {
+    return `<input type="text" class="cond-state-value" placeholder="wartość liczbowa (np. 55 lub 55%)" value="${escapeHtml(selectedValue || '')}">`;
+  }
+  const options = STATE_VALUE_OPTIONS[category];
+  if (!options) {
+    return `<input type="text" class="cond-state-value" placeholder="wartość (np. liczba dla kotła)" value="${escapeHtml(selectedValue || '')}">`;
+  }
+  return stateValueSelectHtml(options, selectedValue);
 }
 
 function stateKeyOptionsHtml(selected, category) {
@@ -707,7 +725,7 @@ function buildConditionLeafFieldsHtml(type, initial) {
       <select class="cond-state-category">${statusCategoryOptionsHtml(category)}</select>
       <select class="cond-state-key">${stateKeyOptionsHtml(initial.key, category)}</select>
       <select class="cond-state-op" style="max-width:130px;">${stateOpOptionsHtml(initialOp)}</select>
-      <span class="cond-state-value-wrap">${stateValueFieldHtml(category, selectedValue)}</span>`;
+      <span class="cond-state-value-wrap">${stateValueFieldHtml(category, selectedValue, initial.key)}</span>`;
   }
   if (type === 'time_window') {
     return `
@@ -759,11 +777,11 @@ function buildConditionGroupEl(groupData) {
         fields.querySelector('.cond-state-category').addEventListener('change', (e) => {
           const category = e.target.value;
           fields.querySelector('.cond-state-key').innerHTML = stateKeyOptionsHtml('', category);
-          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '');
+          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '', '');
         });
-        fields.querySelector('.cond-state-key').addEventListener('change', () => {
+        fields.querySelector('.cond-state-key').addEventListener('change', (e) => {
           const category = fields.querySelector('.cond-state-category').value;
-          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '');
+          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '', e.target.value);
         });
       }
       if (kind === 'time_window') {
