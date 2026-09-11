@@ -1,3 +1,7 @@
+import asyncio
+import threading
+import time
+
 import pytest
 
 from bridge.tuya_local import (
@@ -886,6 +890,91 @@ class TestZigbeeGateways:
         ctrl = TuyaLocalController(devices_cfg, self.GATEWAYS_CFG)
         assert "lampka" not in ctrl._devices
         assert "gniazdko_salon" in ctrl._devices
+
+
+class _ConcurrencyTrackingDevice:
+    """Symuluje blokujące wywołanie tinytuya (np. status()) i mierzy, ile takich
+    wywołań faktycznie nakłada się w czasie - dokładnie to, czego tinytuya nie
+    obsługuje bezpiecznie, gdy wiele wątków współdzieli jeden obiekt `parent`."""
+
+    def __init__(self, tracker: "_ConcurrencyTracker"):
+        self._tracker = tracker
+
+    def status(self):
+        self._tracker.enter()
+        time.sleep(0.05)
+        self._tracker.exit()
+        return {"dps": {}}
+
+
+class _ConcurrencyTracker:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.current = 0
+        self.max_seen = 0
+
+    def enter(self):
+        with self._lock:
+            self.current += 1
+            self.max_seen = max(self.max_seen, self.current)
+
+    def exit(self):
+        with self._lock:
+            self.current -= 1
+
+
+class TestGatewayCallSerialization:
+    """Wiele podurządzeń Zigbee tej samej bramki dzieli JEDEN obiekt tinytuya.Device
+    (i jego gniazdo TCP) jako `parent` - tinytuya nie jest bezpieczne wątkowo, więc
+    równoległe odpytanie dwóch takich podurządzeń w tym samym momencie (dokładnie to,
+    co robi get_all_statuses() przez asyncio.gather) psuje współdzielone połączenie
+    obu wywołaniom naraz. Stąd blokada per bramka w _call_with_retry."""
+
+    GATEWAYS_CFG = {
+        "brama": {"id": "gw1", "ip": "192.168.1.60", "local_key": "gwkey"},
+        "brama2": {"id": "gw2", "ip": "192.168.1.61", "local_key": "gwkey2"},
+    }
+
+    async def test_same_gateway_calls_never_overlap(self):
+        devices_cfg = {
+            "a": {"id": "suba", "gateway": "brama", "type": "socket"},
+            "b": {"id": "subb", "gateway": "brama", "type": "socket"},
+        }
+        ctrl = TuyaLocalController(devices_cfg, self.GATEWAYS_CFG, retries=0, retry_delay=0.01)
+        tracker = _ConcurrencyTracker()
+        ctrl._devices["a"] = _ConcurrencyTrackingDevice(tracker)
+        ctrl._devices["b"] = _ConcurrencyTrackingDevice(tracker)
+
+        await asyncio.gather(ctrl.get_status("a"), ctrl.get_status("b"))
+        assert tracker.max_seen == 1
+
+    async def test_different_gateways_run_concurrently(self):
+        devices_cfg = {
+            "a": {"id": "suba", "gateway": "brama", "type": "socket"},
+            "b": {"id": "subb", "gateway": "brama2", "type": "socket"},
+        }
+        ctrl = TuyaLocalController(devices_cfg, self.GATEWAYS_CFG, retries=0, retry_delay=0.01)
+        tracker = _ConcurrencyTracker()
+        ctrl._devices["a"] = _ConcurrencyTrackingDevice(tracker)
+        ctrl._devices["b"] = _ConcurrencyTrackingDevice(tracker)
+
+        await asyncio.gather(ctrl.get_status("a"), ctrl.get_status("b"))
+        assert tracker.max_seen == 2
+
+    async def test_plain_wifi_devices_run_concurrently_alongside_a_gateway(self):
+        devices_cfg = {
+            "a": {"id": "suba", "gateway": "brama", "type": "socket"},
+            "wifi1": {"id": "w1", "ip": "192.168.1.70", "local_key": "k1"},
+            "wifi2": {"id": "w2", "ip": "192.168.1.71", "local_key": "k2"},
+        }
+        ctrl = TuyaLocalController(devices_cfg, self.GATEWAYS_CFG, retries=0, retry_delay=0.01)
+        tracker = _ConcurrencyTracker()
+        ctrl._devices["a"] = _ConcurrencyTrackingDevice(tracker)
+        ctrl._devices["wifi1"] = _ConcurrencyTrackingDevice(tracker)
+        ctrl._devices["wifi2"] = _ConcurrencyTrackingDevice(tracker)
+
+        await asyncio.gather(ctrl.get_status("a"), ctrl.get_status("wifi1"), ctrl.get_status("wifi2"))
+        assert tracker.max_seen == 3
 
 
 class TestProtocolVersionFallback:

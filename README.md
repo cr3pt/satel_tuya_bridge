@@ -936,6 +936,24 @@ akurat bramka Zigbee (a nie zwykłe gniazdko/przełącznik) - przycisk
 `local_key` i nazwę uzupełnij ręcznie, tak jak dla zwykłego urządzenia
 znalezionego samym skanem LAN).
 
+**Wszystkie podurządzenia jednej bramki dzielą jedno połączenie TCP - ich
+odpytywanie jest teraz zserializowane.** Biblioteka `tinytuya` reprezentuje
+podurządzenie Zigbee jako osobny obiekt, ale komunikacja i tak zawsze
+przechodzi przez `parent` (obiekt bramki) i jego JEDNO gniazdo sieciowe -
+`tinytuya` nie jest bezpieczne wątkowo. `get_all_statuses()` (odpytywanie
+co `status_poll_interval_seconds`) odpytuje wszystkie urządzenia RAZEM,
+każde na osobnym wątku (`asyncio.gather` + executor) - bez dodatkowej
+synchronizacji dwa podurządzenia tej samej bramki odpytane w tej samej
+chwili psuły sobie nawzajem współdzielone gniazdo, co objawiało się jako
+masowa, pozornie przypadkowa fala błędów **"Check device key or
+version"/"Network Error: Unable to Connect"** na WSZYSTKICH urządzeniach
+danej bramki naraz, w każdym cyklu odpytywania - mimo poprawnych kluczy i
+działającej sieci. `TuyaLocalController` trzyma teraz jeden `asyncio.Lock`
+na bramkę i przepuszcza przez niego (w `_call_with_retry`) każde
+polecenie/odpytanie kierowane do jej podurządzeń jedno po drugim -
+urządzenia różnych bramek i zwykłe urządzenia WiFi nadal działają w pełni
+równolegle, bez żadnego spowolnienia.
+
 ### Zmiany działają od razu - bez restartu Dockera
 
 Zapis czujników eBUS, pól Satela, urządzeń Tuya (sekcje na stronach
