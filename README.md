@@ -3013,6 +3013,21 @@ danymi z odpowiedzi API, odczytywany raz po przeładowaniu docelowej strony -
 żadna z operacji nie zapisuje niczego bez jawnego kliknięcia przycisku
 "Zapisz" na stronie docelowej.
 
+### Historia zdarzeń dla Flow
+
+Odpalenie i wykonanie akcji przez Flow trafia teraz do tej samej **Historii
+zdarzeń** na stronie głównej, co reguły ruchu i sceny (filtr "Typ zdarzeń"
+-> **flow**) - wcześniej `FlowEngine` nie zapisywał NIC do historii (w
+odróżnieniu od reguł ruchu/scen, które od zawsze to robiły), więc nie dało
+się w panelu sprawdzić, czy i kiedy dany flow się w ogóle uruchomił. Logowane
+jest osobno: odpalenie węzła wejściowego (Trigger/MQTT in/Warunek złożony
+jako trigger, w tym ręczne "Testuj"), każda wykonana akcja (Urządzenie,
+Scena, Ustaw pole Tuya, MQTT out, HTTP, Powiadomienie) - z jej parametrami
+w kolumnie ze szczegółami - oraz błąd węzła (to samo zdarzenie, które
+wcześniej trafiało WYŁĄCZNIE do logu Pythona/powiadomienia push, teraz
+widoczne też w Historii zdarzeń). Źródło zdarzenia to zawsze `flow:<nazwa
+flow>`, więc łatwo przefiltrować historię jednego konkretnego flow.
+
 ## Zmywarki/AGD HomeWhiz (BEQ/Arcelik)
 
 Bridge łączy się BEZPOŚREDNIO z chmurą HomeWhiz (Arcelik IoT/AWS) tymi

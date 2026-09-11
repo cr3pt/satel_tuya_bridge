@@ -106,6 +106,7 @@ class RulesEngine:
             run_scene=lambda name: self.scenes.run(name), notify_cfg=notify_cfg,
             mqtt_cfg=config.raw.get("mqtt_publish", {}), location_cfg=self._location_cfg,
             get_status_value=self.history.get_status_value, set_tuya_dp=self._set_tuya_dp,
+            write_event=self.history.write_event,
         )
 
         self._escalation_history: dict[str, list[float]] = {}

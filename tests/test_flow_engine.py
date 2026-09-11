@@ -1005,3 +1005,199 @@ class TestUpdateFlows:
         await engine.handle_motion("satel_zone", 5)
         await asyncio.sleep(0.01)
         assert calls["run_scene"] == []
+
+
+class TestFlowEventLogging:
+    """FlowEngine wcześniej nie zapisywał żadnych zdarzeń do Historii zdarzeń
+    (w odróżnieniu od reguł ruchu/scen) - nie dało się zobaczyć w panelu, KIEDY
+    i CZY dany flow w ogóle się uruchomił/wykonał akcję. Te testy pokrywają
+    nowe wywołania write_event dla odpalenia triggera i każdej akcji."""
+
+    def _events_engine(self, flows):
+        events = []
+
+        def write_event(event_type, source, detail):
+            events.append((event_type, source, detail))
+
+        engine, calls = _engine(flows, write_event=write_event)
+        return engine, calls, events
+
+    async def test_trigger_fire_logs_flow_event(self):
+        flow = {
+            "id": "f1", "name": "moja-flow", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, _calls, events = self._events_engine([flow])
+        await engine.handle_motion("satel_zone", 5, trigger="violated")
+        await asyncio.sleep(0.01)
+
+        trigger_events = [e for e in events if e[2].get("node_type") == "trigger"]
+        assert len(trigger_events) == 1
+        event_type, source, detail = trigger_events[0]
+        assert event_type == "flow"
+        assert source == "flow:moja-flow"
+        assert detail["node_id"] == "trig"
+
+    async def test_device_action_logs_flow_event(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "target_system": "tuya", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, _calls, events = self._events_engine([flow])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+
+        device_events = [e for e in events if e[2].get("node") == "device"]
+        assert len(device_events) == 1
+        assert device_events[0][2] == {
+            "node": "device", "target_device": "lampa", "target_system": "tuya", "value": "on",
+        }
+
+    async def test_scene_action_logs_flow_event(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["scn"]]},
+                {"id": "scn", "type": "scene", "config": {"scene_name": "wykryto_intruza"}, "wires": []},
+            ],
+        }
+        engine, _calls, events = self._events_engine([flow])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+
+        scene_events = [e for e in events if e[2].get("node") == "scene"]
+        assert scene_events == [("flow", "flow:f", {"node": "scene", "scene": "wykryto_intruza"})]
+
+    async def test_tuya_dp_action_logs_flow_event(self):
+        async def set_tuya_dp(device, dp_code, value, reason=None):
+            pass
+
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dp"]]},
+                {"id": "dp", "type": "tuya_dp", "config": {"target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1"}, "wires": []},
+            ],
+        }
+        engine, _calls, events = self._events_engine([flow])
+        engine._set_tuya_dp = set_tuya_dp
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+
+        dp_events = [e for e in events if e[2].get("node") == "tuya_dp"]
+        assert dp_events == [
+            ("flow", "flow:f", {"node": "tuya_dp", "target_device": "nawadnianie", "dp_code": "manual_delay", "value": "1"}),
+        ]
+
+    async def test_mqtt_out_action_logs_flow_event(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["mo"]]},
+                {"id": "mo", "type": "mqttOut", "config": {"topic": "home/test", "payload": "on"}, "wires": []},
+            ],
+        }
+        engine, _calls, events = self._events_engine([flow])
+        engine._ensure_mqtt_client = lambda: FakeMqttClient()
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+
+        mqtt_events = [e for e in events if e[2].get("node") == "mqtt_out"]
+        assert mqtt_events == [("flow", "flow:f", {"node": "mqtt_out", "topic": "home/test", "payload": "on"})]
+
+    async def test_notify_action_logs_flow_event(self, monkeypatch):
+        async def fake_send(self, title, message, priority="default"):
+            pass
+
+        monkeypatch.setattr("bridge.flow_engine.Notifier.send", fake_send)
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["ntf"]]},
+                {"id": "ntf", "type": "notify", "config": {"level": "warning", "message": "uwaga"}, "wires": []},
+            ],
+        }
+        engine, _calls, events = self._events_engine([flow])
+        await engine.handle_motion("satel_zone", 5)
+        await asyncio.sleep(0.01)
+
+        notify_events = [e for e in events if e[2].get("node") == "notify"]
+        assert notify_events == [("flow", "flow:f", {"node": "notify", "level": "warning", "message": "uwaga"})]
+
+    async def test_condition_group_entrypoint_fire_logs_flow_event(self):
+        condition = {"type": "state", "key": "tuya:garaz", "equals": "zamknięte"}
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [["dev"], []]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        values = {"tuya:garaz": "otwarte"}
+        engine, _calls, events = self._events_engine([flow])
+        engine._get_status_value = lambda key: values.get(key)
+        await engine.handle_motion("satel_zone", 99)  # dowolne zdarzenie odpytuje entrypointy
+        assert not events
+
+        values["tuya:garaz"] = "zamknięte"
+        await engine.handle_motion("satel_zone", 99)
+        await asyncio.sleep(0.01)
+
+        cg_events = [e for e in events if e[2].get("node_type") == "condition_group"]
+        assert len(cg_events) == 1
+        assert cg_events[0][1] == "flow:f"
+
+    async def test_node_failure_logs_flow_event_with_error(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["http"]]},
+                {"id": "http", "type": "http", "config": {"method": "GET", "url": "http://example.invalid"}, "wires": []},
+            ],
+        }
+        engine, _calls, events = self._events_engine([flow])
+
+        class FailingSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            def request(self, *a, **kw):
+                raise RuntimeError("boom")
+
+        import bridge.flow_engine as flow_engine_module
+        original = flow_engine_module.aiohttp.ClientSession
+        flow_engine_module.aiohttp.ClientSession = lambda: FailingSession()
+        try:
+            await engine.handle_motion("satel_zone", 5)
+            await asyncio.sleep(0.01)
+        finally:
+            flow_engine_module.aiohttp.ClientSession = original
+
+        error_events = [e for e in events if "error" in e[2]]
+        assert len(error_events) == 1
+        assert error_events[0][2]["node_type"] == "http"
+
+    async def test_run_flow_manual_test_logs_flow_event(self):
+        flow = {
+            "id": "f1", "name": "f", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, _calls, events = self._events_engine([flow])
+        await engine.run_flow("f1")
+        await asyncio.sleep(0.01)
+
+        trigger_events = [e for e in events if e[2].get("node_type") == "trigger"]
+        assert len(trigger_events) == 1
+        assert trigger_events[0][2]["source"] == "flow-test:f"
