@@ -1023,8 +1023,12 @@ class RulesEngine:
             if key not in seen:
                 self.history.set_status(key, "tuya", "?", label=name)
 
+        tuya_status_suffixes = (
+            "brightness", "soil_humidity", "contact", "leak", "battery", "humidity", "temperature",
+        )
         tuya_keys = {f"tuya:{name}" for name in self.tuya.devices_cfg}
-        tuya_keys |= {f"tuya:{name}:brightness" for name in self.tuya.devices_cfg}
+        for suffix in tuya_status_suffixes:
+            tuya_keys |= {f"tuya:{name}:{suffix}" for name in self.tuya.devices_cfg}
         self.history.prune_status("tuya", tuya_keys)
 
     def _seed_homewhiz_status_labels(self) -> None:

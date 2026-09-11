@@ -1836,6 +1836,46 @@ class TestTuyaStatusPollLoop:
         assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
 
 
+class TestSeedTuyaStatusLabels:
+
+    async def test_dedicated_sensor_sub_keys_survive_prune(self, engine, fake_tuya):
+        fake_tuya.devices_cfg = {"drzwi_wejsciowe": {"id": "dev1", "ip": "1.2.3.4", "local_key": "k"}}
+        engine.history.set_status("tuya:drzwi_wejsciowe:contact", "tuya", "tak", label="Drzwi (kontaktron)")
+        engine.history.set_status("tuya:drzwi_wejsciowe:leak", "tuya", "nie", label="Drzwi (zalanie)")
+        engine.history.set_status("tuya:drzwi_wejsciowe:battery", "tuya", "87.0%", label="Drzwi (bateria)")
+        engine.history.set_status("tuya:drzwi_wejsciowe:humidity", "tuya", "55.0%", label="Drzwi (wilgotność)")
+        engine.history.set_status("tuya:drzwi_wejsciowe:temperature", "tuya", "23.5°C", label="Drzwi (temperatura)")
+        engine.history.set_status("tuya:drzwi_wejsciowe:soil_humidity", "tuya", "32.0%", label="Drzwi (gleba)")
+
+        engine._seed_tuya_status_labels()
+
+        statuses = {s["key"]: s["value"] for s in engine.history.get_status("tuya")}
+        assert statuses["tuya:drzwi_wejsciowe:contact"] == "tak"
+        assert statuses["tuya:drzwi_wejsciowe:leak"] == "nie"
+        assert statuses["tuya:drzwi_wejsciowe:battery"] == "87.0%"
+        assert statuses["tuya:drzwi_wejsciowe:humidity"] == "55.0%"
+        assert statuses["tuya:drzwi_wejsciowe:temperature"] == "23.5°C"
+        assert statuses["tuya:drzwi_wejsciowe:soil_humidity"] == "32.0%"
+
+    async def test_dedicated_sensor_sub_keys_survive_reload_config(self, engine, fake_tuya):
+        # gniazdko_salon jest zdefiniowany w CONFIG_TEMPLATE, więc reload_config()
+        # (który odtwarza self.tuya z pliku configu, nie z fake_tuya) wciąż go zna.
+        engine.history.set_status("tuya:gniazdko_salon:contact", "tuya", "tak", label="Gniazdko (kontaktron)")
+
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+
+        assert engine.history.get_status_value("tuya:gniazdko_salon:contact") == "tak"
+
+    async def test_sub_key_for_removed_device_is_still_pruned(self, engine, fake_tuya):
+        fake_tuya.devices_cfg = {}
+        engine.history.set_status("tuya:usuniete_urzadzenie:contact", "tuya", "tak", label="Usunięte (kontaktron)")
+
+        engine._seed_tuya_status_labels()
+
+        assert engine.history.get_status_value("tuya:usuniete_urzadzenie:contact") is None
+
+
 class TestWeatherPollLoop:
 
     async def test_publishes_precipitation_status_keys(self, engine, monkeypatch):

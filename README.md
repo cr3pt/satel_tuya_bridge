@@ -1915,6 +1915,20 @@ pokazuje pole tekstowe do wpisania wartości liczbowej (do użycia z
 operatorami `>`/`>=`/`<`/`<=`), a dla pozostałych kluczy (przełączniki,
 Satel itd.) działa jak dotychczas.
 
+**Poprawka: nowe klucze czujników znikały po każdym zapisie w panelu.**
+`_seed_tuya_status_labels()` (uruchamiane przy starcie i przy każdym
+przeładowaniu konfiguracji - czyli po KAŻDYM zapisie flow, reguły ruchu
+czy dowolnego ustawienia w panelu) czyści status kategorii `tuya` do
+"znanej" listy kluczy, żeby usuwać śmieci po usuniętych urządzeniach. Ta
+"znana" lista znała tylko `tuya:<urządzenie>` i `tuya:<urządzenie>:brightness`
+- więc zaraz po dodaniu nowych kluczy `:contact`/`:leak`/`:battery`/
+`:humidity`/`:temperature` (i już wcześniej istniejącego `:soil_humidity`)
+były one natychmiast kasowane przy pierwszym zapisie w panelu, przez co
+warunek oparty o taki klucz (np. "kontaktron: tak") przestawał móc się
+kiedykolwiek spełnić. Naprawione - lista "znanych" sufiksów obejmuje teraz
+wszystkie dedykowane klucze czujników.
+Satel itd.) działa jak dotychczas.
+
 **Uzbrajanie z aplikacji Dom - dlaczego bezpieczne (w przeciwieństwie do
 MQTT).** HomeKit ma wbudowane, obowiązkowe parowanie i szyfrowanie
 end-to-end na poziomie protokołu (Apple Authentication Coprocessor /
