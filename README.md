@@ -403,22 +403,26 @@ automatycznie zamiast gołego ID.
 
 Urządzenie sterowane przez chmurę może z czasem stać się dostępne
 lokalnie (zmiana routera/WiFi, przeniesienie bridge'a do tej samej sieci
-co urządzenie) - zamiast robić import od nowa, na tej samej stronie jest
-przycisk **"🔄 Rescan"**. Ponownie odpytuje Tuya Cloud i skanuje LAN
-wyłącznie dla wierszy w trybie "Przez chmurę" i dla każdego, dla którego
-udało się teraz znaleźć komplet danych (adres IP + `local_key`),
-automatycznie przełącza tryb sterowania tego wiersza na "Lokalnie
-(WiFi)" i wypełnia adres IP/`local_key`/wersję protokołu (opis pól DP,
-jeśli był już pobrany, zostaje przy urządzeniu) - wystarczy potem
-kliknąć **"💾 Zapisz urządzenia"**.
+co urządzenie, albo dopisanie jego bramki Zigbee do configu) - zamiast
+robić import od nowa, na tej samej stronie są dwa przyciski **"🔄 Rescan"**
+(WiFi i Zigbee, patrz niżej), z których każdy trzeba kliknąć osobno i
+świadomie - żaden zwykły skan LAN sam z siebie nie zmienia trybu
+sterowania już skonfigurowanego urządzenia. Rescan ponownie odpytuje Tuya
+Cloud i skanuje LAN wyłącznie dla wierszy w trybie "Przez chmurę" i dla
+każdego, dla którego udało się teraz znaleźć komplet danych (adres IP +
+`local_key` dla wariantu WiFi, albo już skonfigurowaną bramkę dla wariantu
+Zigbee), przełącza tryb sterowania tego wiersza i wypełnia odpowiednie
+pola (opis pól DP, jeśli był już pobrany, zostaje przy urządzeniu) -
+wystarczy potem kliknąć **"💾 Zapisz urządzenia"**.
 
 **Skan trwa ok. 18 sekund - to normalne, nie oznacza zawieszenia.**
 Tuya rozgłasza się w sieci LAN cyklicznie, nie w sposób ciągły, więc
 skan musi nasłuchiwać broadcastu UDP przez pewien czas, żeby złapać
 wszystkie urządzenia (dokładnie tak samo działa ręczne uruchomienie
 `python -m tinytuya scan` - jego domyślny czas nasłuchu to też 18s).
-Każdy z trzech przycisków skanujących sieć (🔍 Skanuj sieć, ☁
-Importuj z Tuya Cloud, 🔄 Rescan) rzeczywiście tyle czeka - jeśli
+Każdy z czterech przycisków skanujących sieć (🔍 Skanuj sieć, ☁
+Importuj z Tuya Cloud, 🔄 Rescan WiFi, 🌉 Rescan Zigbee) rzeczywiście tyle
+czeka - jeśli
 wcześniej u Ciebie kończyły się od razu z pustym wynikiem mimo
 działających urządzeń widocznych w samym `tinytuya`, to był błąd w
 bridge'u (czas nasłuchu skrócony do 1s zamiast 18s), naprawiony.
@@ -960,17 +964,32 @@ akurat bramka Zigbee (a nie zwykłe gniazdko/przełącznik) - przycisk
 `local_key` i nazwę uzupełnij ręcznie, tak jak dla zwykłego urządzenia
 znalezionego samym skanem LAN).
 
-**Skan LAN uzupełnia też zwykłe urządzenia sterowane przez chmurę, po tym
-samym ID.** Jeśli w tabeli "Urządzenia" jest wiersz w trybie "Przez chmurę"
-(bo import z Tuya Cloud nie znalazł wtedy jego adresu IP), a **"🔍 Skanuj
-sieć"** teraz go odnajdzie po tym samym ID - wiersz dostaje adres IP/wersję
-protokołu i tryb sterowania sam przełącza się na "Lokalnie (WiFi)".
-**Dane z Tuya Cloud (nazwa, `local_key`, kategoria) mają pierwszeństwo i
-zostają nietknięte** - skan LAN dokłada wyłącznie to, czego chmura nie ma
-(adres IP), nigdy nie nadpisuje tego, co już wypełniła. Dotyczy to samego
-przycisku "🔍 Skanuj sieć" (nie wymaga osobnego "🔄 Rescan", które i tak
-robi to samo, ale ponownie odpytując Tuya Cloud - przydatne, gdy lista
-urządzeń w tabeli nie jest jeszcze zapisana).
+**Żaden skan sam z siebie nie przełącza trybu sterowania urządzenia -
+wymaga to świadomego kliknięcia dedykowanego przycisku.** Wcześniej zwykły
+**"🔍 Skanuj sieć"** (uruchamiany też odruchowo, żeby po prostu sprawdzić,
+co odpowiada w LAN) sam przełączał wiersze z trybu "Przez chmurę" na
+"Lokalnie (WiFi)", gdy tylko trafił na pasujące ID - w praktyce potrafiło
+to po cichu cofnąć świadomie wybrane sterowanie chmurowe na sterowanie
+lokalne z nieaktualnym/niepewnym adresem IP, co wyglądało jak "urządzenia
+przestały działać" mimo wcześniejszego przełączenia wszystkiego na chmurę.
+Teraz "🔍 Skanuj sieć" tylko **informuje** w wynikach ("urządzenie
+sterowane przez chmurę odpowiedziało też w LAN"), nic nie zmienia w
+tabeli - migracja trybu dzieje się WYŁĄCZNIE po kliknięciu jednego z dwóch
+przycisków w sekcji "Urządzenia":
+- **"🔄 Rescan - sprawdź, które można przełączyć na lokalne (WiFi)"** -
+  dla wierszy "Przez chmurę", którym Tuya Cloud + skan LAN dają teraz
+  komplet danych (adres IP + `local_key`), przełącza tryb na "Lokalnie
+  (WiFi)" i wypełnia adres IP/`local_key`/wersję protokołu.
+- **"🌉 Rescan - sprawdź, które można przełączyć na bramkę (Zigbee)"** -
+  dla wierszy "Przez chmurę", które Tuya Cloud zgłasza jako podurządzenie
+  Zigbee (`gateway_id`) WSKAZUJĄCE NA JUŻ SKONFIGUROWANĄ bramkę, przełącza
+  tryb na "Lokalnie (Zigbee)" i wypełnia bramkę oraz `cid`.
+
+W obu przypadkach **dane z Tuya Cloud (nazwa, `local_key`, kategoria) mają
+pierwszeństwo i zostają nietknięte** - przycisk dokłada wyłącznie to, czego
+chmura nie ma (adres IP/bramkę), nigdy nie nadpisuje tego, co już
+wypełniła. Żadna z tych dwóch operacji nie zapisuje niczego do configu -
+jak zawsze wymaga to na końcu kliknięcia **"💾 Zapisz urządzenia"**.
 
 **Wszystkie podurządzenia jednej bramki dzielą jedno połączenie TCP - ich
 odpytywanie jest teraz zserializowane.** Biblioteka `tinytuya` reprezentuje
