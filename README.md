@@ -1885,6 +1885,36 @@ tak jak `tuya:<urządzenie>:brightness` dla ściemniaczy. Wcześniej druga
 wartość była całkowicie tracona (branych pod uwagę było tylko pierwsze
 dopasowanie).
 
+**Osobne klucze statusu dla kontaktronu, czujnika zalania, baterii,
+wilgotności i temperatury** (`tuya:<urządzenie>:contact`, `:leak`,
+`:battery`, `:humidity`, `:temperature`) - dla czujników bez przełącznika
+(np. czujnik otwarcia drzwi) główny status `tuya:<urządzenie>` był
+dotychczas JEDNYM złożonym tekstem łączącym wszystkie pola naraz (np.
+`"kontaktron: nie | bateria: 100"`), co nie nadawało się do niezawodnego
+dopasowania w warunkach automatyzacji - zmieniał się przy każdej zmianie
+KTÓREGOKOLWIEK ze składowych pól. Teraz każde rozpoznane pole publikowane
+jest dodatkowo pod własnym, dedykowanym kluczem (kontaktron/zalanie jako
+`"tak"`/`"nie"`, bateria/wilgotność jako wartość procentowa, temperatura ze
+znakiem `°C`) - dokładnie ten sam wzorzec co istniejący wcześniej
+`tuya:<urządzenie>:soil_humidity`/`:brightness`. Złożony status
+`tuya:<urządzenie>` nadal istnieje bez zmian (jako ogólny podgląd na
+panelu głównym), ale do warunków w Kreatorze Flow i "dodatkowego warunku
+reguły" w Automatyzacjach należy wybierać te nowe, dedykowane klucze.
+
+**Wybór wartości warunku dopasowany do wybranego klucza statusu.**
+Wcześniej lista wartości do wyboru w Warunku stanu/Warunku złożonym była
+zależna WYŁĄCZNIE od kategorii systemu (`tuya`), więc dla KAŻDEGO klucza
+Tuya (przełącznik, kontaktron, bateria, wilgotność...) proponowała ten
+sam, stały zestaw `włączone`/`wyłączone`/`niedostępne`/`poza siecią` -
+uniemożliwiając np. wybranie naruszenia kontaktronu (`kontaktron: tak`),
+bo taka wartość nie występowała na liście. Teraz wybór pola wartości
+rozpoznaje KONKRETNY wybrany klucz statusu: dla `:contact`/`:leak` pokazuje
+listę `tak`/`nie` (zgodnie z tym, co faktycznie wyświetla panel główny),
+dla `:battery`/`:humidity`/`:soil_humidity`/`:temperature`/`:brightness`
+pokazuje pole tekstowe do wpisania wartości liczbowej (do użycia z
+operatorami `>`/`>=`/`<`/`<=`), a dla pozostałych kluczy (przełączniki,
+Satel itd.) działa jak dotychczas.
+
 **Uzbrajanie z aplikacji Dom - dlaczego bezpieczne (w przeciwieństwie do
 MQTT).** HomeKit ma wbudowane, obowiązkowe parowanie i szyfrowanie
 end-to-end na poziomie protokołu (Apple Authentication Coprocessor /

@@ -658,8 +658,15 @@ function stateOpOptionsHtml(selectedOp) {
 function stateOpSymbol(op) {
   return (STATE_OPS.find(o => o.value === op) || STATE_OPS[0]).symbol;
 }
-function stateValueOptionsHtml(category, selectedValue) {
-  const options = STATE_VALUE_OPTIONS[category] || [];
+const STATE_VALUE_BOOLEAN_KEY_SUFFIXES = [':contact', ':leak'];
+const STATE_VALUE_NUMERIC_KEY_SUFFIXES = [':battery', ':humidity', ':soil_humidity', ':temperature', ':brightness'];
+function stateValueKindForKey(key) {
+  if (!key) return null;
+  if (STATE_VALUE_BOOLEAN_KEY_SUFFIXES.some(suffix => key.endsWith(suffix))) return 'boolean';
+  if (STATE_VALUE_NUMERIC_KEY_SUFFIXES.some(suffix => key.endsWith(suffix))) return 'numeric';
+  return null;
+}
+function stateValueOptionsHtml(options, selectedValue) {
   const hasSelected = selectedValue && options.includes(selectedValue);
   const extra = (selectedValue && !hasSelected)
     ? `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>` : '';
@@ -667,11 +674,18 @@ function stateValueOptionsHtml(category, selectedValue) {
     options.map(v => `<option value="${escapeHtml(v)}" ${v === selectedValue ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('') +
     extra;
 }
-function stateValueFieldHtml(category, selectedValue) {
+function stateValueFieldHtml(category, selectedValue, key) {
+  const kind = stateValueKindForKey(key);
+  if (kind === 'boolean') {
+    return `<select class="state-value">${stateValueOptionsHtml(['tak', 'nie'], selectedValue)}</select>`;
+  }
+  if (kind === 'numeric') {
+    return `<input type="text" class="state-value" placeholder="wartość liczbowa (np. 55 lub 55%)" value="${escapeHtml(selectedValue || '')}">`;
+  }
   if (!STATE_VALUE_OPTIONS[category]) {
     return `<input type="text" class="state-value" placeholder="wartość" value="${escapeHtml(selectedValue || '')}">`;
   }
-  return `<select class="state-value">${stateValueOptionsHtml(category, selectedValue)}</select>`;
+  return `<select class="state-value">${stateValueOptionsHtml(STATE_VALUE_OPTIONS[category] || [], selectedValue)}</select>`;
 }
 function sceneOptions(selected) {
   const names = context.scene_names || [];
@@ -754,7 +768,7 @@ function buildConditionLeafFieldsHtml(type, initial) {
       <div class="field"><label>System</label><select class="cond-state-category">${statusCategoryOptionsHtml(category)}</select></div>
       <div class="field"><label>Status</label><select class="cond-state-key">${stateKeyOptionsHtml(initial.key, category)}</select></div>
       <div class="field"><label>Operator</label><select class="cond-state-op">${stateOpOptionsHtml(initialOp)}</select></div>
-      <div class="field"><label>Wartość</label><span class="cond-state-value-wrap">${stateValueFieldHtml(category, selectedValue)}</span></div>`;
+      <div class="field"><label>Wartość</label><span class="cond-state-value-wrap">${stateValueFieldHtml(category, selectedValue, initial.key)}</span></div>`;
   }
   if (type === 'time_window') {
     return `
@@ -806,11 +820,11 @@ function buildConditionGroupEl(groupData) {
         fields.querySelector('.cond-state-category').addEventListener('change', (e) => {
           const category = e.target.value;
           fields.querySelector('.cond-state-key').innerHTML = stateKeyOptionsHtml('', category);
-          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '');
+          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '', '');
         });
-        fields.querySelector('.cond-state-key').addEventListener('change', () => {
+        fields.querySelector('.cond-state-key').addEventListener('change', (e) => {
           const category = fields.querySelector('.cond-state-category').value;
-          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '');
+          fields.querySelector('.cond-state-value-wrap').innerHTML = stateValueFieldHtml(category, '', e.target.value);
         });
       }
       if (kind === 'time_window') {
@@ -902,7 +916,7 @@ function renderNodeFields(node) {
     html += field(`<label>System</label><select class="state-category">${statusCategoryOptionsHtml(stateCategory)}</select>`);
     html += field(`<label>Status</label><select class="state-key">${stateKeyOptionsHtml(c.key, stateCategory)}</select>`);
     html += field(`<label>Operator</label><select data-field="op">${stateOpOptionsHtml(c.op)}</select>`);
-    html += field(`<label>Wartość</label><span class="state-value-wrap">${stateValueFieldHtml(stateCategory, c.value)}</span>`);
+    html += field(`<label>Wartość</label><span class="state-value-wrap">${stateValueFieldHtml(stateCategory, c.value, c.key)}</span>`);
   } else if (node.type === 'device') {
     const targetSystem = c.target_system || 'tuya';
     html += field(`<label>System</label><select data-field="target_system">
