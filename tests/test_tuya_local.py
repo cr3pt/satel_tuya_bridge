@@ -8,7 +8,7 @@ from bridge.tuya_local import (
     TuyaLocalController, scan_network, fetch_cloud_devices, fetch_device_dp_schema,
     fetch_dp_schemas_for_devices, find_tuya_switch_key, format_tuya_dps,
     extract_tuya_sensor_readings, detect_tuya_sensor_type,
-    is_switch_code, find_switch_keys_from_schema, coerce_dp_value,
+    is_switch_code, find_switch_keys_from_schema, coerce_dp_value, _tcp_probe,
 )
 
 DEVICES_CFG = {
@@ -88,7 +88,12 @@ class FakeMultiDPDevice:
 
 
 @pytest.fixture
-def controller():
+def controller(monkeypatch):
+    # Diagnostyka po wyczerpaniu prób robi prawdziwe połączenie TCP (do 2s) -
+    # w testach, które nie sprawdzają samej diagnostyki, to tylko niepotrzebne
+    # opóźnienie/niedeterminizm (sandbox bez trasy do 192.168.x.x zwraca timeout,
+    # nie natychmiastowy błąd).
+    monkeypatch.setattr("bridge.tuya_local._tcp_probe", lambda *a, **k: "diagnostyka pominięta w testach")
     ctrl = TuyaLocalController(DEVICES_CFG, retries=2, retry_delay=0.01)
     return ctrl
 
@@ -975,6 +980,105 @@ class TestGatewayCallSerialization:
 
         await asyncio.gather(ctrl.get_status("a"), ctrl.get_status("wifi1"), ctrl.get_status("wifi2"))
         assert tracker.max_seen == 3
+
+
+class _FakeSocket:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class TestTcpProbe:
+    """`_tcp_probe` to diagnostyka niezależna od tinytuya (tylko do logu) -
+    testujemy ją przez podmianę `socket.create_connection`, żeby nie
+    wykonywać prawdziwych połączeń sieciowych."""
+
+    def test_empty_host_reported_without_connecting(self, monkeypatch):
+        def fail_if_called(*a, **k):
+            raise AssertionError("nie powinno próbować się łączyć bez adresu IP")
+
+        monkeypatch.setattr("bridge.tuya_local.socket.create_connection", fail_if_called)
+        assert _tcp_probe("") == "brak skonfigurowanego adresu IP"
+
+    def test_successful_connect_reported_as_ok(self, monkeypatch):
+        monkeypatch.setattr("bridge.tuya_local.socket.create_connection", lambda addr, timeout: _FakeSocket())
+        result = _tcp_probe("192.168.1.60", port=6668, timeout=1.0)
+        assert "192.168.1.60:6668" in result
+        assert "ODPOWIADA" in result
+
+    def test_timeout_reported_distinctly(self, monkeypatch):
+        def raise_timeout(addr, timeout):
+            raise TimeoutError("timed out")
+
+        monkeypatch.setattr("bridge.tuya_local.socket.create_connection", raise_timeout)
+        result = _tcp_probe("192.168.1.60", port=6668, timeout=1.0)
+        assert "timeout" in result
+        assert "offline" in result
+
+    def test_connection_refused_reported_distinctly(self, monkeypatch):
+        def raise_refused(addr, timeout):
+            raise ConnectionRefusedError("refused")
+
+        monkeypatch.setattr("bridge.tuya_local.socket.create_connection", raise_refused)
+        result = _tcp_probe("192.168.1.60", port=6668, timeout=1.0)
+        assert "ODRZUCA" in result
+
+    def test_other_os_error_includes_exception_text(self, monkeypatch):
+        def raise_unreachable(addr, timeout):
+            raise OSError("No route to host")
+
+        monkeypatch.setattr("bridge.tuya_local.socket.create_connection", raise_unreachable)
+        result = _tcp_probe("192.168.1.60", port=6668, timeout=1.0)
+        assert "No route to host" in result
+
+
+class TestConnectionDiagnostics:
+    """Diagnoza po wyczerpaniu prób musi trafić do loga błędu i - dla podurządzenia
+    Zigbee - sondować adres IP BRAMKI (przez którą faktycznie idzie ruch), nie
+    własny (nieistniejący) adres IP podurządzenia."""
+
+    GATEWAYS_CFG = {"brama": {"id": "gw1", "ip": "192.168.1.60", "local_key": "gwkey"}}
+
+    async def test_zigbee_sub_device_diagnosis_probes_gateway_ip(self, monkeypatch, caplog):
+        probed = []
+
+        def fake_probe(host, *a, **k):
+            probed.append(host)
+            return "SONDA-OK"
+
+        monkeypatch.setattr("bridge.tuya_local._tcp_probe", fake_probe)
+        devices_cfg = {"lampka": {"id": "sub1", "gateway": "brama", "type": "socket"}}
+        ctrl = TuyaLocalController(devices_cfg, self.GATEWAYS_CFG, retries=0, retry_delay=0.01)
+        ctrl._devices["lampka"] = FlakyDevice(fail_times=999)
+
+        with caplog.at_level("ERROR", logger="bridge.tuya_local"):
+            with pytest.raises(ConnectionError):
+                await ctrl.turn_on("lampka")
+
+        assert probed == ["192.168.1.60"]
+        assert "SONDA-OK" in caplog.text
+        assert "brama" in caplog.text
+
+    async def test_plain_wifi_device_diagnosis_probes_own_ip(self, monkeypatch, caplog):
+        probed = []
+
+        def fake_probe(host, *a, **k):
+            probed.append(host)
+            return "SONDA-OK"
+
+        monkeypatch.setattr("bridge.tuya_local._tcp_probe", fake_probe)
+        devices_cfg = {"gniazdko_salon": DEVICES_CFG["gniazdko_salon"]}
+        ctrl = TuyaLocalController(devices_cfg, retries=0, retry_delay=0.01)
+        ctrl._devices["gniazdko_salon"] = FlakyDevice(fail_times=999)
+
+        with caplog.at_level("ERROR", logger="bridge.tuya_local"):
+            with pytest.raises(ConnectionError):
+                await ctrl.turn_on("gniazdko_salon")
+
+        assert probed == ["192.168.1.50"]
+        assert "SONDA-OK" in caplog.text
 
 
 class TestCredentialWhitespaceStripping:

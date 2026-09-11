@@ -512,6 +512,41 @@ odróżnia złego klucza od złej wersji protokołu):
    pochodzi config. To samo dotyczy kodu integracji/klucza szyfrowania
    Satela (`SatelIntegraClient`).
 
+### Częsty problem: "Network Error: Unable to Connect" (urządzenie/bramka Zigbee)
+
+W odróżnieniu od "Check device key or version" (klucz/wersja protokołu
+złe, ale urządzenie ODPOWIADA), `Network Error: Unable to Connect` to
+błąd na poziomie samego gniazda TCP - `tinytuya` w ogóle nie zdołał się
+połączyć z adresem IP. **Bridge sam diagnozuje to po wyczerpaniu 3 prób** -
+w logu, obok standardowego `wyczerpano próby (3)`, pojawia się dodatkowa
+linia `diagnostyka: ...` z wynikiem szybkiego, niezależnego testu TCP na
+porcie `6668`:
+
+- **Dla urządzenia łączącego się przez bramkę Zigbee diagnostyka sonduje
+  adres IP BRAMKI, nie samego urządzenia** - podurządzenie Zigbee nie ma
+  własnego adresu IP w sieci, cały jego ruch i tak idzie przez `parent`
+  (obiekt bramki) i jego jedno gniazdo TCP (patrz sekcja o serializacji
+  odpytywania niżej). Jeśli diagnostyka pokazuje `timeout`/`nieosiągalny`
+  dla adresu bramki - **sprawdź samą bramkę**, nie urządzenie: czy jest
+  zasilona i online, czy jej adres IP się nie zmienił (typowe po
+  restarcie routera bez rezerwacji DHCP). Jeśli TYLKO jedno urządzenie
+  pod bramką ma ten błąd, a inne pod tą samą bramką działają - błąd
+  najpewniej nie jest sieciowy (sprawdź `cid` urządzenia).
+- **`odpowiada (TCP OK)`** w diagnostyce, mimo błędu połączenia z
+  perspektywy `tinytuya` - port jest osiągalny, ale problem leży gdzie
+  indziej (zła wersja protokołu, urządzenie właśnie się restartuje w
+  trakcie próby). Nie jest to problem sieciowy - sprawdź wersję protokołu
+  (`version`) w wierszu urządzenia/bramki.
+- **`aktywnie ODRZUCA połączenie`** - coś odpowiada na tym adresie IP, ale
+  nic nie nasłuchuje na porcie `6668` w tej chwili - zwykle urządzenie w
+  trakcie restartu/aktualizacji firmware, spróbuj ponownie za chwilę.
+- **Adres IP bramki/urządzenia się zmienił** - najszybsza naprawa to
+  zakładka 🧩 Wtyczki → Tuya, przycisk **"🔍 Skanuj sieć LAN"** (znajdzie
+  nowy adres po ID) albo **"🔄 Rescan"** dla urządzeń chmurowych - żaden z
+  tych przycisków nie zmienia trybu sterowania automatycznie (patrz sekcja
+  o imporcie wyżej), ale zawsze można ręcznie wpisać znaleziony adres IP w
+  polu "adres IP" wiersza bramki i zapisać.
+
 ## Lokalny broker MQTT
 
 Zarówno eBUS (`ebusd`), jak i opcjonalnie Home Assistant potrzebują
