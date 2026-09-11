@@ -355,18 +355,23 @@ już znane (istnieje w tabeli Urządzenia), **🟢 zielony** - nowe, jeszcze
 nieskonfigurowane. Dotyczy to zarówno skanu LAN, jak i importu z Tuya
 Cloud.
 
-Każde nowo znalezione urządzenie dodaje wiersz do tabeli **Urządzenia**
-z polem **"Tryb sterowania"** (Lokalnie WiFi / Lokalnie Zigbee / Przez
-chmurę), które decyduje, jakie kolumny są widoczne/wymagane w tym wierszu:
-- **Komplet danych** (adres IP znaleziony w sieci LAN + `local_key`
-  zwrócony przez Tuya Cloud) → wiersz od razu w trybie **"Lokalnie
-  (WiFi)"** - sterowanie lokalne jest szybsze i nie zależy od internetu.
-- **Niekompletne dane** (typowe - Tuya Cloud nie zawsze zwraca
-  `local_key`, albo urządzenie nie jest w tej samej sieci LAN co bridge)
-  → wiersz w trybie **"Przez chmurę"** - sterowane przez Tuya Cloud REST
-  API (wolniej, wymaga internetu), **jako fallback TYLKO dopóki** dane
-  urządzenie nie zostanie ręcznie przełączone na tryb lokalny (albo
-  przełączone automatycznie przyciskiem "🔄 Rescan" niżej).
+Każde nowo dodane urządzenie trafia do tabeli **Urządzenia** z polem
+**"Tryb sterowania"** (Lokalnie WiFi / Lokalnie Zigbee / Przez chmurę),
+które decyduje, jakie kolumny są widoczne/wymagane w tym wierszu.
+**Import z Tuya Cloud dodaje KAŻDE urządzenie (poza samą bramką Zigbee)
+domyślnie w trybie "Przez chmurę"** - niezależnie od tego, czy wykrył dla
+niego komplet danych do sterowania lokalnego (adres IP + `local_key`) albo
+bramkę Zigbee, do której się podpina. Import tylko **informuje** o
+wykrytych możliwościach (np. "ma komplet danych w LAN", "wygląda na
+urządzenie Zigbee przez bramkę X") - nie decyduje za Ciebie, którym
+kanałem dane urządzenie ma być sterowane. `local_key`/adres IP i tak
+zostają zapisane przy urządzeniu (nawet w trybie chmurowym), więc kiedy
+sam zdecydujesz się na sterowanie lokalne, wystarczy kliknąć **"🔄/🌉
+Rescan"** w tabeli "Urządzenia" (patrz niżej) - bez ponownego importu.
+Jedyny wyjątek to sama bramka Zigbee (nie jest "urządzeniem" z trybem
+sterowania) - jej dodanie do sekcji "🐝 Bramki Zigbee" zawsze wymaga
+osobnego, świadomego kliknięcia przycisku "🌉 Ustaw jako bramkę Zigbee"
+przy wyniku importu.
 
 Żadna z tych operacji (import, skan LAN) nie zapisuje niczego od razu -
 dopiero jeden przycisk **"💾 Zapisz urządzenia"** na dole strony zapisuje
