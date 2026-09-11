@@ -2005,6 +2005,28 @@ class TestFlows:
         errors = validate_automations(self._form_with_flow(flow))
         assert any("węzła wejściowego" in e for e in errors)
 
+    def test_unconnected_condition_group_counts_as_entry_node(self):
+        condition = {"type": "state", "key": "tuya:garaz", "equals": "v"}
+        flow = self._simple_flow(nodes=[
+            {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [["dev"], []]},
+            {"id": "dev", "type": "device", "config": {"target_device": "gniazdko_salon"}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert not any("węzła wejściowego" in e for e in errors)
+
+    def test_condition_group_fed_by_a_wire_does_not_count_as_entry_node(self):
+        # "cg" ma podłączone wejście (od "trig2", nie od trigger/mqttIn) -
+        # sam z siebie nie jest punktem wejściowym, więc flow nadal wymaga
+        # osobnego trigger/mqttIn/niepodłączonego condition_group.
+        condition = {"type": "state", "key": "tuya:garaz", "equals": "v"}
+        flow = self._simple_flow(nodes=[
+            {"id": "trig2", "type": "condition", "config": {"op": "==", "value": "x"}, "wires": [["cg"], []]},
+            {"id": "cg", "type": "condition_group", "config": {"condition": condition}, "wires": [["dev"], []]},
+            {"id": "dev", "type": "device", "config": {"target_device": "gniazdko_salon"}, "wires": []},
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("węzła wejściowego" in e for e in errors)
+
     def test_duplicate_node_ids_is_error(self):
         flow = self._simple_flow(nodes=[
             {"id": "a", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["a"]]},
