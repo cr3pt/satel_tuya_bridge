@@ -2819,6 +2819,17 @@ chmury HomeWhiz listę WSZYSTKICH możliwych stanów tego konkretnego modelu
 zamiast wpisywać nazwę stanu (np. `finished`) na pamięć. Gdyby pobranie
 listy się nie udało, pole spada z powrotem na wolny tekst.
 
+**Zapis Flow pilnuje, żeby "Konkretna wartość" miała wybraną wartość.**
+Trigger źródła Tuya/HomeWhiz z wyzwalaczem "Konkretna wartość" bez
+wypełnionego pola "Wartość wyzwalająca" jest odrzucany przy zapisie
+(`dashboard/setup.py: _validate_flow_node`) - bez tego walidator przepuszczał
+taki trigger po cichu, a on nigdy się nie odpalał (pusty string nigdy nie
+pasuje do rzeczywistej wartości urządzenia) - typowy efekt: przełączenie
+źródła z Satela na Tuya/HomeWhiz i zapomnienie o rozwijanej liście wartości.
+Jeśli zależy Ci na KAŻDEJ zmianie stanu (a nie jednej konkretnej wartości),
+ustaw wyzwalacz na "Każda zmiana" - wtedy pole wartości w ogóle nie jest
+wymagane.
+
 Węzeł **Urządzenie** z systemem "Satel (wirtualne wejście)" wywołuje
 DOKŁADNIE ten sam kod co akcja `virtual_input` reguły ruchu
 (`RulesEngine._set_target_state` obsługuje `target_system:
