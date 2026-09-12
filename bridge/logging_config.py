@@ -23,6 +23,14 @@ PLUGIN_LOGGERS: dict[str, list[str]] = {
     "notifications": ["bridge.notifier"],
     "mcp_server": ["bridge.mcp_server"],
     "homekit": ["bridge.homekit"],
+    # Flow (/flows) nie jest wtyczką z własną stroną w 🧩 Wtyczki (nie da się go
+    # wyłączyć), ale poziom logowania i tak trzeba dać się ustawić - stąd osobny
+    # wpis tutaj + mały panel "Poziom logowania" bezpośrednio na stronie /flows,
+    # zamiast pełnej karty wtyczki. Bez tego bridge.flow_engine w ogóle nie
+    # pojawiał się na liście loggerów w Historii logów (lista jest budowana z
+    # loggerów, które faktycznie coś zalogowały - a silnik Flow logował dotąd
+    # WYŁĄCZNIE błędy, nigdy zwykły przebieg węzłów).
+    "flow_engine": ["bridge.flow_engine"],
 }
 
 
@@ -40,6 +48,7 @@ def plugin_config_section(config_raw: dict, plugin_id: str) -> dict:
         "notifications": config_raw.get("notifications", {}) or {},
         "mcp_server": config_raw.get("mcp_server", {}) or {},
         "homekit": config_raw.get("homekit", {}) or {},
+        "flow_engine": config_raw.get("flow_engine", {}) or {},
     }.get(plugin_id, {})
 
 

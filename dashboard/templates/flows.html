@@ -136,6 +136,30 @@
   ma stać się głównym sposobem budowania automatyzacji krok-po-kroku.
 </div>
 
+<div class="toolbar" style="margin-bottom:8px;">
+  <label style="font-size:13px;display:flex;align-items:center;gap:6px;">
+    Poziom logowania Flow:
+    <select id="flowLogLevelSelect">
+      <option value="">(domyślny globalny)</option>
+      <option value="DEBUG">DEBUG</option>
+      <option value="INFO">INFO</option>
+      <option value="WARNING">WARNING</option>
+      <option value="ERROR">ERROR</option>
+      <option value="CRITICAL">CRITICAL</option>
+    </select>
+  </label>
+  <button id="saveFlowLogLevelBtn" type="button" class="secondary">Zapisz poziom logowania</button>
+  <span id="flowLogLevelStatus" style="font-size:12.5px;color:var(--muted);"></span>
+</div>
+<div class="hint" style="margin-top:-8px;">
+  Ustaw <strong>DEBUG</strong>, żeby zobaczyć w Historii logów (⚙ Ustawienia
+  ogólne, filtr logger "bridge.flow_engine") dokładny przebieg każdego
+  uruchomienia: który węzeł się wykonał, z jaką wiadomością i jakie wyjścia
+  zwrócił - przydatne, gdy flow "nic nie robi" i nie wiadomo, na którym
+  węźle utyka. Poza diagnozowaniem trzymaj to na domyślnym poziomie -
+  DEBUG loguje KAŻDY węzeł KAŻDEGO uruchomienia.
+</div>
+
 <div id="msg" class="msg-box"></div>
 
 <div class="toolbar">
@@ -1234,10 +1258,32 @@ document.getElementById('exportSelectedToAutomationsBtn').addEventListener('clic
   }
 });
 
+async function loadFlowLogLevel() {
+  const data = await (await fetch('/api/flows/settings')).json();
+  document.getElementById('flowLogLevelSelect').value = data.log_level || '';
+}
+
+document.getElementById('saveFlowLogLevelBtn').addEventListener('click', async () => {
+  const status = document.getElementById('flowLogLevelStatus');
+  try {
+    const resp = await fetch('/api/flows/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ log_level: document.getElementById('flowLogLevelSelect').value }),
+    });
+    if (resp.status === 401) { window.location.href = '/login?next=' + encodeURIComponent(location.pathname); return; }
+    const data = await resp.json();
+    status.textContent = resp.ok ? '✅ ' + data.message : '❌ ' + (data.error || 'Błąd zapisu');
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  }
+});
+
 (async () => {
   await refreshAuthNav();
   await loadContext();
   await loadFlows();
+  await loadFlowLogLevel();
   consumePendingImportFromAutomations();
 })();
 </script>

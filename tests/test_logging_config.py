@@ -17,6 +17,12 @@ class TestPluginLoggersMapping:
         assert "tuya_zigbee" not in PLUGIN_LOGGERS
         assert "tuya_cloud" not in PLUGIN_LOGGERS
 
+    def test_flow_engine_logger_is_registered(self):
+        # Bez tego wpisu poziomu logowania Flow nie dało się w ogóle ustawić
+        # (a logger bridge.flow_engine nigdy nie pojawiał się na liście
+        # loggerów w Historii logów, bo nic go nie kontrolowało).
+        assert PLUGIN_LOGGERS["flow_engine"] == ["bridge.flow_engine"]
+
 
 class TestApplyLogLevels:
 
