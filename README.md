@@ -350,6 +350,23 @@ LAN i chmury. Zapisz tam poświadczenia Tuya Cloud (Access ID/Secret/region)
 RAZ, potem przycisk **☁ Importuj z Tuya Cloud** pobiera listę urządzeń
 jednym kliknięciem, bez wpisywania ich ponownie.
 
+**Wiele kont Tuya Cloud.** Sekcja **"☁ Konta Tuya Cloud"** to lista - można
+dodać (i usunąć) dowolną liczbę niezależnych kont, każde z własną nazwą,
+Access ID/Secret i regionem. Każde urządzenie chmurowe w tabeli
+"Urządzenia" ma pole **"konto Tuya Cloud"** (widoczne w trybie "Przez
+chmurę") wybierające, z którego konta korzysta - urządzenie bez wybranego
+konta używa pierwszego skonfigurowanego (kompatybilność z konfiguracją
+sprzed tej funkcji: pojedyncze, wcześniej zapisane poświadczenia stają się
+automatycznie kontem "domyślne"). Import z Tuya Cloud też pyta o konto
+(lista rozwijana obok przycisku importu) i oznacza zaimportowane
+urządzenia tym kontem. Najczęstszy powód, żeby użyć więcej niż jednego
+konta: limit **"Controllable Device Pool"** w Tuya IoT Platform (błąd
+"Your controllable device pool quota is insufficient" - patrz niżej) jest
+liczony per projekt/konto, niezależnie od tego, ile urządzeń bridge akurat
+w danej chwili kontroluje - jego przekroczenie da się obejść, rozkładając
+urządzenia na kilka projektów zamiast czekać na rozszerzenie limitu jednego
+z nich.
+
 Wyniki skanowania/importu są kolorowane: **🟠 pomarańczowy** - urządzenie
 już znane (istnieje w tabeli Urządzenia), **🟢 zielony** - nowe, jeszcze
 nieskonfigurowane. Dotyczy to zarówno skanu LAN, jak i importu z Tuya
@@ -1058,6 +1075,34 @@ na bramkę i przepuszcza przez niego (w `_call_with_retry`) każde
 polecenie/odpytanie kierowane do jej podurządzeń jedno po drugim -
 urządzenia różnych bramek i zwykłe urządzenia WiFi nadal działają w pełni
 równolegle, bez żadnego spowolnienia.
+
+**Przycisk "🧪 Testuj" przy każdym urządzeniu w trybie lokalnym (WiFi/Zigbee).**
+Jednorazowo odpytuje urządzenie o status DP, używając BIEŻĄCYCH wartości pól
+w wierszu (adres IP/`local_key`/wersja, albo bramka+`cid` dla Zigbee) -
+DZIAŁA NAWET BEZ WCZEŚNIEJSZEGO ZAPISU formularza, dokładnie jak "Testuj
+połączenie" dla Satela. Przydatne od razu po przełączeniu urządzenia z
+"Przez chmurę" na "Lokalnie" (WiFi/Zigbee), żeby sprawdzić nowe dane
+POD RZĄD, przed kliknięciem "💾 Zapisz urządzenia" - błąd (zły `local_key`,
+nieosiągalny adres IP) widać natychmiast obok wiersza, zamiast dopiero po
+zapisaniu i restarcie automatyzacji. Niedostępne dla urządzeń w trybie
+"Przez chmurę" (te idą przez Tuya Cloud, nie bezpośrednie połączenie TCP).
+
+**Poprawka: błędy komend do Tuya Cloud "gubiły się" w logach.** Suwak
+poziomu logowania na stronie Tuya (i przycisk "📜 Logi" na jej karcie w
+Wtyczkach) sterował dotąd WYŁĄCZNIE loggerem `bridge.tuya_local` - logger
+`bridge.tuya_cloud` (używany m.in. przy wysyłaniu komend do urządzeń w
+trybie "Przez chmurę") został przeoczony przy scalaniu dawnych osobnych
+wtyczek Tuya LAN/Zigbee/Cloud w jedną stronę `/plugins/tuya`. W efekcie
+błędy typu **"Your controllable device pool quota is insufficient"**
+(przekroczony limit urządzeń w projekcie Tuya IoT Platform - zwykle po
+wygaśnięciu darmowego okresu próbnego "Cloud Development") były widoczne
+tylko pośrednio, w loggerze wywołującego (np. `bridge.flow_engine` przy
+nieudanej akcji Flow), a nie wprost pod filtrem "Tuya" w Historii
+logów - Naprawione: suwak i przycisk "📜 Logi" obejmują teraz oba loggery.
+Ten konkretny błąd (przekroczony limit puli) nie znika przez ograniczenie
+częstotliwości komend - to stały limit liczby urządzeń przypisanych do
+konta/projektu, nie limit współbieżności - patrz wyżej "Wiele kont Tuya
+Cloud" jako sposób na obejście go bez czekania na odnowienie subskrypcji.
 
 ### Zmiany działają od razu - bez restartu Dockera
 

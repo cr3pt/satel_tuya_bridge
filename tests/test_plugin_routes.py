@@ -41,6 +41,16 @@ def _basic_auth_header(password: str, username: str = "admin") -> dict:
     return {"Authorization": f"Basic {token}"}
 
 
+async def _save_cloud_account(
+    client, access_id: str = "aid", access_key: str = "akey", api_region: str = "eu", name: str = "domyślne",
+):
+    return await client.post(
+        "/api/plugins/tuya_cloud/accounts",
+        json={"accounts": [{"name": name, "access_id": access_id, "access_key": access_key, "api_region": api_region}]},
+        headers=_basic_auth_header("test_haslo_123"),
+    )
+
+
 @pytest.fixture
 def client(tmp_path):
     from dashboard.app import app as quart_app
@@ -462,11 +472,7 @@ class TestTuyaLocalPluginPage:
         assert "Tuya Cloud" in (await resp.get_json())["error"]
 
     async def test_refresh_dp_schema_saves_fetched_schema(self, client, monkeypatch):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
 
         def fake_fetch(api_region, access_id, access_key, device_ids):
             assert device_ids == ["d1"]
@@ -489,11 +495,7 @@ class TestTuyaLocalPluginPage:
         assert gniazdko["dp_schema"] == {"1": {"code": "switch_1", "type": "Boolean", "values": "{}"}}
 
     async def test_refresh_dp_schema_reports_per_device_failures(self, client, monkeypatch):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
 
         def fake_fetch(api_region, access_id, access_key, device_ids):
             return {}, {"d1": "nie znaleziono urządzenia"}
@@ -509,11 +511,7 @@ class TestTuyaLocalPluginPage:
         assert data["failed"] == ["gniazdko"]
 
     async def test_refresh_dp_schema_connection_error_returns_502(self, client, monkeypatch):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
 
         def fake_fetch(api_region, access_id, access_key, device_ids):
             raise ConnectionError("Błąd logowania do Tuya Cloud: bad credentials")
@@ -784,74 +782,96 @@ class TestTuyaCloudPluginPage:
         assert resp.status_code == 302
         assert resp.headers["Location"] == "/plugins/tuya"
 
-    async def test_credentials_get_requires_auth_and_defaults(self, client):
-        assert (await client.get("/api/plugins/tuya_cloud/credentials")).status_code == 401
-        resp = (await client.get("/api/plugins/tuya_cloud/credentials", headers=_basic_auth_header("test_haslo_123")))
+    async def test_accounts_get_requires_auth_and_defaults_to_empty(self, client):
+        assert (await client.get("/api/plugins/tuya_cloud/accounts")).status_code == 401
+        resp = (await client.get("/api/plugins/tuya_cloud/accounts", headers=_basic_auth_header("test_haslo_123")))
         assert resp.status_code == 200
-        data = await resp.get_json()
-        assert data["access_id"] == ""
-        assert data["access_key_set"] is False
-        assert data["api_region"] == "eu"
-        assert data["api_endpoint"] == "https://openapi.tuyaeu.com"
+        assert await resp.get_json() == {"accounts": []}
 
-    async def test_credentials_post_rejects_unknown_region(self, client):
+    async def test_accounts_post_rejects_unknown_region(self, client):
         resp = (await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid1", "api_region": "atlantyda"},
+            "/api/plugins/tuya_cloud/accounts",
+            json={"accounts": [{"name": "domyślne", "access_id": "aid1", "api_region": "atlantyda"}]},
             headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 400
 
-    async def test_credentials_post_without_auth_returns_401(self, client):
-        assert (await client.post("/api/plugins/tuya_cloud/credentials", json={"access_id": "x"})).status_code == 401
+    async def test_accounts_post_without_auth_returns_401(self, client):
+        payload = {"accounts": [{"name": "domyślne", "access_id": "x"}]}
+        assert (await client.post("/api/plugins/tuya_cloud/accounts", json=payload)).status_code == 401
 
-    async def test_credentials_post_requires_access_id(self, client):
+    async def test_accounts_post_requires_name_and_access_id(self, client):
         resp = (await client.post(
-            "/api/plugins/tuya_cloud/credentials", json={}, headers=_basic_auth_header("test_haslo_123"),
+            "/api/plugins/tuya_cloud/accounts", json={"accounts": [{}]}, headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 400
 
-    async def test_credentials_post_persists_and_never_leaks_secret_back(self, client):
+    async def test_accounts_post_rejects_duplicate_names(self, client):
+        resp = (await client.post(
+            "/api/plugins/tuya_cloud/accounts",
+            json={"accounts": [
+                {"name": "dom", "access_id": "aid1"}, {"name": "dom", "access_id": "aid2"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_accounts_post_persists_and_never_leaks_secret_back(self, client):
         import dashboard.app as app_module
 
         resp = (await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={
-                "access_id": "aid1", "access_key": "secret1", "api_region": "us",
-                "api_endpoint": "", "mq_endpoint": "",
-            },
+            "/api/plugins/tuya_cloud/accounts",
+            json={"accounts": [{
+                "name": "domyślne", "access_id": "aid1", "access_key": "secret1", "api_region": "us",
+            }]},
             headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 200
-        saved = app_module.config_store.get("config")["tuya"]["cloud"]
+        saved = app_module.config_store.get("config")["tuya"]["cloud_accounts"]["domyślne"]
         assert saved["access_id"] == "aid1"
         assert saved["access_key"] == "secret1"
         assert saved["api_region"] == "us"
 
         data = await (await client.get(
-            "/api/plugins/tuya_cloud/credentials", headers=_basic_auth_header("test_haslo_123"),
+            "/api/plugins/tuya_cloud/accounts", headers=_basic_auth_header("test_haslo_123"),
         )).get_json()
-        assert data["access_id"] == "aid1"
-        assert data["access_key_set"] is True
-        assert data["api_region"] == "us"
+        assert data["accounts"] == [{
+            "name": "domyślne", "access_id": "aid1", "access_key_set": True,
+            "api_region": "us", "api_endpoint": "", "mq_endpoint": "",
+        }]
         text = await (await client.get(
-            "/api/plugins/tuya_cloud/credentials", headers=_basic_auth_header("test_haslo_123"),
+            "/api/plugins/tuya_cloud/accounts", headers=_basic_auth_header("test_haslo_123"),
         )).get_data(as_text=True)
         assert "secret1" not in text
 
-    async def test_credentials_post_blank_secret_keeps_existing(self, client):
+    async def test_accounts_post_blank_secret_keeps_existing(self, client):
         import dashboard.app as app_module
 
-        (await client.post(
-            "/api/plugins/tuya_cloud/credentials", json={"access_id": "aid1", "access_key": "secret1"},
+        await _save_cloud_account(client, access_id="aid1", access_key="secret1")
+        await client.post(
+            "/api/plugins/tuya_cloud/accounts",
+            json={"accounts": [{"name": "domyślne", "access_id": "aid1", "access_key": ""}]},
             headers=_basic_auth_header("test_haslo_123"),
-        ))
-        (await client.post(
-            "/api/plugins/tuya_cloud/credentials", json={"access_id": "aid1", "access_key": ""},
-            headers=_basic_auth_header("test_haslo_123"),
-        ))
-        saved = app_module.config_store.get("config")["tuya"]["cloud"]
+        )
+        saved = app_module.config_store.get("config")["tuya"]["cloud_accounts"]["domyślne"]
         assert saved["access_key"] == "secret1"
+
+    async def test_accounts_post_supports_multiple_named_accounts(self, client):
+        import dashboard.app as app_module
+
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/accounts",
+            json={"accounts": [
+                {"name": "dom", "access_id": "aid1", "access_key": "key1", "api_region": "eu"},
+                {"name": "garaz", "access_id": "aid2", "access_key": "key2", "api_region": "us"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert (await resp.get_json())["saved"] == 2
+        saved = app_module.config_store.get("config")["tuya"]["cloud_accounts"]
+        assert set(saved) == {"dom", "garaz"}
+        assert saved["garaz"]["api_region"] == "us"
 
     async def test_settings_endpoint_no_longer_exists_separately(self, client):
         # Tuya Cloud nie ma już własnego przełącznika włącz/wyłącz + poziom logowania -
@@ -890,9 +910,21 @@ class TestTuyaCloudPluginPage:
         assert data["devices"] == [
             {
                 "name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1",
-                "local_key": "", "ip": "", "version": "", "dp_schema": {},
+                "local_key": "", "ip": "", "version": "", "dp_schema": {}, "cloud_account": "",
             },
         ]
+
+    async def test_devices_post_roundtrips_cloud_account(self, client):
+        payload = {"cloud_devices": [{"name": "lampa_taras", "id": "c1", "cloud_account": "garaz"}]}
+        resp = (await client.post(
+            "/api/plugins/tuya_cloud/devices", json=payload, headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+
+        data = await (await client.get(
+            "/api/plugins/tuya_cloud/devices", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert data["devices"][0]["cloud_account"] == "garaz"
 
     async def test_devices_post_preserves_local_devices_and_gateways(self, client):
         before = await (await client.get("/api/plugins/tuya/devices", headers=_basic_auth_header("test_haslo_123"))).get_json()
@@ -914,14 +946,14 @@ class TestTuyaCloudPluginPage:
     async def test_cloud_import_without_auth_returns_401(self, client):
         assert (await client.post("/api/plugins/tuya_cloud/cloud-import")).status_code == 401
 
-    async def test_cloud_import_requires_saved_credentials(self, client):
+    async def test_cloud_import_requires_configured_account(self, client):
         resp = (await client.post(
             "/api/plugins/tuya_cloud/cloud-import", headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 400
-        assert "poświadczenia" in (await resp.get_json())["error"].lower()
+        assert "konto" in (await resp.get_json())["error"].lower()
 
-    async def test_cloud_import_uses_stored_credentials(self, client, monkeypatch):
+    async def test_cloud_import_uses_stored_account_credentials(self, client, monkeypatch):
         captured = {}
 
         def _fake_fetch(api_region, access_id, access_key, networks):
@@ -929,39 +961,55 @@ class TestTuyaCloudPluginPage:
             return [{"id": "c1", "name": "Lampa", "local_key": "", "ip": "", "category": "kg"}]
 
         monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", _fake_fetch)
-        (await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid1", "access_key": "secret1", "api_region": "us"},
-            headers=_basic_auth_header("test_haslo_123"),
-        ))
+        await _save_cloud_account(client, access_id="aid1", access_key="secret1", api_region="us")
         resp = (await client.post(
             "/api/plugins/tuya_cloud/cloud-import", headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 200
         assert captured == {"api_region": "us", "access_id": "aid1", "access_key": "secret1"}
-        assert (await resp.get_json())["devices"][0]["name"] == "Lampa"
+        data = await resp.get_json()
+        assert data["devices"][0]["name"] == "Lampa"
+        assert data["devices"][0]["cloud_account"] == "domyślne"
+
+    async def test_cloud_import_picks_explicitly_requested_account(self, client, monkeypatch):
+        captured = {}
+
+        def _fake_fetch(api_region, access_id, access_key, networks):
+            captured.update(api_region=api_region, access_id=access_id, access_key=access_key)
+            return [{"id": "c2", "name": "Wentylator", "local_key": "", "ip": "", "category": "fs"}]
+
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", _fake_fetch)
+        await client.post(
+            "/api/plugins/tuya_cloud/accounts",
+            json={"accounts": [
+                {"name": "dom", "access_id": "aid1", "access_key": "key1", "api_region": "eu"},
+                {"name": "garaz", "access_id": "aid2", "access_key": "key2", "api_region": "us"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        resp = (await client.post(
+            "/api/plugins/tuya_cloud/cloud-import", json={"account": "garaz"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        assert captured == {"api_region": "us", "access_id": "aid2", "access_key": "key2"}
+        data = await resp.get_json()
+        assert data["account"] == "garaz"
+        assert data["devices"][0]["cloud_account"] == "garaz"
 
     async def test_cloud_import_connection_error_returns_502(self, client, monkeypatch):
         def _fake_fetch(api_region, access_id, access_key, networks):
             raise ConnectionError("błąd logowania")
 
         monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", _fake_fetch)
-        (await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid1", "access_key": "secret1"},
-            headers=_basic_auth_header("test_haslo_123"),
-        ))
+        await _save_cloud_account(client, access_id="aid1", access_key="secret1")
         resp = (await client.post(
             "/api/plugins/tuya_cloud/cloud-import", headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 502
 
     async def test_refresh_dp_schema_saves_fetched_schema(self, client, monkeypatch):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
         await client.post(
             "/api/plugins/tuya_cloud/devices",
             json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
@@ -990,11 +1038,7 @@ class TestTuyaCloudPluginPage:
         assert lampa["dp_schema"] == {"1": {"code": "manual_delay", "type": "Value", "values": "{}"}}
 
     async def test_refresh_dp_schema_reports_per_device_failures(self, client, monkeypatch):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
         await client.post(
             "/api/plugins/tuya_cloud/devices",
             json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
@@ -1014,11 +1058,7 @@ class TestTuyaCloudPluginPage:
         assert "lampa_taras" in data["failed"]
 
     async def test_refresh_dp_schema_connection_error_returns_502(self, client, monkeypatch):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
         await client.post(
             "/api/plugins/tuya_cloud/devices",
             json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
@@ -1035,33 +1075,59 @@ class TestTuyaCloudPluginPage:
         )
         assert resp.status_code == 502
 
+    async def test_refresh_dp_schema_queries_each_account_separately(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/accounts",
+            json={"accounts": [
+                {"name": "dom", "access_id": "aid1", "access_key": "key1", "api_region": "eu"},
+                {"name": "garaz", "access_id": "aid2", "access_key": "key2", "api_region": "us"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [
+                {"name": "lampa_dom", "id": "c1", "cloud_account": "dom"},
+                {"name": "lampa_garaz", "id": "c2", "cloud_account": "garaz"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        seen_regions = []
+
+        def fake_fetch(api_region, access_id, access_key, device_ids):
+            seen_regions.append(api_region)
+            return {dev_id: {"1": {"code": "switch_1", "type": "Boolean", "values": "{}"}} for dev_id in device_ids}, {}
+
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_dp_schemas_for_devices", fake_fetch)
+
+        resp = await client.post(
+            "/api/plugins/tuya/devices/refresh-dp-schema", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert set(data["updated"]) >= {"lampa_dom", "lampa_garaz"}
+        assert set(seen_regions) == {"eu", "us"}
+
     async def test_rescan_requires_auth(self, client):
         assert (await client.post("/api/plugins/tuya_cloud/devices/rescan")).status_code == 401
 
-    async def test_rescan_without_cloud_credentials_returns_400(self, client):
+    async def test_rescan_without_cloud_accounts_returns_400(self, client):
         resp = await client.post(
             "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
         )
         assert resp.status_code == 400
-        assert "Tuya Cloud" in (await resp.get_json())["error"]
+        assert "konto" in (await resp.get_json())["error"].lower()
 
     async def test_rescan_without_devices_returns_400(self, client):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
         resp = await client.post(
             "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
         )
         assert resp.status_code == 400
 
     async def test_rescan_reports_devices_now_reachable_on_lan(self, client, monkeypatch):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
         await client.post(
             "/api/plugins/tuya_cloud/devices",
             json={"cloud_devices": [
@@ -1090,11 +1156,7 @@ class TestTuyaCloudPluginPage:
         assert by_name["kamera"]["can_move_to_local"] is False
 
     async def test_rescan_reports_devices_movable_to_configured_gateway(self, client, monkeypatch):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
         await client.post(
             "/api/plugins/tuya/devices",
             json={"zigbee_gateways": [{"name": "brama_salon", "id": "gw1", "ip": "192.168.1.5", "local_key": "gwkey"}]},
@@ -1129,11 +1191,7 @@ class TestTuyaCloudPluginPage:
         assert by_name["kamera"]["can_move_to_gateway"] is False
 
     async def test_rescan_flags_mismatched_cid_on_already_configured_zigbee_device(self, client, monkeypatch):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
         await client.post(
             "/api/plugins/tuya/devices",
             json={
@@ -1168,11 +1226,7 @@ class TestTuyaCloudPluginPage:
         assert "nieaktualny cid" in data["message"]
 
     async def test_rescan_works_with_only_zigbee_devices_and_no_cloud_devices(self, client, monkeypatch):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
         await client.post(
             "/api/plugins/tuya/devices",
             json={
@@ -1198,11 +1252,7 @@ class TestTuyaCloudPluginPage:
         assert data["zigbee_cid_checks"][0]["mismatch"] is False
 
     async def test_rescan_connection_error_returns_502(self, client, monkeypatch):
-        await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
-            headers=_basic_auth_header("test_haslo_123"),
-        )
+        await _save_cloud_account(client)
         await client.post(
             "/api/plugins/tuya_cloud/devices",
             json={"cloud_devices": [{"name": "lampa_taras", "id": "c1"}]},
@@ -1217,6 +1267,40 @@ class TestTuyaCloudPluginPage:
             "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
         )
         assert resp.status_code == 502
+
+    async def test_rescan_matches_devices_to_their_own_account_only(self, client, monkeypatch):
+        await client.post(
+            "/api/plugins/tuya_cloud/accounts",
+            json={"accounts": [
+                {"name": "dom", "access_id": "aid1", "access_key": "key1", "api_region": "eu"},
+                {"name": "garaz", "access_id": "aid2", "access_key": "key2", "api_region": "us"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/tuya_cloud/devices",
+            json={"cloud_devices": [
+                {"name": "lampa_dom", "id": "c1", "cloud_account": "dom"},
+                {"name": "lampa_garaz", "id": "c2", "cloud_account": "garaz"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+
+        def _fake_fetch(api_region, access_id, access_key, networks):
+            if api_region == "eu":
+                return [{"id": "c1", "name": "Lampa", "local_key": "k1", "ip": "192.168.1.20", "dp_schema": {}}]
+            return [{"id": "c2", "name": "Lampa2", "local_key": "k2", "ip": "192.168.1.21", "dp_schema": {}}]
+
+        monkeypatch.setattr("plugins.tuya_local.routes.fetch_tuya_cloud_devices", _fake_fetch)
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/devices/rescan", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        by_name = {d["name"]: d for d in data["devices"]}
+        assert set(by_name) == {"lampa_dom", "lampa_garaz"}
+        assert by_name["lampa_dom"]["cloud_account"] == "dom"
+        assert by_name["lampa_garaz"]["cloud_account"] == "garaz"
 
 
 class TestHomeAssistantPluginPage:

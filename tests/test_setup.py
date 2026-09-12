@@ -418,7 +418,7 @@ class TestCloudDevicesBuilder:
         assert devices == {
             "lampa_taras": {
                 "id": "c1", "category": "", "switch_code": "switch_1",
-                "local_key": "", "ip": "", "version": "", "dp_schema": {},
+                "local_key": "", "ip": "", "version": "", "dp_schema": {}, "cloud_account": "",
             },
         }
 
@@ -443,6 +443,11 @@ class TestCloudDevicesBuilder:
         devices = build_tuya_devices_dict(form)["cloud_devices"]
         assert devices["sterownik"]["dp_schema"] == schema
 
+    def test_build_cloud_devices_keeps_cloud_account(self):
+        form = {"cloud_devices": [{"name": "wentylator", "id": "c2", "cloud_account": "garaz"}]}
+        devices = build_tuya_devices_dict(form)["cloud_devices"]
+        assert devices["wentylator"]["cloud_account"] == "garaz"
+
     def test_build_cloud_devices_skips_incomplete_rows(self):
         form = {"cloud_devices": [{"name": "", "id": "c1"}, {"name": "x", "id": ""}]}
         assert build_tuya_devices_dict(form)["cloud_devices"] == {}
@@ -466,7 +471,7 @@ class TestCloudDevicesBuilder:
         assert cloud_devices_to_rows(devices) == [
             {
                 "name": "lampa_taras", "id": "c1", "category": "kg", "switch_code": "switch_1",
-                "local_key": "", "ip": "", "version": "", "dp_schema": {},
+                "local_key": "", "ip": "", "version": "", "dp_schema": {}, "cloud_account": "",
             },
         ]
 
@@ -2915,7 +2920,7 @@ class TestListPlugins:
 
     def test_toggleable_flags_reflected(self):
         config_raw = {
-            "tuya": {"cloud": {"access_id": "x"}},
+            "tuya": {"cloud_accounts": {"domyślne": {"access_id": "x"}}},
             "ebus": {"mqtt_host": "127.0.0.1"},
             "home_assistant": {"enabled": True, "mqtt_host": "127.0.0.1"},
             "mqtt_publish": {"enabled": True},

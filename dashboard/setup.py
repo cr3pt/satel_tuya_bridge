@@ -762,10 +762,74 @@ def _build_cloud_devices(form: dict) -> dict:
             "ip": d.get("ip", ""),
             "version": d.get("version", ""),
             "dp_schema": d.get("dp_schema") or {},
+            # Puste = konto domyślne (pierwsze skonfigurowane) - patrz
+            # TuyaCloudController._account_name_for(). Dzięki temu urządzenia
+            # zapisane przed wprowadzeniem wielu kont dalej działają bez zmian.
+            "cloud_account": (d.get("cloud_account") or "").strip(),
         }
         for d in form.get("cloud_devices", [])
         if d.get("name") and d.get("id")
     }
+
+
+def validate_cloud_accounts(form: dict) -> list[str]:
+    from bridge.tuya_local import TUYA_CLOUD_REGIONS
+
+    errors = []
+    seen_names = set()
+    for i, acc in enumerate(form.get("accounts", [])):
+        label = f"Konto Tuya Cloud #{i + 1}"
+        name = (acc.get("name") or "").strip()
+        if not name:
+            errors.append(f"{label}: nazwa konta jest wymagana")
+        elif name in seen_names:
+            errors.append(f"{label}: nazwa konta '{name}' powtarza się - nazwy muszą być unikalne")
+        else:
+            seen_names.add(name)
+        if not (acc.get("access_id") or "").strip():
+            errors.append(f"{label} ('{name or '?'}'): Access ID jest wymagany")
+        api_region = (acc.get("api_region") or "").strip()
+        if api_region and api_region not in TUYA_CLOUD_REGIONS:
+            errors.append(f"{label} ('{name or '?'}'): nieznany region '{api_region}'")
+    return errors
+
+
+def build_cloud_accounts_dict(form: dict, existing: dict | None = None) -> dict:
+    """Buduje słownik kont Tuya Cloud (nazwa -> poświadczenia) z wierszy formularza.
+    Puste pole Access Secret oznacza "zachowaj obecny sekret" (ten sam wzorzec co
+    przy pojedynczym koncie w kreatorze) - stąd potrzebny `existing` do podejrzenia
+    starej wartości po nazwie konta."""
+    existing = existing or {}
+    accounts = {}
+    for acc in form.get("accounts", []):
+        name = (acc.get("name") or "").strip()
+        if not name:
+            continue
+        prior = existing.get(name, {})
+        accounts[name] = {
+            "access_id": (acc.get("access_id") or "").strip(),
+            "access_key": (acc.get("access_key") or "").strip() or prior.get("access_key", ""),
+            "api_region": (acc.get("api_region") or "").strip() or prior.get("api_region", "eu"),
+            "api_endpoint": (acc.get("api_endpoint") or "").strip() or prior.get("api_endpoint", ""),
+            "mq_endpoint": (acc.get("mq_endpoint") or "").strip() or prior.get("mq_endpoint", ""),
+        }
+    return accounts
+
+
+def cloud_accounts_to_rows(accounts: dict) -> list[dict]:
+    # access_key NIGDY nie wraca do przeglądarki po zapisie - tylko informacja,
+    # czy jest ustawiony (ten sam wzorzec co dotychczasowe pojedyncze poświadczenia).
+    return [
+        {
+            "name": name,
+            "access_id": cfg.get("access_id", ""),
+            "access_key_set": bool(cfg.get("access_key")),
+            "api_region": cfg.get("api_region", "eu"),
+            "api_endpoint": cfg.get("api_endpoint", ""),
+            "mq_endpoint": cfg.get("mq_endpoint", ""),
+        }
+        for name, cfg in accounts.items()
+    ]
 
 
 def validate_connections(form: dict) -> list[str]:
@@ -1165,6 +1229,7 @@ def cloud_devices_to_rows(devices: dict) -> list[dict]:
             "switch_code": cfg.get("switch_code", "switch_1"),
             "local_key": cfg.get("local_key", ""), "ip": cfg.get("ip", ""), "version": cfg.get("version", ""),
             "dp_schema": cfg.get("dp_schema", {}),
+            "cloud_account": cfg.get("cloud_account", ""),
         }
         for name, cfg in devices.items()
     ]

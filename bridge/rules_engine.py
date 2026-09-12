@@ -37,7 +37,7 @@ logger = logging.getLogger("bridge.rules")
 
 def _build_tuya_controller(tuya_cfg: dict) -> TuyaController:
     local = TuyaLocalController(tuya_cfg["devices"], tuya_cfg.get("zigbee_gateways"))
-    cloud = TuyaCloudController(tuya_cfg.get("cloud_devices", {}), tuya_cfg.get("cloud", {}))
+    cloud = TuyaCloudController(tuya_cfg.get("cloud_devices", {}), tuya_cfg.get("cloud_accounts", {}))
     return TuyaController(local, cloud)
 
 
