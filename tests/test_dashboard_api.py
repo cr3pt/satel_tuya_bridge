@@ -670,8 +670,8 @@ class TestAutomationContextEndpoint:
 
     async def test_context_includes_tuya_dp_options_for_cloud_devices(self, client):
         await client.post(
-            "/api/plugins/tuya_cloud/credentials",
-            json={"access_id": "aid", "access_key": "akey", "api_region": "eu"},
+            "/api/plugins/tuya_cloud/accounts",
+            json={"accounts": [{"name": "domyślne", "access_id": "aid", "access_key": "akey", "api_region": "eu"}]},
             headers=_basic_auth_header("test_haslo_123"),
         )
         await client.post(

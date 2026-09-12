@@ -112,7 +112,7 @@ ebus:
 def test_convenience_properties(config_dir):
     config = BridgeConfig.load(config_dir / "config.yaml")
     assert config.satel["host"] == "127.0.0.1"
-    assert config.tuya == {"devices": {}, "zigbee_gateways": {}, "cloud_devices": {}}
+    assert config.tuya == {"devices": {}, "zigbee_gateways": {}, "cloud_devices": {}, "cloud_accounts": {}}
     assert config.motion_rules == []
     assert config.boiler_output == {"mode": "mqtt"}
     assert config.unifi_protect is None
@@ -289,6 +289,41 @@ class TestSatelFieldsAndTuyaDevicesFiles:
         config = BridgeConfig.load(tmp_path / "config.yaml")
         assert config.raw["satel"]["partitions"] == {"Dom": 1}
         assert config.raw["tuya"]["devices"]["x"]["ip"] == "1.2.3.4"
+
+
+class TestCloudAccountsMigration:
+    """Konta Tuya Cloud - stare instalacje mają jedno konto pod tuya.cloud;
+    BridgeConfig.load() musi je automatycznie przepisać na tuya.cloud_accounts
+    (nowy, wielokontowy format), zostawiając stary klucz "cloud" bez zmian
+    (czyta z niego m.in. funkcja "wirtualne urządzenie Tuya" dla kotła)."""
+
+    def test_legacy_single_account_becomes_domyslne(self, tmp_path):
+        config_text = MINIMAL_CONFIG.replace(
+            "tuya:\n  devices: {}",
+            'tuya:\n  devices: {}\n  cloud: {access_id: "aid1", access_key: "secret1", api_region: "eu"}',
+        )
+        (tmp_path / "config.yaml").write_text(config_text, encoding="utf-8")
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+        assert config.raw["tuya"]["cloud_accounts"] == {
+            "domyślne": {"access_id": "aid1", "access_key": "secret1", "api_region": "eu"},
+        }
+        # Stary klucz zostaje nietknięty (czyta z niego m.in. wirtualne urządzenie Tuya).
+        assert config.raw["tuya"]["cloud"]["access_id"] == "aid1"
+
+    def test_no_legacy_account_gives_empty_cloud_accounts(self, tmp_path):
+        (tmp_path / "config.yaml").write_text(MINIMAL_CONFIG, encoding="utf-8")
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+        assert config.raw["tuya"]["cloud_accounts"] == {}
+
+    def test_existing_cloud_accounts_are_not_overwritten_by_migration(self, tmp_path):
+        config_text = MINIMAL_CONFIG.replace(
+            "tuya:\n  devices: {}",
+            'tuya:\n  devices: {}\n  cloud: {access_id: "legacy", access_key: "x"}\n'
+            '  cloud_accounts: {dom: {access_id: "aid1", access_key: "k1"}}',
+        )
+        (tmp_path / "config.yaml").write_text(config_text, encoding="utf-8")
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+        assert config.raw["tuya"]["cloud_accounts"] == {"dom": {"access_id": "aid1", "access_key": "k1"}}
 
 
 class TestDatabaseMigration:

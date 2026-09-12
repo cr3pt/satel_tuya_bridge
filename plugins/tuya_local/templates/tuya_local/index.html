@@ -112,43 +112,25 @@
   <div id="pluginSettingsMsg" class="msg-box"></div>
 </div>
 
-<div class="section" id="credentialsSection">
-  <h2>☁ Poświadczenia Tuya Cloud</h2>
+<div class="section" id="accountsSection">
+  <h2>☁ Konta Tuya Cloud</h2>
   <div class="section-hint">
     Access ID/Secret z panelu developer.tuya.com (projekt Cloud, region
     zgodny z aplikacją Tuya/Smart Life) - potrzebne do importu urządzeń,
     sterowania chmurowego i detekcji ruchu z kamer Tuya. Access Secret nigdy
     nie wraca do przeglądarki po zapisie - puste pole przy zapisie oznacza
-    "zostaw bez zmian".
+    "zostaw bez zmian". Możesz dodać kilka kont (np. osobne projekty Tuya
+    IoT dla różnych lokalizacji, albo żeby obejść limit "Controllable Device
+    Pool" jednego konta) - każde urządzenie chmurowe niżej wybiera, z
+    którego konta korzysta; urządzenia bez wybranego konta używają
+    pierwszego z listy.
   </div>
-  <div class="field-group">
-    <label>Access ID</label>
-    <input type="text" id="accessIdInput">
-  </div>
-  <div class="field-group">
-    <label>Access Secret <span id="accessKeySetHint" style="color: var(--muted);"></span></label>
-    <input type="password" id="accessKeyInput" placeholder="(zostaw puste, żeby nie zmieniać)">
-  </div>
-  <div class="field-group">
-    <label>Region (api_region) - do importu urządzeń i sterowania chmurowego</label>
-    <select id="apiRegionSelect">
-      {% for code, label in regions.items() %}
-      <option value="{{ code }}">{{ label }} ({{ code }})</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="field-group">
-    <label>Adres API (api_endpoint) - do detekcji ruchu z kamer</label>
-    <input type="text" id="apiEndpointInput" placeholder="https://openapi.tuyaeu.com">
-  </div>
-  <div class="field-group">
-    <label>Adres kolejki Pulsar (mq_endpoint) - do detekcji ruchu z kamer</label>
-    <input type="text" id="mqEndpointInput" placeholder="wss://mqe.tuyaeu.com:8285/">
-  </div>
+  <div id="accountsRows"></div>
+  <button type="button" class="add-row-btn" id="addAccountBtn">+ Dodaj konto</button>
   <div class="actions-bar">
-    <button id="saveCredentialsBtn" type="button">Zapisz poświadczenia</button>
+    <button id="saveAccountsBtn" type="button">Zapisz konta</button>
   </div>
-  <div id="credentialsMsg" class="msg-box"></div>
+  <div id="accountsMsg" class="msg-box"></div>
 </div>
 
 <div class="section" id="scanSection">
@@ -209,6 +191,8 @@
     liście urządzeń) nie wymaga ponownego importu.
   </div>
   <div class="discover-row">
+    <label for="cloudImportAccountSelect" style="color: var(--muted); font-size: 13px;">Konto:</label>
+    <select id="cloudImportAccountSelect" style="max-width: 200px;"></select>
     <button type="button" class="secondary" id="cloudImportBtn">☁ Importuj z Tuya Cloud</button>
     <span class="discover-status" id="cloudImportStatus"></span>
   </div>
@@ -349,40 +333,95 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
 });
 
 
-async function loadCredentials() {
-  const data = await (await fetch('/api/plugins/tuya_cloud/credentials')).json();
-  document.getElementById('accessIdInput').value = data.access_id || '';
-  document.getElementById('apiRegionSelect').value = data.api_region || 'eu';
-  document.getElementById('apiEndpointInput').value = data.api_endpoint || '';
-  document.getElementById('mqEndpointInput').value = data.mq_endpoint || '';
-  document.getElementById('accessKeySetHint').textContent = data.access_key_set ? '(zapisany)' : '(brak)';
-}
-loadCredentials();
+const TUYA_CLOUD_REGIONS = {{ regions | tojson }};
 
-document.getElementById('saveCredentialsBtn').addEventListener('click', async () => {
-  const payload = {
-    access_id: document.getElementById('accessIdInput').value,
-    access_key: document.getElementById('accessKeyInput').value,
-    api_region: document.getElementById('apiRegionSelect').value,
-    api_endpoint: document.getElementById('apiEndpointInput').value,
-    mq_endpoint: document.getElementById('mqEndpointInput').value,
-  };
+function regionOptionsHtml(selected) {
+  return Object.entries(TUYA_CLOUD_REGIONS).map(([code, label]) =>
+    `<option value="${escapeHtml(code)}" ${code === selected ? 'selected' : ''}>${escapeHtml(label)} (${escapeHtml(code)})</option>`
+  ).join('');
+}
+
+function addAccountRow(initial) {
+  const container = document.getElementById('accountsRows');
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa konta (np. dom)" class="acc-name" style="max-width: 150px;">
+    <input type="text" placeholder="Access ID" class="acc-id">
+    <input type="password" placeholder="Access Secret (puste = bez zmian)" class="acc-key">
+    <select class="acc-region" style="max-width: 170px;">${regionOptionsHtml(initial ? initial.api_region : 'eu')}</select>
+    <input type="text" placeholder="api_endpoint (opcjonalnie, do kamer)" class="acc-endpoint">
+    <input type="text" placeholder="mq_endpoint (opcjonalnie, do kamer)" class="acc-mq-endpoint">
+    <span class="discover-status acc-key-hint"></span>
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.acc-name').value = initial.name ?? '';
+    row.querySelector('.acc-id').value = initial.access_id ?? '';
+    row.querySelector('.acc-endpoint').value = initial.api_endpoint ?? '';
+    row.querySelector('.acc-mq-endpoint').value = initial.mq_endpoint ?? '';
+    row.querySelector('.acc-key-hint').textContent = initial.access_key_set ? '(sekret zapisany)' : '(brak sekretu)';
+  }
+  row.querySelector('.acc-name').addEventListener('input', () => { refreshDeviceAccountSelects(); });
+  row.querySelector('.row-remove').addEventListener('click', () => { row.remove(); refreshDeviceAccountSelects(); });
+  container.appendChild(row);
+}
+document.getElementById('addAccountBtn').addEventListener('click', () => addAccountRow());
+
+function collectAccounts() {
+  return Array.from(document.querySelectorAll('#accountsRows .repeatable-row'))
+    .map(row => ({
+      name: row.querySelector('.acc-name').value.trim(),
+      access_id: row.querySelector('.acc-id').value.trim(),
+      access_key: row.querySelector('.acc-key').value.trim(),
+      api_region: row.querySelector('.acc-region').value,
+      api_endpoint: row.querySelector('.acc-endpoint').value.trim(),
+      mq_endpoint: row.querySelector('.acc-mq-endpoint').value.trim(),
+    }))
+    .filter(a => a.name);
+}
+
+function accountOptionsHtml(selected) {
+  const names = collectAccounts().map(a => a.name);
+  return `<option value="">(domyślne - pierwsze konto)</option>` + names.map(n =>
+    `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`
+  ).join('');
+}
+
+function refreshDeviceAccountSelects() {
+  document.querySelectorAll('#devicesRows .dev-account').forEach(select => {
+    const current = select.value;
+    select.innerHTML = accountOptionsHtml(current);
+  });
+  const importSelect = document.getElementById('cloudImportAccountSelect');
+  const currentImportAccount = importSelect.value;
+  importSelect.innerHTML = accountOptionsHtml(currentImportAccount);
+}
+
+async function loadAccounts() {
+  const data = await (await fetch('/api/plugins/tuya_cloud/accounts')).json();
+  (data.accounts || []).forEach(a => addAccountRow(a));
+  refreshDeviceAccountSelects();
+}
+const accountsLoaded = loadAccounts();
+
+document.getElementById('saveAccountsBtn').addEventListener('click', async () => {
   try {
-    const resp = await authorizedFetch('/api/plugins/tuya_cloud/credentials', {
+    const resp = await authorizedFetch('/api/plugins/tuya_cloud/accounts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ accounts: collectAccounts() }),
     });
     const data = await resp.json();
     if (!resp.ok) {
-      showMsg('credentialsMsg', false, data.error || 'Błąd zapisu');
+      showMsg('accountsMsg', false, data.error || 'Błąd zapisu');
     } else {
-      showMsg('credentialsMsg', true, data.message);
-      document.getElementById('accessKeyInput').value = '';
-      await loadCredentials();
+      showMsg('accountsMsg', true, data.message);
+      document.getElementById('accountsRows').innerHTML = '';
+      await loadAccounts();
+      refreshDeviceAccountSelects();
     }
   } catch (e) {
-    showMsg('credentialsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+    showMsg('accountsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
 
@@ -500,6 +539,7 @@ function _applyDeviceModeVisibility(row) {
   show('.dev-dp', mode !== 'cloud' && row.querySelector('.dev-type').value === 'dimmer');
   show('.dev-category', mode === 'cloud');
   show('.dev-switch-code', mode === 'cloud');
+  show('.dev-account', mode === 'cloud');
   show('.dev-test', mode !== 'cloud');
   show('.dev-test-status', mode !== 'cloud');
 }
@@ -565,6 +605,7 @@ function addDeviceRow(initial) {
     <input type="text" placeholder="wersja (np. 3.4)" class="dev-version" title="wersja protokołu Tuya (puste = 3.4)" style="max-width: 90px;">
     <input type="text" placeholder="kategoria (opcjonalnie)" class="dev-category" style="max-width: 140px;">
     <input type="text" placeholder="kod przełącznika" class="dev-switch-code" style="max-width: 140px;">
+    <select class="dev-account" title="konto Tuya Cloud" style="max-width: 160px;"></select>
     <input type="hidden" class="dev-schema">
     <button type="button" class="secondary dev-test">🧪 Testuj</button>
     <span class="discover-status dev-test-status"></span>
@@ -578,6 +619,7 @@ function addDeviceRow(initial) {
   const gatewayNames = collectGateways().map(g => g.name);
   const defaultGateway = initial ? (initial.gateway ?? '') : (gatewayNames.length === 1 ? gatewayNames[0] : '');
   gatewaySelect.innerHTML = gatewayOptionsHtml(defaultGateway);
+  row.querySelector('.dev-account').innerHTML = accountOptionsHtml(initial ? (initial.cloud_account ?? '') : '');
   if (initial) {
     row.querySelector('.dev-name').value = initial.name ?? '';
     row.querySelector('.dev-id').value = initial.id ?? '';
@@ -623,6 +665,7 @@ function collectDevices() {
         version: row.querySelector('.dev-version').value.trim(),
         category: row.querySelector('.dev-category').value.trim(),
         switch_code: row.querySelector('.dev-switch-code').value.trim() || 'switch_1',
+        cloud_account: row.querySelector('.dev-account').value.trim(),
         dp_schema,
       };
     })
@@ -637,6 +680,7 @@ function _splitDevicesByMode(rows) {
       cloud_devices.push({
         name: d.name, id: d.id, category: d.category, switch_code: d.switch_code,
         local_key: d.local_key, ip: d.ip, version: d.version, dp_schema: d.dp_schema,
+        cloud_account: d.cloud_account,
       });
     } else if (d.mode === 'local_zigbee') {
       tuya_devices.push({
@@ -654,7 +698,8 @@ function _splitDevicesByMode(rows) {
 }
 
 async function loadTuyaDevices() {
-  const [localData, cloudData] = await Promise.all([
+  const [, localData, cloudData] = await Promise.all([
+    accountsLoaded,
     fetch('/api/plugins/tuya/devices').then(r => r.json()),
     fetch('/api/plugins/tuya_cloud/devices').then(r => r.json()),
   ]);
@@ -831,6 +876,7 @@ function _addImportedDeviceAsCloud(d, name) {
     local_key: d.local_key, ip: d.ip, version: d.version,
     category: d.category || '', dp_schema: d.dp_schema,
     gateway: matchedGateway ? matchedGateway.name : '', cid: d.node_id || '',
+    cloud_account: d.cloud_account || '',
   });
 }
 
@@ -925,7 +971,12 @@ document.getElementById('cloudImportBtn').addEventListener('click', async () => 
   status.textContent = 'Pobieram listę urządzeń z Tuya Cloud (ok. 18s, obejmuje skan LAN)...';
   document.getElementById('importResultsRows').innerHTML = '';
   try {
-    const resp = await authorizedFetch('/api/plugins/tuya_cloud/cloud-import', { method: 'POST' });
+    const account = document.getElementById('cloudImportAccountSelect').value;
+    const resp = await authorizedFetch('/api/plugins/tuya_cloud/cloud-import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account }),
+    });
     const data = await resp.json();
     if (!resp.ok) {
       status.textContent = '❌ ' + (data.error || 'Błąd importu');
@@ -946,7 +997,8 @@ document.getElementById('cloudImportBtn').addEventListener('click', async () => 
     if (subCount + localReadyCount + cloudOnly > 0) {
       parts.push('Wszystkie urządzenia (niezależnie od wykrytych możliwości) dodawane są domyślnie w trybie "Przez chmurę" - na lokalne/bramkę przełączasz je sam później przyciskami "🔄/🌉 Rescan".');
     }
-    status.textContent = parts.length ? parts.join(' ') : 'Brak urządzeń do zaimportowania.';
+    const accountLabel = data.account ? `Konto "${data.account}": ` : '';
+    status.textContent = accountLabel + (parts.length ? parts.join(' ') : 'Brak urządzeń do zaimportowania.');
   } catch (e) {
     status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
   } finally {

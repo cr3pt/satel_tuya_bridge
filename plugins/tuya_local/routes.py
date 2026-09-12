@@ -15,6 +15,7 @@ from bridge.tuya_local import (
 from dashboard.setup import (
     build_tuya_devices_dict, validate_tuya_devices, validate_cloud_devices,
     tuya_devices_to_rows, zigbee_gateways_to_rows, cloud_devices_to_rows,
+    validate_cloud_accounts, build_cloud_accounts_dict, cloud_accounts_to_rows,
 )
 from plugins import PluginMeta, register_settings_route
 
@@ -29,15 +30,17 @@ def describe_state(config_raw: dict) -> dict:
     tuya_devices = tuya.get("devices", {}) or {}
     zigbee_devices = _zigbee_devices(config_raw)
     cloud_devices = tuya.get("cloud_devices", {}) or {}
-    cloud = tuya.get("cloud", {}) or {}
+    cloud_accounts = tuya.get("cloud_accounts", {}) or {}
     detail_parts = [f"{len(tuya_devices) - len(zigbee_devices)} WiFi"]
     if zigbee_devices:
         detail_parts.append(f"{len(zigbee_devices)} Zigbee")
     if cloud_devices:
-        detail_parts.append(f"{len(cloud_devices)} chmurowych")
+        account_note = f" ({len(cloud_accounts)} kont)" if len(cloud_accounts) > 1 else ""
+        detail_parts.append(f"{len(cloud_devices)} chmurowych{account_note}")
+    has_cloud_account = any(acc.get("access_id") for acc in cloud_accounts.values())
     return {
-        "enabled": tuya.get("enabled", True) and (len(tuya_devices) > len(zigbee_devices) or bool(cloud.get("access_id"))),
-        "configured": len(tuya_devices) > len(zigbee_devices) or bool(cloud.get("access_id")),
+        "enabled": tuya.get("enabled", True) and (len(tuya_devices) > len(zigbee_devices) or has_cloud_account),
+        "configured": len(tuya_devices) > len(zigbee_devices) or has_cloud_account,
         "detail": ", ".join(detail_parts),
         "poll_interval_seconds": tuya.get("status_poll_interval_seconds", 30),
     }
@@ -63,13 +66,19 @@ META = PluginMeta(
 def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_config_store,
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
 
-    def _get_cloud_section() -> dict:
-        return get_config_store().get("config").get("tuya", {}).get("cloud", {}) or {}
+    def _get_cloud_accounts() -> dict:
+        return get_config_store().get("config").get("tuya", {}).get("cloud_accounts", {}) or {}
 
-    def _save_cloud_section(section: dict) -> None:
+    def _save_cloud_accounts(accounts: dict) -> None:
         current = get_config_store().get("config")
-        current.setdefault("tuya", {})["cloud"] = section
+        current.setdefault("tuya", {})["cloud_accounts"] = accounts
         get_config_store().set("config", current)
+
+    def _resolve_account_name(device_cfg: dict, accounts: dict) -> str | None:
+        # Puste "cloud_account" (urządzenie sprzed wprowadzenia wielu kont, albo
+        # zapisane przez kreator, który zna tylko jedno konto) -> pierwsze
+        # skonfigurowane konto, tak samo jak w TuyaCloudController.
+        return device_cfg.get("cloud_account") or (next(iter(accounts), None))
 
     @app.route("/plugins/tuya")
     async def tuya_plugin_page():
@@ -224,44 +233,30 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             "message": message,
         })
 
-    @app.route("/api/plugins/tuya_cloud/credentials", methods=["GET"])
-    async def api_plugin_tuya_cloud_credentials_get():
-        cloud = _get_cloud_section()
-        return jsonify({
-            "access_id": cloud.get("access_id", ""),
-            "access_key_set": bool(cloud.get("access_key")),
-            "api_region": cloud.get("api_region", "eu"),
-            "api_endpoint": cloud.get("api_endpoint", "https://openapi.tuyaeu.com"),
-            "mq_endpoint": cloud.get("mq_endpoint", "wss://mqe.tuyaeu.com:8285/"),
-        })
+    @app.route("/api/plugins/tuya_cloud/accounts", methods=["GET"])
+    async def api_plugin_tuya_cloud_accounts_get():
+        return jsonify({"accounts": cloud_accounts_to_rows(_get_cloud_accounts())})
 
-    @app.route("/api/plugins/tuya_cloud/credentials", methods=["POST"])
+    @app.route("/api/plugins/tuya_cloud/accounts", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
-    async def api_plugin_tuya_cloud_credentials_post():
+    async def api_plugin_tuya_cloud_accounts_post():
         form = await request.get_json(silent=True)
-        if not isinstance(form, dict):
-            return jsonify({"error": "Nieprawidłowe dane"}), 400
-        access_id = (form.get("access_id") or "").strip()
-        if not access_id:
-            return jsonify({"error": "Access ID jest wymagany"}), 400
-        api_region = (form.get("api_region") or "").strip()
-        if api_region and api_region not in TUYA_CLOUD_REGIONS:
-            return jsonify({"error": f"Nieznany region: {api_region}"}), 400
+        if not isinstance(form, dict) or not isinstance(form.get("accounts"), list):
+            return jsonify({"error": "Nieprawidłowe dane - oczekiwano listy 'accounts'"}), 400
 
-        existing = _get_cloud_section()
-        section = dict(existing)
-        section.update({
-            "access_id": access_id,
-            "access_key": (form.get("access_key") or "").strip() or existing.get("access_key", ""),
-            "api_region": api_region or existing.get("api_region", "eu"),
-            "api_endpoint": (form.get("api_endpoint") or "").strip() or existing.get("api_endpoint", "https://openapi.tuyaeu.com"),
-            "mq_endpoint": (form.get("mq_endpoint") or "").strip() or existing.get("mq_endpoint", "wss://mqe.tuyaeu.com:8285/"),
-        })
-        _save_cloud_section(section)
+        errors = validate_cloud_accounts(form)
+        if errors:
+            return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+
+        accounts = build_cloud_accounts_dict(form, existing=_get_cloud_accounts())
+        _save_cloud_accounts(accounts)
         reload_bridge_config()
         enqueue_bridge_reload()
 
-        return jsonify({"message": "Zapisano. Bridge sam przeładuje konfigurację w ciągu ok. 1-2s, bez restartu procesu."})
+        return jsonify({
+            "saved": len(accounts),
+            "message": "Zapisano. Bridge sam przeładuje konfigurację w ciągu ok. 1-2s, bez restartu procesu.",
+        })
 
     @app.route("/api/plugins/tuya_cloud/devices", methods=["GET"])
     async def api_plugin_tuya_cloud_devices_get():
@@ -295,13 +290,23 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
     @app.route("/api/plugins/tuya_cloud/cloud-import", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
     async def api_plugin_tuya_cloud_cloud_import():
-        cloud = _get_cloud_section()
-        api_region = cloud.get("api_region", "")
-        access_id = cloud.get("access_id", "")
-        access_key = cloud.get("access_key", "")
+        accounts = _get_cloud_accounts()
+        if not accounts:
+            return jsonify({
+                "error": "Najpierw dodaj konto Tuya Cloud wyżej (nazwa, region, Access ID, Access Secret).",
+            }), 400
+
+        form = await request.get_json(silent=True) or {}
+        account_name = (form.get("account") or "").strip() or next(iter(accounts))
+        account = accounts.get(account_name)
+        if account is None:
+            return jsonify({"error": f"Nieznane konto Tuya Cloud: '{account_name}'"}), 400
+        api_region = account.get("api_region", "")
+        access_id = account.get("access_id", "")
+        access_key = account.get("access_key", "")
         if not api_region or not access_id or not access_key:
             return jsonify({
-                "error": "Najpierw zapisz poświadczenia Tuya Cloud wyżej (region, Access ID, Access Secret).",
+                "error": f"Konto '{account_name}': uzupełnij region, Access ID i Access Secret wyżej.",
             }), 400
 
         scan_networks = get_config_raw().get("tuya", {}).get("scan_networks") or []
@@ -313,7 +318,9 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             return jsonify({"error": str(exc)}), 502
         except Exception as exc:
             return jsonify({"error": f"Błąd importu z Tuya Cloud: {exc}"}), 502
-        return jsonify({"devices": devices})
+        for d in devices:
+            d["cloud_account"] = account_name
+        return jsonify({"devices": devices, "account": account_name})
 
     async def _refresh_dp_schema(devices: dict, api_region: str, access_id: str, access_key: str):
         """Pobiera z Tuya Cloud opisy pól (dp_schema) dla przekazanego słownika
@@ -335,16 +342,24 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
                 failed.append(name)
         return updated, failed
 
+    def _group_by_account(devices: dict, accounts: dict) -> dict[str, dict]:
+        """Urządzenia lokalne (WiFi/Zigbee) nie mają "cloud_account" - trafiają
+        wszystkie pod konto domyślne, bo dp_schema dla nich pochodzi zawsze z
+        tego samego konta, na którym zostały pierwotnie zaimportowane/dodane."""
+        grouped: dict[str, dict] = {}
+        for name, cfg in devices.items():
+            account_name = _resolve_account_name(cfg, accounts)
+            if account_name:
+                grouped.setdefault(account_name, {})[name] = cfg
+        return grouped
+
     @app.route("/api/plugins/tuya/devices/refresh-dp-schema", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
     async def api_plugin_tuya_refresh_dp_schema():
-        cloud = _get_cloud_section()
-        api_region = cloud.get("api_region", "")
-        access_id = cloud.get("access_id", "")
-        access_key = cloud.get("access_key", "")
-        if not api_region or not access_id or not access_key:
+        accounts = _get_cloud_accounts()
+        if not accounts:
             return jsonify({
-                "error": "Najpierw zapisz poświadczenia Tuya Cloud wyżej (region, Access ID, Access Secret).",
+                "error": "Najpierw dodaj konto Tuya Cloud wyżej (nazwa, region, Access ID, Access Secret).",
             }), 400
 
         tuya = get_config_raw().get("tuya", {})
@@ -353,9 +368,29 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         if not local_devices and not cloud_devices:
             return jsonify({"error": "Brak skonfigurowanych urządzeń z ID do opisania"}), 400
 
+        updated: list[str] = []
+        failed: list[str] = []
         try:
-            local_updated, local_failed = await _refresh_dp_schema(local_devices, api_region, access_id, access_key)
-            cloud_updated, cloud_failed = await _refresh_dp_schema(cloud_devices, api_region, access_id, access_key)
+            for account_name, devices_for_account in _group_by_account(local_devices, accounts).items():
+                account = accounts[account_name]
+                if not (account.get("access_id") and account.get("access_key")):
+                    failed.extend(devices_for_account)
+                    continue
+                u, f = await _refresh_dp_schema(
+                    devices_for_account, account.get("api_region", "eu"), account["access_id"], account["access_key"],
+                )
+                updated.extend(u)
+                failed.extend(f)
+            for account_name, devices_for_account in _group_by_account(cloud_devices, accounts).items():
+                account = accounts[account_name]
+                if not (account.get("access_id") and account.get("access_key")):
+                    failed.extend(devices_for_account)
+                    continue
+                u, f = await _refresh_dp_schema(
+                    devices_for_account, account.get("api_region", "eu"), account["access_id"], account["access_key"],
+                )
+                updated.extend(u)
+                failed.extend(f)
         except ConnectionError as exc:
             return jsonify({"error": str(exc)}), 502
         except Exception as exc:
@@ -368,7 +403,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         reload_bridge_config()
         enqueue_bridge_reload()
 
-        updated, failed = local_updated + cloud_updated, local_failed + cloud_failed
         return jsonify({
             "updated": updated, "failed": failed,
             "message": f"Zaktualizowano opisy pól dla {len(updated)}/{len(updated) + len(failed)} urządzeń.",
@@ -377,13 +411,10 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
     @app.route("/api/plugins/tuya_cloud/devices/rescan", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
     async def api_plugin_tuya_cloud_rescan():
-        cloud = _get_cloud_section()
-        api_region = cloud.get("api_region", "")
-        access_id = cloud.get("access_id", "")
-        access_key = cloud.get("access_key", "")
-        if not api_region or not access_id or not access_key:
+        accounts = _get_cloud_accounts()
+        if not accounts:
             return jsonify({
-                "error": "Najpierw zapisz poświadczenia Tuya Cloud wyżej (region, Access ID, Access Secret).",
+                "error": "Najpierw dodaj konto Tuya Cloud wyżej (nazwa, region, Access ID, Access Secret).",
             }), 400
 
         cloud_devices = get_config_raw().get("tuya", {}).get("cloud_devices", {})
@@ -409,47 +440,75 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         zigbee_gateways = get_config_raw().get("tuya", {}).get("zigbee_gateways", {})
         gateway_id_to_name = {cfg["id"]: name for name, cfg in zigbee_gateways.items() if cfg.get("id")}
 
-        try:
-            devices = await asyncio.get_event_loop().run_in_executor(
-                None, fetch_tuya_cloud_devices, api_region, access_id, access_key, scan_networks,
-            )
-        except ConnectionError as exc:
-            return jsonify({"error": str(exc)}), 502
-        except Exception as exc:
-            return jsonify({"error": f"Błąd komunikacji z Tuya Cloud: {exc}"}), 502
-
+        # Każde konto ma swoją, niezależną listę urządzeń w Tuya Cloud - trzeba
+        # odpytać każde skonfigurowane konto osobno i dopasować wynik tylko do
+        # urządzeń, które faktycznie do niego należą (żeby nie mylić urządzeń
+        # o takim samym ID z różnych kont, choć w praktyce ID są globalnie unikalne).
         results = []
         cid_checks = []
-        for d in devices:
-            dev_id = d.get("id", "")
-            cloud_cid = d.get("node_id") or dev_id
+        cloud_devices_by_account = _group_by_account(cloud_devices, accounts)
+        zigbee_devices_by_account = _group_by_account(zigbee_devices, accounts)
+        queried_any_account = False
+        for account_name, account in accounts.items():
+            if not (account.get("access_id") and account.get("access_key")):
+                continue
+            by_id_for_account = {
+                cfg["id"]: name for name, cfg in cloud_devices_by_account.get(account_name, {}).items()
+            }
+            zigbee_by_id_for_account = {
+                cfg["id"]: name for name, cfg in zigbee_devices_by_account.get(account_name, {}).items()
+            }
+            if not by_id_for_account and not zigbee_by_id_for_account:
+                continue
+            queried_any_account = True
+            try:
+                devices = await asyncio.get_event_loop().run_in_executor(
+                    None, fetch_tuya_cloud_devices,
+                    account.get("api_region", "eu"), account["access_id"], account["access_key"], scan_networks,
+                )
+            except ConnectionError as exc:
+                return jsonify({"error": f"Konto '{account_name}': {exc}"}), 502
+            except Exception as exc:
+                return jsonify({"error": f"Konto '{account_name}': błąd komunikacji z Tuya Cloud: {exc}"}), 502
 
-            name = by_id.get(dev_id)
-            if name:
-                gateway_name = gateway_id_to_name.get(d.get("gateway_id") or "", "")
-                results.append({
-                    "name": name,
-                    "id": dev_id,
-                    "ip": d.get("ip", ""),
-                    "local_key": d.get("local_key", ""),
-                    "version": d.get("version", ""),
-                    "dp_schema": d.get("dp_schema", {}),
-                    "can_move_to_local": bool(d.get("ip") and d.get("local_key")),
-                    "can_move_to_gateway": bool(gateway_name),
-                    "gateway_name": gateway_name,
-                    "cid": cloud_cid,
-                })
+            for d in devices:
+                dev_id = d.get("id", "")
+                cloud_cid = d.get("node_id") or dev_id
 
-            zigbee_name = zigbee_by_id.get(dev_id)
-            if zigbee_name:
-                current_cid = (zigbee_devices[zigbee_name].get("cid") or dev_id).strip()
-                cid_checks.append({
-                    "name": zigbee_name,
-                    "id": dev_id,
-                    "current_cid": current_cid,
-                    "cloud_cid": cloud_cid,
-                    "mismatch": current_cid != cloud_cid,
-                })
+                name = by_id_for_account.get(dev_id)
+                if name:
+                    gateway_name = gateway_id_to_name.get(d.get("gateway_id") or "", "")
+                    results.append({
+                        "name": name,
+                        "id": dev_id,
+                        "ip": d.get("ip", ""),
+                        "local_key": d.get("local_key", ""),
+                        "version": d.get("version", ""),
+                        "dp_schema": d.get("dp_schema", {}),
+                        "can_move_to_local": bool(d.get("ip") and d.get("local_key")),
+                        "can_move_to_gateway": bool(gateway_name),
+                        "gateway_name": gateway_name,
+                        "cid": cloud_cid,
+                        "cloud_account": account_name,
+                    })
+
+                zigbee_name = zigbee_by_id_for_account.get(dev_id)
+                if zigbee_name:
+                    current_cid = (zigbee_devices[zigbee_name].get("cid") or dev_id).strip()
+                    cid_checks.append({
+                        "name": zigbee_name,
+                        "id": dev_id,
+                        "current_cid": current_cid,
+                        "cloud_cid": cloud_cid,
+                        "mismatch": current_cid != cloud_cid,
+                        "cloud_account": account_name,
+                    })
+
+        if not queried_any_account:
+            return jsonify({
+                "error": "Żadne skonfigurowane konto Tuya Cloud nie ma kompletnych poświadczeń "
+                         "(Access ID + Access Secret) - uzupełnij je wyżej.",
+            }), 400
 
         movable_local = sum(1 for r in results if r["can_move_to_local"])
         movable_gateway = sum(1 for r in results if r["can_move_to_gateway"])

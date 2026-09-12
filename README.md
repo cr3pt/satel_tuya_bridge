@@ -350,6 +350,23 @@ LAN i chmury. Zapisz tam poświadczenia Tuya Cloud (Access ID/Secret/region)
 RAZ, potem przycisk **☁ Importuj z Tuya Cloud** pobiera listę urządzeń
 jednym kliknięciem, bez wpisywania ich ponownie.
 
+**Wiele kont Tuya Cloud.** Sekcja **"☁ Konta Tuya Cloud"** to lista - można
+dodać (i usunąć) dowolną liczbę niezależnych kont, każde z własną nazwą,
+Access ID/Secret i regionem. Każde urządzenie chmurowe w tabeli
+"Urządzenia" ma pole **"konto Tuya Cloud"** (widoczne w trybie "Przez
+chmurę") wybierające, z którego konta korzysta - urządzenie bez wybranego
+konta używa pierwszego skonfigurowanego (kompatybilność z konfiguracją
+sprzed tej funkcji: pojedyncze, wcześniej zapisane poświadczenia stają się
+automatycznie kontem "domyślne"). Import z Tuya Cloud też pyta o konto
+(lista rozwijana obok przycisku importu) i oznacza zaimportowane
+urządzenia tym kontem. Najczęstszy powód, żeby użyć więcej niż jednego
+konta: limit **"Controllable Device Pool"** w Tuya IoT Platform (błąd
+"Your controllable device pool quota is insufficient" - patrz niżej) jest
+liczony per projekt/konto, niezależnie od tego, ile urządzeń bridge akurat
+w danej chwili kontroluje - jego przekroczenie da się obejść, rozkładając
+urządzenia na kilka projektów zamiast czekać na rozszerzenie limitu jednego
+z nich.
+
 Wyniki skanowania/importu są kolorowane: **🟠 pomarańczowy** - urządzenie
 już znane (istnieje w tabeli Urządzenia), **🟢 zielony** - nowe, jeszcze
 nieskonfigurowane. Dotyczy to zarówno skanu LAN, jak i importu z Tuya
@@ -1082,6 +1099,10 @@ wygaśnięciu darmowego okresu próbnego "Cloud Development") były widoczne
 tylko pośrednio, w loggerze wywołującego (np. `bridge.flow_engine` przy
 nieudanej akcji Flow), a nie wprost pod filtrem "Tuya" w Historii
 logów - Naprawione: suwak i przycisk "📜 Logi" obejmują teraz oba loggery.
+Ten konkretny błąd (przekroczony limit puli) nie znika przez ograniczenie
+częstotliwości komend - to stały limit liczby urządzeń przypisanych do
+konta/projektu, nie limit współbieżności - patrz wyżej "Wiele kont Tuya
+Cloud" jako sposób na obejście go bez czekania na odnowienie subskrypcji.
 
 ### Zmiany działają od razu - bez restartu Dockera
 

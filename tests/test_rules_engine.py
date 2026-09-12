@@ -1277,7 +1277,7 @@ class TestBuildTuyaController:
         tuya_cfg = {
             "devices": {"gniazdko": {"id": "d1", "ip": "1.2.3.4", "local_key": "k"}},
             "cloud_devices": {"lampa": {"id": "c1", "switch_code": "switch_1"}},
-            "cloud": {"api_region": "eu", "access_id": "aid", "access_key": "akey"},
+            "cloud_accounts": {"domyślne": {"api_region": "eu", "access_id": "aid", "access_key": "akey"}},
         }
         controller = _build_tuya_controller(tuya_cfg)
         assert isinstance(controller, TuyaController)
@@ -1285,7 +1285,9 @@ class TestBuildTuyaController:
         assert isinstance(controller.cloud, TuyaCloudController)
         assert "gniazdko" in controller.local.devices_cfg
         assert "lampa" in controller.cloud.devices_cfg
-        assert controller.cloud.credentials == {"api_region": "eu", "access_id": "aid", "access_key": "akey"}
+        assert controller.cloud.accounts_cfg == {
+            "domyślne": {"api_region": "eu", "access_id": "aid", "access_key": "akey"},
+        }
 
     def test_works_with_missing_cloud_devices_and_credentials(self):
         from bridge.rules_engine import _build_tuya_controller

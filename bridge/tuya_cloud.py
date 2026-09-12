@@ -17,29 +17,46 @@ def _reason_suffix(reason: str | None) -> str:
 
 
 class TuyaCloudController:
-    def __init__(self, devices_cfg: dict, credentials: dict, retries: int = 2, retry_delay: float = 1.5):
+    def __init__(
+        self, devices_cfg: dict, accounts_cfg: dict[str, dict], retries: int = 2, retry_delay: float = 1.5,
+    ):
         # .strip() na ID: config może pochodzić z importu paczki YAML/ręcznej edycji,
         # nie tylko z panelu (gdzie pola są już przycięte w JS) - niewidoczna spacja
         # na końcu ID psuje każde polecenie do Tuya Cloud dla tego urządzenia.
         self.devices_cfg = {
             name: {**cfg, "id": (cfg.get("id") or "").strip()} for name, cfg in devices_cfg.items()
         }
-        self.credentials = credentials
+        self.accounts_cfg = accounts_cfg or {}
+        # Konto domyślne dla urządzeń bez jawnie wybranego "cloud_account" (np. sprzed
+        # wprowadzenia wielu kont) - pierwsze skonfigurowane konto.
+        self._default_account = next(iter(self.accounts_cfg), None)
         self.retries = retries
         self.retry_delay = retry_delay
-        self._cloud: tinytuya.Cloud | None = None
+        self._clients: dict[str, tinytuya.Cloud] = {}
         self._switch_codes_cache: dict[str, list[str]] = {}
 
-    def _client(self) -> tinytuya.Cloud:
-        if self._cloud is None:
+    def _account_name_for(self, device_name: str) -> str | None:
+        return self.devices_cfg.get(device_name, {}).get("cloud_account") or self._default_account
+
+    def _client(self, device_name: str) -> tinytuya.Cloud:
+        account_name = self._account_name_for(device_name)
+        if account_name not in self.accounts_cfg:
+            raise ConnectionError(
+                f"Urządzenie '{device_name}' odwołuje się do nieistniejącego konta Tuya Cloud "
+                f"'{account_name}' - sprawdź konfigurację kont w ustawieniach wtyczki Tuya."
+            )
+        client = self._clients.get(account_name)
+        if client is None:
+            credentials = self.accounts_cfg[account_name]
             # .strip() z tego samego powodu co ID wyżej - wklejone z konsoli Tuya IoT
             # Access ID/Secret często niosą niewidoczne białe znaki.
-            self._cloud = tinytuya.Cloud(
-                apiRegion=(self.credentials.get("api_region") or "eu").strip() or "eu",
-                apiKey=(self.credentials.get("access_id") or "").strip(),
-                apiSecret=(self.credentials.get("access_key") or "").strip(),
+            client = tinytuya.Cloud(
+                apiRegion=(credentials.get("api_region") or "eu").strip() or "eu",
+                apiKey=(credentials.get("access_id") or "").strip(),
+                apiSecret=(credentials.get("access_key") or "").strip(),
             )
-        return self._cloud
+            self._clients[account_name] = client
+        return client
 
     async def _call_with_retry(self, device_name: str, func, *args):
         loop = asyncio.get_event_loop()
@@ -67,7 +84,7 @@ class TuyaCloudController:
 
     async def _detect_switch_codes_from_functions(self, device_name: str) -> list[str] | None:
         cfg = self.devices_cfg[device_name]
-        client = self._client()
+        client = self._client(device_name)
         getdps = getattr(client, "getdps", None)
         if getdps is None:
             return None
@@ -105,7 +122,7 @@ class TuyaCloudController:
         self, device_name: str, dimmer_level_percent: int | None = None, reason: str | None = None,
     ) -> None:
         cfg = self.devices_cfg[device_name]
-        client = self._client()
+        client = self._client(device_name)
         codes = await self._switch_codes(device_name)
         commands = {"commands": [{"code": code, "value": True} for code in codes]}
         await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
@@ -115,7 +132,7 @@ class TuyaCloudController:
 
     async def turn_off(self, device_name: str, reason: str | None = None) -> None:
         cfg = self.devices_cfg[device_name]
-        client = self._client()
+        client = self._client(device_name)
         codes = await self._switch_codes(device_name)
         commands = {"commands": [{"code": code, "value": False} for code in codes]}
         await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
@@ -125,7 +142,7 @@ class TuyaCloudController:
 
     async def set_dp(self, device_name: str, dp_code: str, value: object, reason: str | None = None) -> None:
         cfg = self.devices_cfg[device_name]
-        client = self._client()
+        client = self._client(device_name)
         coerced = coerce_dp_value(value)
         commands = {"commands": [{"code": dp_code, "value": coerced}]}
         await self._call_with_retry(device_name, client.sendcommand, cfg["id"], commands)
@@ -136,14 +153,14 @@ class TuyaCloudController:
 
     async def get_status(self, device_name: str) -> dict:
         cfg = self.devices_cfg[device_name]
-        client = self._client()
+        client = self._client(device_name)
         result = await self._call_with_retry(device_name, client.getstatus, cfg["id"])
         items = result.get("result", []) if isinstance(result, dict) else []
         return {item["code"]: item.get("value") for item in items if item.get("code")}
 
     async def toggle(self, device_name: str, reason: str | None = None) -> None:
         cfg = self.devices_cfg[device_name]
-        client = self._client()
+        client = self._client(device_name)
         codes = await self._switch_codes(device_name)
         status = await self.get_status(device_name)
         new_value = not bool(status.get(codes[0]))

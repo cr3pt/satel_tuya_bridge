@@ -78,6 +78,19 @@ class BridgeConfig:
         else:
             data["tuya"].setdefault("cloud_devices", {})
 
+        # Migracja z pojedynczego konta Tuya Cloud (tuya.cloud) na wiele nazwanych
+        # kont (tuya.cloud_accounts) - stary klucz "cloud" zostaje NIETKNIĘTY (dla
+        # configów zapisanych zewnętrznie/importem YAML sprzed tej zmiany), ale
+        # przy braku "cloud_accounts" jego zawartość (o ile ma access_id) staje się
+        # jednym kontem o nazwie "domyślne", żeby istniejące konfiguracje działały
+        # bez żadnej ręcznej migracji.
+        if "cloud_accounts" not in data["tuya"]:
+            legacy_cloud = data["tuya"].get("cloud") or {}
+            if legacy_cloud.get("access_id"):
+                data["tuya"]["cloud_accounts"] = {"domyślne": dict(legacy_cloud)}
+            else:
+                data["tuya"]["cloud_accounts"] = {}
+
         sensors_content = store.get("sensors")
         data.setdefault("ebus", {})["sensors"] = sensors_content.get("sensors", [])
 
