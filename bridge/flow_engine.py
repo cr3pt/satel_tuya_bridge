@@ -132,11 +132,13 @@ class FlowEngine:
         location_cfg: dict | None = None,
         get_status_value: Callable[[str], str | None] | None = None,
         set_tuya_dp: Callable[[str, str, object], Awaitable[None]] | None = None,
+        write_event: Callable[[str, str, dict], None] | None = None,
     ):
         self.flows = flows_cfg or []
         self._set_target_state = set_target_state
         self._run_scene = run_scene
         self._set_tuya_dp = set_tuya_dp
+        self._write_event = write_event or (lambda event_type, source, detail: None)
         self._notifier = Notifier(notify_cfg)
         self._mqtt_cfg = mqtt_cfg or {}
         self._mqtt_client: mqtt.Client | None = None
@@ -165,6 +167,17 @@ class FlowEngine:
 
     # ── Wejścia zdarzeń (te same co RulesEngine.handle_motion/handle_device_state) ──
 
+    def _start_flow(self, flow: dict, node: dict, msg: dict) -> None:
+        """Loguje odpalenie węzła wejściowego grafu (trigger/mqttIn/Warunek
+        złożony-jako-trigger, także ręczny przycisk "Testuj") do Historii
+        zdarzeń, żeby było widać w panelu, KIEDY i PRZEZ CO dany flow się
+        uruchomił - wcześniej FlowEngine nie zapisywał żadnych zdarzeń, w
+        odróżnieniu od reguł ruchu/scen."""
+        self._write_event(
+            "flow", f"flow:{flow.get('name')}",
+            {"node_type": node.get("type"), "node_id": node.get("id"), "key": msg.get("key"), "source": msg.get("source")},
+        )
+
     async def handle_motion(self, source: str, zone_or_device_id, trigger: str = "violated") -> None:
         for flow in self.flows:
             if not flow.get("enabled", True):
@@ -184,6 +197,7 @@ class FlowEngine:
                     "payload": trigger == "violated", "key": zone_or_device_id,
                     "source": f"flow:{flow.get('name')}",
                 }
+                self._start_flow(flow, node, msg)
                 asyncio.create_task(self._propagate(flow, node, msg, 0))
             self._check_condition_group_entrypoints(flow)
 
@@ -208,6 +222,7 @@ class FlowEngine:
                 if not fire:
                     continue
                 msg = {"payload": value, "key": device_name, "source": f"flow:{flow.get('name')}"}
+                self._start_flow(flow, node, msg)
                 asyncio.create_task(self._propagate(flow, node, msg, 0))
             self._check_condition_group_entrypoints(flow)
 
@@ -251,6 +266,7 @@ class FlowEngine:
             if not fire:
                 continue
             msg = {"payload": True, "key": None, "source": f"flow:{flow.get('name')}"}
+            self._start_flow(flow, node, msg)
             asyncio.create_task(self._propagate(flow, node, msg, 0))
 
     # ── MQTT (opcjonalne - tylko gdy flow zawiera węzeł mqttIn/mqttOut) ──
@@ -312,6 +328,7 @@ class FlowEngine:
         payload = msg.payload.decode(errors="replace")
         for flow, node in self._mqtt_subs.get(msg.topic, []):
             fmsg = {"payload": payload, "key": msg.topic, "source": f"flow:{flow.get('name')}"}
+            self._start_flow(flow, node, fmsg)
             asyncio.run_coroutine_threadsafe(self._propagate(flow, node, fmsg, 0), self._loop)
 
     # ── Wykonanie grafu ──
@@ -327,6 +344,10 @@ class FlowEngine:
         except Exception as exc:
             logger.error(
                 "Flow '%s': węzeł %s (%s) nie powiódł się: %s", flow.get("name"), node.get("id"), node.get("type"), exc,
+            )
+            self._write_event(
+                "flow", f"flow:{flow.get('name')}",
+                {"node_type": node.get("type"), "node_id": node.get("id"), "error": str(exc)},
             )
             await self._notifier.send(
                 "🔴 Flow błąd", f"Flow \"{flow.get('name')}\": węzeł {node.get('type')} nie powiódł się - {exc}",
@@ -411,12 +432,17 @@ class FlowEngine:
             dimmer = c.get("dimmer_level_percent")
             reason = f"flow '{flow.get('name')}'" if flow.get("name") else None
             await self._set_target_state(target_system, device, on, dimmer, reason=reason)
+            self._write_event(
+                "flow", f"flow:{flow.get('name')}",
+                {"node": "device", "target_device": device, "target_system": target_system, "value": value},
+            )
             return [msg]
 
         if ntype == "scene":
             scene_name = c.get("scene_name")
             if scene_name:
                 await self._run_scene(scene_name)
+                self._write_event("flow", f"flow:{flow.get('name')}", {"node": "scene", "scene": scene_name})
             return [msg]
 
         if ntype == "stop":
@@ -431,6 +457,10 @@ class FlowEngine:
             value = _resolve_template(c.get("value"), msg)
             reason = f"flow '{flow.get('name')}'" if flow.get("name") else None
             await self._set_tuya_dp(c.get("target_device"), c.get("dp_code"), value, reason=reason)
+            self._write_event(
+                "flow", f"flow:{flow.get('name')}",
+                {"node": "tuya_dp", "target_device": c.get("target_device"), "dp_code": c.get("dp_code"), "value": value},
+            )
             return [msg]
 
         if ntype == "delay":
@@ -444,6 +474,7 @@ class FlowEngine:
                 f"{_LEVEL_EMOJI.get(level, 'ℹ️')} Flow: {flow.get('name')}", text,
                 priority=_LEVEL_PRIORITY.get(level, "default"),
             )
+            self._write_event("flow", f"flow:{flow.get('name')}", {"node": "notify", "level": level, "message": text})
             return [msg]
 
         if ntype == "mqttOut":
@@ -452,6 +483,9 @@ class FlowEngine:
             if client is not None and topic:
                 payload = _resolve_template(c.get("payload") if c.get("payload") not in (None, "") else "{value}", msg)
                 client.publish(topic, payload=str(payload))
+                self._write_event(
+                    "flow", f"flow:{flow.get('name')}", {"node": "mqtt_out", "topic": topic, "payload": str(payload)},
+                )
             return [msg]
 
         if ntype == "http":
@@ -467,6 +501,7 @@ class FlowEngine:
                         text = await resp.text()
             except Exception as exc:
                 raise RuntimeError(f"HTTP {method} {url}: {exc}") from exc
+            self._write_event("flow", f"flow:{flow.get('name')}", {"node": "http", "method": method, "url": url})
             return [{**msg, "payload": text}]
 
         return [msg]
@@ -487,4 +522,5 @@ class FlowEngine:
             if node.get("type") not in _TRIGGER_TYPES and not is_entry_condition_group:
                 continue
             msg = {"payload": None, "key": None, "source": f"flow-test:{flow.get('name')}"}
+            self._start_flow(flow, node, msg)
             await self._propagate(flow, node, msg, 0)
