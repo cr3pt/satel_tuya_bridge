@@ -325,6 +325,32 @@ class TestCloudAccountsMigration:
         config = BridgeConfig.load(tmp_path / "config.yaml")
         assert config.raw["tuya"]["cloud_accounts"] == {"dom": {"access_id": "aid1", "access_key": "k1"}}
 
+    def test_explicitly_persisted_empty_cloud_accounts_still_falls_back_to_legacy(self, tmp_path):
+        """Regres znaleziony po wdrożeniu: strona wtyczki Tuya czytała listę kont
+        wprost z ConfigStore (z pominięciem tej migracji) - dla instalacji z samym
+        starym "cloud" widziała 0 kont, więc samo kliknięcie tam "Zapisz konta"
+        (bez dodania wiersza) trwale zapisywało do configu PUSTY słownik
+        cloud_accounts. Bez tego złagodzenia migracja uznawałaby to za "już
+        zmigrowane" i nigdy więcej nie odtworzyłaby konta "domyślne" - każda
+        komenda do Tuya Cloud kończyłaby się błędem "nieistniejące konto"."""
+        config_text = MINIMAL_CONFIG.replace(
+            "tuya:\n  devices: {}",
+            'tuya:\n  devices: {}\n  cloud: {access_id: "aid1", access_key: "secret1", api_region: "eu"}',
+        )
+        (tmp_path / "config.yaml").write_text(config_text, encoding="utf-8")
+        config = BridgeConfig.load(tmp_path / "config.yaml")
+
+        # Symuluje dokładnie to, co (przed poprawką) zapisywał POST
+        # /api/plugins/tuya_cloud/accounts z pustą listą "accounts" w formularzu.
+        stored = config.store.get("config")
+        stored["tuya"]["cloud_accounts"] = {}
+        config.store.set("config", stored)
+
+        reloaded = BridgeConfig.load(tmp_path / "config.yaml")
+        assert reloaded.raw["tuya"]["cloud_accounts"] == {
+            "domyślne": {"access_id": "aid1", "access_key": "secret1", "api_region": "eu"},
+        }
+
 
 class TestDatabaseMigration:
 
