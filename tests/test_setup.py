@@ -2059,6 +2059,46 @@ class TestFlows:
         errors = validate_automations(self._form_with_flow(flow))
         assert any("wybierz urządzenie źródłowe" in e for e in errors)
 
+    def test_trigger_device_state_with_specific_value_requires_trigger_value(self):
+        # Regres: trigger "Konkretna wartość" (op != "changes") zapisywał się
+        # bez błędu z pustym trigger_value - taki trigger nigdy się nie odpala
+        # (FlowEngine.handle_device_state porównuje value == cfg["trigger_value"],
+        # a pusty string nigdy nie pasuje do prawdziwej wartości urządzenia).
+        flow = self._simple_flow(nodes=[
+            {
+                "id": "trig", "type": "trigger",
+                "config": {"source": "tuya_state", "source_device": "swiatlo", "op": "violated"},
+                "wires": [],
+            },
+        ])
+        errors = validate_automations(self._form_with_flow(flow))
+        assert any("wartość wyzwalającą" in e for e in errors)
+
+    def test_trigger_device_state_specific_value_with_trigger_value_is_valid(self):
+        flow = self._simple_flow(nodes=[
+            {
+                "id": "trig", "type": "trigger",
+                "config": {
+                    "source": "tuya_state", "source_device": "swiatlo", "op": "violated",
+                    "trigger_value": "włączone",
+                },
+                "wires": [["dev"]],
+            },
+            {"id": "dev", "type": "device", "config": {"target_device": "gniazdko_salon"}, "wires": []},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
+    def test_trigger_device_state_changes_does_not_require_trigger_value(self):
+        flow = self._simple_flow(nodes=[
+            {
+                "id": "trig", "type": "trigger",
+                "config": {"source": "tuya_state", "source_device": "swiatlo", "op": "changes"},
+                "wires": [["dev"]],
+            },
+            {"id": "dev", "type": "device", "config": {"target_device": "gniazdko_salon"}, "wires": []},
+        ])
+        assert validate_automations(self._form_with_flow(flow)) == []
+
     def test_condition_requires_op_and_value(self):
         flow = self._simple_flow(nodes=[
             {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": "3"}, "wires": [["c"]]},

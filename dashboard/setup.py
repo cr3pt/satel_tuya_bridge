@@ -146,6 +146,16 @@ def _validate_flow_node(node: dict, label: str, scene_names: set[str]) -> list[s
         else:
             if not (c.get("source_device") or "").strip():
                 errors.append(f"{label}: wybierz urządzenie źródłowe")
+            # UWAGA: bez tego warunku trigger "Konkretna wartość" (op != "changes")
+            # zapisywał się BEZ BŁĘDU z pustym trigger_value (np. gdy ktoś przełączył
+            # źródło z Satela na Tuya i nie kliknął jeszcze rozwijanej listy "Wartość
+            # wyzwalająca") - taki trigger nigdy się nie odpala, bo w
+            # FlowEngine.handle_device_state porównanie `value == cfg.get("trigger_value")`
+            # nigdy nie jest prawdziwe dla pustego stringa. Reguły ruchu
+            # (_validate_motion_rule_source) mają ten sam wymóg - to była luka
+            # specyficzna dla Flow.
+            if c.get("op", "changes") != "changes" and not (c.get("trigger_value") or "").strip():
+                errors.append(f"{label}: wybierz wartość wyzwalającą (albo ustaw wyzwalacz na 'każda zmiana')")
     elif ntype == "condition":
         if c.get("op") not in _FLOW_CONDITION_OPS:
             errors.append(f"{label}: nieznany operator '{c.get('op')}'")
