@@ -810,6 +810,33 @@ async def flows_page():
     return await render_template("flows.html")
 
 
+@app.route("/api/flows/settings", methods=["GET"])
+async def api_flows_settings_get():
+    section = config_raw.get("flow_engine", {}) or {}
+    return jsonify({"log_level": section.get("log_level") or ""})
+
+
+@app.route("/api/flows/settings", methods=["POST"])
+@require_auth()
+async def api_flows_settings_post():
+    body = await request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Nieprawidłowe dane"}), 400
+    level = (body.get("log_level") or "").strip().upper()
+    if level and level not in LOG_LEVELS:
+        return jsonify({"error": f"Nieprawidłowy poziom logowania: {level}"}), 400
+
+    current = config_store.get("config")
+    current.setdefault("flow_engine", {})["log_level"] = level
+    config_store.set("config", current)
+
+    config = BridgeConfig.load(config_path)
+    create_app(config)
+    _enqueue_bridge_reload()
+
+    return jsonify({"message": _RELOAD_MESSAGE})
+
+
 @app.route("/api/config/flows", methods=["GET"])
 async def api_config_flows_get():
     return jsonify({"flows": config_raw.get("flows", [])})

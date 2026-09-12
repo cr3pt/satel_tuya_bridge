@@ -1255,6 +1255,18 @@ szczegółami reszty systemu. Działa na żywo, bez restartu procesu (patrz
 `bridge/logging_config.py: apply_log_levels`, wywoływane przy starcie i
 przy każdym przeładowaniu konfiguracji).
 
+**Poziom logowania dla Flow.** Flow nie jest wtyczką (nie ma włącznika ani
+własnej strony w `/plugins`), ale ma dokładnie ten sam mechanizm poziomu
+logowania - na stronie `/flows`, w sekcji "Poziom logowania Flow" (nad
+listą flow). Ustawienie `DEBUG` włącza szczegółowe wpisy w logerze
+`bridge.flow_engine` (widoczny na liście loggerów w "Przegląd logów"
+niżej): każde uruchomienie flow przez czujnik ruchu lub zmianę stanu
+urządzenia, każdy wykonany węzeł wraz z jego wyjściami, oraz informację o
+niepodłączonych wyjściach węzła (flow kończy się w tym miejscu, bo nic
+dalej nie jest podłączone) - przydatne przy diagnozowaniu, dlaczego flow
+"nic nie robi" albo robi coś innego niż oczekiwano, bez konieczności
+grzebania w kodzie.
+
 **Logi komend Tuya pokazują, co je wywołało.** Wpisy w logu przy
 włączeniu/wyłączeniu/zmianie stanu urządzenia Tuya (lokalnie i przez
 chmurę) kończą się dopiskiem `- <przyczyna>`, np. `Wyłączono 'Garaż góra'

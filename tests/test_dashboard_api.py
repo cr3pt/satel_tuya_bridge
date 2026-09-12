@@ -1404,6 +1404,47 @@ class TestFlowsImportFromMotionRules:
         assert data["flows"][0]["name"] == "Import: druga"
 
 
+class TestFlowsSettings:
+    """Poziom logowania Flow (bridge.flow_engine) - zgłoszony brak możliwości
+    włączenia DEBUG dla Flow, bo w odróżnieniu od każdej innej integracji Flow
+    nie ma własnej strony wtyczki z suwakiem poziomu logowania (nie jest
+    wtyczką, nie da się go wyłączyć) - stąd mały panel wprost na /flows."""
+
+    async def test_get_requires_auth_and_defaults_to_empty(self, client):
+        assert (await client.get("/api/flows/settings")).status_code == 401
+        resp = await client.get("/api/flows/settings", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert await resp.get_json() == {"log_level": ""}
+
+    async def test_post_requires_auth(self, client):
+        resp = await client.post("/api/flows/settings", json={"log_level": "DEBUG"})
+        assert resp.status_code == 401
+
+    async def test_post_rejects_invalid_level(self, client):
+        resp = await client.post(
+            "/api/flows/settings", json={"log_level": "BARDZO_GADATLIWY"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
+
+    async def test_post_persists_and_applies_level(self, client):
+        import dashboard.app as app_module
+        import logging
+
+        resp = await client.post(
+            "/api/flows/settings", json={"log_level": "DEBUG"},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert app_module.config_store.get("config")["flow_engine"]["log_level"] == "DEBUG"
+        assert logging.getLogger("bridge.flow_engine").level == logging.DEBUG
+
+        data = await (await client.get(
+            "/api/flows/settings", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert data["log_level"] == "DEBUG"
+
+
 class TestFlowsMarkMotionRulesImported:
     async def test_requires_auth(self, client):
         resp = (await client.post("/api/flows/mark-motion-rules-imported", json={"rule_indices": [0]}))

@@ -179,6 +179,10 @@ class FlowEngine:
         )
 
     async def handle_motion(self, source: str, zone_or_device_id, trigger: str = "violated") -> None:
+        logger.debug(
+            "Flow: handle_motion(source=%s, zone_or_device_id=%s, trigger=%s) - %s flow(s) do sprawdzenia",
+            source, zone_or_device_id, trigger, len(self.flows),
+        )
         for flow in self.flows:
             if not flow.get("enabled", True):
                 continue
@@ -202,6 +206,10 @@ class FlowEngine:
             self._check_condition_group_entrypoints(flow)
 
     async def handle_device_state(self, source: str, device_name: str, value: str) -> None:
+        logger.debug(
+            "Flow: handle_device_state(source=%s, device_name=%s, value=%s) - %s flow(s) do sprawdzenia",
+            source, device_name, value, len(self.flows),
+        )
         for flow in self.flows:
             if not flow.get("enabled", True):
                 continue
@@ -339,6 +347,10 @@ class FlowEngine:
                 "Flow '%s': przekroczono limit głębokości (50) - możliwa pętla, przerywam", flow.get("name"),
             )
             return
+        logger.debug(
+            "Flow '%s': wykonuję węzeł '%s' (%s), głębokość=%s, wiadomość=%r",
+            flow.get("name"), node.get("id"), node.get("type"), depth, msg,
+        )
         try:
             outputs = await self._exec_node(flow, node, msg)
         except Exception as exc:
@@ -355,12 +367,21 @@ class FlowEngine:
             )
             return
 
+        logger.debug(
+            "Flow '%s': węzeł '%s' (%s) zwrócił wyjścia: %r", flow.get("name"), node.get("id"), node.get("type"), outputs,
+        )
         wires = node.get("wires") or []
         nodes_by_id = {n.get("id"): n for n in flow.get("nodes", [])}
         for port, out_msg in enumerate(outputs):
             if out_msg is None:
                 continue
-            for target_id in (wires[port] if port < len(wires) else []):
+            targets = wires[port] if port < len(wires) else []
+            if not targets:
+                logger.debug(
+                    "Flow '%s': wyjście %s węzła '%s' niepodłączone - gałąź kończy się tutaj",
+                    flow.get("name"), port, node.get("id"),
+                )
+            for target_id in targets:
                 target = nodes_by_id.get(target_id)
                 if target is not None:
                     asyncio.create_task(self._propagate(flow, target, dict(out_msg), depth + 1))

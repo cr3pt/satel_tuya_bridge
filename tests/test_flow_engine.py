@@ -1201,3 +1201,56 @@ class TestFlowEventLogging:
         trigger_events = [e for e in events if e[2].get("node_type") == "trigger"]
         assert len(trigger_events) == 1
         assert trigger_events[0][2]["source"] == "flow-test:f"
+
+
+class TestFlowDebugLogging:
+    """Zgłoszony problem: logger 'bridge.flow_engine' nigdy nie pojawiał się na
+    liście loggerów w Historii logów (⚙ Ustawienia ogólne), bo silnik Flow
+    logował dotąd WYŁĄCZNIE błędy - nie dawało się włączyć DEBUG i zobaczyć
+    krok-po-kroku, który węzeł się wykonał i z jakim wynikiem. Te testy
+    pokrywają nowe logi DEBUG (osobne od Historii zdarzeń/write_event)."""
+
+    async def test_handle_motion_logs_debug_entry(self, caplog):
+        engine, _calls = _engine([])
+        with caplog.at_level("DEBUG", logger="bridge.flow_engine"):
+            await engine.handle_motion("satel_zone", 5, trigger="violated")
+        assert "handle_motion" in caplog.text
+        assert "satel_zone" in caplog.text
+
+    async def test_handle_device_state_logs_debug_entry(self, caplog):
+        engine, _calls = _engine([])
+        with caplog.at_level("DEBUG", logger="bridge.flow_engine"):
+            await engine.handle_device_state("tuya_state", "gniazdko", "on")
+        assert "handle_device_state" in caplog.text
+        assert "gniazdko" in caplog.text
+
+    async def test_node_execution_logs_debug_with_outputs(self, caplog):
+        flow = {
+            "id": "f1", "name": "moja-flow", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [["dev"]]},
+                {"id": "dev", "type": "device", "config": {"target_device": "lampa", "value": "on"}, "wires": []},
+            ],
+        }
+        engine, _calls = _engine([flow])
+        with caplog.at_level("DEBUG", logger="bridge.flow_engine"):
+            await engine.handle_motion("satel_zone", 5, trigger="violated")
+            await asyncio.sleep(0.01)
+
+        assert "wykonuję węzeł 'trig' (trigger)" in caplog.text
+        assert "wykonuję węzeł 'dev' (device)" in caplog.text
+        assert "zwrócił wyjścia" in caplog.text
+
+    async def test_unconnected_output_logs_debug_branch_end(self, caplog):
+        flow = {
+            "id": "f1", "name": "moja-flow", "enabled": True,
+            "nodes": [
+                {"id": "trig", "type": "trigger", "config": {"source": "satel_zone", "zone_number": 5}, "wires": [[]]},
+            ],
+        }
+        engine, _calls = _engine([flow])
+        with caplog.at_level("DEBUG", logger="bridge.flow_engine"):
+            await engine.handle_motion("satel_zone", 5, trigger="violated")
+            await asyncio.sleep(0.01)
+
+        assert "niepodłączone" in caplog.text
