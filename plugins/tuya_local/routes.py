@@ -67,7 +67,17 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
 
     def _get_cloud_accounts() -> dict:
-        return get_config_store().get("config").get("tuya", {}).get("cloud_accounts", {}) or {}
+        # UWAGA: musi czytać przez get_config_raw() (czyli BridgeConfig.load()),
+        # NIE bezpośrednio z ConfigStore - to właśnie BridgeConfig.load() migruje
+        # stare, pojedyncze konto (tuya.cloud) na tuya.cloud_accounts["domyślne"].
+        # Odczyt wprost z ConfigStore widziałby puste cloud_accounts dla każdej
+        # instalacji sprzed tej funkcji (dopóki nikt nie zapisze kont explicite) -
+        # import/rescan/pobieranie opisów pól zwracałyby błąd "brak konta", a co
+        # gorsza, zapis JAKIEGOKOLWIEK (nawet pustego) stanu kont z tej strony
+        # trwale zapisywałby do configu PUSTĄ/niepełną listę kont, którą
+        # TuyaCloudController potem uznaje za jedyne dostępne konto - odcinając
+        # od chmury WSZYSTKIE urządzenia bez jawnie wybranego konta.
+        return get_config_raw().get("tuya", {}).get("cloud_accounts", {}) or {}
 
     def _save_cloud_accounts(accounts: dict) -> None:
         current = get_config_store().get("config")

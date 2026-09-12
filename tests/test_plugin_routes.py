@@ -788,6 +788,59 @@ class TestTuyaCloudPluginPage:
         assert resp.status_code == 200
         assert await resp.get_json() == {"accounts": []}
 
+    async def test_accounts_get_sees_legacy_single_account_migrated_by_bridge_config(self, client):
+        """Regres: ten endpoint kiedyś czytał konta wprost z ConfigStore, z
+        pominięciem migracji BridgeConfig.load() - dla instalacji sprzed
+        wprowadzenia wielu kont (samo stare "tuya.cloud", bez "cloud_accounts")
+        pokazywał 0 kont, mimo że urządzenia faktycznie działały przez to
+        "domyślne" konto w prawdziwym procesie bridge'a."""
+        import dashboard.app as app_module
+
+        current = app_module.config_store.get("config")
+        current.setdefault("tuya", {})["cloud"] = {
+            "access_id": "legacy_id", "access_key": "legacy_secret", "api_region": "eu",
+        }
+        app_module.config_store.set("config", current)
+        app_module._reload_bridge_config_from_disk()
+
+        resp = await client.get("/api/plugins/tuya_cloud/accounts", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data["accounts"] == [{
+            "name": "domyślne", "access_id": "legacy_id", "access_key_set": True,
+            "api_region": "eu", "api_endpoint": "", "mq_endpoint": "",
+        }]
+
+    async def test_saving_empty_accounts_list_does_not_permanently_disable_legacy_account(self, client):
+        """Regres: kliknięcie 'Zapisz konta' bez dodania żadnego wiersza (np. gdy
+        strona - z powodu powyższego błędu - pokazywała 0 kont mimo działającego
+        starego konta) zapisywało do configu PUSTY słownik cloud_accounts. Bez
+        złagodzenia migracji w bridge/config.py to trwale gasiło konto "domyślne"
+        - każda kolejna komenda do Tuya Cloud kończyła się błędem "nieistniejące
+        konto", mimo że stare poświadczenia nigdy nie zniknęły z tuya.cloud."""
+        import dashboard.app as app_module
+
+        current = app_module.config_store.get("config")
+        current.setdefault("tuya", {})["cloud"] = {
+            "access_id": "legacy_id", "access_key": "legacy_secret", "api_region": "eu",
+        }
+        app_module.config_store.set("config", current)
+        app_module._reload_bridge_config_from_disk()
+
+        resp = await client.post(
+            "/api/plugins/tuya_cloud/accounts", json={"accounts": []},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+
+        data = await (await client.get(
+            "/api/plugins/tuya_cloud/accounts", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert data["accounts"] == [{
+            "name": "domyślne", "access_id": "legacy_id", "access_key_set": True,
+            "api_region": "eu", "api_endpoint": "", "mq_endpoint": "",
+        }]
+
     async def test_accounts_post_rejects_unknown_region(self, client):
         resp = (await client.post(
             "/api/plugins/tuya_cloud/accounts",

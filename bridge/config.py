@@ -84,7 +84,21 @@ class BridgeConfig:
         # przy braku "cloud_accounts" jego zawartość (o ile ma access_id) staje się
         # jednym kontem o nazwie "domyślne", żeby istniejące konfiguracje działały
         # bez żadnej ręcznej migracji.
-        if "cloud_accounts" not in data["tuya"]:
+        #
+        # UWAGA: sprawdzamy "not data["tuya"].get("cloud_accounts")", NIE tylko
+        # `"cloud_accounts" not in data["tuya"]` - realny regres: strona wtyczki
+        # Tuya odczytywała konta wprost z ConfigStore (z pominięciem tej migracji),
+        # więc dla instalacji z samym starym "cloud" pokazywała PUSTĄ listę kont;
+        # samo otwarcie tej sekcji i kliknięcie "Zapisz konta" (bez dodania
+        # żadnego wiersza) zapisywało do configu PUSTY słownik "cloud_accounts",
+        # co bez tego złagodzenia trwale wyłączałoby migrację - "domyślne" konto
+        # nigdy by się już nie pojawiło, a każde urządzenie chmurowe (żadne nie ma
+        # jawnie wybranego konta) odwoływałoby się do nieistniejącego konta i
+        # KAŻDA komenda do Tuya Cloud kończyłaby się błędem. Pusty słownik kont
+        # traktujemy więc tak samo jak brak klucza - dopóki użytkownik nie doda
+        # co najmniej jednego konta z prawdziwym Access ID, stare poświadczenia
+        # nadal obowiązują jako "domyślne".
+        if not data["tuya"].get("cloud_accounts"):
             legacy_cloud = data["tuya"].get("cloud") or {}
             if legacy_cloud.get("access_id"):
                 data["tuya"]["cloud_accounts"] = {"domyślne": dict(legacy_cloud)}
