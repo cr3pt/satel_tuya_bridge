@@ -533,6 +533,48 @@ def detect_tuya_sensor_type(device_cfg: dict) -> str:
     return _CLOUD_CATEGORY_SENSOR_TYPES.get((device_cfg or {}).get("category"), "")
 
 
+def _coerce_version(value: object) -> float:
+    try:
+        return float(value) if value else 3.4
+    except (TypeError, ValueError):
+        return 3.4
+
+
+async def test_local_device_status(
+    device_id: str, *, ip: str | None = None, local_key: str | None = None, version: object = None,
+    cid: str | None = None, gateway_ip: str | None = None, gateway_id: str | None = None,
+    gateway_key: str | None = None, gateway_version: object = None,
+) -> dict:
+    """Jednorazowy test połączenia z pojedynczym urządzeniem Tuya sterowanym
+    lokalnie (WiFi albo przez bramkę Zigbee), używając PODANYCH parametrów -
+    niekoniecznie jeszcze zapisanych w configu (analogicznie do
+    satel_client.test_connection - test bieżącego, może niezapisanego jeszcze
+    wiersza formularza, zanim ktoś kliknie "Zapisz urządzenia"). Zwraca surowy
+    status DP przy sukcesie, rzuca ConnectionError z czytelnym opisem przy
+    błędzie (brak odpowiedzi, zły klucz, brak IP/local_key)."""
+    device_id = (device_id or "").strip()
+    if not device_id:
+        raise ConnectionError("Brak ID urządzenia")
+
+    if gateway_ip and gateway_id and gateway_key:
+        gw = tinytuya.Device(gateway_id.strip(), gateway_ip.strip(), gateway_key.strip())
+        gw.set_version(_coerce_version(gateway_version))
+        dev = tinytuya.Device(device_id, cid=(cid or device_id).strip(), dev_type="zigbee", parent=gw)
+    else:
+        if not ip or not local_key:
+            raise ConnectionError("Brak adresu IP lub local_key - uzupełnij pola przed testem")
+        dev = tinytuya.OutletDevice(device_id, ip.strip(), local_key.strip())
+        dev.set_version(_coerce_version(version))
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, dev.status)
+    if isinstance(result, dict) and "Error" in result:
+        raise ConnectionError(str(result["Error"]))
+    if not isinstance(result, dict) or "dps" not in result:
+        raise ConnectionError(f"Brak odpowiedzi od urządzenia (odpowiedź: {result})")
+    return result
+
+
 class TuyaLocalController:
     def __init__(self, devices_cfg: dict, zigbee_gateways_cfg: dict | None = None,
                  retries: int = 2, retry_delay: float = 1.5):

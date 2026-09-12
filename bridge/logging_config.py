@@ -6,9 +6,14 @@ VALID_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 PLUGIN_LOGGERS: dict[str, list[str]] = {
     "satel": ["bridge.satel"],
-    "tuya_local": ["bridge.tuya_local"],
-    "tuya_zigbee": ["bridge.tuya_local"],
-    "tuya_cloud": ["bridge.tuya_cloud"],
+    # Wtyczki "tuya_zigbee" i "tuya_cloud" zostały scalone do jednej "tuya_local"
+    # (jedna strona /plugins/tuya) - obie odrębne wcześniej listy loggerów muszą
+    # więc trafiać pod ten sam, jedyny już istniejący plugin_id, inaczej suwak
+    # poziomu logowania na stronie Tuya nigdy nie obejmował bridge.tuya_cloud
+    # (a przycisk "📜 Logi" na karcie wtyczki nie filtrował po nim wcale) -
+    # błędy komend do Tuya Cloud (np. "device pool quota is insufficient")
+    # widać było tylko pośrednio, w loggerze wywołującego (np. bridge.flow_engine).
+    "tuya_local": ["bridge.tuya_local", "bridge.tuya_cloud"],
     "ebus": ["bridge.ebus"],
     "home_assistant": ["bridge.ha_mqtt"],
     "mqtt_publish": ["bridge.ha_mqtt"],
@@ -26,8 +31,6 @@ def plugin_config_section(config_raw: dict, plugin_id: str) -> dict:
     return {
         "satel": config_raw.get("satel", {}) or {},
         "tuya_local": tuya,
-        "tuya_zigbee": tuya,
-        "tuya_cloud": tuya.get("cloud", {}) or {},
         "ebus": config_raw.get("ebus", {}) or {},
         "home_assistant": config_raw.get("home_assistant", {}) or {},
         "mqtt_publish": config_raw.get("mqtt_publish", {}) or {},

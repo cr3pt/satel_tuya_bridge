@@ -1059,6 +1059,30 @@ polecenie/odpytanie kierowane do jej podurządzeń jedno po drugim -
 urządzenia różnych bramek i zwykłe urządzenia WiFi nadal działają w pełni
 równolegle, bez żadnego spowolnienia.
 
+**Przycisk "🧪 Testuj" przy każdym urządzeniu w trybie lokalnym (WiFi/Zigbee).**
+Jednorazowo odpytuje urządzenie o status DP, używając BIEŻĄCYCH wartości pól
+w wierszu (adres IP/`local_key`/wersja, albo bramka+`cid` dla Zigbee) -
+DZIAŁA NAWET BEZ WCZEŚNIEJSZEGO ZAPISU formularza, dokładnie jak "Testuj
+połączenie" dla Satela. Przydatne od razu po przełączeniu urządzenia z
+"Przez chmurę" na "Lokalnie" (WiFi/Zigbee), żeby sprawdzić nowe dane
+POD RZĄD, przed kliknięciem "💾 Zapisz urządzenia" - błąd (zły `local_key`,
+nieosiągalny adres IP) widać natychmiast obok wiersza, zamiast dopiero po
+zapisaniu i restarcie automatyzacji. Niedostępne dla urządzeń w trybie
+"Przez chmurę" (te idą przez Tuya Cloud, nie bezpośrednie połączenie TCP).
+
+**Poprawka: błędy komend do Tuya Cloud "gubiły się" w logach.** Suwak
+poziomu logowania na stronie Tuya (i przycisk "📜 Logi" na jej karcie w
+Wtyczkach) sterował dotąd WYŁĄCZNIE loggerem `bridge.tuya_local` - logger
+`bridge.tuya_cloud` (używany m.in. przy wysyłaniu komend do urządzeń w
+trybie "Przez chmurę") został przeoczony przy scalaniu dawnych osobnych
+wtyczek Tuya LAN/Zigbee/Cloud w jedną stronę `/plugins/tuya`. W efekcie
+błędy typu **"Your controllable device pool quota is insufficient"**
+(przekroczony limit urządzeń w projekcie Tuya IoT Platform - zwykle po
+wygaśnięciu darmowego okresu próbnego "Cloud Development") były widoczne
+tylko pośrednio, w loggerze wywołującego (np. `bridge.flow_engine` przy
+nieudanej akcji Flow), a nie wprost pod filtrem "Tuya" w Historii
+logów - Naprawione: suwak i przycisk "📜 Logi" obejmują teraz oba loggery.
+
 ### Zmiany działają od razu - bez restartu Dockera
 
 Zapis czujników eBUS, pól Satela, urządzeń Tuya (sekcje na stronach

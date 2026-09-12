@@ -10,6 +10,7 @@ from bridge.tuya_local import (
     scan_network as scan_tuya_network,
     fetch_cloud_devices as fetch_tuya_cloud_devices,
     fetch_dp_schemas_for_devices,
+    test_local_device_status,
 )
 from dashboard.setup import (
     build_tuya_devices_dict, validate_tuya_devices, validate_cloud_devices,
@@ -111,6 +112,35 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             "saved": len(tuya_devices_dict["devices"]),
             "message": "Zapisano. Bridge sam przeładuje konfigurację w ciągu ok. 1-2s, bez restartu procesu.",
         })
+
+    @app.route("/api/plugins/tuya/devices/test", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_tuya_devices_test():
+        form = await request.get_json(silent=True)
+        if not isinstance(form, dict):
+            return jsonify({"error": "Nieprawidłowe dane"}), 400
+
+        device_id = (form.get("id") or "").strip()
+        if not device_id:
+            return jsonify({"error": "Uzupełnij ID urządzenia przed testem"}), 400
+
+        try:
+            if form.get("mode") == "local_zigbee":
+                status = await test_local_device_status(
+                    device_id, cid=form.get("cid"),
+                    gateway_ip=form.get("gateway_ip"), gateway_id=form.get("gateway_id"),
+                    gateway_key=form.get("gateway_key"), gateway_version=form.get("gateway_version"),
+                )
+            else:
+                status = await test_local_device_status(
+                    device_id, ip=form.get("ip"), local_key=form.get("local_key"), version=form.get("version"),
+                )
+        except ConnectionError as exc:
+            return jsonify({"error": str(exc)}), 502
+        except Exception as exc:
+            return jsonify({"error": f"Błąd testu: {exc}"}), 502
+
+        return jsonify({"message": f"Połączono - odpowiedź: {status}"})
 
     @app.route("/api/plugins/tuya/scan", methods=["POST"])
     async def api_plugin_tuya_scan():

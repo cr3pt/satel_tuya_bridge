@@ -500,6 +500,45 @@ function _applyDeviceModeVisibility(row) {
   show('.dev-dp', mode !== 'cloud' && row.querySelector('.dev-type').value === 'dimmer');
   show('.dev-category', mode === 'cloud');
   show('.dev-switch-code', mode === 'cloud');
+  show('.dev-test', mode !== 'cloud');
+  show('.dev-test-status', mode !== 'cloud');
+}
+
+async function testDeviceRow(row) {
+  const status = row.querySelector('.dev-test-status');
+  const btn = row.querySelector('.dev-test');
+  const mode = row.querySelector('.dev-mode').value;
+  const payload = { mode, id: row.querySelector('.dev-id').value.trim() };
+  if (mode === 'local_zigbee') {
+    payload.cid = row.querySelector('.dev-cid').value.trim() || payload.id;
+    const gatewayName = row.querySelector('.dev-gateway').value.trim();
+    const gateway = collectGateways().find(g => g.name === gatewayName);
+    if (!gateway) {
+      status.textContent = '❌ Wybierz najpierw bramkę Zigbee (i uzupełnij jej dane) wyżej';
+      return;
+    }
+    payload.gateway_ip = gateway.ip;
+    payload.gateway_id = gateway.id;
+    payload.gateway_key = gateway.local_key;
+    payload.gateway_version = gateway.version;
+  } else {
+    payload.ip = row.querySelector('.dev-ip').value.trim();
+    payload.local_key = row.querySelector('.dev-key').value.trim();
+    payload.version = row.querySelector('.dev-version').value.trim();
+  }
+  btn.disabled = true;
+  status.textContent = 'Testuję...';
+  try {
+    const resp = await authorizedFetch('/api/plugins/tuya/devices/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    status.textContent = resp.ok ? '✅ ' + data.message : '❌ ' + (data.error || 'Błąd testu');
+  } catch (e) {
+    status.textContent = '❌ Błąd sieci: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function addDeviceRow(initial) {
@@ -527,12 +566,15 @@ function addDeviceRow(initial) {
     <input type="text" placeholder="kategoria (opcjonalnie)" class="dev-category" style="max-width: 140px;">
     <input type="text" placeholder="kod przełącznika" class="dev-switch-code" style="max-width: 140px;">
     <input type="hidden" class="dev-schema">
+    <button type="button" class="secondary dev-test">🧪 Testuj</button>
+    <span class="discover-status dev-test-status"></span>
     <button type="button" class="row-remove">✕</button>`;
   const modeSelect = row.querySelector('.dev-mode');
   const typeSelect = row.querySelector('.dev-type');
   const gatewaySelect = row.querySelector('.dev-gateway');
   modeSelect.addEventListener('change', () => _applyDeviceModeVisibility(row));
   typeSelect.addEventListener('change', () => _applyDeviceModeVisibility(row));
+  row.querySelector('.dev-test').addEventListener('click', () => testDeviceRow(row));
   const gatewayNames = collectGateways().map(g => g.name);
   const defaultGateway = initial ? (initial.gateway ?? '') : (gatewayNames.length === 1 ? gatewayNames[0] : '');
   gatewaySelect.innerHTML = gatewayOptionsHtml(defaultGateway);

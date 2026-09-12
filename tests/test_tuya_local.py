@@ -1196,3 +1196,92 @@ class TestSetDp:
         controller._devices["gniazdko_salon"] = fake
         await controller.set_dp("gniazdko_salon", "9", "true")
         assert fake.calls == [("set_value", "9", True)]
+
+
+class FakeStatusDevice:
+    def __init__(self, *args, cid=None, dev_type=None, parent=None, **kwargs):
+        self.args = args
+        self.cid = cid
+        self.dev_type = dev_type
+        self.parent = parent
+        self.version = None
+        self.status_result = {"dps": {"1": True}}
+
+    def set_version(self, version):
+        self.version = version
+
+    def status(self):
+        return self.status_result
+
+
+class TestTestLocalDeviceStatus:
+
+    async def test_wifi_device_returns_status(self, monkeypatch):
+        from bridge.tuya_local import test_local_device_status
+
+        created = {}
+
+        def fake_outlet(dev_id, ip, key):
+            created["dev_id"], created["ip"], created["key"] = dev_id, ip, key
+            return FakeStatusDevice()
+
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.OutletDevice", fake_outlet)
+        result = await test_local_device_status("dev1", ip="1.2.3.4", local_key="k1", version="3.3")
+        assert result == {"dps": {"1": True}}
+        assert created == {"dev_id": "dev1", "ip": "1.2.3.4", "key": "k1"}
+
+    async def test_wifi_device_missing_ip_or_key_raises_without_calling_tinytuya(self, monkeypatch):
+        from bridge.tuya_local import test_local_device_status
+
+        monkeypatch.setattr(
+            "bridge.tuya_local.tinytuya.OutletDevice",
+            lambda *a, **kw: (_ for _ in ()).throw(AssertionError("nie powinno być wołane")),
+        )
+        with pytest.raises(ConnectionError, match="local_key"):
+            await test_local_device_status("dev1", ip="1.2.3.4", local_key="")
+
+    async def test_zigbee_device_builds_gateway_and_sub_device(self, monkeypatch):
+        from bridge.tuya_local import test_local_device_status
+
+        created = []
+
+        def fake_device(dev_id, *args, cid=None, dev_type=None, parent=None, **kwargs):
+            dev = FakeStatusDevice(dev_id, *args, cid=cid, dev_type=dev_type, parent=parent)
+            created.append(dev)
+            return dev
+
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.Device", fake_device)
+        result = await test_local_device_status(
+            "sub1", cid="cid1",
+            gateway_ip="1.2.3.4", gateway_id="gw1", gateway_key="gwkey", gateway_version="3.4",
+        )
+        assert result == {"dps": {"1": True}}
+        gateway_dev, sub_dev = created
+        assert gateway_dev.args == ("gw1", "1.2.3.4", "gwkey")
+        assert sub_dev.cid == "cid1"
+        assert sub_dev.dev_type == "zigbee"
+        assert sub_dev.parent is gateway_dev
+
+    async def test_error_response_raises_connection_error(self, monkeypatch):
+        from bridge.tuya_local import test_local_device_status
+
+        fake = FakeStatusDevice()
+        fake.status_result = {"Error": "Check device key or version"}
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.OutletDevice", lambda *a, **kw: fake)
+        with pytest.raises(ConnectionError, match="Check device key or version"):
+            await test_local_device_status("dev1", ip="1.2.3.4", local_key="k1")
+
+    async def test_missing_dps_in_response_raises_connection_error(self, monkeypatch):
+        from bridge.tuya_local import test_local_device_status
+
+        fake = FakeStatusDevice()
+        fake.status_result = {}
+        monkeypatch.setattr("bridge.tuya_local.tinytuya.OutletDevice", lambda *a, **kw: fake)
+        with pytest.raises(ConnectionError):
+            await test_local_device_status("dev1", ip="1.2.3.4", local_key="k1")
+
+    async def test_missing_device_id_raises(self):
+        from bridge.tuya_local import test_local_device_status
+
+        with pytest.raises(ConnectionError, match="ID"):
+            await test_local_device_status("", ip="1.2.3.4", local_key="k1")
