@@ -23,3 +23,8 @@ astral>=3.2
 # bo format pliku stanu parowania (bridge/homekit_bridge.py) jest
 # zależny od konkretnej wersji biblioteki.
 HAP-python==5.0.0
+# Oficjalne SDK LG ThinQ Connect (REST, autoryzacja PAT) - bridge/lg_thinq_client.py
+# używa tylko ThinQApi.async_get_device_list/profile/status (zwykłe odpytywanie
+# przez HTTP), NIE korzysta z wbudowanego kanału push przez AWS IoT/MQTT (stąd
+# brak dodatkowego skonfigurowania certyfikatów klienta w tej wersji).
+thinqconnect>=1.0.14

@@ -566,7 +566,9 @@ function zoneOptions(selected) {
   ).join('');
 }
 function sourceDeviceOptions(selected, source) {
-  const list = source === 'homewhiz_state' ? (context.homewhiz_appliances || []) : (context.tuya_devices || []);
+  const list = source === 'homewhiz_state' ? (context.homewhiz_appliances || [])
+    : source === 'lg_thinq_state' ? (context.lg_thinq_devices || [])
+    : (context.tuya_devices || []);
   return '<option value="">(wybierz)</option>' + list.map(n =>
     `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`
   ).join('');
@@ -582,18 +584,33 @@ function fetchHomewhizStates(applianceName) {
   }
   return homewhizStatesCache[applianceName];
 }
-function triggerValueFieldHtml(source, selectedValue, homewhizStates) {
+const lgThinqStatesCache = {};
+function fetchLgThinqStates(deviceName) {
+  if (!deviceName) return Promise.resolve([]);
+  if (!(deviceName in lgThinqStatesCache)) {
+    lgThinqStatesCache[deviceName] = fetch(`/api/plugins/lg_thinq/devices/${encodeURIComponent(deviceName)}/states`)
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(data => Array.isArray(data.states) ? data.states : [])
+      .catch(() => []);
+  }
+  return lgThinqStatesCache[deviceName];
+}
+function triggerValueFieldHtml(source, selectedValue, dynamicStates) {
   let options = null;
   if (source === 'tuya_state') {
     options = STATE_VALUE_OPTIONS.tuya;
-  } else if (source === 'homewhiz_state' && Array.isArray(homewhizStates) && homewhizStates.length > 0) {
-    options = homewhizStates;
+  } else if ((source === 'homewhiz_state' || source === 'lg_thinq_state') && Array.isArray(dynamicStates) && dynamicStates.length > 0) {
+    options = dynamicStates;
   }
   if (!options) {
     const placeholder = source === 'homewhiz_state'
-      ? (Array.isArray(homewhizStates)
+      ? (Array.isArray(dynamicStates)
           ? 'nie udało się pobrać listy stanów z chmury - wpisz ręcznie'
           : 'ładowanie listy stanów z chmury HomeWhiz...')
+      : source === 'lg_thinq_state'
+      ? (Array.isArray(dynamicStates)
+          ? 'nie udało się pobrać listy stanów z chmury - wpisz ręcznie'
+          : 'ładowanie listy stanów z chmury LG ThinQ...')
       : 'wartość wyzwalająca';
     return `<input type="text" data-field="trigger_value" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(selectedValue || '')}">`;
   }
@@ -632,6 +649,7 @@ const STATUS_CATEGORY_LABELS = {
   satel_partition: 'Satel (strefa)',
   tuya: 'Tuya',
   homewhiz: 'HomeWhiz (AGD)',
+  lg_thinq: 'LG ThinQ (AGD)',
   boiler: 'Kocioł (eBUS)',
   system_health: 'Zdrowie połączeń',
   automation: 'Automatyzacja',
@@ -797,7 +815,9 @@ function buildConditionLeafFieldsHtml(type, initial) {
   if (type === 'time_window') {
     return `
       <div class="field"><label>Początek okna</label>${timeSpecFieldHtml('cond-tw-start', initial.start)}</div>
-      <div class="field"><label>Koniec okna</label>${timeSpecFieldHtml('cond-tw-end', initial.end)}</div>`;
+      <div class="field"><label>Koniec okna</label>${timeSpecFieldHtml('cond-tw-end', initial.end)}</div>
+      <div class="cond-empty-hint empty-hint">"Wschód"/"Zachód słońca" wymaga ustawienia współrzędnych w
+        <a href="/automations" target="_blank">🎬 Automatyzacje -&gt; 🌍 Lokalizacja</a>.</div>`;
   }
   return '';
 }
@@ -913,6 +933,7 @@ function renderNodeFields(node) {
       <option value="satel_zone" ${c.source === 'satel_zone' ? 'selected' : ''}>Satel (wejście)</option>
       <option value="tuya_state" ${c.source === 'tuya_state' ? 'selected' : ''}>Tuya (stan urządzenia)</option>
       <option value="homewhiz_state" ${c.source === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz</option>
+      <option value="lg_thinq_state" ${c.source === 'lg_thinq_state' ? 'selected' : ''}>LG ThinQ (AGD)</option>
     </select>`);
     if (c.source === 'satel_zone') {
       html += field(`<label>Wejście w Satelu</label><select data-field="zone_number">${zoneOptions(c.zone_number)}</select>`);
@@ -983,6 +1004,9 @@ function renderNodeFields(node) {
   } else if (node.type === 'schedule') {
     html += field(`<label>Początek</label>${timeSpecFieldHtml('sched-start', c.start || '')}`);
     html += field(`<label>Koniec</label>${timeSpecFieldHtml('sched-end', c.end || '')}`);
+    html += `<div class="empty-hint" style="margin:-4px 0 8px;">"Wschód słońca"/"Zachód słońca" wymaga ustawienia
+      współrzędnych w zakładce <a href="/automations" target="_blank">🎬 Automatyzacje -&gt; 🌍 Lokalizacja</a> -
+      bez tego okno czasowe z takim punktem odniesienia nie zadziała.</div>`;
   } else if (node.type === 'escalation') {
     html += field(`<label>Próg (liczba naruszeń)</label><input type="number" min="1" step="1" data-field="threshold_count" value="${c.threshold_count ?? 3}">`);
     html += field(`<label>Okno czasowe (sekundy)</label><input type="number" min="1" step="1" data-field="window_seconds" value="${c.window_seconds ?? 120}">`);
@@ -1042,6 +1066,24 @@ function renderNodeFields(node) {
     const deviceName = c.source_device;
     fetchHomewhizStates(deviceName).then(states => {
       if (c.source !== 'homewhiz_state' || c.source_device !== deviceName || c.op !== 'violated') return;
+      const wrap = el.querySelector('.trigger-value-wrap');
+      if (!wrap) return;
+      const curValue = (wrap.querySelector('[data-field="trigger_value"]') || {}).value;
+      wrap.innerHTML = triggerValueFieldHtml(c.source, curValue || c.trigger_value, states);
+      const newField = wrap.querySelector('[data-field="trigger_value"]');
+      if (newField) {
+        newField.addEventListener('change', () => {
+          c.trigger_value = newField.value;
+          renderCanvas();
+          renderSidePanel();
+        });
+      }
+    });
+  }
+  if (node.type === 'trigger' && c.source === 'lg_thinq_state' && c.op === 'violated' && c.source_device) {
+    const deviceName = c.source_device;
+    fetchLgThinqStates(deviceName).then(states => {
+      if (c.source !== 'lg_thinq_state' || c.source_device !== deviceName || c.op !== 'violated') return;
       const wrap = el.querySelector('.trigger-value-wrap');
       if (!wrap) return;
       const curValue = (wrap.querySelector('[data-field="trigger_value"]') || {}).value;

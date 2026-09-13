@@ -156,3 +156,7 @@ class BridgeConfig:
     @property
     def homewhiz(self) -> dict | None:
         return self.raw.get("homewhiz")
+
+    @property
+    def lg_thinq(self) -> dict | None:
+        return self.raw.get("lg_thinq")

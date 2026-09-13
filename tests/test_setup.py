@@ -2904,10 +2904,10 @@ class TestListPlugins:
     def test_empty_config_does_not_crash_and_all_unconfigured(self):
         plugins = list_plugins({})
         by_id = {p["id"]: p for p in plugins}
-        assert len(plugins) == len(by_id) == 11
+        assert len(plugins) == len(by_id) == 12
         for plugin_id in (
             "satel", "tuya_local", "ebus", "home_assistant",
-            "mqtt_publish", "unifi_protect", "homewhiz", "presence_simulation", "notifications",
+            "mqtt_publish", "unifi_protect", "homewhiz", "lg_thinq", "presence_simulation", "notifications",
         ):
             assert by_id[plugin_id]["enabled"] is False, plugin_id
             assert by_id[plugin_id]["configured"] is False, plugin_id
@@ -2981,7 +2981,7 @@ class TestListPlugins:
         toggleable = {p["id"] for p in list_plugins({}) if p["toggleable"]}
         assert toggleable == {
             "satel", "tuya_local", "ebus", "home_assistant",
-            "mqtt_publish", "unifi_protect", "homewhiz", "presence_simulation", "notifications",
+            "mqtt_publish", "unifi_protect", "homewhiz", "lg_thinq", "presence_simulation", "notifications",
             "mcp_server", "homekit",
         }
 
