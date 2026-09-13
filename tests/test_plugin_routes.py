@@ -1436,6 +1436,7 @@ class TestMqttPublishPluginPage:
         assert resp.status_code == 200
         assert await resp.get_json() == {
             "satel_topic": "satel", "tuya_topic": "tuya", "homewhiz_topic": "homewhiz",
+            "lg_thinq_topic": "lg_thinq",
         }
 
     async def test_topics_post_without_auth_returns_401(self, client):
@@ -1446,7 +1447,10 @@ class TestMqttPublishPluginPage:
 
         (await client.post(
             "/api/plugins/mqtt_publish/topics",
-            json={"satel_topic": "moj_satel", "tuya_topic": "moje_tuya", "homewhiz_topic": "moj_homewhiz"},
+            json={
+                "satel_topic": "moj_satel", "tuya_topic": "moje_tuya", "homewhiz_topic": "moj_homewhiz",
+                "lg_thinq_topic": "moj_lg_thinq",
+            },
             headers=_basic_auth_header("test_haslo_123"),
         ))
         (await client.post(
@@ -1454,7 +1458,9 @@ class TestMqttPublishPluginPage:
             headers=_basic_auth_header("test_haslo_123"),
         ))
         saved = app_module.config_store.get("config")["mqtt_publish"]
-        assert saved["topics"] == {"satel": "moj_satel", "tuya": "moje_tuya", "homewhiz": "moj_homewhiz"}
+        assert saved["topics"] == {
+            "satel": "moj_satel", "tuya": "moje_tuya", "homewhiz": "moj_homewhiz", "lg_thinq": "moj_lg_thinq",
+        }
         assert saved["log_level"] == "WARNING"
 
     async def test_explorer_get_requires_auth(self, client):
@@ -1466,7 +1472,7 @@ class TestMqttPublishPluginPage:
         data = await resp.get_json()
         assert data["topics"] == []
         assert set(data["known_prefixes"]) == {
-            "homeassistant", "home/bridge", "satel", "tuya", "homewhiz", "home/boiler",
+            "homeassistant", "home/bridge", "satel", "tuya", "homewhiz", "lg_thinq", "home/boiler",
         }
 
     async def test_explorer_get_shows_recorded_topics(self, client):
@@ -1994,6 +2000,273 @@ class TestHomeWhizPluginPage:
 
         resp = (await client.get(
             "/api/plugins/homewhiz/appliances/Zmywarka/states", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 502
+
+
+class TestLgThinqPluginPage:
+    async def test_page_redirects_to_login_without_auth(self, client):
+        resp = (await client.get("/plugins/lg_thinq", follow_redirects=False))
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    async def test_page_loads_when_authenticated(self, client):
+        resp = (await client.get("/plugins/lg_thinq", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+
+    async def test_credentials_get_requires_auth_and_defaults_when_unconfigured(self, client):
+        assert (await client.get("/api/plugins/lg_thinq/credentials")).status_code == 401
+        resp = (await client.get("/api/plugins/lg_thinq/credentials", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert await resp.get_json() == {"pat_set": False, "country_code": "PL", "client_id": ""}
+
+    async def test_credentials_post_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/lg_thinq/credentials", json={"personal_access_token": "x"})).status_code == 401
+
+    async def test_credentials_post_requires_country_code(self, client):
+        resp = (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"personal_access_token": "pat", "country_code": ""},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_credentials_post_requires_pat_on_first_save(self, client):
+        resp = (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"country_code": "PL"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_credentials_post_persists_and_generates_stable_client_id(self, client):
+        import dashboard.app as app_module
+
+        resp = (await client.post(
+            "/api/plugins/lg_thinq/credentials",
+            json={"personal_access_token": "s3cr3t-pat", "country_code": "pl"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["lg_thinq"]
+        assert saved["personal_access_token"] == "s3cr3t-pat"
+        assert saved["country_code"] == "PL"
+        client_id = saved["client_id"]
+        assert client_id
+        text = await (await client.get(
+            "/api/plugins/lg_thinq/credentials", headers=_basic_auth_header("test_haslo_123"),
+        )).get_data(as_text=True)
+        assert "s3cr3t-pat" not in text
+
+        # Zapis bez PAT (np. sama zmiana kraju) NIE zmienia client_id - musi
+        # zostać stały dla tego samego tokenu, inaczej LG traktuje to jak
+        # inne urządzenie kliencie.
+        (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"country_code": "DE"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        saved_again = app_module.config_store.get("config")["lg_thinq"]
+        assert saved_again["client_id"] == client_id
+        assert saved_again["personal_access_token"] == "s3cr3t-pat"
+        assert saved_again["country_code"] == "DE"
+
+    async def test_devices_get_defaults_to_empty(self, client):
+        resp = (await client.get("/api/plugins/lg_thinq/devices", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert await resp.get_json() == {"devices": []}
+
+    async def test_devices_post_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/lg_thinq/devices", json={"devices": []})).status_code == 401
+
+    async def test_devices_post_requires_credentials_first(self, client):
+        resp = (await client.post(
+            "/api/plugins/lg_thinq/devices",
+            json={"devices": [{"name": "Pralka", "device_id": "abc"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_rejects_missing_device_id(self, client):
+        (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"personal_access_token": "pat", "country_code": "PL"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/lg_thinq/devices", json={"devices": [{"name": "Pralka", "device_id": ""}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_rejects_duplicate_names(self, client):
+        (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"personal_access_token": "pat", "country_code": "PL"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/lg_thinq/devices",
+            json={"devices": [
+                {"name": "Pralka", "device_id": "d1"}, {"name": "Pralka", "device_id": "d2"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_persists(self, client):
+        import dashboard.app as app_module
+
+        (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"personal_access_token": "pat", "country_code": "PL"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/lg_thinq/devices",
+            json={"devices": [{"name": "Pralka", "device_id": "dev-123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["lg_thinq"]
+        assert saved["devices"] == {"Pralka": {"device_id": "dev-123"}}
+
+    async def test_settings_post_rejects_enabling_when_not_configured(self, client):
+        resp = (await client.post(
+            "/api/plugins/lg_thinq/settings", json={"enabled": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_settings_post_succeeds_once_configured(self, client):
+        import dashboard.app as app_module
+
+        (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"personal_access_token": "pat", "country_code": "PL"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        (await client.post(
+            "/api/plugins/lg_thinq/devices",
+            json={"devices": [{"name": "Pralka", "device_id": "dev-123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/lg_thinq/settings", json={"enabled": True, "log_level": "ERROR"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["lg_thinq"]
+        assert saved["enabled"] is True
+        assert saved["log_level"] == "ERROR"
+        assert saved["personal_access_token"] == "pat"
+
+    async def test_discover_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/lg_thinq/discover")).status_code == 401
+
+    async def test_discover_requires_credentials_first(self, client):
+        resp = (await client.post("/api/plugins/lg_thinq/discover", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 400
+
+    async def test_discover_returns_devices_from_client(self, client, monkeypatch):
+        import plugins.lg_thinq.routes as lg_thinq_routes_module
+
+        (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"personal_access_token": "pat", "country_code": "PL"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        async def fake_list_devices(pat, country_code, client_id):
+            assert pat == "pat"
+            assert country_code == "PL"
+            return [
+                {"device_id": "d1", "alias": "Pralka", "device_type": "DEVICE_WASHER", "model_name": "F4WV"},
+                {"device_id": "d2", "alias": "Suszarka", "device_type": "DEVICE_DRYER", "model_name": "R9"},
+            ]
+
+        monkeypatch.setattr(lg_thinq_routes_module, "list_devices", fake_list_devices)
+
+        resp = (await client.post("/api/plugins/lg_thinq/discover", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        devices = (await resp.get_json())["devices"]
+        assert {d["device_id"] for d in devices} == {"d1", "d2"}
+
+    async def test_discover_reports_lg_thinq_error(self, client, monkeypatch):
+        import plugins.lg_thinq.routes as lg_thinq_routes_module
+        from bridge.lg_thinq_client import LgThinqError
+
+        (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"personal_access_token": "pat", "country_code": "PL"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        async def fake_list_devices(pat, country_code, client_id):
+            raise LgThinqError("nieprawidłowy token PAT")
+
+        monkeypatch.setattr(lg_thinq_routes_module, "list_devices", fake_list_devices)
+
+        resp = (await client.post("/api/plugins/lg_thinq/discover", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 502
+        assert "PAT" in (await resp.get_json())["error"]
+
+    async def test_device_states_without_auth_returns_401(self, client):
+        assert (await client.get("/api/plugins/lg_thinq/devices/Pralka/states")).status_code == 401
+
+    async def test_device_states_requires_credentials_first(self, client):
+        resp = (await client.get(
+            "/api/plugins/lg_thinq/devices/Pralka/states", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_device_states_unknown_device_returns_404(self, client):
+        (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"personal_access_token": "pat", "country_code": "PL"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.get(
+            "/api/plugins/lg_thinq/devices/Nieznane/states", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 404
+
+    async def test_device_states_returns_list_from_profile(self, client, monkeypatch):
+        import plugins.lg_thinq.routes as lg_thinq_routes_module
+
+        (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"personal_access_token": "pat", "country_code": "PL"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        (await client.post(
+            "/api/plugins/lg_thinq/devices",
+            json={"devices": [{"name": "Pralka", "device_id": "dev-123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        async def fake_fetch_possible_states(pat, country_code, client_id, device_id):
+            assert device_id == "dev-123"
+            return ["wyłączona", "pranie", "zakończone"]
+
+        monkeypatch.setattr(lg_thinq_routes_module, "fetch_possible_states", fake_fetch_possible_states)
+
+        resp = (await client.get(
+            "/api/plugins/lg_thinq/devices/Pralka/states", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        assert (await resp.get_json())["states"] == ["wyłączona", "pranie", "zakończone"]
+
+    async def test_device_states_reports_lg_thinq_error(self, client, monkeypatch):
+        import plugins.lg_thinq.routes as lg_thinq_routes_module
+        from bridge.lg_thinq_client import LgThinqError
+
+        (await client.post(
+            "/api/plugins/lg_thinq/credentials", json={"personal_access_token": "pat", "country_code": "PL"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        (await client.post(
+            "/api/plugins/lg_thinq/devices",
+            json={"devices": [{"name": "Pralka", "device_id": "dev-123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        async def fake_fetch_possible_states(pat, country_code, client_id, device_id):
+            raise LgThinqError("nieprawidłowy token PAT")
+
+        monkeypatch.setattr(lg_thinq_routes_module, "fetch_possible_states", fake_fetch_possible_states)
+
+        resp = (await client.get(
+            "/api/plugins/lg_thinq/devices/Pralka/states", headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 502
 

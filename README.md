@@ -2125,12 +2125,12 @@ system + urządzenie źródłowe + wyzwalacz + rodzaj akcji), **2. Wyjście**
 **4. Harmonogram**, **5. Eskalacja** - patrz sekcje niżej po szczegóły
 każdej z nich.
 
-### Wejście reguły ruchu: Satel, albo stan urządzenia Tuya/HomeWhiz (`source`)
+### Wejście reguły ruchu: Satel, albo stan urządzenia Tuya/HomeWhiz/LG ThinQ (`source`)
 
 Reguła ruchu wyzwala się nie tylko naruszeniem wejścia Satela - może też
 reagować na **stan dowolnego urządzenia Tuya albo urządzenia AGD
-HomeWhiz** (patrz sekcja "Zmywarki/AGD HomeWhiz" niżej). Pole "System" w
-sekcji "1. Wejście" wybiera źródło:
+HomeWhiz/LG ThinQ** (patrz sekcje "Zmywarki/AGD HomeWhiz" i "Pralki/AGD LG
+ThinQ" niżej). Pole "System" w sekcji "1. Wejście" wybiera źródło:
 
 - **Satel (wejście)** (`source: satel_zone`, domyślne) - jak dotąd:
   `zone_number` + `trigger_on` (naruszenie/ustanie).
@@ -2149,6 +2149,11 @@ sekcji "1. Wejście" wybiera źródło:
   listę wyboru - zamiast wolnego tekstu na pamięć. Gdyby pobranie listy się
   nie udało (np. chwilowy brak połączenia z chmurą), pole spada z powrotem
   na wolny tekst.
+- **LG ThinQ (stan urządzenia AGD)** (`source: lg_thinq_state`) - analogicznie
+  do HomeWhiz: `source_device` (nazwa urządzenia LG ThinQ) + `trigger_value`
+  pobierane na żywo z deskryptora profilu TEGO KONKRETNEGO modelu (endpoint
+  `/api/plugins/lg_thinq/devices/<nazwa>/states`, patrz sekcja "Pralki/AGD
+  LG ThinQ" niżej).
 
 ```yaml
 reguły_ruchu:
@@ -2791,7 +2796,7 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 
 | Węzeł | Rola | Konfiguracja |
 |---|---|---|
-| ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz), wyzwalacz |
+| ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz/LG ThinQ), wyzwalacz |
 | 📥 MQTT in | wejście grafu | temat MQTT (drugie możliwe wejście obok Trigger) |
 | ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania (payload wiadomości) - dwa wyjścia: "spełniony"/"inaczej" |
 | 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`, wybierany dwustopniowo: System -> Status) + operator (równa się/różna od/większe/większe-równe/mniejsze/mniejsze-równe) - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
@@ -2803,7 +2808,7 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 | 🔔 Powiadomienie | akcja | poziom (info/ostrzeżenie/krytyczne) i treść (`{value}`/`{key}` podstawiane z wiadomości) |
 | 📤 MQTT out | akcja | publikuje na temat MQTT (treść puste = wartość z wyzwalacza) |
 | 🌐 HTTP | akcja | wywołanie dowolnego URL-a (GET/POST/PUT/PATCH/DELETE) |
-| 📅 Harmonogram | rozgałęzienie | okno czasowe (`start`/`end`, w tym `sunset`/`sunrise+-N` jak w harmonogramie reguły ruchu) - jedno wyjście "w oknie", poza oknem wiadomość jest wygaszana |
+| 📅 Harmonogram | rozgałęzienie | okno czasowe (`start`/`end`, w tym `sunset`/`sunrise+-N` jak w harmonogramie reguły ruchu - wymaga ustawienia współrzędnych w zakładce 🎬 Automatyzacje -> 🌍 Lokalizacja, inaczej okno z takim punktem odniesienia nie zadziała) - jedno wyjście "w oknie", poza oknem wiadomość jest wygaszana |
 | 📈 Eskalacja | rozgałęzienie | próg (liczba naruszeń) i okno czasowe (sekundy) - dwa wyjścia: "normalnie" (poniżej progu) / "eskalacja" (próg przekroczony, licznik się zeruje) |
 | 🛑 Zakończ | terminalny | brak konfiguracji i brak wyjścia - jawnie kończy przetwarzanie danej gałęzi grafu (funkcjonalnie równoważne pozostawieniu wyjścia niepodłączonego, ale czytelniejsze na canvasie niż "urwany" przewód) |
 
@@ -3149,6 +3154,55 @@ stan kotła (kategoria `boiler`). Da się go użyć na dwa sposoby:
 
 W obu przypadkach akcja (np. powiadomienie albo włączenie gniazdka)
 uruchomi się dopiero, gdy zmywarka faktycznie skończy zmywanie.
+
+## Pralki/AGD LG ThinQ
+
+Bridge łączy się z **oficjalnym REST API LG ThinQ Connect**
+(`api-<region>.lgthinq.com`) przez oficjalny pakiet PyPI `thinqconnect`
+(`bridge/lg_thinq_client.py`) - autoryzacja tokenem PAT (Personal Access
+Token) generowanym na
+[LG ThinQ Developer Site](https://smartsolution.lgthinq.com) (sekcja
+"Cloud Developer" -> dokumentacja ThinQ Connect -> zakładka PAT), NIE
+loginem/hasłem do konta LG jak w starszych, nieoficjalnych integracjach
+(`wideq` i pochodne). W odróżnieniu od HomeWhiz (push w czasie rzeczywistym
+przez AWS IoT/MQTT), bridge **odpytuje** stan urządzeń okresowo
+(`status_poll_interval_seconds`, domyślnie 60s, minimum 20s) - oficjalne
+SDK udostępnia też kanał push przez AWS IoT, ale wymaga dodatkowo
+wystawienia certyfikatu klienta (`async_post_client_certificate`) i
+utrzymywania osobnego połączenia MQTT, czego ta wersja celowo nie
+implementuje (prostsze, wystarczające do wyzwalania Flow/reguł ruchu przy
+zmianie stanu).
+
+**Kształt odpowiedzi zweryfikowany wprost w kodzie pakietu
+`thinqconnect`** (nie zgadywany) - stan urządzenia to
+`{"runState": {"currentState": "..."}}` (ta sama ścieżka co
+`devices/washer.py`, `devices/dryer.py`, `devices/dish_washer.py` itd. w
+tym pakiecie), a lista możliwych wartości dla KONKRETNEGO modelu to
+`profile["property"]["runState"]["currentState"]["value"]["r"]` (deskryptor
+profilu urządzenia, `ThinQApi.async_get_device_profile()`) - stąd lista
+stanów w edytorze Flow/automatyzacji pobierana jest per urządzenie,
+dokładnie jak dla HomeWhiz, zamiast być jednym uniwersalnym, zgadywanym
+zestawem.
+
+### Konfiguracja (zakładka 🧩 Wtyczki -> "🧺 Pralki/AGD LG ThinQ")
+
+1. Wygeneruj token PAT na LG ThinQ Developer Site, wpisz go razem z kodem
+   kraju (ISO, np. `PL`) i zapisz - Client ID generowany jest automatycznie
+   (UUID4) i musi pozostać stały dla danego tokenu (zmiana tokenu PAT bez
+   zmiany Client ID jest OK, ale zmiana samego Client ID każe LG traktować
+   bridge jako inne urządzenie kliencie).
+2. Kliknij "🔍 Odkryj urządzenia" - lista WSZYSTKICH urządzeń przypisanych
+   do konta (27 wspieranych typów AGD wg dokumentacji `thinqconnect`, nie
+   tylko pralki - działa dla każdego z nich, o ile ma zasób `runState`).
+3. Kliknij "+ Dodaj" przy urządzeniu, nadaj mu nazwę (dowolną, unikalną) i
+   zapisz listę monitorowanych urządzeń.
+4. Włącz wtyczkę - wymaga pełnego restartu procesu bridge'a, tak jak inne
+   integracje chmurowe (UniFi Protect, Tuya Cloud, HomeWhiz).
+
+Stan trafia na stronę główną i jest dostępny jako warunek "stan" oraz jako
+trigger Flow/reguł ruchu (`source: lg_thinq_state`) - DOKŁADNIE tym samym
+mechanizmem co HomeWhiz (klucz statusu `lg_thinq:<nazwa>`, patrz sekcja
+"Stan urządzenia jako warunek ALBO wejście automatyzacji" wyżej).
 
 ## Synchronizacja czasu
 

@@ -1577,6 +1577,63 @@ class TestHomeWhizStatusSeeding:
         assert engine.history.get_status("homewhiz") == []
 
 
+class TestLgThinqStatusSeeding:
+
+    def _set_lg_thinq_cfg(self, engine, devices: dict) -> None:
+        raw = engine.config.store.get("config")
+        raw["lg_thinq"] = {"personal_access_token": "pat", "client_id": "c1", "devices": devices}
+        engine.config.store.set("config", raw)
+
+    async def test_seeded_as_unknown_for_configured_device(self, engine):
+        self._set_lg_thinq_cfg(engine, {"Pralka": {"device_id": "dev-123"}})
+        await engine.reload_config()
+        assert engine.history.get_status_value("lg_thinq:Pralka") == "nieznany"
+
+    async def test_seed_does_not_overwrite_already_running_status(self, engine):
+        self._set_lg_thinq_cfg(engine, {"Pralka": {"device_id": "dev-123"}})
+        await engine.reload_config()
+        engine.history.set_status("lg_thinq:Pralka", "lg_thinq", "pranie", label="Pralka")
+        engine._seed_lg_thinq_status_labels()
+        assert engine.history.get_status_value("lg_thinq:Pralka") == "pranie"
+
+    async def test_removed_device_prunes_stale_status(self, engine):
+        self._set_lg_thinq_cfg(engine, {"Pralka": {"device_id": "dev-123"}})
+        await engine.reload_config()
+        assert engine.history.get_status_value("lg_thinq:Pralka") is not None
+
+        self._set_lg_thinq_cfg(engine, {})
+        await engine.reload_config()
+        assert engine.history.get_status_value("lg_thinq:Pralka") is None
+
+    async def test_no_lg_thinq_config_is_a_noop(self, engine):
+        await engine.reload_config()
+        assert engine.history.get_status("lg_thinq") == []
+
+
+class TestLgThinqStateCallback:
+
+    async def test_publishes_state_as_status(self, engine):
+        await engine._on_lg_thinq_state("Pralka", "pranie")
+        assert engine.history.get_status_value("lg_thinq:Pralka") == "pranie"
+        rows = engine.history.get_status("lg_thinq")
+        assert rows[0]["label"] == "Pralka"
+
+    async def test_also_dispatches_to_device_state_motion_rules(self, engine, fake_tuya):
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [{
+                "source": "lg_thinq_state", "source_device": "Pralka", "trigger_value": "zakończone",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+            }],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+
+        await engine._on_lg_thinq_state("Pralka", "zakończone")
+        await asyncio.sleep(0)
+        assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+
 class TestHomeWhizStateCallback:
 
     async def test_publishes_state_as_status(self, engine):

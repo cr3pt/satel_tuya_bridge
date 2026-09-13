@@ -375,6 +375,13 @@ function sourceDeviceOptionsHtml(system, selected) {
     }
     return appliances.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
   }
+  if (system === 'lg_thinq_state') {
+    const devices = context.lg_thinq_devices || [];
+    if (devices.length === 0) {
+      return `<option value="">(brak skonfigurowanych urządzeń LG ThinQ - zakładka 🧩 Wtyczki)</option>`;
+    }
+    return devices.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+  }
   return deviceOptionsHtml(selected);
 }
 
@@ -389,6 +396,18 @@ function fetchHomewhizStates(applianceName) {
       .catch(() => []);
   }
   return homewhizStatesCache[applianceName];
+}
+
+const lgThinqStatesCache = {};
+function fetchLgThinqStates(deviceName) {
+  if (!deviceName) return Promise.resolve([]);
+  if (!(deviceName in lgThinqStatesCache)) {
+    lgThinqStatesCache[deviceName] = fetch(`/api/plugins/lg_thinq/devices/${encodeURIComponent(deviceName)}/states`)
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(data => Array.isArray(data.states) ? data.states : [])
+      .catch(() => []);
+  }
+  return lgThinqStatesCache[deviceName];
 }
 
 function getSceneNames() {
@@ -592,6 +611,7 @@ const STATUS_CATEGORY_LABELS = {
   satel_partition: 'Satel (strefa)',
   tuya: 'Tuya',
   homewhiz: 'HomeWhiz (AGD)',
+  lg_thinq: 'LG ThinQ (AGD)',
   boiler: 'Kocioł (eBUS)',
   system_health: 'Zdrowie połączeń',
   automation: 'Automatyzacja',
@@ -616,16 +636,16 @@ function statusCategoryOptionsHtml(selected) {
 }
 
 
-function triggerValueFieldHtml(system, selectedValue, homewhizStates) {
+function triggerValueFieldHtml(system, selectedValue, dynamicStates) {
   let options = null;
   if (system === 'tuya_state') {
     options = STATE_VALUE_OPTIONS.tuya;
-  } else if (system === 'homewhiz_state' && Array.isArray(homewhizStates) && homewhizStates.length > 0) {
-    options = homewhizStates;
+  } else if ((system === 'homewhiz_state' || system === 'lg_thinq_state') && Array.isArray(dynamicStates) && dynamicStates.length > 0) {
+    options = dynamicStates;
   }
   if (!options) {
-    const placeholder = system === 'homewhiz_state'
-      ? (Array.isArray(homewhizStates)
+    const placeholder = (system === 'homewhiz_state' || system === 'lg_thinq_state')
+      ? (Array.isArray(dynamicStates)
           ? 'wartość (nie udało się pobrać listy stanów z chmury - wpisz ręcznie)'
           : 'wybierz najpierw urządzenie źródłowe / ładowanie listy stanów...')
       : 'wartość (np. finished - zależy od modelu urządzenia)';
@@ -645,11 +665,12 @@ function triggerValueFieldHtml(system, selectedValue, homewhizStates) {
 function renderTriggerValueField(card, system, selectedValue) {
   const wrap = card.querySelector('.mr-trigger-value-wrap');
   wrap.innerHTML = triggerValueFieldHtml(system, selectedValue);
-  if (system !== 'homewhiz_state') return;
+  if (system !== 'homewhiz_state' && system !== 'lg_thinq_state') return;
   const deviceName = card.querySelector('.mr-source-device').value;
   if (!deviceName) return;
-  fetchHomewhizStates(deviceName).then(states => {
-    if (card.querySelector('.mr-source-system').value !== 'homewhiz_state') return;
+  const fetchStates = system === 'homewhiz_state' ? fetchHomewhizStates : fetchLgThinqStates;
+  fetchStates(deviceName).then(states => {
+    if (card.querySelector('.mr-source-system').value !== system) return;
     if (card.querySelector('.mr-source-device').value !== deviceName) return;
     const curValue = wrap.querySelector('.mr-trigger-value').value;
     wrap.innerHTML = triggerValueFieldHtml(system, curValue || selectedValue, states);
@@ -857,6 +878,7 @@ function buildExtraSourceRowHtml(entry) {
           <option value="satel_zone" ${system === 'satel_zone' ? 'selected' : ''}>Satel (wejście)</option>
           <option value="tuya_state" ${system === 'tuya_state' ? 'selected' : ''}>Tuya (stan urządzenia)</option>
           <option value="homewhiz_state" ${system === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz (stan urządzenia AGD)</option>
+          <option value="lg_thinq_state" ${system === 'lg_thinq_state' ? 'selected' : ''}>LG ThinQ (stan urządzenia AGD)</option>
         </select></div>
       <div class="field mr-ex-satel-fields" style="${system === 'satel_zone' ? '' : 'display:none;'}">
         <label>Wejście w Satelu</label>
@@ -997,6 +1019,7 @@ function addMotionRuleCard(initial, startCollapsed) {
             <option value="satel_zone" ${sourceSystem === 'satel_zone' ? 'selected' : ''}>Satel (wejście)</option>
             <option value="tuya_state" ${sourceSystem === 'tuya_state' ? 'selected' : ''}>Tuya (stan urządzenia)</option>
             <option value="homewhiz_state" ${sourceSystem === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz (stan urządzenia AGD)</option>
+            <option value="lg_thinq_state" ${sourceSystem === 'lg_thinq_state' ? 'selected' : ''}>LG ThinQ (stan urządzenia AGD)</option>
           </select></div>
         <div class="field mr-satel-source-fields" style="${sourceSystem === 'satel_zone' ? '' : 'display:none;'}">
           <label>Wejście w Satelu</label>
@@ -1134,7 +1157,7 @@ function addMotionRuleCard(initial, startCollapsed) {
   });
 
 
-  if (sourceSystem === 'homewhiz_state' && primarySource.source_device) {
+  if ((sourceSystem === 'homewhiz_state' || sourceSystem === 'lg_thinq_state') && primarySource.source_device) {
     renderTriggerValueField(card, sourceSystem, primarySource.trigger_value);
   }
 

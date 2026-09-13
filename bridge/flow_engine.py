@@ -57,7 +57,7 @@ class FlowEngine:
       wires[port] = lista id węzłów podłączonych do danego wyjścia węzła.
 
     Typy węzłów:
-      trigger   {source: satel_zone|tuya_state|homewhiz_state, zone_number?,
+      trigger   {source: satel_zone|tuya_state|homewhiz_state|lg_thinq_state, zone_number?,
                  source_device?, trigger_value?, op: violated|restored|changes}
                 wejście grafu - odpalane przez handle_motion/handle_device_state,
                 dokładnie te same zdarzenia co reguły ruchu.

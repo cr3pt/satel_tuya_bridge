@@ -15,6 +15,7 @@ from .tuya_dispatch import TuyaController
 from .tuya_cloud_events import TuyaCameraMotionListener
 from .unifi_protect_events import UnifiProtectMotionListener
 from .homewhiz_client import HomeWhizClient
+from .lg_thinq_client import LgThinqClient
 from .ebus_client import EbusMqttListener
 from .weather_client import fetch_forecast
 from .boiler_output import build_boiler_publishers, MqttBoilerPublisher, TuyaVirtualDevicePublisher
@@ -129,6 +130,7 @@ class RulesEngine:
         self._satel_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("satel", "satel")
         self._tuya_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("tuya", "tuya")
         self._homewhiz_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("homewhiz", "homewhiz")
+        self._lg_thinq_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("lg_thinq", "lg_thinq")
         if mqtt_publish_cfg.get("enabled", True) and config.ebus.get("mqtt_host"):
             self.state_mqtt = HomeAssistantMqttBridge(
                 {"mqtt_host": config.ebus["mqtt_host"], "mqtt_port": config.ebus.get("mqtt_port", 1883)},
@@ -597,10 +599,20 @@ class RulesEngine:
     async def _on_homewhiz_state(self, appliance_name: str, state_name: str) -> None:
         self.history.set_status(f"homewhiz:{appliance_name}", "homewhiz", state_name, label=appliance_name)
         await self.handle_device_state("homewhiz_state", appliance_name, state_name)
+
         if self.ha_mqtt:
             self.ha_mqtt.publish_state(f"{self._ha_topic_prefix}/homewhiz/{appliance_name}/state", state_name)
         if self.state_mqtt:
             self.state_mqtt.publish_state(f"{self._homewhiz_mqtt_topic}/{appliance_name}/state", state_name)
+
+    async def _on_lg_thinq_state(self, device_name: str, state_name: str) -> None:
+        self.history.set_status(f"lg_thinq:{device_name}", "lg_thinq", state_name, label=device_name)
+        await self.handle_device_state("lg_thinq_state", device_name, state_name)
+
+        if self.ha_mqtt:
+            self.ha_mqtt.publish_state(f"{self._ha_topic_prefix}/lg_thinq/{device_name}/state", state_name)
+        if self.state_mqtt:
+            self.state_mqtt.publish_state(f"{self._lg_thinq_mqtt_topic}/{device_name}/state", state_name)
 
     async def handle_camera_motion(self, source: str, camera_id: str) -> None:
         now = datetime.now()
@@ -841,6 +853,7 @@ class RulesEngine:
         self._seed_satel_status_labels()
         self._seed_tuya_status_labels()
         self._seed_homewhiz_status_labels()
+        self._seed_lg_thinq_status_labels()
         self._seed_automation_status_labels()
 
         logger.info("Konfiguracja przeładowana bez restartu procesu")
@@ -1044,6 +1057,18 @@ class RulesEngine:
         homewhiz_keys = {f"homewhiz:{name}" for name in appliance_names}
         self.history.prune_status("homewhiz", homewhiz_keys)
 
+    def _seed_lg_thinq_status_labels(self) -> None:
+        lg_thinq_cfg = self.config.lg_thinq or {}
+        device_names = set((lg_thinq_cfg.get("devices") or {}).keys())
+        seen = {s["key"] for s in self.history.get_status("lg_thinq")}
+        for name in device_names:
+            key = f"lg_thinq:{name}"
+            if key not in seen:
+                self.history.set_status(key, "lg_thinq", "nieznany", label=name)
+
+        lg_thinq_keys = {f"lg_thinq:{name}" for name in device_names}
+        self.history.prune_status("lg_thinq", lg_thinq_keys)
+
     def _seed_automation_status_labels(self) -> None:
         seen = {s["key"] for s in self.history.get_status("automation")}
         valid_keys = {f"automation:{scene_name}" for scene_name in self.scenes.scenes}
@@ -1107,6 +1132,7 @@ class RulesEngine:
         self._seed_satel_status_labels()
         self._seed_tuya_status_labels()
         self._seed_homewhiz_status_labels()
+        self._seed_lg_thinq_status_labels()
         self._seed_automation_status_labels()
 
         async def _on_zone_change(status: dict) -> None:
@@ -1207,6 +1233,13 @@ class RulesEngine:
                 history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
             )
             asyncio.create_task(homewhiz_client.run_forever())
+
+        if self.config.lg_thinq and self.config.lg_thinq.get("enabled", True):
+            lg_thinq_client = LgThinqClient(
+                self.config.lg_thinq, self._on_lg_thinq_state,
+                history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
+            )
+            asyncio.create_task(lg_thinq_client.run_forever())
 
         if self.ha_mqtt:
             def _make_tuya_handler(name):
