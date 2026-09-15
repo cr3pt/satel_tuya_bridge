@@ -152,3 +152,25 @@ async def test_failing_action_does_not_abort_scene(fake_satel, history):
     runner = SceneRunner(failing_tuya_cfg, FailingTuya(), fake_satel, history=history)
     await runner.run("test_scena")
     assert fake_satel.calls == [("output", 2, True)]
+
+
+async def test_tuya_on_for_duration_reports_state_change_via_callback(fake_tuya, fake_satel, history):
+    """Regresja: `tuya_on_for_duration` (np. "włącz światło na X" jako
+    reakcja na inną automatyzację) wołał `tuya.turn_on_for_duration`
+    bezpośrednio, z pominięciem `on_tuya_state` - inna reguła/flow nasłuchujące
+    na stan TEGO urządzenia nie widziało włączenia od razu (patrz
+    RulesEngine._apply_tuya_own_state)."""
+    cfg = [{
+        "name": "impuls",
+        "actions": [{"type": "tuya_on_for_duration", "device": "gniazdko_salon", "duration_seconds": 600}],
+    }]
+    reported = []
+
+    async def on_tuya_state(device, value):
+        reported.append((device, value))
+
+    runner = SceneRunner(cfg, fake_tuya, fake_satel, history=history, on_tuya_state=on_tuya_state)
+    await runner.run("impuls")
+    await asyncio.sleep(0)
+
+    assert reported == [("gniazdko_salon", "włączone")]

@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import socket
+from typing import Awaitable, Callable
 
 import tinytuya
 
@@ -781,14 +782,28 @@ class TuyaLocalController:
 
     async def turn_on_for_duration(
         self, device_name: str, duration_seconds: int, dimmer_level_percent: int | None = None,
-        reason: str | None = None,
+        reason: str | None = None, on_state_change: Callable[[bool], Awaitable[None]] | None = None,
     ) -> None:
+        """`on_state_change(True/False)` - wołane od razu po udanym
+        turn_on/turn_off, ZANIM minie `duration_seconds` - bez tego (patrz
+        RulesEngine._apply_tuya_own_state / SceneRunner._on_tuya_state) inny
+        flow/reguła/scena nasłuchujące na stan TEGO urządzenia dowiadywały
+        się o włączeniu/wyłączeniu dopiero przy najbliższym cyklu odpytywania
+        Tuya (do status_poll_interval_seconds) - a jeśli to "pulsowe" włączenie
+        było krótsze niż ten cykl, odpytywanie mogło w ogóle nie zauważyć
+        zmiany."""
         try:
             await self.turn_on(device_name, dimmer_level_percent, reason=reason)
         except ConnectionError:
             pass
+        else:
+            if on_state_change:
+                await on_state_change(True)
         await asyncio.sleep(duration_seconds)
         try:
             await self.turn_off(device_name, reason=reason)
         except ConnectionError:
             logger.error("Nie udało się wyłączyć '%s' po czasie - sprawdź urządzenie ręcznie", device_name)
+        else:
+            if on_state_change:
+                await on_state_change(False)

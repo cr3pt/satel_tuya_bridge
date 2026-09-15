@@ -7,6 +7,7 @@ class FakeSubController:
     def __init__(self, devices_cfg):
         self.devices_cfg = devices_cfg
         self.calls: list[tuple] = []
+        self.on_state_change_callbacks: list = []
 
     async def turn_on(self, device_name, dimmer_level_percent=None, reason=None):
         self.calls.append(("turn_on", device_name, dimmer_level_percent))
@@ -24,8 +25,10 @@ class FakeSubController:
     async def get_all_statuses(self):
         return {name: {"1": True} for name in self.devices_cfg}
 
-    async def turn_on_for_duration(self, device_name, duration_seconds, dimmer_level_percent=None, reason=None):
+    async def turn_on_for_duration(self, device_name, duration_seconds, dimmer_level_percent=None, reason=None,
+                                    on_state_change=None):
         self.calls.append(("turn_on_for_duration", device_name, duration_seconds, dimmer_level_percent))
+        self.on_state_change_callbacks.append(on_state_change)
 
     async def set_dp(self, device_name, dp_code, value, reason=None):
         self.calls.append(("set_dp", device_name, dp_code, value))
@@ -95,6 +98,16 @@ def test_devices_cfg_merges_both_with_local_precedence(local, cloud):
 async def test_turn_on_for_duration_routes_correctly(dispatch, cloud):
     await dispatch.turn_on_for_duration("lampa_cloud", 30, dimmer_level_percent=None)
     assert cloud.calls == [("turn_on_for_duration", "lampa_cloud", 30, None)]
+
+
+async def test_turn_on_for_duration_forwards_on_state_change_callback(dispatch, cloud):
+    received = []
+
+    async def on_state_change(is_on):
+        received.append(is_on)
+
+    await dispatch.turn_on_for_duration("lampa_cloud", 30, on_state_change=on_state_change)
+    assert cloud.on_state_change_callbacks == [on_state_change]
 
 
 async def test_set_dp_routes_local_device_to_local(dispatch, local, cloud):

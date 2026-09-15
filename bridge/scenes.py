@@ -63,8 +63,15 @@ class SceneRunner:
             if self._on_tuya_state:
                 await self._on_tuya_state(action["device"], "wyłączone")
         elif kind == "tuya_on_for_duration":
+            device = action["device"]
+
+            async def _on_state_change(is_on: bool, device=device) -> None:
+                if self._on_tuya_state:
+                    await self._on_tuya_state(device, "włączone" if is_on else "wyłączone")
+
             asyncio.create_task(self.tuya.turn_on_for_duration(
-                action["device"], action["duration_seconds"], action.get("dimmer_level_percent"), reason=reason,
+                device, action["duration_seconds"], action.get("dimmer_level_percent"), reason=reason,
+                on_state_change=_on_state_change,
             ))
         elif kind == "satel_output":
             await self.satel.set_output(action["output_number"], action.get("state", True))

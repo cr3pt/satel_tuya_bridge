@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Awaitable, Callable
 
 import tinytuya
 
@@ -183,12 +184,15 @@ class TuyaCloudController:
 
     async def turn_on_for_duration(
         self, device_name: str, duration_seconds: int, dimmer_level_percent: int | None = None,
-        reason: str | None = None,
+        reason: str | None = None, on_state_change: Callable[[bool], Awaitable[None]] | None = None,
     ) -> None:
         try:
             await self.turn_on(device_name, dimmer_level_percent, reason=reason)
         except ConnectionError:
             pass
+        else:
+            if on_state_change:
+                await on_state_change(True)
         await asyncio.sleep(duration_seconds)
         try:
             await self.turn_off(device_name, reason=reason)
@@ -196,3 +200,6 @@ class TuyaCloudController:
             logger.error(
                 "Nie udało się wyłączyć '%s' po czasie (Tuya Cloud) - sprawdź urządzenie ręcznie", device_name,
             )
+        else:
+            if on_state_change:
+                await on_state_change(False)

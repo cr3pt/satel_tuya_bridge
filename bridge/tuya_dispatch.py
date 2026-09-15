@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Awaitable, Callable
 
 from .tuya_cloud import TuyaCloudController
 from .tuya_local import TuyaLocalController
@@ -49,8 +50,8 @@ class TuyaController:
 
     async def turn_on_for_duration(
         self, device_name: str, duration_seconds: int, dimmer_level_percent: int | None = None,
-        reason: str | None = None,
+        reason: str | None = None, on_state_change: Callable[[bool], Awaitable[None]] | None = None,
     ) -> None:
         await self._resolve(device_name).turn_on_for_duration(
-            device_name, duration_seconds, dimmer_level_percent, reason=reason,
+            device_name, duration_seconds, dimmer_level_percent, reason=reason, on_state_change=on_state_change,
         )

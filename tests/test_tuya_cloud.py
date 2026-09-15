@@ -217,6 +217,20 @@ async def test_turn_on_for_duration_turns_off_after_delay(controller):
     assert codes == [True, False]
 
 
+async def test_turn_on_for_duration_calls_on_state_change_after_each_transition(controller):
+    fake = FakeTinytuyaCloud()
+    _set_fake_client(controller, fake)
+    calls = []
+
+    async def on_state_change(is_on):
+        calls.append(is_on)
+
+    await controller.turn_on_for_duration(
+        "lampa_taras", duration_seconds=0.01, on_state_change=on_state_change,
+    )
+    assert calls == [True, False]
+
+
 class TestAutoDetectedSwitchCodes:
 
     DEVICES_CFG_NO_SWITCH_CODE = {
