@@ -135,6 +135,9 @@
     czujniki kotła) - odświeżane co 3s. To NIE jest podgląd całego brokera
     MQTT, tylko naszych integracji.
   </div>
+  <div class="actions-bar" style="margin-top:0; margin-bottom:12px;">
+    <button type="button" class="secondary" id="clearExplorerBtn">🗑 Wyczyść listę</button>
+  </div>
   <div style="overflow-x:auto;">
     <table>
       <thead><tr><th>Temat</th><th>Wartość</th><th>Ostatnio</th></tr></thead>
@@ -145,6 +148,7 @@
     Jeszcze żaden temat nie został zaobserwowany - włącz Home Assistant,
     tę wtyczkę albo publikację danych kotła, żeby coś się tu pojawiło.
   </div>
+  <div id="explorerMsg" class="msg-box"></div>
 </div>
 
 <div class="section" id="publishSection">
@@ -316,6 +320,22 @@ async function loadExplorer() {
 }
 loadExplorer();
 setInterval(loadExplorer, 3000);
+
+document.getElementById('clearExplorerBtn').addEventListener('click', async () => {
+  if (!confirm('Wyczyścić całą listę zaobserwowanych tematów? Tematy pojawią się ponownie, gdy bridge znów coś opublikuje/odbierze.')) return;
+  try {
+    const resp = await authorizedFetch('/api/plugins/mqtt_publish/explorer', { method: 'DELETE' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('explorerMsg', false, data.error || 'Błąd czyszczenia listy');
+    } else {
+      showMsg('explorerMsg', true, data.message);
+      await loadExplorer();
+    }
+  } catch (e) {
+    showMsg('explorerMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
 
 document.getElementById('publishBtn').addEventListener('click', async () => {
   const payload = {

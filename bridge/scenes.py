@@ -2,19 +2,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Awaitable, Callable
 
 logger = logging.getLogger("bridge.scenes")
 
 
 class SceneRunner:
     def __init__(self, scenes_cfg: list[dict], tuya, satel, satel_virtual_inputs=None,
-                 virtual_input_mode: str = "library", history=None):
+                 virtual_input_mode: str = "library", history=None,
+                 on_tuya_state: Callable[[str, str], Awaitable[None]] | None = None):
         self.scenes = {s["name"]: s for s in (scenes_cfg or [])}
         self.tuya = tuya
         self.satel = satel
         self.satel_virtual_inputs = satel_virtual_inputs
         self.virtual_input_mode = virtual_input_mode
         self.history = history
+        # Bez tego callbacku scena włączająca/wyłączająca urządzenie Tuya nie
+        # aktualizowała JEGO statusu wcale (w odróżnieniu od tego samego
+        # działania wykonanego przez Flow/regułę ruchu, patrz
+        # RulesEngine._apply_tuya_own_state) - inny flow/reguła nasłuchujący
+        # na stan TEGO urządzenia widział zmianę dopiero przy najbliższym
+        # cyklu odpytywania Tuya (do status_poll_interval_seconds, domyślnie
+        # 30s) zamiast natychmiast po akcji sceny.
+        self._on_tuya_state = on_tuya_state
 
     def exists(self, scene_name: str) -> bool:
         return scene_name in self.scenes
@@ -46,8 +56,12 @@ class SceneRunner:
         reason = f"scena '{scene_name}'"
         if kind == "tuya_on":
             await self.tuya.turn_on(action["device"], action.get("dimmer_level_percent"), reason=reason)
+            if self._on_tuya_state:
+                await self._on_tuya_state(action["device"], "włączone")
         elif kind == "tuya_off":
             await self.tuya.turn_off(action["device"], reason=reason)
+            if self._on_tuya_state:
+                await self._on_tuya_state(action["device"], "wyłączone")
         elif kind == "tuya_on_for_duration":
             asyncio.create_task(self.tuya.turn_on_for_duration(
                 action["device"], action["duration_seconds"], action.get("dimmer_level_percent"), reason=reason,

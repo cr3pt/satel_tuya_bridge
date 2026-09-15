@@ -97,6 +97,17 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         topics = [{"topic": e["label"], "payload": e["value"], "ts": e["ts"]} for e in entries]
         return jsonify({"topics": topics, "known_prefixes": _known_prefixes(get_config_raw())})
 
+    @app.route("/api/plugins/mqtt_publish/explorer", methods=["DELETE"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_mqtt_publish_explorer_delete():
+        # prune_status z pustą listą kluczy do zachowania usuwa WSZYSTKIE wpisy
+        # danej kategorii (patrz bridge/history_store.py) - tematy i tak wrócą
+        # same, gdy bridge znów coś opublikuje/odbierze, więc to tylko
+        # czyszczenie WIDOKU (nieużywanych/przestarzałych tematów), nie żadnej
+        # trwałej konfiguracji.
+        get_history().prune_status("mqtt_topic", [])
+        return jsonify({"message": "Wyczyszczono listę zaobserwowanych tematów."})
+
     @app.route("/api/plugins/mqtt_publish/publish", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
     async def api_plugin_mqtt_publish_publish_post():
