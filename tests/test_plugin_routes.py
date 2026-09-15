@@ -1482,6 +1482,21 @@ class TestMqttPublishPluginPage:
         data = await resp.get_json()
         assert data["topics"] == [{"topic": "tuya/gniazdko/state", "payload": "ON", "ts": data["topics"][0]["ts"]}]
 
+    async def test_explorer_delete_without_auth_returns_401(self, client):
+        assert (await client.delete("/api/plugins/mqtt_publish/explorer")).status_code == 401
+
+    async def test_explorer_delete_clears_recorded_topics(self, client):
+        import dashboard.app as app_module
+        app_module.history.set_status("mqtt:tuya/gniazdko/state", "mqtt_topic", "ON", label="tuya/gniazdko/state")
+
+        resp = await client.delete(
+            "/api/plugins/mqtt_publish/explorer", headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+
+        after = await client.get("/api/plugins/mqtt_publish/explorer", headers=_basic_auth_header("test_haslo_123"))
+        assert (await after.get_json())["topics"] == []
+
     async def test_publish_requires_auth(self, client):
         assert (await client.post("/api/plugins/mqtt_publish/publish", json={"topic": "tuya/x"})).status_code == 401
 

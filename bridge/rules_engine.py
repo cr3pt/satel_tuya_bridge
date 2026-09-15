@@ -96,7 +96,7 @@ class RulesEngine:
         self.scenes = SceneRunner(
             config.raw.get("scenes", []), self.tuya, self.satel,
             satel_virtual_inputs=self.satel_virtual_inputs, virtual_input_mode=self._vi_mode,
-            history=self.history,
+            history=self.history, on_tuya_state=self._apply_tuya_own_state,
         )
         self.boiler_automation = BoilerAutomation(config.raw.get("boiler_rules", []), self.scenes)
         self.presence_simulation = PresenceSimulation(
@@ -469,10 +469,28 @@ class RulesEngine:
             await self.tuya.toggle(device, reason=reason)
         elif on:
             await self.tuya.turn_on(device, dimmer, reason=reason)
-            self.history.set_status(f"tuya:{device}", "tuya", "włączone", label=device)
+            await self._apply_tuya_own_state(device, "włączone")
         else:
             await self.tuya.turn_off(device, reason=reason)
-            self.history.set_status(f"tuya:{device}", "tuya", "wyłączone", label=device)
+            await self._apply_tuya_own_state(device, "wyłączone")
+
+    async def _apply_tuya_own_state(self, device: str, value: str) -> None:
+        """Jak w docstringu _set_target_state - aktualizacja statusu Tuya OD
+        RAZU po własnej komendzie, ale w odróżnieniu od samego
+        history.set_status, przechodzi też przez handle_device_state.
+
+        UWAGA: bez tego druga część "docstringu" była prawdziwa tylko dla
+        WŁASNEGO węzła "Warunek stanu" (bo ten czyta wprost history), ale NIE
+        dla triggera innego flow/reguły nasłuchującego na TO SAMO urządzenie
+        (np. "gdy gniazdko się włączy") - taki trigger czekał na najbliższy
+        cykl odpytywania Tuya (status_poll_interval_seconds, domyślnie 30s),
+        zamiast zauważyć zmianę, którą bridge SAM WŁAŚNIE wykonał. Dotyczyło
+        to też przypadku zgłoszonego jako "trigger nie odpala" - jeśli
+        urządzenie zostało włączone przez inny flow/regułę/scenę (a nie
+        fizycznie/z apki), reakcja przychodziła z opóźnieniem do 30s zamiast
+        natychmiast."""
+        self.history.set_status(f"tuya:{device}", "tuya", value, label=device)
+        await self.handle_device_state("tuya_state", device, value)
 
     async def _set_tuya_dp(self, device: str, dp_code: str, value: object, reason: str | None = None) -> None:
         """Wrapper wołany przez FlowEngine (węzeł "Ustaw pole Tuya") - jak
@@ -809,7 +827,7 @@ class RulesEngine:
         self.scenes = SceneRunner(
             new_config.raw.get("scenes", []), self.tuya, self.satel,
             satel_virtual_inputs=self.satel_virtual_inputs, virtual_input_mode=self._vi_mode,
-            history=self.history,
+            history=self.history, on_tuya_state=self._apply_tuya_own_state,
         )
         self.flow_engine.update_flows(new_config.raw.get("flows", []))
         self.flow_engine.location_cfg = self._location_cfg

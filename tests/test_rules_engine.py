@@ -647,6 +647,71 @@ class TestDeviceStateTrigger:
         assert fake_tuya.calls == []
 
 
+class TestInstantTuyaStatePropagation:
+    """`_set_target_state`/`SceneRunner` włączające/wyłączające Tuya muszą od
+    razu wywołać `handle_device_state` - bez tego inny flow/reguła
+    nasłuchujący na stan TEGO SAMEGO urządzenia (np. reguła B reagująca na
+    akcję reguły A) widziałby zmianę dopiero przy najbliższym cyklu
+    odpytywania Tuya (status_poll_interval_seconds, domyślnie 30s), co dla
+    użytkownika wygląda jak "trigger w ogóle się nie odpala"."""
+
+    async def test_motion_rule_action_immediately_fires_another_rules_trigger(self, engine, fake_tuya):
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [
+                {"source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+                 "target_device": "gniazdko_salon"},
+                {"source": "tuya_state", "source_device": "gniazdko_salon", "trigger_value": "włączone",
+                 "target_device": "inne_urzadzenie", "duration_seconds": 5},
+            ],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+
+        await engine.handle_device_state("tuya_state", "czujnik_drzwi", "włączone")
+        await asyncio.sleep(0)
+
+        assert ("on", "gniazdko_salon", None) in fake_tuya.calls
+        assert any(c[0] == "on_for" and c[1] == "inne_urzadzenie" for c in fake_tuya.calls)
+        assert engine.history.get_status_value("tuya:gniazdko_salon") == "włączone"
+
+    async def test_scene_tuya_on_immediately_fires_rule_trigger(self, engine, fake_tuya):
+        engine.config.store.set("automations", {
+            "scenes": [{"name": "wlacz_pomocnicze", "actions": [{"type": "tuya_on", "device": "gniazdko_salon"}]}],
+            "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [
+                {"source": "tuya_state", "source_device": "gniazdko_salon", "trigger_value": "włączone",
+                 "target_device": "inne_urzadzenie", "duration_seconds": 5},
+            ],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+
+        await engine.scenes.run("wlacz_pomocnicze")
+        await asyncio.sleep(0)
+
+        assert any(c[0] == "on_for" and c[1] == "inne_urzadzenie" for c in fake_tuya.calls)
+        assert engine.history.get_status_value("tuya:gniazdko_salon") == "włączone"
+
+    async def test_scene_tuya_off_updates_status_and_fires_trigger(self, engine, fake_tuya):
+        engine.config.store.set("automations", {
+            "scenes": [{"name": "wylacz", "actions": [{"type": "tuya_off", "device": "gniazdko_salon"}]}],
+            "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [
+                {"source": "tuya_state", "source_device": "gniazdko_salon", "trigger_value": "wyłączone",
+                 "target_device": "inne_urzadzenie", "duration_seconds": 5},
+            ],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+
+        await engine.scenes.run("wylacz")
+        await asyncio.sleep(0)
+
+        assert engine.history.get_status_value("tuya:gniazdko_salon") == "wyłączone"
+        assert any(c[0] == "on_for" and c[1] == "inne_urzadzenie" for c in fake_tuya.calls)
+
+
 class TestMotionRuleMultiSourceAndAction:
 
     async def _reload_with_rule(self, engine, rule: dict, fake_tuya=None, fake_satel=None, fake_virtual_inputs=None):

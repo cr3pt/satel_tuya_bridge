@@ -1410,6 +1410,10 @@ Raspberry Pi Zero. Dane trafiają do tabeli `status` (`bridge_history.db`,
 kategoria `mqtt_topic`) w momencie publikacji/odbioru - bez dodatkowego
 połączenia z brokerem.
 
+Przycisk "🗑 Wyczyść listę" czyści tabelę Explorera (usuwa wszystkie
+zapamiętane wpisy kategorii `mqtt_topic`) - to tylko czyszczenie widoku,
+tematy i tak wrócą same, gdy bridge znów coś opublikuje/odbierze.
+
 Sekcja "Ręczna publikacja" pozwala opublikować dowolny payload, ale
 **wyłącznie w obrębie własnych prefixów** bridge'a (te same, które widać w
 Explorerze - `home_assistant.discovery_prefix`/`state_topic_prefix`,
@@ -2181,6 +2185,18 @@ tych źródeł - urządzenie docelowe włącza się, gdy status STAJE SIĘ
 `trigger_value`, i gaśnie, gdy status zmienia się na jakąkolwiek inną
 wartość.
 
+Gdy urządzenie Tuya zmienia stan **z poziomu samego bridge'a** (akcja innej
+reguły ruchu, scena albo węzeł "Urządzenie" we Flow), ta zmiana trafia do
+wszystkich triggerów `tuya_state` NATYCHMIAST, a nie dopiero przy
+najbliższym cyklu odpytywania Tuya (`tuya.status_poll_interval_seconds`,
+domyślnie 30s, minimum 3s na stronie wtyczki Tuya) - dzięki temu reguły i
+sceny reagujące na siebie nawzajem (np. scena włącza gniazdko, a osobna
+reguła/Flow ma trigger "Tuya = włączone" na tym samym urządzeniu) odpalają
+się od razu. Jeśli mimo to trigger nie odpala - np. urządzenie zmienia stan
+z zewnątrz (aplikacja Tuya, pilot, inny system) - można skrócić
+`status_poll_interval_seconds` do 3s na stronie wtyczki Tuya, żeby bridge
+zauważał taką zmianę szybciej.
+
 ### Harmonogramy czasowe (`time_window`)
 
 Dowolna reguła ruchu lub kamery może mieć opcjonalne pole `time_window`,
@@ -2791,6 +2807,11 @@ niczego z nich nie zastępuje ani nie usuwa. Docelowo ma stać się głównym
 sposobem budowania automatyzacji krok-po-kroku, ale to długoterminowy
 kierunek, nie coś co dzieje się automatycznie przy aktualizacji - istniejące
 reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
+
+Edytor działa też na telefonie - poniżej szerokości ok. 820px układ
+przechodzi z trzech kolumn (paleta/płótno/panel boczny) na jedną, pełną
+szerokość, a przeciąganie węzłów po płótnie obsługuje dotyk (Pointer
+Events), nie tylko mysz.
 
 ### 14 typów węzłów
 
