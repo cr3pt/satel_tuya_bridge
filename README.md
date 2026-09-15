@@ -2186,8 +2186,9 @@ tych źródeł - urządzenie docelowe włącza się, gdy status STAJE SIĘ
 wartość.
 
 Gdy urządzenie Tuya zmienia stan **z poziomu samego bridge'a** (akcja innej
-reguły ruchu, scena albo węzeł "Urządzenie" we Flow), ta zmiana trafia do
-wszystkich triggerów `tuya_state` NATYCHMIAST, a nie dopiero przy
+reguły ruchu, scena albo węzeł "Urządzenie" we Flow - w tym wariant "włącz
+na X sekund", czyli `duration_seconds`/akcja `tuya_on_for_duration`), ta
+zmiana trafia do wszystkich triggerów `tuya_state` NATYCHMIAST, a nie dopiero przy
 najbliższym cyklu odpytywania Tuya (`tuya.status_poll_interval_seconds`,
 domyślnie 30s, minimum 3s na stronie wtyczki Tuya) - dzięki temu reguły i
 sceny reagujące na siebie nawzajem (np. scena włącza gniazdko, a osobna

@@ -42,9 +42,12 @@ class FakeTuya:
         self.calls.append(("toggle", device))
         self.reasons.append(reason)
 
-    async def turn_on_for_duration(self, device, duration, dimmer_level_percent=None, reason=None):
+    async def turn_on_for_duration(self, device, duration, dimmer_level_percent=None, reason=None,
+                                    on_state_change=None):
         self.calls.append(("on_for", device, duration, dimmer_level_percent))
         self.reasons.append(reason)
+        if on_state_change:
+            await on_state_change(True)
 
     async def get_status(self, device):
         return {"1": device not in self.fail_devices}

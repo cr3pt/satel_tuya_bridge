@@ -513,7 +513,12 @@ class RulesEngine:
                 await asyncio.sleep(duration)
                 await self._set_target_state(target_system, device, False, reason=reason)
             else:
-                await self.tuya.turn_on_for_duration(device, duration, dimmer, reason=reason)
+                async def _on_state_change(is_on: bool, device=device) -> None:
+                    await self._apply_tuya_own_state(device, "włączone" if is_on else "wyłączone")
+
+                await self.tuya.turn_on_for_duration(
+                    device, duration, dimmer, reason=reason, on_state_change=_on_state_change,
+                )
         finally:
             if rule_name:
                 self.history.set_status(f"automation:{rule_name}", "automation", "bezczynna", label=rule_name)

@@ -711,6 +711,60 @@ class TestInstantTuyaStatePropagation:
         assert engine.history.get_status_value("tuya:gniazdko_salon") == "wyłączone"
         assert any(c[0] == "on_for" and c[1] == "inne_urzadzenie" for c in fake_tuya.calls)
 
+    async def test_motion_rule_on_for_duration_immediately_fires_another_rules_trigger(self, engine, fake_tuya):
+        """Reguła A ma WŁASNY `duration_seconds` (Tuya "włącz na X sekund") -
+        to osobna ścieżka (`_run_on_for_duration` -> `tuya.turn_on_for_duration`)
+        niż zwykłe włączenie/wyłączenie przez `_set_target_state`, i miała ten
+        sam brak propagacji co ta klasa testów naprawiała gdzie indziej -
+        reguła B nasłuchująca na "gniazdko_salon = włączone" nie odpalała się
+        od razu po włączeniu przez regułę A."""
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [
+                {"source": "tuya_state", "source_device": "czujnik_drzwi", "trigger_value": "włączone",
+                 "target_device": "gniazdko_salon", "duration_seconds": 600},
+                {"source": "tuya_state", "source_device": "gniazdko_salon", "trigger_value": "włączone",
+                 "target_device": "inne_urzadzenie", "duration_seconds": 5},
+            ],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+
+        await engine.handle_device_state("tuya_state", "czujnik_drzwi", "włączone")
+        # Dwa poziomy asyncio.create_task (reguła A -> jej własny "on_for" ->
+        # dopiero W TRAKCIE jego wykonania odpala się reguła B, tworząc SWOJE
+        # własne "on_for") - jedno asyncio.sleep(0) puszcza tylko pierwszy poziom.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+        assert any(c[0] == "on_for" and c[1] == "inne_urzadzenie" for c in fake_tuya.calls)
+        assert engine.history.get_status_value("tuya:gniazdko_salon") == "włączone"
+
+    async def test_scene_tuya_on_for_duration_immediately_fires_rule_trigger(self, engine, fake_tuya):
+        engine.config.store.set("automations", {
+            "scenes": [{"name": "impuls", "actions": [
+                {"type": "tuya_on_for_duration", "device": "gniazdko_salon", "duration_seconds": 600},
+            ]}],
+            "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [
+                {"source": "tuya_state", "source_device": "gniazdko_salon", "trigger_value": "włączone",
+                 "target_device": "inne_urzadzenie", "duration_seconds": 5},
+            ],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+
+        await engine.scenes.run("impuls")
+        # Scena tworzy własny task dla "tuya_on_for_duration", a dopiero W
+        # TRAKCIE jego wykonania odpala się reguła obserwująca to urządzenie,
+        # tworząc SWÓJ WŁASNY task - stąd dwa asyncio.sleep(0).
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert any(c[0] == "on_for" and c[1] == "inne_urzadzenie" for c in fake_tuya.calls)
+        assert engine.history.get_status_value("tuya:gniazdko_salon") == "włączone"
+
 
 class TestMotionRuleMultiSourceAndAction:
 

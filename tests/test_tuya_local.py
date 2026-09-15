@@ -137,6 +137,34 @@ async def test_turn_on_for_duration_still_turns_off_after_failed_turn_on(control
     assert fake_device.turned_on is False
 
 
+async def test_turn_on_for_duration_calls_on_state_change_after_each_transition(controller):
+    fake_device = FlakyDevice(fail_times=0)
+    controller._devices["gniazdko_salon"] = fake_device
+    calls = []
+
+    async def on_state_change(is_on):
+        calls.append(is_on)
+
+    await controller.turn_on_for_duration(
+        "gniazdko_salon", duration_seconds=0.01, on_state_change=on_state_change,
+    )
+    assert calls == [True, False]
+
+
+async def test_turn_on_for_duration_skips_on_state_change_when_turn_on_fails(controller):
+    fake_device = FlakyDevice(fail_times=10)
+    controller._devices["gniazdko_salon"] = fake_device
+    calls = []
+
+    async def on_state_change(is_on):
+        calls.append(is_on)
+
+    await controller.turn_on_for_duration(
+        "gniazdko_salon", duration_seconds=0.01, on_state_change=on_state_change,
+    )
+    assert calls == [False]
+
+
 async def test_get_all_statuses_marks_unreachable_devices_as_none(controller):
     working = FlakyDevice(fail_times=0)
     broken = FlakyDevice(fail_times=999)
