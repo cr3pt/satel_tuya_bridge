@@ -60,6 +60,12 @@
        samo .canvas-col (flex: 1 w .editor-layout + width: 100% na mobile). */
     flex: none; overflow: auto; border: 1px solid var(--border); border-radius: 10px;
     background: #101216; position: relative; height: 560px; min-width: 0; width: 100%;
+    /* pan-x pan-y (nie "auto", nie "none") - pozwala przeglądarce nadal
+       przewijać płótno jednym palcem (natywny scroll .canvas-wrap), ale
+       wyłącza natywne przybliżanie/oddalanie CAŁEJ STRONY dwoma palcami -
+       dzięki temu gest szczypania trafia do JS (patrz pinch-zoom niżej)
+       zamiast do przeglądarki. */
+    touch-action: pan-x pan-y;
   }
   .canvas { position: relative; width: 2200px; height: 1400px; }
   svg.wires { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
@@ -666,6 +672,40 @@ document.getElementById('zoomInBtn').addEventListener('click', () => setZoom(can
 document.getElementById('zoomOutBtn').addEventListener('click', () => setZoom(canvasZoom - 0.1));
 document.getElementById('zoomResetBtn').addEventListener('click', () => setZoom(1));
 document.getElementById('zoomFitBtn').addEventListener('click', fitZoomToContent);
+
+// Powiększanie/pomniejszanie "szczypaniem" dwoma palcami (typowy gest na
+// telefonie) - śledzimy wszystkie aktywne wskaźniki nad .canvas-wrap (nie
+// tylko te, które zaczęły się na węźle) i przy DWÓCH aktywnych liczymy
+// zmianę odległości między nimi względem chwili złapania drugiego palca.
+// `touch-action: pan-x pan-y` na .canvas-wrap (patrz CSS) wyłącza natywne
+// przybliżanie CAŁEJ STRONY, więc te zdarzenia w ogóle do nas docierają.
+const canvasWrapEl = document.getElementById('canvasWrap');
+const pinchPointers = new Map();
+let pinchStart = null;
+canvasWrapEl.addEventListener('pointerdown', (e) => {
+  pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinchPointers.size === 2) {
+    dragState = null; // drugi palec - to gest szczypania, nie przeciąganie węzła
+    const [a, b] = Array.from(pinchPointers.values());
+    pinchStart = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: canvasZoom };
+  }
+});
+canvasWrapEl.addEventListener('pointermove', (e) => {
+  if (!pinchPointers.has(e.pointerId)) return;
+  pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinchPointers.size === 2 && pinchStart && pinchStart.dist > 0) {
+    const [a, b] = Array.from(pinchPointers.values());
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    setZoom(pinchStart.zoom * (dist / pinchStart.dist));
+  }
+});
+function endPinchPointer(e) {
+  pinchPointers.delete(e.pointerId);
+  if (pinchPointers.size < 2) pinchStart = null;
+}
+canvasWrapEl.addEventListener('pointerup', endPinchPointer);
+canvasWrapEl.addEventListener('pointercancel', endPinchPointer);
+canvasWrapEl.addEventListener('pointerleave', endPinchPointer);
 
 function zoneOptions(selected) {
   const zones = context.satel_zones || [];
