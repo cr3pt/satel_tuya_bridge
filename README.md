@@ -2812,7 +2812,11 @@ reguły ruchu i sceny działają bez zmian i nie wymagają migracji.
 Edytor działa też na telefonie - poniżej szerokości ok. 820px układ
 przechodzi z trzech kolumn (paleta/płótno/panel boczny) na jedną, pełną
 szerokość, a przeciąganie węzłów po płótnie obsługuje dotyk (Pointer
-Events), nie tylko mysz.
+Events), nie tylko mysz. Płótno ma stały rozmiar 2200x1400px niezależnie od
+ekranu, więc nad nim jest pasek powiększenia (➖/➕/procent, "🔍 Dopasuj
+widok", "100%") - na telefonie przy otwarciu flow powiększenie dobiera się
+automatycznie tak, żeby zmieścić wszystkie węzły na raz, bez przewijania w
+obu osiach.
 
 ### 14 typów węzłów
 

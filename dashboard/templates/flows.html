@@ -45,9 +45,21 @@
   .editor-layout { display: flex; gap: 14px; align-items: flex-start; }
   .palette { width: 150px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
   .palette button { text-align: left; }
+  /* .canvas-col grupuje pasek zoomu + canvas-wrap w jedną kolumnę - dzięki
+     temu ten pasek nie liczy się jako osobna (czwarta) kolumna obok
+     palety/canvasu/panelu bocznego w .editor-layout. */
+  .canvas-col { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .canvas-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .canvas-toolbar button { padding: 4px 9px; font-size: 12px; }
+  .canvas-toolbar .zoom-label { font-size: 12px; color: var(--muted); min-width: 38px; text-align: center; }
   .canvas-wrap {
-    flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: 10px;
-    background: #101216; position: relative; height: 560px; min-width: 0;
+    /* flex: none (nie 1!) - .canvas-wrap jest teraz W ŚRODKU .canvas-col
+       (kolumnowy flex), więc "flex: 1" rządziłoby tu WYSOKOŚCIĄ i zagłuszało
+       jawne "height" (ten sam mechanizm, co opisany niżej dla wersji
+       mobilnej) - rozciąganie na szerokość/wysokość rodzica załatwia już
+       samo .canvas-col (flex: 1 w .editor-layout + width: 100% na mobile). */
+    flex: none; overflow: auto; border: 1px solid var(--border); border-radius: 10px;
+    background: #101216; position: relative; height: 560px; min-width: 0; width: 100%;
   }
   .canvas { position: relative; width: 2200px; height: 1400px; }
   svg.wires { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
@@ -121,6 +133,14 @@
       -webkit-overflow-scrolling: touch; padding-bottom: 4px;
     }
     .palette button { flex: 0 0 auto; min-width: 100px; text-align: center; }
+    /* .canvas-col - tak samo jak .canvas-wrap niżej - potrzebuje JAWNEGO
+       width: 100%. .editor-layout ma align-items: flex-start (nie stretch),
+       więc bez tego .canvas-col kurczyłby się do naturalnej szerokości
+       swojej zawartości - czyli do 2200px canvasu w środku (mimo że sam
+       canvas-wrap ma "width: 100%" - to i tak 100% RODZICA, który wtedy
+       też jest wyliczany na podstawie zawartości) - i to canvas-col, nie
+       canvas-wrap, byłby źródłem przewijania całej strony w poziomie. */
+    .canvas-col { width: 100%; }
     /* 65vh zamiast poprzednich sztywnych 380px - na typowym telefonie w
        pionie to i tak spory kawałek ekranu, a canvas ma pełną szerokość, więc
        przy złożonym flow z wieloma węzłami dużo więcej widać bez przewijania
@@ -229,9 +249,18 @@
       <button type="button" class="secondary" data-node-type="tuya_dp">🔧 Ustaw pole Tuya</button>
       <button type="button" class="secondary" data-node-type="stop">🛑 Zakończ</button>
     </div>
-    <div class="canvas-wrap" id="canvasWrap">
-      <div class="canvas" id="canvas">
-        <svg class="wires" id="wiresLayer"></svg>
+    <div class="canvas-col">
+      <div class="canvas-toolbar">
+        <button type="button" class="secondary" id="zoomOutBtn" title="Pomniejsz">➖</button>
+        <span class="zoom-label" id="zoomLabel">100%</span>
+        <button type="button" class="secondary" id="zoomInBtn" title="Powiększ">➕</button>
+        <button type="button" class="secondary" id="zoomFitBtn">🔍 Dopasuj widok</button>
+        <button type="button" class="secondary" id="zoomResetBtn">100%</button>
+      </div>
+      <div class="canvas-wrap" id="canvasWrap">
+        <div class="canvas" id="canvas">
+          <svg class="wires" id="wiresLayer"></svg>
+        </div>
       </div>
     </div>
     <div class="side-panel" id="sidePanel">
@@ -422,6 +451,10 @@ function selectFlow(i) {
   document.getElementById('flowEnabledInput').checked = flow.enabled !== false;
   renderCanvas();
   renderSidePanel();
+  // Na telefonie automatycznie dopasuj powiększenie do całego flow przy
+  // otwarciu - na desktopie zostaw 100%, tam canvas jest i tak dużo większy
+  // względem typowej liczby węzłów.
+  if (window.innerWidth <= 820) fitZoomToContent(); else setZoom(1);
 }
 
 document.getElementById('newFlowBtn').addEventListener('click', () => {
@@ -589,14 +622,50 @@ function startDrag(e, node) {
 }
 document.addEventListener('pointermove', (e) => {
   if (!dragState) return;
-  const dx = e.clientX - dragState.startX;
-  const dy = e.clientY - dragState.startY;
+  // Dzielenie przez canvasZoom - clientX/clientY są w pikselach EKRANU, a
+  // node.x/node.y w LOKALNYCH pikselach .canvas (przed powiększeniem/
+  // pomniejszeniem przez CSS "zoom"), więc bez tego przeciąganie przy
+  // zoomie innym niż 100% przesuwałoby węzeł o złą odległość względem
+  // ruchu palca/kursora.
+  const dx = (e.clientX - dragState.startX) / canvasZoom;
+  const dy = (e.clientY - dragState.startY) / canvasZoom;
   dragState.node.x = Math.max(0, dragState.origX + dx);
   dragState.node.y = Math.max(0, dragState.origY + dy);
   renderCanvas();
 });
 document.addEventListener('pointerup', () => { dragState = null; });
 document.addEventListener('pointercancel', () => { dragState = null; });
+
+// Powiększenie widoku canvasu (przydatne zwłaszcza na telefonie, gdzie graf
+// o wielu węzłach rozstawionych szeroko na płótnie 2200x1400 nie mieści się
+// w wąskim viewport bez ciągłego przewijania w obu osiach). CSS "zoom"
+// (nie "transform: scale") - w odróżnieniu od transform, realnie zmienia
+// rozmiar layoutu elementu, więc .canvas-wrap poprawnie liczy mniejszy
+// (przeskalowany) obszar przewijania zamiast pustego marginesu dookoła
+// pomniejszonej treści.
+let canvasZoom = 1;
+const CANVAS_MIN_ZOOM = 0.2;
+const CANVAS_MAX_ZOOM = 1.5;
+function applyZoom() {
+  document.getElementById('canvas').style.zoom = canvasZoom;
+  document.getElementById('zoomLabel').textContent = Math.round(canvasZoom * 100) + '%';
+}
+function setZoom(z) {
+  canvasZoom = Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM, z));
+  applyZoom();
+}
+function fitZoomToContent() {
+  const flow = flows[activeFlowIndex];
+  const wrap = document.getElementById('canvasWrap');
+  if (!flow || !flow.nodes.length || !wrap) { setZoom(1); return; }
+  const maxX = Math.max(...flow.nodes.map(n => (n.x || 0) + 180));
+  const maxY = Math.max(...flow.nodes.map(n => (n.y || 0) + 90));
+  setZoom(Math.min(wrap.clientWidth / maxX, wrap.clientHeight / maxY, 1));
+}
+document.getElementById('zoomInBtn').addEventListener('click', () => setZoom(canvasZoom + 0.1));
+document.getElementById('zoomOutBtn').addEventListener('click', () => setZoom(canvasZoom - 0.1));
+document.getElementById('zoomResetBtn').addEventListener('click', () => setZoom(1));
+document.getElementById('zoomFitBtn').addEventListener('click', fitZoomToContent);
 
 function zoneOptions(selected) {
   const zones = context.satel_zones || [];
