@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 );
 """
 
-KNOWN_DOCUMENTS = ["config", "sensors", "automations", "satel_fields", "tuya_devices"]
+KNOWN_DOCUMENTS = ["config", "sensors", "automations", "satel_fields", "tuya_devices", "home_map"]
 
 
 @dataclass
