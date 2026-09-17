@@ -868,6 +868,34 @@ async def api_config_flows_post():
     return jsonify({"saved": {"flows": len(built_flows)}, "message": _RELOAD_MESSAGE})
 
 
+@app.route("/map")
+async def home_map_page():
+    return await render_template("map.html")
+
+
+@app.route("/api/config/home_map", methods=["GET"])
+async def api_config_home_map_get():
+    return jsonify(config_store.get("home_map", {"rooms": [], "icons": []}))
+
+
+@app.route("/api/config/home_map", methods=["POST"])
+@require_auth()
+async def api_config_home_map_post():
+    # Mapa domu to czysto wizualny stan panelu (rozmieszczenie pomieszczeń/ikon
+    # na płótnie) - w odróżnieniu od flows/reguł ruchu NIE trafia do
+    # BridgeConfig/silnika reguł, więc zapis to zwykłe config_store.set bez
+    # przeładowania bridge'a.
+    payload = await request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+    rooms = payload.get("rooms")
+    icons = payload.get("icons")
+    if not isinstance(rooms, list) or not isinstance(icons, list):
+        return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
+    config_store.set("home_map", {"rooms": rooms, "icons": icons})
+    return jsonify({"message": "Zapisano mapę domu"})
+
+
 @app.route("/api/flows/import-from-motion-rules", methods=["POST"])
 @require_auth()
 async def api_flows_import_from_motion_rules():

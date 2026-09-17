@@ -3128,6 +3128,63 @@ wcześniej trafiało WYŁĄCZNIE do logu Pythona/powiadomienia push, teraz
 widoczne też w Historii zdarzeń). Źródło zdarzenia to zawsze `flow:<nazwa
 flow>`, więc łatwo przefiltrować historię jednego konkretnego flow.
 
+## Mapa domu (beta) - interaktywny plan pomieszczeń
+
+Zakładka **🏠 Mapa** (`/map`) to wizualny plan domu: rysuje się na nim
+pomieszczenia (prostokąty i dowolne wieloboki) i rozmieszcza ikony
+(emoji) reprezentujące urządzenia/czujki, mapując każdą ikonę na
+istniejący status widoczny na panelu głównym (`/api/status`) - dokładnie
+te same wpisy, z których korzystają "Warunek stanu" we Flow i reguły
+ruchu. Ikona aktywnego urządzenia (włączone/naruszone/otwarte/uzbrojona)
+jest kolorowa, nieaktywnego (w tym "niedostępne"/"poza siecią") -
+wyszarzona (CSS `filter: grayscale`) - stan odświeża się co 2s, bez
+przeładowania strony.
+
+**Status: beta**, jak Flow - to czysto wizualny stan panelu (zapisywany
+jako osobny dokument `home_map` w bazie panelu, dokument `rooms`+`icons`),
+niepowiązany z `BridgeConfig`/silnikiem reguł - usunięcie/przebudowanie
+mapy nie wpływa na żadną automatyzację.
+
+### Trzy tryby pracy
+
+- **👁 Podgląd** (domyślny) - klik w ikonę pokazuje w panelu bocznym jej
+  aktualny stan (urządzenie, kategoria, wartość) - bez możliwości
+  przypadkowego sterowania.
+- **🎛 Sterowanie** - klik w ikonę zamapowaną na urządzenie Tuya OD RAZU
+  je przełącza (włącz/wyłącz) - dokładnie tak samo, jak przycisk "⏻
+  Włącz/Wyłącz" na panelu głównym (`/api/tuya/<nazwa>/on|off` +
+  odpytywanie `/api/commands/<id>`). Inne kategorie (Satel, HomeWhiz, LG
+  ThinQ, kocioł) na razie tylko pokazują stan w tym trybie - nie mają
+  jeszcze odpowiednika generycznego przełącznika w panelu.
+- **✏️ Edycja** - rysowanie pomieszczeń (▭ Prostokąt - dwa kliknięcia na
+  przeciwległych rogach; ⬠ Wielobok - dowolna liczba kliknięć + "✓
+  Zakończ", min. 3 punkty), dodawanie ikon (📍 - klik na płótnie stawia
+  ikonę), przeciąganie ich w nowe miejsce, oraz panel boczny do ustawienia
+  emoji/etykiety/mapowania na urządzenie i usuwania pomieszczenia/ikony.
+
+**Pamiętaj o przycisku "💾 Zapisz mapę"** - podobnie jak we Flow, zmiany
+w edytorze nie zapisują się same (dopiero `POST /api/config/home_map`).
+
+### Powiększanie i przewijanie płótna
+
+Płótno (1800x1100px) ma dokładnie ten sam mechanizm powiększania co
+edytor Flow (patrz wyżej): pasek ➖/➕/procent/"Dopasuj widok"/"100%",
+CSS `zoom` (nie `transform`) i szczypanie dwoma palcami na telefonie.
+
+### Powiązane reguły ruchu i flow
+
+Klik w pomieszczenie (w KAŻDYM z trzech trybów, nie tylko w Edycji)
+pokazuje w panelu bocznym listę urządzeń zamapowanych na ikony w tym
+pomieszczeniu, a dla każdego z nich - nazwy reguł ruchu i flow, które go
+używają (jako źródło ALBO cel akcji, w tym warunki zagnieżdżone w
+"Warunek złożony"). Dodatkowo pod nazwą pomieszczenia na samym płótnie
+od razu widać liczbę powiązań (np. "🎬2 · 🔀1"), bez klikania - dzięki
+temu widać na pierwszy rzut oka, które pomieszczenia mają jakąś
+automatyzację. Dopasowanie urządzenia do reguły/flow działa po nazwie
+urządzenia (Tuya/HomeWhiz/LG ThinQ) albo numerze strefy (Satel) -
+nie wymaga żadnej dodatkowej konfiguracji poza samym zamapowaniem ikony
+na urządzenie w trybie Edycji.
+
 ## Zmywarki/AGD HomeWhiz (BEQ/Arcelik)
 
 Bridge łączy się BEZPOŚREDNIO z chmurą HomeWhiz (Arcelik IoT/AWS) tymi

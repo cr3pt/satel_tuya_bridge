@@ -1606,3 +1606,69 @@ class TestSetupOnlyPathsPublicOnlyBeforeConfiguration:
         monkeypatch.setattr(app_module, "is_configured", lambda: True)
         for path in app_module._SETUP_ONLY_PUBLIC_PATHS:
             assert app_module._is_public_path(path) is False
+
+
+class TestHomeMap:
+    """Mapa domu (/map) - czysto wizualny stan panelu (rozmieszczenie
+    pomieszczeń/ikon na płótnie), zapisywany jako osobny dokument
+    config_store ("home_map"), niezależnie od BridgeConfig/silnika reguł -
+    patrz api_config_home_map_get/post w dashboard/app.py."""
+
+    async def test_map_page_requires_login(self, client):
+        resp = (await client.get("/map", follow_redirects=False))
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    async def test_map_page_loads_when_authenticated(self, client):
+        await client.post("/api/login", json={"username": "admin", "password": "test_haslo_123"})
+        resp = (await client.get("/map"))
+        assert resp.status_code == 200
+
+    async def test_get_defaults_to_empty_structure_when_never_saved(self, client):
+        resp = (await client.get("/api/config/home_map", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert (await resp.get_json()) == {"rooms": [], "icons": []}
+
+    async def test_post_requires_auth(self, client):
+        resp = (await client.post("/api/config/home_map", json={"rooms": [], "icons": []}))
+        assert resp.status_code == 401
+
+    async def test_post_rejects_non_dict_payload(self, client):
+        resp = (await client.post(
+            "/api/config/home_map", json=["not", "a", "dict"], headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_post_rejects_missing_rooms_or_icons(self, client):
+        resp = (await client.post(
+            "/api/config/home_map", json={"rooms": []}, headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+        data = await resp.get_json()
+        assert "error" in data
+
+    async def test_post_saves_and_get_reflects_it(self, client):
+        payload = {
+            "rooms": [{"id": "room_1", "type": "rect", "points": [[0, 0], [100, 0], [100, 80], [0, 80]],
+                       "label": "Salon", "color": "#4d8dfd"}],
+            "icons": [{"id": "icon_1", "x": 40, "y": 30, "emoji": "💡", "label": "Lampa salon",
+                       "status_key": "tuya:gniazdko", "status_category": "tuya", "status_device_label": "gniazdko"}],
+        }
+        post_resp = (await client.post(
+            "/api/config/home_map", json=payload, headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert post_resp.status_code == 200
+        assert "message" in (await post_resp.get_json())
+
+        get_resp = (await client.get("/api/config/home_map", headers=_basic_auth_header("test_haslo_123")))
+        assert (await get_resp.get_json()) == payload
+
+    async def test_saving_map_does_not_touch_bridge_config(self, client, monkeypatch):
+        # W odróżnieniu od /api/config/flows, zapis mapy NIE powinien
+        # przeładowywać BridgeConfig/silnika - to czysto wizualny stan panelu.
+        called = []
+        monkeypatch.setattr("dashboard.app._enqueue_bridge_reload", lambda: called.append(True))
+        await client.post(
+            "/api/config/home_map", json={"rooms": [], "icons": []}, headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert called == []

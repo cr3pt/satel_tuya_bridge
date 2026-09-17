@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mapa domu - Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<style>
+  :root {
+    --bg: #14161a; --card: #1d2026; --border: #2c3038;
+    --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
+    --danger: #e5484d; --ok: #3dd68c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 20px; width: 95%; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 18px; line-height: 1.5; }
+  .empty-hint { color: var(--muted); font-size: 12.5px; }
+  .msg-box { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-bottom: 14px; display: none; }
+  .msg-box.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  .msg-box.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
+  button.secondary.active { border-color: var(--accent); color: var(--text); background: #2a3550; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  select, input[type=text], input[type=number] {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px;
+  }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .mode-switch { display: flex; gap: 6px; }
+  .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field select, .field input { width: 100%; }
+
+  .editor-layout { display: flex; gap: 14px; align-items: flex-start; }
+  .palette { width: 170px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
+  .palette button { text-align: left; }
+  .draw-status {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px; font-size: 12px; color: var(--muted); display: none;
+  }
+  .draw-status.visible { display: block; }
+  .draw-status .row { display: flex; gap: 6px; margin-top: 6px; }
+  .emoji-palette { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+  .emoji-palette button { font-size: 18px; padding: 4px 7px; }
+  .color-palette { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .color-swatch {
+    width: 26px; height: 26px; border-radius: 6px; cursor: pointer; border: 2px solid transparent;
+    padding: 0;
+  }
+  .color-swatch.selected { border-color: var(--text); }
+
+  .canvas-col { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .canvas-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .canvas-toolbar button { padding: 4px 9px; font-size: 12px; }
+  .canvas-toolbar .zoom-label { font-size: 12px; color: var(--muted); min-width: 38px; text-align: center; }
+  .canvas-wrap {
+    flex: none; overflow: auto; border: 1px solid var(--border); border-radius: 10px;
+    background: #101216; position: relative; height: 560px; min-width: 0; width: 100%;
+    touch-action: pan-x pan-y;
+  }
+  .canvas { position: relative; width: 1800px; height: 1100px; }
+  svg.rooms-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  svg.rooms-layer polygon { cursor: default; }
+  svg.rooms-layer polygon.selectable { cursor: pointer; }
+  svg.rooms-layer text { fill: var(--text); font-size: 13px; pointer-events: none; user-select: none; }
+  svg.rooms-layer text.room-summary { fill: var(--muted); font-size: 11px; }
+  svg.rooms-layer .draw-preview-point { fill: var(--accent); }
+
+  .map-icon {
+    position: absolute; width: 56px; margin-left: -28px; margin-top: -24px;
+    text-align: center; cursor: pointer; user-select: none; touch-action: none;
+  }
+  .map-icon .emoji { font-size: 26px; line-height: 1; filter: none; transition: filter .15s; }
+  .map-icon.inactive .emoji { filter: grayscale(1) opacity(0.5); }
+  .map-icon .icon-label {
+    font-size: 10px; color: var(--text); background: rgba(20,22,26,.75); border-radius: 4px;
+    padding: 1px 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 70px; margin: 1px auto 0; line-height: 1.3;
+  }
+  .map-icon.selected .emoji { filter: drop-shadow(0 0 4px var(--accent)); }
+  .map-icon.unmapped .icon-label { color: var(--muted); font-style: italic; }
+
+  .side-panel {
+    width: 340px; flex-shrink: 0; background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px; max-height: 560px; overflow-y: auto;
+  }
+  .status-row { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+  .status-row .k { color: var(--muted); }
+  .row-remove {
+    background: transparent; color: var(--danger); border: none; font-size: 13px;
+    cursor: pointer; padding: 4px 0;
+  }
+
+  @media (max-width: 820px) {
+    body { width: 100%; padding: 12px; }
+    .editor-layout { flex-direction: column; }
+    .palette {
+      width: 100%; flex-direction: row; flex-wrap: nowrap; overflow-x: auto;
+      -webkit-overflow-scrolling: touch; padding-bottom: 4px;
+    }
+    .palette button { flex: 0 0 auto; min-width: 110px; text-align: center; }
+    .draw-status { width: 100%; }
+    .canvas-col { width: 100%; }
+    .canvas-wrap { width: 100%; height: 65vh; flex: none; }
+    .side-panel { width: 100%; max-height: none; }
+  }
+</style>
+</head>
+<body>
+{% include "_nav.html" %}
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🏠 Mapa domu</h1>
+<div class="hint">
+  Interaktywny plan domu - rysuj pomieszczenia (prostokąty i dowolne wieloboki)
+  i rozmieszczaj na nich ikony urządzeń, mapując każdą na istniejące
+  urządzenie/czujkę. Ikona zapalonej żarówki/aktywnej czujki jest kolorowa,
+  nieaktywnej - wyszarzona. Tryb <strong>👁 Podgląd</strong> - klik w ikonę
+  pokazuje jej stan. Tryb <strong>🎛 Sterowanie</strong> - klik w ikonę
+  mapowaną na urządzenie Tuya od razu je przełącza (inne kategorie na razie
+  tylko pokazują stan - patrz README). Tryb <strong>✏️ Edycja</strong> -
+  rysowanie pomieszczeń, dodawanie/przenoszenie/usuwanie ikon i mapowanie ich
+  na urządzenia. Klik w pomieszczenie (w każdym trybie) pokazuje, jakie
+  urządzenia w nim są i jakie reguły ruchu/flow ich używają - liczba pod
+  nazwą pomieszczenia (🎬 reguły · 🔀 flow) widać od razu, bez klikania.
+  Pamiętaj o "💾 Zapisz mapę" - zmiany nie zapisują się same.
+</div>
+<div class="msg-box" id="msg"></div>
+
+<div class="toolbar">
+  <div class="mode-switch">
+    <button type="button" class="secondary active" data-mode="view" id="modeViewBtn">👁 Podgląd</button>
+    <button type="button" class="secondary" data-mode="control" id="modeControlBtn">🎛 Sterowanie</button>
+    <button type="button" class="secondary" data-mode="edit" id="modeEditBtn">✏️ Edycja</button>
+  </div>
+  <button type="button" id="saveMapBtn">💾 Zapisz mapę</button>
+</div>
+
+<div class="editor-layout">
+  <div class="palette" id="palette" style="display:none;">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:2px;">Dodaj kształt</div>
+    <button type="button" class="secondary" id="toolRectBtn">▭ Prostokąt</button>
+    <button type="button" class="secondary" id="toolPolygonBtn">⬠ Wielobok</button>
+    <div style="font-size:12px;color:var(--muted);margin:6px 0 2px;">Dodaj urządzenie</div>
+    <button type="button" class="secondary" id="toolIconBtn">📍 Ikona</button>
+    <div class="draw-status" id="drawStatus">
+      <div id="drawStatusText"></div>
+      <div class="row">
+        <button type="button" class="secondary" id="drawFinishBtn" style="display:none;">✓ Zakończ</button>
+        <button type="button" class="secondary" id="drawCancelBtn">✕ Anuluj</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="canvas-col">
+    <div class="canvas-toolbar">
+      <button type="button" class="secondary" id="zoomOutBtn" title="Pomniejsz">➖</button>
+      <span class="zoom-label" id="zoomLabel">100%</span>
+      <button type="button" class="secondary" id="zoomInBtn" title="Powiększ">➕</button>
+      <button type="button" class="secondary" id="zoomFitBtn">🔍 Dopasuj widok</button>
+      <button type="button" class="secondary" id="zoomResetBtn">100%</button>
+    </div>
+    <div class="canvas-wrap" id="canvasWrap">
+      <div class="canvas" id="canvas">
+        <svg class="rooms-layer" id="roomsLayer"></svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="side-panel" id="sidePanel">
+    <div class="empty-hint" id="sidePanelEmpty">
+      Kliknij ikonę urządzenia, żeby zobaczyć jej stan (tryb Podgląd/Sterowanie),
+      albo narysuj/zaznacz pomieszczenie lub ikonę w trybie Edycji.
+    </div>
+    <div id="sidePanelContent" style="display:none;"></div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function showMsg(ok, text) {
+  const el = document.getElementById('msg');
+  el.className = 'msg-box ' + (ok ? 'ok' : 'error');
+  el.style.display = '';
+  el.textContent = (ok ? '✅ ' : '❌ ') + text;
+}
+async function refreshAuthNav() {
+  const link = document.getElementById('authNavLink');
+  try {
+    const status = await (await fetch('/api/auth/status')).json();
+    if (status.logged_in) {
+      link.textContent = '🔓 Wyloguj';
+      link.href = '#';
+      link.onclick = async (e) => {
+        e.preventDefault();
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.reload();
+      };
+    } else {
+      link.textContent = '🔒 Zaloguj';
+      link.href = '/login?next=' + encodeURIComponent(location.pathname);
+      link.onclick = null;
+    }
+  } catch (e) { /* nieistotne - link zostaje w stanie domyślnym */ }
+}
+async function authorizedFetch(url, options = {}) {
+  const resp = await fetch(url, options);
+  if (resp.status === 401) {
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+    throw new Error('Wymagane zalogowanie - przekierowuję na /login...');
+  }
+  return resp;
+}
+
+const EMOJI_PALETTE = ['💡','🔌','🔘','🚪','🪟','🏃','🌡️','💧','🚨','🌀','❄️','🔥','🚗','🔒','📷','🧺','🍽','⚡'];
+const ROOM_COLORS = ['#4d8dfd','#3dd68c','#e5484d','#f5b83d','#a855f7','#14b8a6','#8b93a1'];
+// Wartości statusu traktowane jako "aktywne" (kolorowa ikona) - reszta (w tym
+// "niedostępne"/"poza siecią"/nieznane) jest wyszarzana. Nie próbujemy
+// rozróżniać znaczenia per kategoria (włączone światło vs naruszona czujka) -
+// wystarczy jeden uniwersalny zestaw "coś się dzieje/jest aktywne".
+const ACTIVE_VALUES = new Set(['włączone', 'naruszone', 'otwarte', 'tak', 'uzbrojona']);
+
+let mapData = { rooms: [], icons: [] };
+let context = { status_keys: [] };
+let automationsData = { reguły_ruchu: [] };
+let flowsList = [];
+let mode = 'view'; // view | control | edit
+let activeTool = null; // null | 'rect' | 'polygon' | 'icon'
+let drawPoints = [];
+let selectedRoomId = null;
+let selectedIconId = null;
+let statusByKey = {};
+let idCounter = 1;
+function nextId(prefix) { return `${prefix}_${Date.now().toString(36)}_${idCounter++}`; }
+
+async function loadContext() {
+  context = await (await fetch('/api/config/automation-context')).json();
+}
+
+async function loadAutomationsAndFlows() {
+  automationsData = await (await fetch('/api/config/automations')).json();
+  const flowsResp = await (await fetch('/api/config/flows')).json();
+  flowsList = flowsResp.flows || [];
+}
+
+// ---- Dopasowanie urządzenia (ikony) do reguł ruchu/flow, które go używają ----
+// Celowo prosty/pragmatyczny sposób zamiast pełnego rozbioru struktury
+// reguły/węzła: reguły ruchu i węzły Flow trzymają nazwę urządzenia w wielu
+// różnych polach zależnie od typu (source_device/target_device/actions[].
+// target_device/warunki zagnieżdżone w condition_group/klucz statusu "state"
+// itd.) - przeszukanie zserializowanego JSON-a pod kątem DOKŁADNIE
+// zacytowanej wartości (JSON.stringify) w praktyce trafia we wszystkie te
+// miejsca naraz, bez osobnej ścieżki na każdy kształt reguły/węzła.
+function deviceReferenceStrings(icon) {
+  const refs = [];
+  if (icon.status_device_label) refs.push(JSON.stringify(icon.status_device_label));
+  if (icon.status_key) refs.push(JSON.stringify(icon.status_key));
+  if (icon.status_category === 'satel_input' && icon.status_key) {
+    const m = icon.status_key.match(/^satel_input:(\d+)$/);
+    if (m) refs.push(`"zone_number":${m[1]}`, `"zone_number": ${m[1]}`, `"zone_number":"${m[1]}"`);
+  }
+  return refs;
+}
+function referencesIcon(obj, refs) {
+  if (!refs.length) return false;
+  const json = JSON.stringify(obj);
+  return refs.some(r => json.includes(r));
+}
+function findLinkedAutomations(icon) {
+  const refs = deviceReferenceStrings(icon);
+  const rules = (automationsData.reguły_ruchu || [])
+    .filter(r => referencesIcon(r, refs))
+    .map(r => r.name || '(reguła bez nazwy)');
+  const flows = flowsList
+    .filter(f => (f.nodes || []).some(n => referencesIcon(n.config || {}, refs)))
+    .map(f => f.name || '(flow bez nazwy)');
+  return { rules, flows };
+}
+function pointInPolygon(x, y, points) {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const xi = points[i][0], yi = points[i][1];
+    const xj = points[j][0], yj = points[j][1];
+    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+function roomLinkedSummary(room) {
+  const iconsIn = mapData.icons.filter(i => i.status_key && pointInPolygon(i.x, i.y, room.points));
+  const ruleNames = new Set();
+  const flowNames = new Set();
+  iconsIn.forEach(icon => {
+    const linked = findLinkedAutomations(icon);
+    linked.rules.forEach(r => ruleNames.add(r));
+    linked.flows.forEach(f => flowNames.add(f));
+  });
+  return { iconsIn, ruleCount: ruleNames.size, flowCount: flowNames.size };
+}
+
+async function loadMap() {
+  mapData = await (await fetch('/api/config/home_map')).json();
+  mapData.rooms = mapData.rooms || [];
+  mapData.icons = mapData.icons || [];
+  renderCanvas();
+}
+
+async function saveMap() {
+  const resp = await authorizedFetch('/api/config/home_map', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rooms: mapData.rooms, icons: mapData.icons }),
+  });
+  const data = await resp.json();
+  if (resp.ok) showMsg(true, data.message || 'Zapisano');
+  else showMsg(false, data.error || 'Błąd zapisu');
+}
+document.getElementById('saveMapBtn').addEventListener('click', saveMap);
+
+// ---- Tryby ----
+function setMode(m) {
+  mode = m;
+  ['view', 'control', 'edit'].forEach(k => {
+    document.getElementById(`mode${k[0].toUpperCase()}${k.slice(1)}Btn`).classList.toggle('active', k === m);
+  });
+  document.getElementById('palette').style.display = m === 'edit' ? '' : 'none';
+  if (m !== 'edit') { activeTool = null; drawPoints = []; updateDrawStatus(); }
+  clearSelection();
+  renderCanvas();
+}
+document.getElementById('modeViewBtn').addEventListener('click', () => setMode('view'));
+document.getElementById('modeControlBtn').addEventListener('click', () => setMode('control'));
+document.getElementById('modeEditBtn').addEventListener('click', () => setMode('edit'));
+
+// ---- Panel boczny ----
+function clearSelection() {
+  selectedRoomId = null;
+  selectedIconId = null;
+  document.getElementById('sidePanelEmpty').style.display = '';
+  document.getElementById('sidePanelContent').style.display = 'none';
+  document.getElementById('sidePanelContent').innerHTML = '';
+}
+function showSidePanel(html) {
+  document.getElementById('sidePanelEmpty').style.display = 'none';
+  const c = document.getElementById('sidePanelContent');
+  c.style.display = '';
+  c.innerHTML = html;
+}
+
+function statusKeyOptionsHtml(selected) {
+  const byCategory = {};
+  (context.status_keys || []).forEach(s => {
+    (byCategory[s.category] = byCategory[s.category] || []).push(s);
+  });
+  let html = '<option value="">(brak mapowania)</option>';
+  Object.keys(byCategory).sort().forEach(cat => {
+    html += `<optgroup label="${escapeHtml(cat)}">`;
+    byCategory[cat].forEach(s => {
+      html += `<option value="${escapeHtml(s.key)}" data-label="${escapeHtml(s.label)}" data-category="${escapeHtml(s.category)}" ${s.key === selected ? 'selected' : ''}>${escapeHtml(s.label)}</option>`;
+    });
+    html += '</optgroup>';
+  });
+  return html;
+}
+
+function renderIconEditPanel(icon) {
+  showSidePanel(`
+    <div class="field"><label>Emoji</label>
+      <div class="emoji-palette">
+        ${EMOJI_PALETTE.map(e => `<button type="button" class="secondary emoji-opt" data-emoji="${e}">${e}</button>`).join('')}
+      </div>
+      <input type="text" id="iconEmojiInput" value="${escapeHtml(icon.emoji || '⚡')}" maxlength="4">
+    </div>
+    <div class="field"><label>Etykieta</label>
+      <input type="text" id="iconLabelInput" value="${escapeHtml(icon.label || '')}" placeholder="np. Lampa salon"></div>
+    <div class="field"><label>Mapowane urządzenie/status</label>
+      <select id="iconDeviceSelect">${statusKeyOptionsHtml(icon.status_key)}</select></div>
+    <button type="button" id="iconSaveBtn">✓ Zapisz ikonę</button>
+    <button type="button" class="row-remove" id="iconDeleteBtn">🗑 Usuń ikonę</button>
+  `);
+  document.querySelectorAll('.emoji-opt').forEach(btn => {
+    btn.addEventListener('click', () => { document.getElementById('iconEmojiInput').value = btn.dataset.emoji; });
+  });
+  document.getElementById('iconSaveBtn').addEventListener('click', () => {
+    icon.emoji = (document.getElementById('iconEmojiInput').value || '⚡').trim() || '⚡';
+    icon.label = document.getElementById('iconLabelInput').value.trim();
+    const sel = document.getElementById('iconDeviceSelect');
+    const opt = sel.selectedOptions[0];
+    icon.status_key = sel.value || null;
+    icon.status_category = sel.value ? opt.dataset.category : null;
+    icon.status_device_label = sel.value ? opt.dataset.label : null;
+    renderCanvas();
+    selectIcon(icon.id);
+  });
+  document.getElementById('iconDeleteBtn').addEventListener('click', () => {
+    if (!confirm('Na pewno usunąć tę ikonę z mapy?')) return;
+    mapData.icons = mapData.icons.filter(i => i.id !== icon.id);
+    clearSelection();
+    renderCanvas();
+  });
+}
+
+function renderRoomEditPanel(room) {
+  showSidePanel(`
+    <div class="field"><label>Nazwa pomieszczenia</label>
+      <input type="text" id="roomLabelInput" value="${escapeHtml(room.label || '')}" placeholder="np. Salon"></div>
+    <div class="field"><label>Kolor</label>
+      <div class="color-palette">
+        ${ROOM_COLORS.map(c => `<button type="button" class="color-swatch ${c === room.color ? 'selected' : ''}" data-color="${c}" style="background:${c}"></button>`).join('')}
+      </div>
+    </div>
+    <button type="button" id="roomSaveBtn">✓ Zapisz pomieszczenie</button>
+    <button type="button" class="row-remove" id="roomDeleteBtn">🗑 Usuń pomieszczenie</button>
+  `);
+  let pendingColor = room.color;
+  document.querySelectorAll('.color-swatch').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pendingColor = btn.dataset.color;
+      document.querySelectorAll('.color-swatch').forEach(b => b.classList.toggle('selected', b === btn));
+    });
+  });
+  document.getElementById('roomSaveBtn').addEventListener('click', () => {
+    room.label = document.getElementById('roomLabelInput').value.trim();
+    room.color = pendingColor;
+    renderCanvas();
+    selectRoom(room.id);
+  });
+  document.getElementById('roomDeleteBtn').addEventListener('click', () => {
+    if (!confirm(`Na pewno usunąć pomieszczenie "${room.label || '(bez nazwy)'}"?`)) return;
+    mapData.rooms = mapData.rooms.filter(r => r.id !== room.id);
+    clearSelection();
+    renderCanvas();
+  });
+}
+
+function linkedAutomationsHtml(linked) {
+  if (!linked.rules.length && !linked.flows.length) {
+    return '<div class="empty-hint" style="margin-top:6px;">Brak powiązanych automatyzacji/flow.</div>';
+  }
+  return `
+    ${linked.rules.length ? `<div class="empty-hint" style="margin-top:6px;">🎬 Reguły ruchu: ${linked.rules.map(escapeHtml).join(', ')}</div>` : ''}
+    ${linked.flows.length ? `<div class="empty-hint" style="margin-top:2px;">🔀 Flow: ${linked.flows.map(escapeHtml).join(', ')}</div>` : ''}
+  `;
+}
+
+function renderIconStatusPanel(icon) {
+  const s = icon.status_key ? statusByKey[icon.status_key] : null;
+  let controlHtml = '';
+  if (mode === 'control' && icon.status_category === 'tuya' && icon.status_device_label) {
+    const isOn = s && String(s.value).toLowerCase() === 'włączone';
+    controlHtml = `<button type="button" id="iconToggleBtn" style="margin-top:8px;">⏻ ${isOn ? 'Wyłącz' : 'Włącz'}</button>`;
+  } else if (mode === 'control' && icon.status_key) {
+    controlHtml = '<div class="empty-hint" style="margin-top:8px;">To urządzenie nie obsługuje jeszcze sterowania z mapy (na razie tylko Tuya).</div>';
+  }
+  showSidePanel(`
+    <div style="font-size:28px;">${escapeHtml(icon.emoji || '⚡')}</div>
+    <div style="font-weight:600;margin-bottom:6px;">${escapeHtml(icon.label || '(bez etykiety)')}</div>
+    ${icon.status_key ? `
+      <div class="status-row"><span class="k">Urządzenie</span><span>${escapeHtml(icon.status_device_label || icon.status_key)}</span></div>
+      <div class="status-row"><span class="k">Kategoria</span><span>${escapeHtml(icon.status_category || '?')}</span></div>
+      <div class="status-row"><span class="k">Stan</span><span>${s ? escapeHtml(s.value) : '(brak danych)'}</span></div>
+      ${linkedAutomationsHtml(findLinkedAutomations(icon))}
+    ` : '<div class="empty-hint">Ta ikona nie jest zamapowana na żadne urządzenie (ustaw to w trybie Edycji).</div>'}
+    ${controlHtml}
+  `);
+  if (document.getElementById('iconToggleBtn')) {
+    document.getElementById('iconToggleBtn').addEventListener('click', () => toggleTuyaFromMap(icon));
+  }
+}
+
+function renderRoomLinksPanel(room) {
+  const summary = roomLinkedSummary(room);
+  showSidePanel(`
+    <div style="font-weight:600;margin-bottom:8px;">${escapeHtml(room.label || '(bez nazwy)')}</div>
+    ${summary.iconsIn.length ? summary.iconsIn.map(icon => `
+      <div style="margin-bottom:10px;">
+        <div>${escapeHtml(icon.emoji || '⚡')} <strong>${escapeHtml(icon.label || icon.status_device_label || '?')}</strong></div>
+        ${linkedAutomationsHtml(findLinkedAutomations(icon))}
+      </div>
+    `).join('') : '<div class="empty-hint">Brak zamapowanych urządzeń w tym pomieszczeniu.</div>'}
+  `);
+}
+
+async function toggleTuyaFromMap(icon) {
+  const btn = document.getElementById('iconToggleBtn');
+  const s = statusByKey[icon.status_key];
+  const isOn = s && String(s.value).toLowerCase() === 'włączone';
+  const nextState = isOn ? 'off' : 'on';
+  btn.disabled = true;
+  btn.textContent = '⏳ ...';
+  try {
+    const resp = await authorizedFetch(`/api/tuya/${encodeURIComponent(icon.status_device_label)}/${nextState}`, { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) { showMsg(false, data.error || 'Błąd'); btn.disabled = false; return; }
+    await pollMapCommand(data.command_id, btn);
+  } catch (e) { /* authorizedFetch już przekierował na /login */ }
+}
+async function pollMapCommand(commandId, btn, attempt = 0) {
+  if (attempt > 15) { btn.textContent = '❌ Brak odpowiedzi'; return; }
+  const cmd = await (await fetch(`/api/commands/${commandId}`)).json();
+  if (cmd.status === 'pending') { setTimeout(() => pollMapCommand(commandId, btn, attempt + 1), 500); return; }
+  if (cmd.status === 'done') { btn.textContent = '✅'; await refreshStatuses(); }
+  else { btn.textContent = '❌ ' + (cmd.result?.error || 'Błąd'); }
+  setTimeout(() => { btn.disabled = false; }, 800);
+}
+
+function selectIcon(id) {
+  selectedRoomId = null;
+  selectedIconId = id;
+  const icon = mapData.icons.find(i => i.id === id);
+  if (!icon) { clearSelection(); return; }
+  if (mode === 'edit') renderIconEditPanel(icon);
+  else renderIconStatusPanel(icon);
+  renderCanvas();
+}
+function selectRoom(id) {
+  selectedIconId = null;
+  selectedRoomId = id;
+  const room = mapData.rooms.find(r => r.id === id);
+  if (!room) { clearSelection(); return; }
+  if (mode === 'edit') renderRoomEditPanel(room);
+  else renderRoomLinksPanel(room);
+  renderCanvas();
+}
+
+// ---- Rysowanie kształtów/ikon ----
+function updateDrawStatus() {
+  const el = document.getElementById('drawStatus');
+  const textEl = document.getElementById('drawStatusText');
+  const finishBtn = document.getElementById('drawFinishBtn');
+  ['toolRectBtn', 'toolPolygonBtn', 'toolIconBtn'].forEach(id => document.getElementById(id).classList.remove('active'));
+  if (!activeTool) { el.classList.remove('visible'); return; }
+  el.classList.add('visible');
+  finishBtn.style.display = 'none';
+  if (activeTool === 'rect') {
+    document.getElementById('toolRectBtn').classList.add('active');
+    textEl.textContent = `Kliknij dwa przeciwległe rogi prostokąta (${drawPoints.length}/2)`;
+  } else if (activeTool === 'polygon') {
+    document.getElementById('toolPolygonBtn').classList.add('active');
+    textEl.textContent = `Kliknij kolejne narożniki wieloboku (${drawPoints.length} pkt.)`;
+    if (drawPoints.length >= 3) finishBtn.style.display = '';
+  } else if (activeTool === 'icon') {
+    document.getElementById('toolIconBtn').classList.add('active');
+    textEl.textContent = 'Kliknij miejsce na płótnie, gdzie ma stanąć ikona';
+  }
+}
+function armTool(tool) {
+  activeTool = activeTool === tool ? null : tool;
+  drawPoints = [];
+  updateDrawStatus();
+  renderCanvas();
+}
+document.getElementById('toolRectBtn').addEventListener('click', () => armTool('rect'));
+document.getElementById('toolPolygonBtn').addEventListener('click', () => armTool('polygon'));
+document.getElementById('toolIconBtn').addEventListener('click', () => armTool('icon'));
+document.getElementById('drawCancelBtn').addEventListener('click', () => { activeTool = null; drawPoints = []; updateDrawStatus(); renderCanvas(); });
+document.getElementById('drawFinishBtn').addEventListener('click', () => finishPolygon());
+
+function finishPolygon() {
+  if (drawPoints.length < 3) return;
+  // drawPoints to obiekty {x,y} (patrz clientToLocalPoint) - room.points
+  // musi być tablicą par [x,y], tak samo jak dla prostokątów (finishRect)
+  // i jak zakłada reszta kodu (roomCentroid, renderCanvas, fitZoomToContent).
+  const room = { id: nextId('room'), type: 'polygon', points: drawPoints.map(p => [p.x, p.y]), label: '', color: ROOM_COLORS[0] };
+  mapData.rooms.push(room);
+  activeTool = null; drawPoints = [];
+  updateDrawStatus();
+  renderCanvas();
+  selectRoom(room.id);
+}
+function finishRect(a, b) {
+  const points = [[a.x, a.y], [b.x, a.y], [b.x, b.y], [a.x, b.y]];
+  const room = { id: nextId('room'), type: 'rect', points, label: '', color: ROOM_COLORS[0] };
+  mapData.rooms.push(room);
+  activeTool = null; drawPoints = [];
+  updateDrawStatus();
+  renderCanvas();
+  selectRoom(room.id);
+}
+function placeIcon(pt) {
+  const icon = { id: nextId('icon'), x: pt.x, y: pt.y, emoji: '⚡', label: '', status_key: null, status_category: null, status_device_label: null };
+  mapData.icons.push(icon);
+  activeTool = null; drawPoints = [];
+  updateDrawStatus();
+  renderCanvas();
+  selectIcon(icon.id);
+}
+
+function clientToLocalPoint(e) {
+  const canvasEl = document.getElementById('canvas');
+  const rect = canvasEl.getBoundingClientRect();
+  return { x: (e.clientX - rect.left) / canvasZoom, y: (e.clientY - rect.top) / canvasZoom };
+}
+
+document.getElementById('canvasWrap').addEventListener('click', (e) => {
+  if (mode !== 'edit' || !activeTool) return;
+  if (e.target.closest('.map-icon')) return; // klik w ikonę ma swój handler
+  const pt = clientToLocalPoint(e);
+  if (activeTool === 'icon') { placeIcon(pt); return; }
+  if (activeTool === 'rect') {
+    drawPoints.push(pt);
+    if (drawPoints.length === 2) finishRect(drawPoints[0], drawPoints[1]);
+    else updateDrawStatus();
+    renderCanvas();
+    return;
+  }
+  if (activeTool === 'polygon') {
+    drawPoints.push(pt);
+    updateDrawStatus();
+    renderCanvas();
+  }
+});
+
+// ---- Renderowanie ----
+function roomCentroid(points) {
+  const n = points.length;
+  const sx = points.reduce((a, p) => a + p[0], 0);
+  const sy = points.reduce((a, p) => a + p[1], 0);
+  return { x: sx / n, y: sy / n };
+}
+
+function renderCanvas() {
+  const svg = document.getElementById('roomsLayer');
+  svg.innerHTML = '';
+  const ns = 'http://www.w3.org/2000/svg';
+
+  mapData.rooms.forEach(room => {
+    const poly = document.createElementNS(ns, 'polygon');
+    poly.setAttribute('points', room.points.map(p => p.join(',')).join(' '));
+    poly.setAttribute('fill', room.color || '#4d8dfd');
+    poly.setAttribute('fill-opacity', room.id === selectedRoomId ? '0.45' : '0.22');
+    poly.setAttribute('stroke', room.color || '#4d8dfd');
+    poly.setAttribute('stroke-width', room.id === selectedRoomId ? '3' : '2');
+    if (!activeTool) {
+      // Klik w pomieszczenie działa we WSZYSTKICH trybach - w Edycji otwiera
+      // formularz nazwy/koloru, w Podglądzie/Sterowaniu pokazuje listę
+      // urządzeń w tym pomieszczeniu wraz z powiązanymi regułami ruchu/flow.
+      poly.setAttribute('class', 'selectable');
+      poly.addEventListener('click', (e) => { e.stopPropagation(); selectRoom(room.id); });
+    }
+    svg.appendChild(poly);
+    if (room.label) {
+      const c = roomCentroid(room.points);
+      const text = document.createElementNS(ns, 'text');
+      text.setAttribute('x', c.x);
+      text.setAttribute('y', c.y);
+      text.setAttribute('text-anchor', 'middle');
+      text.textContent = room.label;
+      svg.appendChild(text);
+
+      const summary = roomLinkedSummary(room);
+      if (summary.ruleCount || summary.flowCount) {
+        const sub = document.createElementNS(ns, 'text');
+        sub.setAttribute('x', c.x);
+        sub.setAttribute('y', c.y + 16);
+        sub.setAttribute('text-anchor', 'middle');
+        sub.setAttribute('class', 'room-summary');
+        sub.textContent = `🎬${summary.ruleCount} · 🔀${summary.flowCount}`;
+        svg.appendChild(sub);
+      }
+    }
+  });
+
+  // podgląd rysowanego kształtu
+  if (activeTool === 'polygon' && drawPoints.length) {
+    const poly = document.createElementNS(ns, 'polyline');
+    poly.setAttribute('points', drawPoints.map(p => `${p.x},${p.y}`).join(' '));
+    poly.setAttribute('fill', 'none');
+    poly.setAttribute('stroke', 'var(--accent)');
+    poly.setAttribute('stroke-width', '2');
+    poly.setAttribute('stroke-dasharray', '6 4');
+    svg.appendChild(poly);
+    drawPoints.forEach(p => {
+      const dot = document.createElementNS(ns, 'circle');
+      dot.setAttribute('cx', p.x); dot.setAttribute('cy', p.y); dot.setAttribute('r', 4);
+      dot.setAttribute('class', 'draw-preview-point');
+      svg.appendChild(dot);
+    });
+  }
+  if (activeTool === 'rect' && drawPoints.length === 1) {
+    const dot = document.createElementNS(ns, 'circle');
+    dot.setAttribute('cx', drawPoints[0].x); dot.setAttribute('cy', drawPoints[0].y); dot.setAttribute('r', 4);
+    dot.setAttribute('class', 'draw-preview-point');
+    svg.appendChild(dot);
+  }
+
+  const canvasEl = document.getElementById('canvas');
+  canvasEl.querySelectorAll('.map-icon').forEach(el => el.remove());
+  mapData.icons.forEach(icon => canvasEl.appendChild(buildIconEl(icon)));
+}
+
+function buildIconEl(icon) {
+  const el = document.createElement('div');
+  const s = icon.status_key ? statusByKey[icon.status_key] : null;
+  const active = s && ACTIVE_VALUES.has(String(s.value).toLowerCase());
+  el.className = 'map-icon' + (active ? '' : ' inactive') + (icon.id === selectedIconId ? ' selected' : '') + (icon.status_key ? '' : ' unmapped');
+  el.style.left = icon.x + 'px';
+  el.style.top = icon.y + 'px';
+  el.dataset.iconId = icon.id;
+  el.innerHTML = `
+    <div class="emoji">${escapeHtml(icon.emoji || '⚡')}</div>
+    <div class="icon-label">${escapeHtml(icon.label || icon.status_device_label || '(bez etykiety)')}</div>
+  `;
+  if (mode === 'edit') {
+    el.addEventListener('pointerdown', (e) => { if (!activeTool) startIconDrag(e, icon); });
+  } else {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectIcon(icon.id);
+      if (mode === 'control' && icon.status_category === 'tuya' && icon.status_device_label) {
+        // Sterowanie = klik OD RAZU przełącza (patrz odpowiedź w rozmowie) -
+        // panel boczny i tak się otwiera (ten sam widok co Podgląd) i tam
+        // też jest przycisk ⏻, na wypadek gdyby ktoś chciał kliknąć jeszcze raz.
+        const s2 = statusByKey[icon.status_key];
+        const isOn = s2 && String(s2.value).toLowerCase() === 'włączone';
+        toggleTuyaFromMapDirect(icon, isOn ? 'off' : 'on');
+      }
+    });
+  }
+  return el;
+}
+
+async function toggleTuyaFromMapDirect(icon, nextState) {
+  try {
+    const resp = await authorizedFetch(`/api/tuya/${encodeURIComponent(icon.status_device_label)}/${nextState}`, { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) { showMsg(false, data.error || 'Błąd'); return; }
+    const btn = document.getElementById('iconToggleBtn');
+    if (btn) await pollMapCommand(data.command_id, btn);
+    else setTimeout(refreshStatuses, 600);
+  } catch (e) { /* authorizedFetch już przekierował na /login */ }
+}
+
+let iconDragState = null;
+function startIconDrag(e, icon) {
+  selectIcon(icon.id);
+  iconDragState = { icon, startX: e.clientX, startY: e.clientY, origX: icon.x, origY: icon.y };
+  try { e.target.closest('.map-icon').setPointerCapture(e.pointerId); } catch (err) { /* patrz komentarz w flows.html */ }
+  e.preventDefault();
+}
+document.addEventListener('pointermove', (e) => {
+  if (!iconDragState) return;
+  const dx = (e.clientX - iconDragState.startX) / canvasZoom;
+  const dy = (e.clientY - iconDragState.startY) / canvasZoom;
+  iconDragState.icon.x = Math.max(0, iconDragState.origX + dx);
+  iconDragState.icon.y = Math.max(0, iconDragState.origY + dy);
+  renderCanvas();
+});
+document.addEventListener('pointerup', () => { iconDragState = null; });
+document.addEventListener('pointercancel', () => { iconDragState = null; });
+
+// ---- Powiększenie (identyczny mechanizm jak w edytorze Flow - patrz
+// flows.html: CSS "zoom" (nie transform), touch-action: pan-x pan-y +
+// śledzenie dwóch wskaźników dla szczypania, dzielenie delty przeciągania
+// przez canvasZoom). ----
+let canvasZoom = 1;
+const CANVAS_MIN_ZOOM = 0.2;
+const CANVAS_MAX_ZOOM = 1.5;
+function applyZoom() {
+  document.getElementById('canvas').style.zoom = canvasZoom;
+  document.getElementById('zoomLabel').textContent = Math.round(canvasZoom * 100) + '%';
+}
+function setZoom(z) {
+  canvasZoom = Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM, z));
+  applyZoom();
+}
+function fitZoomToContent() {
+  const wrap = document.getElementById('canvasWrap');
+  const points = mapData.rooms.flatMap(r => r.points).concat(mapData.icons.map(i => [i.x, i.y]));
+  if (!points.length || !wrap) { setZoom(1); return; }
+  const maxX = Math.max(...points.map(p => p[0])) + 60;
+  const maxY = Math.max(...points.map(p => p[1])) + 60;
+  setZoom(Math.min(wrap.clientWidth / maxX, wrap.clientHeight / maxY, 1));
+}
+document.getElementById('zoomInBtn').addEventListener('click', () => setZoom(canvasZoom + 0.1));
+document.getElementById('zoomOutBtn').addEventListener('click', () => setZoom(canvasZoom - 0.1));
+document.getElementById('zoomResetBtn').addEventListener('click', () => setZoom(1));
+document.getElementById('zoomFitBtn').addEventListener('click', fitZoomToContent);
+
+const canvasWrapEl = document.getElementById('canvasWrap');
+const pinchPointers = new Map();
+let pinchStart = null;
+canvasWrapEl.addEventListener('pointerdown', (e) => {
+  pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinchPointers.size === 2) {
+    iconDragState = null;
+    const [a, b] = Array.from(pinchPointers.values());
+    pinchStart = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: canvasZoom };
+  }
+});
+canvasWrapEl.addEventListener('pointermove', (e) => {
+  if (!pinchPointers.has(e.pointerId)) return;
+  pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinchPointers.size === 2 && pinchStart && pinchStart.dist > 0) {
+    const [a, b] = Array.from(pinchPointers.values());
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    setZoom(pinchStart.zoom * (dist / pinchStart.dist));
+  }
+});
+function endPinchPointer(e) {
+  pinchPointers.delete(e.pointerId);
+  if (pinchPointers.size < 2) pinchStart = null;
+}
+canvasWrapEl.addEventListener('pointerup', endPinchPointer);
+canvasWrapEl.addEventListener('pointercancel', endPinchPointer);
+canvasWrapEl.addEventListener('pointerleave', endPinchPointer);
+
+// ---- Stan urządzeń na żywo ----
+async function refreshStatuses() {
+  const rows = await (await fetch('/api/status')).json();
+  statusByKey = Object.fromEntries(rows.map(r => [r.key, r]));
+  // Nie wołamy pełnego renderCanvas() (zresetowałoby to np. trwające
+  // rysowanie/zaznaczenie) - tylko podmieniamy klasę "inactive" na
+  // istniejących elementach ikon.
+  document.querySelectorAll('.map-icon').forEach(el => {
+    const icon = mapData.icons.find(i => i.id === el.dataset.iconId);
+    if (!icon) return;
+    const s = icon.status_key ? statusByKey[icon.status_key] : null;
+    const active = s && ACTIVE_VALUES.has(String(s.value).toLowerCase());
+    el.classList.toggle('inactive', !active);
+  });
+  if (selectedIconId && (mode === 'view' || mode === 'control')) {
+    const icon = mapData.icons.find(i => i.id === selectedIconId);
+    if (icon) renderIconStatusPanel(icon);
+  }
+}
+
+(async () => {
+  await refreshAuthNav();
+  await loadContext();
+  await loadAutomationsAndFlows();
+  await loadMap();
+  await refreshStatuses();
+  setInterval(refreshStatuses, 2000);
+})();
+</script>
+</body>
+</html>
