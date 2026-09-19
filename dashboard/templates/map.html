@@ -85,6 +85,13 @@
     fill: var(--text); stroke: var(--accent); stroke-width: 2; cursor: grab; touch-action: none;
   }
   svg.rooms-layer .vertex-handle:active { cursor: grabbing; fill: var(--accent); }
+  /* Niewidoczna, gruba linia-hitbox na każdej krawędzi zaznaczonego
+     pomieszczenia - "pointer-events: stroke" wymuszone jawnie, bo
+     stroke="transparent" (alpha=0) w niektórych przeglądarkach NIE liczy
+     się jako "namalowany" dla domyślnego trafiania w SVG. */
+  svg.rooms-layer .edge-hitbox {
+    stroke: transparent; stroke-width: 14; cursor: copy; touch-action: none; pointer-events: stroke;
+  }
 
   .map-icon {
     position: absolute; width: 56px; margin-left: -28px; margin-top: -24px;
@@ -160,7 +167,9 @@
   rysowane pomieszczenia stykały się dokładnie tą samą ścianą. Zaznacz
   narysowane pomieszczenie, żeby pokazały się białe uchwyty na jego
   narożnikach - przeciągnij dowolny, żeby zmienić kształt (też przyciąga do
-  sąsiadów). Klik w pomieszczenie (w każdym trybie) pokazuje, jakie
+  sąsiadów), kliknij (bez przeciągania) uchwyt, żeby go usunąć, albo kliknij
+  na samej krawędzi między dwoma narożnikami, żeby dodać tam nowy punkt.
+  Klik w pomieszczenie (w każdym trybie) pokazuje, jakie
   urządzenia w nim są i jakie reguły ruchu/flow ich używają - liczba pod
   nazwą pomieszczenia (🎬 reguły · 🔀 flow) widać od razu, bez klikania.
   Pamiętaj o "💾 Zapisz mapę" - zmiany nie zapisują się same.
@@ -867,6 +876,28 @@ function renderCanvas() {
     // czworokąt, `room.type` nigdzie w renderowaniu nie jest już potem
     // sprawdzane, więc to nieszkodliwe.
     if (mode === 'edit' && room.id === selectedRoomId && !activeTool) {
+      // Klik NA KRAWĘDZI dodaje nowy wierzchołek dokładnie w klikniętym
+      // miejscu (rzut na ten konkretny odcinek, tym samym `closestPointOnSegment`
+      // co przy snapowaniu) - niewidoczna, gruba (14px) linia-hitbox na każdej
+      // krawędzi, żeby dało się trafić bez pikselowej precyzji. Renderowane
+      // PRZED uchwytami wierzchołków, żeby uchwyt (klik W ISTNIEJĄCY punkt,
+      // patrz startVertexDrag/globalny pointerup - usuwa go) miał
+      // pierwszeństwo w miejscach, gdzie oba się nakładają.
+      const n = room.points.length;
+      room.points.forEach((p, idx) => {
+        const next = room.points[(idx + 1) % n];
+        const edge = document.createElementNS(ns, 'line');
+        edge.setAttribute('x1', p[0]); edge.setAttribute('y1', p[1]);
+        edge.setAttribute('x2', next[0]); edge.setAttribute('y2', next[1]);
+        edge.setAttribute('class', 'edge-hitbox');
+        edge.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const proj = closestPointOnSegment(clientToLocalPoint(e), p, next);
+          room.points.splice(idx + 1, 0, [proj.x, proj.y]);
+          renderCanvas();
+        });
+        svg.appendChild(edge);
+      });
       room.points.forEach((p, idx) => {
         const handle = document.createElementNS(ns, 'circle');
         handle.setAttribute('cx', p[0]);
@@ -1025,12 +1056,19 @@ document.addEventListener('pointercancel', () => { furnitureDragState = null; })
 let vertexDragState = null;
 function startVertexDrag(e, room, index) {
   e.stopPropagation();
-  vertexDragState = { room, index, startX: e.clientX, startY: e.clientY, orig: [...room.points[index]] };
+  vertexDragState = { room, index, startX: e.clientX, startY: e.clientY, orig: [...room.points[index]], moved: false };
   try { e.target.setPointerCapture(e.pointerId); } catch (err) { /* patrz komentarz przy startIconDrag/flows.html */ }
   e.preventDefault();
 }
 document.addEventListener('pointermove', (e) => {
   if (!vertexDragState) return;
+  // Odróżnienie zwykłego kliknięcia od przeciągnięcia po dystansie ruchu
+  // WSKAŹNIKA na ekranie (nie po lokalnych współrzędnych płótna - te są
+  // dzielone przez canvasZoom, więc przy dużym powiększeniu drobny ruch
+  // ekranowy dawałby duży ruch lokalny i odwrotnie).
+  if (Math.hypot(e.clientX - vertexDragState.startX, e.clientY - vertexDragState.startY) > 3) {
+    vertexDragState.moved = true;
+  }
   const dx = (e.clientX - vertexDragState.startX) / canvasZoom;
   const dy = (e.clientY - vertexDragState.startY) / canvasZoom;
   const { room, index, orig } = vertexDragState;
@@ -1038,7 +1076,18 @@ document.addEventListener('pointermove', (e) => {
   room.points[index] = [snapped.x, snapped.y];
   renderCanvas();
 });
-document.addEventListener('pointerup', () => { vertexDragState = null; });
+document.addEventListener('pointerup', () => {
+  if (vertexDragState && !vertexDragState.moved) {
+    // Zwykły klik (bez przeciągnięcia) w istniejący uchwyt = usuń ten
+    // wierzchołek - ale nie schodzimy poniżej trójkąta (3 punkty), bo
+    // wielobok przestałby mieć sens geometryczny.
+    const { room, index, orig } = vertexDragState;
+    if (room.points.length > 3) room.points.splice(index, 1);
+    else room.points[index] = orig;
+    renderCanvas();
+  }
+  vertexDragState = null;
+});
 document.addEventListener('pointercancel', () => { vertexDragState = null; });
 
 // ---- Powiększenie (identyczny mechanizm jak w edytorze Flow - patrz
