@@ -3166,6 +3166,10 @@ mapy nie wpływa na żadną automatyzację.
   Zakończ", min. 3 punkty), dodawanie ikon (📍 - klik na płótnie stawia
   ikonę), przeciąganie ich w nowe miejsce, oraz panel boczny do ustawienia
   emoji/etykiety/mapowania na urządzenie i usuwania pomieszczenia/ikony.
+  Zaznaczone pomieszczenie pokazuje na płótnie białe uchwyty na każdym
+  narożniku - przeciągnięcie dowolnego z nich zmienia kształt (dotyczy też
+  prostokątów - przeciągnięcie rogu prostokąta po prostu zamienia go w
+  dowolny czworokąt, bez utraty pozostałych narożników).
 
 **Pamiętaj o przycisku "💾 Zapisz mapę"** - podobnie jak we Flow, zmiany
 w edytorze nie zapisują się same (dopiero `POST /api/config/home_map`).
@@ -3175,6 +3179,10 @@ w edytorze nie zapisują się same (dopiero `POST /api/config/home_map`).
 Płótno (1800x1100px) ma dokładnie ten sam mechanizm powiększania co
 edytor Flow (patrz wyżej): pasek ➖/➕/procent/"Dopasuj widok"/"100%",
 CSS `zoom` (nie `transform`) i szczypanie dwoma palcami na telefonie.
+Sam kontener płótna (`.canvas-wrap`) ma wysokość liczoną z wysokości okna
+(`calc(100vh - 300px)`, nie sztywną liczbę pikseli) i CSS `resize: vertical`
+- można ręcznie przeciągnąć jego dolną krawędź, gdyby wyliczona wysokość
+komuś nie pasowała.
 
 ### Powiązane reguły ruchu i flow
 

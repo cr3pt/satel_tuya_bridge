@@ -63,9 +63,14 @@
   .canvas-toolbar button { padding: 4px 9px; font-size: 12px; }
   .canvas-toolbar .zoom-label { font-size: 12px; color: var(--muted); min-width: 38px; text-align: center; }
   .canvas-wrap {
+    /* Wysokość liczona z okna (nie sztywne 560px na sztywno, jak wcześniej) -
+       "resize: vertical" dodatkowo pozwala ręcznie przeciągnąć krawędź, gdyby
+       to wyliczenie komuś nie pasowało (np. bardzo niskie/wysokie okno). */
     flex: none; overflow: auto; border: 1px solid var(--border); border-radius: 10px;
-    background: #101216; position: relative; height: 560px; min-width: 0; width: 100%;
+    background: #101216; position: relative; min-width: 0; width: 100%;
     touch-action: pan-x pan-y;
+    height: calc(100vh - 300px); min-height: 420px; max-height: 1400px;
+    resize: vertical;
   }
   .canvas { position: relative; width: 1800px; height: 1100px; }
   svg.rooms-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
@@ -74,6 +79,10 @@
   svg.rooms-layer text { fill: var(--text); font-size: 13px; pointer-events: none; user-select: none; }
   svg.rooms-layer text.room-summary { fill: var(--muted); font-size: 11px; }
   svg.rooms-layer .draw-preview-point { fill: var(--accent); }
+  svg.rooms-layer .vertex-handle {
+    fill: var(--text); stroke: var(--accent); stroke-width: 2; cursor: grab; touch-action: none;
+  }
+  svg.rooms-layer .vertex-handle:active { cursor: grabbing; fill: var(--accent); }
 
   .map-icon {
     position: absolute; width: 56px; margin-left: -28px; margin-top: -24px;
@@ -127,7 +136,9 @@
   mapowaną na urządzenie Tuya od razu je przełącza (inne kategorie na razie
   tylko pokazują stan - patrz README). Tryb <strong>✏️ Edycja</strong> -
   rysowanie pomieszczeń, dodawanie/przenoszenie/usuwanie ikon i mapowanie ich
-  na urządzenia. Klik w pomieszczenie (w każdym trybie) pokazuje, jakie
+  na urządzenia. Zaznacz narysowane pomieszczenie, żeby pokazały się białe
+  uchwyty na jego narożnikach - przeciągnij dowolny, żeby zmienić kształt
+  (dotyczy też prostokątów). Klik w pomieszczenie (w każdym trybie) pokazuje, jakie
   urządzenia w nim są i jakie reguły ruchu/flow ich używają - liczba pod
   nazwą pomieszczenia (🎬 reguły · 🔀 flow) widać od razu, bez klikania.
   Pamiętaj o "💾 Zapisz mapę" - zmiany nie zapisują się same.
@@ -647,6 +658,25 @@ function renderCanvas() {
       poly.addEventListener('click', (e) => { e.stopPropagation(); selectRoom(room.id); });
     }
     svg.appendChild(poly);
+    // Uchwyty do edycji kształtu (przeciąganie pojedynczych wierzchołków) -
+    // tylko dla ZAZNACZONEGO pomieszczenia w trybie Edycji i tylko, gdy nie
+    // trwa akurat rysowanie nowego kształtu (inaczej klik w płótno miałby
+    // dwa konkurujące znaczenia). Prostokąty i wieloboki są tu traktowane
+    // identycznie (points to zwykła tablica [x,y] dla obu typów) - złapanie
+    // za róg prostokąta i przeciągnięcie go po prostu zamienia go w dowolny
+    // czworokąt, `room.type` nigdzie w renderowaniu nie jest już potem
+    // sprawdzane, więc to nieszkodliwe.
+    if (mode === 'edit' && room.id === selectedRoomId && !activeTool) {
+      room.points.forEach((p, idx) => {
+        const handle = document.createElementNS(ns, 'circle');
+        handle.setAttribute('cx', p[0]);
+        handle.setAttribute('cy', p[1]);
+        handle.setAttribute('r', 7);
+        handle.setAttribute('class', 'vertex-handle');
+        handle.addEventListener('pointerdown', (e) => startVertexDrag(e, room, idx));
+        svg.appendChild(handle);
+      });
+    }
     if (room.label) {
       const c = roomCentroid(room.points);
       const text = document.createElementNS(ns, 'text');
@@ -756,6 +786,24 @@ document.addEventListener('pointermove', (e) => {
 });
 document.addEventListener('pointerup', () => { iconDragState = null; });
 document.addEventListener('pointercancel', () => { iconDragState = null; });
+
+let vertexDragState = null;
+function startVertexDrag(e, room, index) {
+  e.stopPropagation();
+  vertexDragState = { room, index, startX: e.clientX, startY: e.clientY, orig: [...room.points[index]] };
+  try { e.target.setPointerCapture(e.pointerId); } catch (err) { /* patrz komentarz przy startIconDrag/flows.html */ }
+  e.preventDefault();
+}
+document.addEventListener('pointermove', (e) => {
+  if (!vertexDragState) return;
+  const dx = (e.clientX - vertexDragState.startX) / canvasZoom;
+  const dy = (e.clientY - vertexDragState.startY) / canvasZoom;
+  const { room, index, orig } = vertexDragState;
+  room.points[index] = [Math.max(0, orig[0] + dx), Math.max(0, orig[1] + dy)];
+  renderCanvas();
+});
+document.addEventListener('pointerup', () => { vertexDragState = null; });
+document.addEventListener('pointercancel', () => { vertexDragState = null; });
 
 // ---- Powiększenie (identyczny mechanizm jak w edytorze Flow - patrz
 // flows.html: CSS "zoom" (nie transform), touch-action: pan-x pan-y +
