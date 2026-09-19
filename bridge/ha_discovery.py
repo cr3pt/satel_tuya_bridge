@@ -178,6 +178,27 @@ def build_iqua_sensor_entities(devices_cfg: dict, ha_cfg: dict, topic_prefix: st
     return entities
 
 
+def build_smartthings_sensor_entities(devices_cfg: dict, ha_cfg: dict, topic_prefix: str) -> list[dict]:
+    prefix = ha_cfg.get("discovery_prefix", "homeassistant")
+    entities = []
+    for name in devices_cfg:
+        object_id = f"smartthings_{name}"
+        state_topic = f"{topic_prefix}/smartthings/{name}/state"
+        payload = {
+            "name": f"Stan: {name}",
+            "unique_id": f"satel_tuya_bridge_{object_id}",
+            "state_topic": state_topic,
+            "device": _device_block(ha_cfg),
+        }
+        entities.append({
+            "discovery_topic": f"{prefix}/sensor/satel_tuya_bridge/{object_id}/config",
+            "payload": payload,
+            "state_topic": state_topic,
+            "command_topic": None,
+        })
+    return entities
+
+
 def build_satel_partition_entities(partitions: dict, ha_cfg: dict, topic_prefix: str) -> list[dict]:
     prefix = ha_cfg.get("discovery_prefix", "homeassistant")
     entities = []
@@ -218,4 +239,6 @@ def build_all_entities(config, boiler_topic_prefix: str) -> list[dict]:
     entities += build_lg_thinq_sensor_entities(lg_thinq_cfg.get("devices", {}), ha_cfg, topic_prefix)
     iqua_cfg = getattr(config, "iqua", None) or {}
     entities += build_iqua_sensor_entities(iqua_cfg.get("devices", {}), ha_cfg, topic_prefix)
+    smartthings_cfg = getattr(config, "smartthings", None) or {}
+    entities += build_smartthings_sensor_entities(smartthings_cfg.get("devices", {}), ha_cfg, topic_prefix)
     return entities

@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SmartThings - Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<style>
+  :root {
+    --bg: #14161a; --card: #1d2026; --border: #2c3038;
+    --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
+    --danger: #e5484d; --ok: #3dd68c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 20px; width: 95%; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
+  .section-hint { color: var(--muted); font-size: 13px; margin: 4px 0 14px; line-height: 1.5; }
+  .card, .section {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px; margin-bottom: 18px;
+  }
+  input[type=text], input[type=password], input[type=number] {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 100%;
+  }
+  select { background: #262a32; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; width: 100%; font-size: 13px; }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 8px 16px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .actions-bar { display: flex; gap: 10px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+  .msg-box { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; display: none; }
+  .msg-box.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  .msg-box.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
+  .field-group { margin-bottom: 18px; }
+  .field-group:last-child { margin-bottom: 0; }
+  .field-group > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .repeatable-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+  .repeatable-row input, .repeatable-row select { flex: 1; min-width: 90px; }
+  .row-remove { background: transparent; color: var(--danger); border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; flex-shrink: 0; }
+  .add-row-btn { background: #262a32; color: var(--text); border: 1px dashed var(--border); border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-top: 4px; }
+  button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
+  .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .discover-status { font-size: 12.5px; color: var(--muted); }
+  .discovered-row { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .discovered-row:last-child { border-bottom: none; }
+  .discovered-row .meta { flex: 1; min-width: 180px; font-size: 13px; }
+  .discovered-row .meta .id { color: var(--muted); font-size: 12px; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #262a32; color: var(--muted); margin-left: 6px; }
+  code { background: #262a32; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+{% include "_nav.html" %}
+
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🔷 SmartThings</h1>
+<div class="hint">
+  Bridge łączy się z oficjalnym <strong>REST API SmartThings</strong> (Samsung)
+  - autoryzacja osobistym tokenem dostępu (Personal Access Token), który
+  wygenerujesz na
+  <a href="https://account.smartthings.com/tokens" target="_blank" rel="noopener">stronie tokenów SmartThings</a>
+  (wymagany zakres <code>r:devices:*</code>, dla samego odczytu stanu nic
+  więcej nie jest potrzebne). Dla każdego urządzenia można wybrać, którą
+  capability/attribute odpytywać (domyślnie <code>switch</code>/<code>switch</code>
+  - gniazdka i przełączniki) - inne typy urządzeń (czujniki kontaktronowe,
+  ruchu, temperatury itd.) wymagają wpisania właściwej pary ręcznie (patrz
+  <a href="https://developer.smartthings.com/docs/devices/capabilities/capabilities-reference" target="_blank" rel="noopener">referencję capability SmartThings</a>).
+  Stan trafia na stronę główną i jest dostępny jako warunek "stan" oraz jako
+  trigger w edytorze <a href="/flows">🧩 Flow</a> i
+  <a href="/automations">🎬 Automatyzacje</a> - klucz statusu to
+  <code>smartthings:&lt;nazwa&gt;</code>. Bridge tylko ODPYTUJE stan (bez
+  sterowania - wysyłanie komend do urządzeń nie jest wspierane w tej wersji).
+  <strong>Wymagane zalogowanie administratora panelu</strong> - dotyczy zarówno przeglądania tej strony, jak i zapisu.
+</div>
+
+<div class="section" id="pluginSettingsSection">
+  <h2>⚙ Ustawienia wtyczki</h2>
+  <div class="section-hint">
+    Włącz/wyłącz tę integrację i ustaw poziom logowania jej zdarzeń
+    (niezależnie od domyślnego poziomu globalnego - zakładka
+    <a href="/system">⚙ Ustawienia ogólne</a>). Wyłączenie/włączenie wymaga
+    pełnego restartu procesu bridge'a, poziom logowania działa od razu, bez
+    restartu.
+  </div>
+  <div class="field-group">
+    <label style="display:flex; align-items:center; gap:8px; margin:0;">
+      <input type="checkbox" id="pluginEnabledCheckbox">
+      Wtyczka włączona
+    </label>
+  </div>
+  <div class="field-group">
+    <label>Poziom logowania zdarzeń</label>
+    <select id="pluginLogLevelSelect">
+      <option value="">(domyślny globalny)</option>
+      <option value="DEBUG">DEBUG</option>
+      <option value="INFO">INFO</option>
+      <option value="WARNING">WARNING</option>
+      <option value="ERROR">ERROR</option>
+      <option value="CRITICAL">CRITICAL</option>
+    </select>
+  </div>
+  <div class="actions-bar">
+    <button id="savePluginSettingsBtn" type="button">Zapisz ustawienia wtyczki</button>
+  </div>
+  <div id="pluginSettingsMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="credentialsSection">
+  <h2>Token dostępu SmartThings</h2>
+  <div class="section-hint">
+    Token nigdy nie wraca do przeglądarki po zapisie - puste pole przy
+    zapisie oznacza "zostaw bez zmian".
+  </div>
+  <div class="field-group">
+    <label>Token dostępu (PAT) <span id="patSetHint" style="color: var(--muted);"></span></label>
+    <input type="password" id="patInput" placeholder="(zostaw puste, żeby nie zmieniać)">
+  </div>
+  <div class="actions-bar">
+    <button id="saveCredentialsBtn" type="button">Zapisz poświadczenia</button>
+  </div>
+  <div id="credentialsMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="discoverSection">
+  <h2>Odkryj urządzenia</h2>
+  <div class="section-hint">
+    Pobiera listę urządzeń przypisanych do konta SmartThings (zapisz token
+    wyżej najpierw). Kliknij "+ Dodaj" przy urządzeniu, żeby wstawić je do
+    listy monitorowanych niżej - potem nadaj mu nazwę, ew. dostosuj
+    capability/attribute i zapisz.
+  </div>
+  <div class="discover-row">
+    <button type="button" class="secondary" id="discoverBtn">🔍 Odkryj urządzenia</button>
+    <span class="discover-status" id="discoverStatus"></span>
+  </div>
+  <div id="discoveredList"></div>
+</div>
+
+<div class="section" id="devicesSection">
+  <h2>Monitorowane urządzenia</h2>
+  <div class="section-hint">
+    Nazwa to klucz statusu (<code>smartthings:&lt;nazwa&gt;</code>) widoczny
+    na stronie głównej i w edytorach Flow/automatyzacji - dowolna, byle
+    unikalna. Capability/attribute można zostawić puste, żeby użyć domyślnych
+    (<code>switch</code>/<code>switch</code>).
+  </div>
+  <div id="devicesRows"></div>
+  <button type="button" class="add-row-btn" id="addDeviceBtn">+ Dodaj urządzenie ręcznie</button>
+  <div class="actions-bar">
+    <button id="saveDevicesBtn" type="button">Zapisz urządzenia</button>
+  </div>
+  <div id="devicesMsg" class="msg-box"></div>
+</div>
+
+<script>
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function authorizedFetch(url, options = {}) {
+  const resp = await fetch(url, options);
+  if (resp.status === 401) {
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname);
+    throw new Error('Wymagane zalogowanie - przekierowuję na /login...');
+  }
+  return resp;
+}
+
+async function refreshAuthNav() {
+  const link = document.getElementById('authNavLink');
+  try {
+    const status = await (await fetch('/api/auth/status')).json();
+    if (status.logged_in) {
+      link.textContent = '🔓 Wyloguj';
+      link.href = '#';
+      link.onclick = async (e) => {
+        e.preventDefault();
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.reload();
+      };
+    } else {
+      link.textContent = '🔒 Zaloguj';
+      link.href = '/login?next=' + encodeURIComponent(location.pathname);
+      link.onclick = null;
+    }
+  } catch (e) {
+
+  }
+}
+refreshAuthNav();
+
+function showMsg(elId, ok, text) {
+  const el = document.getElementById(elId);
+  el.className = 'msg-box ' + (ok ? 'ok' : 'error');
+  el.style.display = '';
+  el.textContent = (ok ? '✅ ' : '❌ ') + text;
+}
+
+
+const PLUGIN_ID = 'smartthings';
+
+async function loadPluginSettings() {
+  const data = await (await fetch(`/api/plugins/${PLUGIN_ID}/settings`)).json();
+  document.getElementById('pluginEnabledCheckbox').checked = !!data.enabled;
+  document.getElementById('pluginLogLevelSelect').value = data.log_level || '';
+}
+loadPluginSettings();
+
+document.getElementById('savePluginSettingsBtn').addEventListener('click', async () => {
+  const payload = {
+    enabled: document.getElementById('pluginEnabledCheckbox').checked,
+    log_level: document.getElementById('pluginLogLevelSelect').value,
+  };
+  try {
+    const resp = await authorizedFetch(`/api/plugins/${PLUGIN_ID}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('pluginSettingsMsg', false, data.error || 'Błąd zapisu');
+    } else {
+      showMsg('pluginSettingsMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('pluginSettingsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+
+async function loadCredentials() {
+  const data = await (await fetch('/api/plugins/smartthings/credentials')).json();
+  document.getElementById('patSetHint').textContent = data.pat_set ? '(zapisany)' : '(brak)';
+}
+loadCredentials();
+
+document.getElementById('saveCredentialsBtn').addEventListener('click', async () => {
+  const payload = {
+    personal_access_token: document.getElementById('patInput').value,
+  };
+  try {
+    const resp = await authorizedFetch('/api/plugins/smartthings/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('credentialsMsg', false, data.error || 'Błąd zapisu');
+    } else {
+      showMsg('credentialsMsg', true, data.message);
+      document.getElementById('patInput').value = '';
+      await loadCredentials();
+    }
+  } catch (e) {
+    showMsg('credentialsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+
+function addDeviceRow(initial) {
+  const container = document.getElementById('devicesRows');
+  const row = document.createElement('div');
+  row.className = 'repeatable-row';
+  row.innerHTML = `
+    <input type="text" placeholder="nazwa (np. Lampka salon)" class="dev-name">
+    <input type="text" placeholder="ID urządzenia (deviceId)" class="dev-id">
+    <input type="text" placeholder="capability (domyślnie switch)" class="dev-capability">
+    <input type="text" placeholder="attribute (domyślnie switch)" class="dev-attribute">
+    <button type="button" class="row-remove">✕</button>`;
+  if (initial) {
+    row.querySelector('.dev-name').value = initial.name ?? '';
+    row.querySelector('.dev-id').value = initial.device_id ?? '';
+    row.querySelector('.dev-capability').value = initial.capability ?? '';
+    row.querySelector('.dev-attribute').value = initial.attribute ?? '';
+  }
+  row.querySelector('.row-remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+document.getElementById('addDeviceBtn').addEventListener('click', () => addDeviceRow());
+
+function collectDevices() {
+  return Array.from(document.querySelectorAll('#devicesRows .repeatable-row'))
+    .map(row => ({
+      name: row.querySelector('.dev-name').value.trim(),
+      device_id: row.querySelector('.dev-id').value.trim(),
+      capability: row.querySelector('.dev-capability').value.trim(),
+      attribute: row.querySelector('.dev-attribute').value.trim(),
+    }))
+    .filter(d => d.name);
+}
+
+async function loadDevices() {
+  const data = await (await fetch('/api/plugins/smartthings/devices')).json();
+  (data.devices || []).forEach(d => addDeviceRow(d));
+}
+loadDevices();
+
+document.getElementById('saveDevicesBtn').addEventListener('click', async () => {
+  try {
+    const resp = await authorizedFetch('/api/plugins/smartthings/devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ devices: collectDevices() }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const details = data.details ? ' - ' + data.details.join('; ') : '';
+      showMsg('devicesMsg', false, (data.error || 'Błąd zapisu') + details);
+    } else {
+      showMsg('devicesMsg', true, data.message);
+    }
+  } catch (e) {
+    showMsg('devicesMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+
+document.getElementById('discoverBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('discoverBtn');
+  const status = document.getElementById('discoverStatus');
+  const list = document.getElementById('discoveredList');
+  btn.disabled = true;
+  status.textContent = 'Łączę się z chmurą SmartThings i pobieram listę urządzeń...';
+  list.innerHTML = '';
+  try {
+    const resp = await authorizedFetch('/api/plugins/smartthings/discover', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = '❌ ' + (data.error || 'Błąd odkrywania');
+      return;
+    }
+    const devices = data.devices || [];
+    if (devices.length === 0) {
+      status.textContent = 'Brak urządzeń na koncie.';
+      return;
+    }
+    status.textContent = `Znaleziono ${devices.length} urządzeń.`;
+    devices.forEach(d => {
+      const row = document.createElement('div');
+      row.className = 'discovered-row';
+      const typeTag = d.device_type ? `<span class="tag">${escapeHtml(d.device_type)}</span>` : '';
+      row.innerHTML = `
+        <div class="meta">${escapeHtml(d.name || d.device_id)}${typeTag}<div class="id">${escapeHtml(d.model_name || '')} · ${escapeHtml(d.device_id)}</div></div>
+        <button type="button" class="secondary add-discovered-btn">+ Dodaj</button>`;
+      row.querySelector('.add-discovered-btn').addEventListener('click', () => {
+        addDeviceRow({ name: d.name || d.device_id, device_id: d.device_id });
+      });
+      list.appendChild(row);
+    });
+  } catch (e) {
+    status.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

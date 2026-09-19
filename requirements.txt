@@ -32,3 +32,10 @@ thinqconnect>=1.0.14
 # bridge/iqua_client.py. Biblioteka jest SYNCHRONICZNA (requests) - każde
 # wywołanie odpytujemy w osobnym wątku (run_in_executor), tak jak tinytuya.
 iqua-softener>=1.0.1
+# Oficjalne REST API SmartThings (Samsung), autoryzacja osobistym tokenem
+# dostępu (PAT) - bridge/smartthings_client.py. W odróżnieniu od powyższych
+# integracji ta biblioteka jest w PEŁNI ASYNCHRONICZNA (aiohttp), więc nie
+# wymaga run_in_executor. Górne ograniczenie <4.0 celowo - wersja 4.0.0+
+# wymaga Pythona >=3.13 (patrz Dockerfile: python:3.12-slim), a 3.7.x to
+# ostatnia gałąź zgodna z 3.12.
+pysmartthings>=3.7.3,<4.0

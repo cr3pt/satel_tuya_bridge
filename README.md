@@ -2129,13 +2129,14 @@ system + urządzenie źródłowe + wyzwalacz + rodzaj akcji), **2. Wyjście**
 **4. Harmonogram**, **5. Eskalacja** - patrz sekcje niżej po szczegóły
 każdej z nich.
 
-### Wejście reguły ruchu: Satel, albo stan urządzenia Tuya/HomeWhiz/LG ThinQ/iQua (`source`)
+### Wejście reguły ruchu: Satel, albo stan urządzenia Tuya/HomeWhiz/LG ThinQ/iQua/SmartThings (`source`)
 
 Reguła ruchu wyzwala się nie tylko naruszeniem wejścia Satela - może też
 reagować na **stan dowolnego urządzenia Tuya albo urządzenia AGD
-HomeWhiz/LG ThinQ, albo zmiękczacza wody iQua** (patrz sekcje "Zmywarki/AGD
-HomeWhiz", "Pralki/AGD LG ThinQ" i "Zmiękczacze wody iQua" niżej). Pole
-"System" w sekcji "1. Wejście" wybiera źródło:
+HomeWhiz/LG ThinQ, zmiękczacza wody iQua, albo dowolnego urządzenia
+SmartThings** (patrz sekcje "Zmywarki/AGD HomeWhiz", "Pralki/AGD LG ThinQ",
+"Zmiękczacze wody iQua" i "SmartThings" niżej). Pole "System" w sekcji
+"1. Wejście" wybiera źródło:
 
 - **Satel (wejście)** (`source: satel_zone`, domyślne) - jak dotąd:
   `zone_number` + `trigger_on` (naruszenie/ustanie).
@@ -2163,6 +2164,14 @@ HomeWhiz", "Pralki/AGD LG ThinQ" i "Zmiękczacze wody iQua" niżej). Pole
   urządzenia iQua) + `trigger_value` (`online`/`offline` - stała lista, w
   odróżnieniu od HomeWhiz/LG ThinQ nie ma tu per-modelowej listy stanów,
   patrz sekcja "Zmiękczacze wody iQua" niżej).
+- **SmartThings** (`source: smartthings_state`) - `source_device` (nazwa
+  urządzenia SmartThings) + `trigger_value` (zwykłe pole tekstowe - wartości
+  zależą od wybranej capability/attribute urządzenia, np. `on`/`off` dla
+  przełącznika, `open`/`closed` dla czujnika kontaktronowego - w
+  odróżnieniu od pozostałych integracji AGD nie ma tu ani stałej, ani
+  pobieranej na żywo listy, bo capability SmartThings są zbyt różnorodne,
+  żeby sensownie zredukować je do jednej listy wyboru), patrz sekcja
+  "SmartThings" niżej.
 
 ```yaml
 reguły_ruchu:
@@ -2828,7 +2837,7 @@ to samo powiększenie, co przyciski/pasek, tylko sterowane gestem.
 
 | Węzeł | Rola | Konfiguracja |
 |---|---|---|
-| ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz/LG ThinQ/iQua), wyzwalacz |
+| ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz/LG ThinQ/iQua/SmartThings), wyzwalacz |
 | 📥 MQTT in | wejście grafu | temat MQTT (drugie możliwe wejście obok Trigger) |
 | ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania (payload wiadomości) - dwa wyjścia: "spełniony"/"inaczej" |
 | 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`, wybierany dwustopniowo: System -> Status) + operator (równa się/różna od/większe/większe-równe/mniejsze/mniejsze-równe) - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
@@ -3166,6 +3175,10 @@ mapy nie wpływa na żadną automatyzację.
   Zakończ", min. 3 punkty), dodawanie ikon (📍 - klik na płótnie stawia
   ikonę), przeciąganie ich w nowe miejsce, oraz panel boczny do ustawienia
   emoji/etykiety/mapowania na urządzenie i usuwania pomieszczenia/ikony.
+  Zaznaczone pomieszczenie pokazuje na płótnie białe uchwyty na każdym
+  narożniku - przeciągnięcie dowolnego z nich zmienia kształt (dotyczy też
+  prostokątów - przeciągnięcie rogu prostokąta po prostu zamienia go w
+  dowolny czworokąt, bez utraty pozostałych narożników).
 
 **Pamiętaj o przycisku "💾 Zapisz mapę"** - podobnie jak we Flow, zmiany
 w edytorze nie zapisują się same (dopiero `POST /api/config/home_map`).
@@ -3175,6 +3188,10 @@ w edytorze nie zapisują się same (dopiero `POST /api/config/home_map`).
 Płótno (1800x1100px) ma dokładnie ten sam mechanizm powiększania co
 edytor Flow (patrz wyżej): pasek ➖/➕/procent/"Dopasuj widok"/"100%",
 CSS `zoom` (nie `transform`) i szczypanie dwoma palcami na telefonie.
+Sam kontener płótna (`.canvas-wrap`) ma wysokość liczoną z wysokości okna
+(`calc(100vh - 300px)`, nie sztywną liczbę pikseli) i CSS `resize: vertical`
+- można ręcznie przeciągnąć jego dolną krawędź, gdyby wyliczona wysokość
+komuś nie pasowała.
 
 ### Powiązane reguły ruchu i flow
 
@@ -3186,7 +3203,7 @@ używają (jako źródło ALBO cel akcji, w tym warunki zagnieżdżone w
 od razu widać liczbę powiązań (np. "🎬2 · 🔀1"), bez klikania - dzięki
 temu widać na pierwszy rzut oka, które pomieszczenia mają jakąś
 automatyzację. Dopasowanie urządzenia do reguły/flow działa po nazwie
-urządzenia (Tuya/HomeWhiz/LG ThinQ/iQua) albo numerze strefy (Satel) -
+urządzenia (Tuya/HomeWhiz/LG ThinQ/iQua/SmartThings) albo numerze strefy (Satel) -
 nie wymaga żadnej dodatkowej konfiguracji poza samym zamapowaniem ikony
 na urządzenie w trybie Edycji.
 
@@ -3340,6 +3357,56 @@ jako warunek ALBO wejście automatyzacji" wyżej. W odróżnieniu od
 HomeWhiz/LG ThinQ lista wartości wyzwalających (`online`/`offline`) jest
 stała dla wszystkich urządzeń (jedno uniwersalne pole połączenia), więc nie
 jest pobierana dynamicznie per urządzenie.
+
+## SmartThings
+
+Bridge łączy się z oficjalnym **REST API SmartThings** (Samsung) przez
+pakiet PyPI `pysmartthings` (`bridge/smartthings_client.py`) - autoryzacja
+osobistym tokenem dostępu (Personal Access Token, generowanym na
+[stronie tokenów SmartThings](https://account.smartthings.com/tokens)),
+bez pełnego przepływu OAuth2/instalowanej SmartApp. W odróżnieniu od
+WSZYSTKICH pozostałych integracji chmurowych w tym projekcie (Tuya, iQua -
+`requests`, LG ThinQ - wymaga sesji `aiohttp` + client_id/country_code) ta
+biblioteka jest **w pełni asynchroniczna** (aiohttp) - bez żadnego
+`run_in_executor`, wystarczy sam token.
+
+**Dowolna capability/attribute, nie tylko przełączniki.** SmartThings
+obejmuje bardzo różne typy urządzeń (przełączniki, czujniki kontaktronowe,
+ruchu, temperatury, itd.) - każde monitorowane urządzenie ma skonfigurowaną
+parę capability/attribute do odczytu (domyślnie `switch`/`switch` -
+gniazdka i przełączniki), pobieraną z surowej odpowiedzi
+`GET /v1/devices/<id>/status` (kształt zweryfikowany wprost w kodzie
+pakietu `pysmartthings`: `{"components": {"main": {"<capability>":
+{"<attribute>": {"value": ...}}}}}`). Wartość `switch` jest tłumaczona na
+polski (`on`/`off` -> `włączone`/`wyłączone`) - reszta capability
+przechodzi jako zwykły tekst (ten sam kompromis co `friendly_run_state` dla
+LG ThinQ).
+
+**Brak sterowania.** Tak jak pozostałe integracje AGD/IoT w tym projekcie,
+bridge tylko ODPYTUJE stan - wysyłanie komend do urządzeń SmartThings
+(`execute_device_command` w bibliotece) nie jest wspierane w tej wersji.
+
+### Konfiguracja (zakładka 🧩 Wtyczki -> "🔷 SmartThings")
+
+1. Wygeneruj token dostępu na stronie tokenów SmartThings (zakres
+   `r:devices:*` wystarczy do samego odczytu stanu) i zapisz go.
+2. Kliknij "🔍 Odkryj urządzenia" - lista WSZYSTKICH urządzeń przypisanych
+   do konta - albo dodaj urządzenie ręcznie (ID urządzenia z panelu
+   SmartThings/aplikacji).
+3. Nadaj urządzeniu nazwę (dowolną, unikalną) i opcjonalnie dostosuj
+   capability/attribute (puste pola = domyślne `switch`/`switch`), zapisz
+   listę monitorowanych urządzeń.
+4. Włącz wtyczkę - wymaga pełnego restartu procesu bridge'a, tak jak inne
+   integracje chmurowe (UniFi Protect, Tuya Cloud, HomeWhiz, LG ThinQ, iQua).
+
+Stan trafia na stronę główną i jest dostępny jako warunek "stan" oraz jako
+trigger Flow/reguł ruchu (`source: smartthings_state`) - klucz statusu
+`smartthings:<nazwa>` - DOKŁADNIE tym samym mechanizmem co pozostałe
+integracje AGD/IoT (patrz sekcja "Stan urządzenia jako warunek ALBO
+wejście automatyzacji" wyżej). W odróżnieniu od nich pole wartości
+wyzwalającej jest zwykłym tekstem (bez stałej ani pobieranej listy) - zbyt
+wiele różnych capability, żeby sensownie zredukować je do jednej listy
+wyboru.
 
 ## Synchronizacja czasu
 

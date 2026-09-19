@@ -738,6 +738,7 @@ async def api_config_automation_context():
     homewhiz_appliances = sorted((config_raw.get("homewhiz") or {}).get("appliances", {}).keys())
     lg_thinq_devices = sorted((config_raw.get("lg_thinq") or {}).get("devices", {}).keys())
     iqua_devices = sorted((config_raw.get("iqua") or {}).get("devices", {}).keys())
+    smartthings_devices = sorted((config_raw.get("smartthings") or {}).get("devices", {}).keys())
     tuya_dp_options = {
         name: sorted(
             (
@@ -754,7 +755,7 @@ async def api_config_automation_context():
         "status_keys": status_keys, "motion_rule_names": motion_rule_names,
         "dimmer_devices": dimmer_devices, "satel_outputs": satel_outputs, "satel_zones": satel_zones,
         "homewhiz_appliances": homewhiz_appliances, "lg_thinq_devices": lg_thinq_devices,
-        "iqua_devices": iqua_devices,
+        "iqua_devices": iqua_devices, "smartthings_devices": smartthings_devices,
         "tuya_dp_options": tuya_dp_options,
     })
 

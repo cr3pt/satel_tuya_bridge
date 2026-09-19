@@ -125,6 +125,10 @@
     <label>Temat iQua (zmiękczacze wody)</label>
     <input type="text" id="iquaTopicInput" placeholder="iqua">
   </div>
+  <div class="field-group">
+    <label>Temat SmartThings</label>
+    <input type="text" id="smartthingsTopicInput" placeholder="smartthings">
+  </div>
   <div class="actions-bar">
     <button id="saveTopicsBtn" type="button">Zapisz</button>
   </div>
@@ -263,6 +267,7 @@ async function loadTopics() {
   document.getElementById('homewhizTopicInput').value = data.homewhiz_topic || 'homewhiz';
   document.getElementById('lgThinqTopicInput').value = data.lg_thinq_topic || 'lg_thinq';
   document.getElementById('iquaTopicInput').value = data.iqua_topic || 'iqua';
+  document.getElementById('smartthingsTopicInput').value = data.smartthings_topic || 'smartthings';
 }
 loadTopics();
 
@@ -273,6 +278,7 @@ document.getElementById('saveTopicsBtn').addEventListener('click', async () => {
     homewhiz_topic: document.getElementById('homewhizTopicInput').value,
     lg_thinq_topic: document.getElementById('lgThinqTopicInput').value,
     iqua_topic: document.getElementById('iquaTopicInput').value,
+    smartthings_topic: document.getElementById('smartthingsTopicInput').value,
   };
   try {
     const resp = await authorizedFetch('/api/plugins/mqtt_publish/topics', {

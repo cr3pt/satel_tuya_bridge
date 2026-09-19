@@ -164,3 +164,7 @@ class BridgeConfig:
     @property
     def iqua(self) -> dict | None:
         return self.raw.get("iqua")
+
+    @property
+    def smartthings(self) -> dict | None:
+        return self.raw.get("smartthings")

@@ -1832,6 +1832,63 @@ class TestIquaStateCallback:
         assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
 
 
+class TestSmartThingsStatusSeeding:
+
+    def _set_smartthings_cfg(self, engine, devices: dict) -> None:
+        raw = engine.config.store.get("config")
+        raw["smartthings"] = {"personal_access_token": "pat", "devices": devices}
+        engine.config.store.set("config", raw)
+
+    async def test_seeded_as_unknown_for_configured_device(self, engine):
+        self._set_smartthings_cfg(engine, {"Lampka": {"device_id": "d1"}})
+        await engine.reload_config()
+        assert engine.history.get_status_value("smartthings:Lampka") == "nieznany"
+
+    async def test_seed_does_not_overwrite_already_running_status(self, engine):
+        self._set_smartthings_cfg(engine, {"Lampka": {"device_id": "d1"}})
+        await engine.reload_config()
+        engine.history.set_status("smartthings:Lampka", "smartthings", "włączone", label="Lampka")
+        engine._seed_smartthings_status_labels()
+        assert engine.history.get_status_value("smartthings:Lampka") == "włączone"
+
+    async def test_removed_device_prunes_stale_status(self, engine):
+        self._set_smartthings_cfg(engine, {"Lampka": {"device_id": "d1"}})
+        await engine.reload_config()
+        assert engine.history.get_status_value("smartthings:Lampka") is not None
+
+        self._set_smartthings_cfg(engine, {})
+        await engine.reload_config()
+        assert engine.history.get_status_value("smartthings:Lampka") is None
+
+    async def test_no_smartthings_config_is_a_noop(self, engine):
+        await engine.reload_config()
+        assert engine.history.get_status("smartthings") == []
+
+
+class TestSmartThingsStateCallback:
+
+    async def test_publishes_state_as_status(self, engine):
+        await engine._on_smartthings_state("Lampka", "włączone")
+        assert engine.history.get_status_value("smartthings:Lampka") == "włączone"
+        rows = engine.history.get_status("smartthings")
+        assert rows[0]["label"] == "Lampka"
+
+    async def test_also_dispatches_to_device_state_motion_rules(self, engine, fake_tuya):
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [{
+                "source": "smartthings_state", "source_device": "Lampka", "trigger_value": "wyłączone",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+            }],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+
+        await engine._on_smartthings_state("Lampka", "wyłączone")
+        await asyncio.sleep(0)
+        assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+
 class TestHomeWhizStateCallback:
 
     async def test_publishes_state_as_status(self, engine):
