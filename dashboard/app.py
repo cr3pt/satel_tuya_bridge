@@ -895,7 +895,15 @@ async def api_config_home_map_post():
     icons = payload.get("icons")
     if not isinstance(rooms, list) or not isinstance(icons, list):
         return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
-    config_store.set("home_map", {"rooms": rooms, "icons": icons})
+    to_save = {"rooms": rooms, "icons": icons}
+    # "furniture" (meble/elementy architektoniczne - drzwi, okna, stoły,
+    # szafy, biurka) to nowsze, OPCJONALNE pole - starsze zapisane mapy (i
+    # istniejące testy) go nie mają, więc dopisujemy je tylko, gdy klient
+    # faktycznie je przysłał, zamiast wymuszać domyślne [] wszędzie.
+    furniture = payload.get("furniture")
+    if isinstance(furniture, list):
+        to_save["furniture"] = furniture
+    config_store.set("home_map", to_save)
     return jsonify({"message": "Zapisano mapę domu"})
 
 

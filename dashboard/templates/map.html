@@ -9,7 +9,7 @@
   :root {
     --bg: #14161a; --card: #1d2026; --border: #2c3038;
     --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
-    --danger: #e5484d; --ok: #3dd68c;
+    --danger: #e5484d; --ok: #3dd68c; --furniture: #b08d5f;
   }
   * { box-sizing: border-box; }
   body {
@@ -49,8 +49,10 @@
   }
   .draw-status.visible { display: block; }
   .draw-status .row { display: flex; gap: 6px; margin-top: 6px; }
-  .emoji-palette { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
-  .emoji-palette button { font-size: 18px; padding: 4px 7px; }
+  .icon-picker { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+  .icon-picker button { padding: 6px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
+  .icon-picker button svg { width: 20px; height: 20px; display: block; }
+  .icon-picker button.selected { border-color: var(--accent); background: #2a3550; }
   .color-palette { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
   .color-swatch {
     width: 26px; height: 26px; border-radius: 6px; cursor: pointer; border: 2px solid transparent;
@@ -88,15 +90,29 @@
     position: absolute; width: 56px; margin-left: -28px; margin-top: -24px;
     text-align: center; cursor: pointer; user-select: none; touch-action: none;
   }
-  .map-icon .emoji { font-size: 26px; line-height: 1; filter: none; transition: filter .15s; }
-  .map-icon.inactive .emoji { filter: grayscale(1) opacity(0.5); }
+  /* Dedykowany zestaw ikon SVG (nie emoji) - kolor napędza wyraźną zmianę
+     przy aktywacji/naruszeniu (zielony -> szary), nie tylko odsycenie jak
+     poprzednio (filter: grayscale) - to samo info, ale mocniej widoczne. */
+  .map-icon .icon-glyph { display: inline-block; color: var(--ok); transition: color .15s, opacity .15s; opacity: 1; }
+  .map-icon .icon-glyph svg { display: block; margin: 0 auto; }
+  .map-icon.inactive .icon-glyph { color: var(--muted); opacity: .55; }
   .map-icon .icon-label {
     font-size: 10px; color: var(--text); background: rgba(20,22,26,.75); border-radius: 4px;
     padding: 1px 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     max-width: 70px; margin: 1px auto 0; line-height: 1.3;
   }
-  .map-icon.selected .emoji { filter: drop-shadow(0 0 4px var(--accent)); }
+  .map-icon.selected .icon-glyph svg { filter: drop-shadow(0 0 4px var(--accent)); }
   .map-icon.unmapped .icon-label { color: var(--muted); font-style: italic; }
+
+  /* Meble/elementy architektoniczne (drzwi, okna, stoły, szafy, biurka) -
+     czysto dekoracyjne (bez statusu/aktywacji), stały kolor "furniture". */
+  .map-furniture {
+    position: absolute; width: 60px; margin-left: -30px; margin-top: -30px;
+    text-align: center; cursor: pointer; user-select: none; touch-action: none; color: var(--furniture);
+  }
+  .map-furniture .furniture-glyph { display: inline-block; }
+  .map-furniture .furniture-glyph svg { display: block; margin: 0 auto; }
+  .map-furniture.selected .furniture-glyph svg { filter: drop-shadow(0 0 4px var(--accent)); }
 
   .side-panel {
     width: 340px; flex-shrink: 0; background: var(--card); border: 1px solid var(--border);
@@ -128,17 +144,23 @@
 {% include "_nav.html" %}
 <h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🏠 Mapa domu</h1>
 <div class="hint">
-  Interaktywny plan domu - rysuj pomieszczenia (prostokąty i dowolne wieloboki)
-  i rozmieszczaj na nich ikony urządzeń, mapując każdą na istniejące
-  urządzenie/czujkę. Ikona zapalonej żarówki/aktywnej czujki jest kolorowa,
-  nieaktywnej - wyszarzona. Tryb <strong>👁 Podgląd</strong> - klik w ikonę
-  pokazuje jej stan. Tryb <strong>🎛 Sterowanie</strong> - klik w ikonę
-  mapowaną na urządzenie Tuya od razu je przełącza (inne kategorie na razie
-  tylko pokazują stan - patrz README). Tryb <strong>✏️ Edycja</strong> -
-  rysowanie pomieszczeń, dodawanie/przenoszenie/usuwanie ikon i mapowanie ich
-  na urządzenia. Zaznacz narysowane pomieszczenie, żeby pokazały się białe
-  uchwyty na jego narożnikach - przeciągnij dowolny, żeby zmienić kształt
-  (dotyczy też prostokątów). Klik w pomieszczenie (w każdym trybie) pokazuje, jakie
+  Interaktywny plan domu - rysuj pomieszczenia (prostokąty i dowolne wieloboki),
+  rozmieszczaj na nich dedykowane ikony SVG urządzeń (mapując każdą na
+  istniejące urządzenie/czujkę) oraz meble/elementy architektoniczne (drzwi,
+  okna, stoły, szafy, biurka - czysto dekoracyjne, bez stanu). Ikona
+  aktywnego urządzenia (włączone/naruszone/otwarte/uzbrojona) jest
+  zielona, nieaktywnego (w tym "niedostępne"/"poza siecią") - wyszarzona.
+  Tryb <strong>👁 Podgląd</strong> - klik w ikonę pokazuje jej stan. Tryb
+  <strong>🎛 Sterowanie</strong> - klik w ikonę mapowaną na urządzenie Tuya od
+  razu je przełącza (inne kategorie na razie tylko pokazują stan - patrz
+  README). Tryb <strong>✏️ Edycja</strong> - rysowanie pomieszczeń, dodawanie
+  ikon/mebli, przenoszenie i mapowanie ich na urządzenia. Przy rysowaniu
+  nowego pomieszczenia narożniki SAME PRZYCIĄGAJĄ się do krawędzi/rogów już
+  narysowanych pomieszczeń w promieniu kilkunastu pikseli, żeby osobno
+  rysowane pomieszczenia stykały się dokładnie tą samą ścianą. Zaznacz
+  narysowane pomieszczenie, żeby pokazały się białe uchwyty na jego
+  narożnikach - przeciągnij dowolny, żeby zmienić kształt (też przyciąga do
+  sąsiadów). Klik w pomieszczenie (w każdym trybie) pokazuje, jakie
   urządzenia w nim są i jakie reguły ruchu/flow ich używają - liczba pod
   nazwą pomieszczenia (🎬 reguły · 🔀 flow) widać od razu, bez klikania.
   Pamiętaj o "💾 Zapisz mapę" - zmiany nie zapisują się same.
@@ -157,10 +179,16 @@
 <div class="editor-layout">
   <div class="palette" id="palette" style="display:none;">
     <div style="font-size:12px;color:var(--muted);margin-bottom:2px;">Dodaj kształt</div>
-    <button type="button" class="secondary" id="toolRectBtn">▭ Prostokąt</button>
-    <button type="button" class="secondary" id="toolPolygonBtn">⬠ Wielobok</button>
+    <button type="button" class="secondary tool-btn" data-tool="rect">▭ Prostokąt</button>
+    <button type="button" class="secondary tool-btn" data-tool="polygon">⬠ Wielobok</button>
     <div style="font-size:12px;color:var(--muted);margin:6px 0 2px;">Dodaj urządzenie</div>
-    <button type="button" class="secondary" id="toolIconBtn">📍 Ikona</button>
+    <button type="button" class="secondary tool-btn" data-tool="icon">📍 Ikona</button>
+    <div style="font-size:12px;color:var(--muted);margin:6px 0 2px;">Dodaj mebel/element</div>
+    <button type="button" class="secondary tool-btn" data-furniture="door">🚪 Drzwi</button>
+    <button type="button" class="secondary tool-btn" data-furniture="window">🪟 Okno</button>
+    <button type="button" class="secondary tool-btn" data-furniture="table">🍽️ Stół</button>
+    <button type="button" class="secondary tool-btn" data-furniture="cabinet">🗄️ Szafa</button>
+    <button type="button" class="secondary tool-btn" data-furniture="desk">🖥️ Biurko</button>
     <div class="draw-status" id="drawStatus">
       <div id="drawStatusText"></div>
       <div class="row">
@@ -188,7 +216,7 @@
   <div class="side-panel" id="sidePanel">
     <div class="empty-hint" id="sidePanelEmpty">
       Kliknij ikonę urządzenia, żeby zobaczyć jej stan (tryb Podgląd/Sterowanie),
-      albo narysuj/zaznacz pomieszczenie lub ikonę w trybie Edycji.
+      albo narysuj/zaznacz pomieszczenie, ikonę lub mebel w trybie Edycji.
     </div>
     <div id="sidePanelContent" style="display:none;"></div>
   </div>
@@ -232,23 +260,94 @@ async function authorizedFetch(url, options = {}) {
   return resp;
 }
 
-const EMOJI_PALETTE = ['💡','🔌','🔘','🚪','🪟','🏃','🌡️','💧','🚨','🌀','❄️','🔥','🚗','🔒','📷','🧺','🍽','⚡'];
+// ---- Dedykowany zestaw ikon SVG (viewBox 24x24, stroke=currentColor) -
+// zastępuje poprzedni wolny wybór emoji: użytkownik wybiera z ZAMKNIĘTEJ
+// listy, więc wygląd całej mapy jest spójny. Klucze 1:1 odpowiadają
+// poprzednim znaczeniom emoji, żeby stare zapisane ikony dało się
+// bezboleśnie przemapować (patrz LEGACY_EMOJI_TO_ICON_KEY/iconKeyFor). ----
+const ICON_DEFS = {
+  bulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.4 10.9c.6.5 1 1.2 1.1 2h4.6c.1-.8.5-1.5 1.1-2A6 6 0 0 0 12 3Z"/>',
+  outlet: '<rect x="4" y="9" width="16" height="8" rx="2"/><path d="M9 9V5M15 9V5M12 17v3"/>',
+  switch: '<rect x="3" y="8" width="18" height="8" rx="4"/><circle cx="9" cy="12" r="3"/>',
+  door: '<rect x="6" y="3" width="12" height="18" rx="1"/><circle cx="15" cy="12" r="1" fill="currentColor" stroke="none"/>',
+  window: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M12 4v16M4 12h16"/>',
+  motion: '<circle cx="12" cy="14" r="2"/><path d="M7.5 9.5a7 7 0 0 1 9 0M4.8 6.8a11 11 0 0 1 14.4 0"/>',
+  thermometer: '<path d="M13 14.8V5a1 1 0 1 0-2 0v9.8a3.5 3.5 0 1 0 2 0Z"/>',
+  water: '<path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11Z"/>',
+  alarm: '<path d="M12 3a5 5 0 0 0-5 5v3l-2 4h14l-2-4V8a5 5 0 0 0-5-5Z"/><path d="M10 19a2 2 0 0 0 4 0"/>',
+  fan: '<circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><path d="M12 12c0-3.2 2-6 4.6-6 2.2 0 2.6 3-.1 5M12 12c-3.2 0-6 2-6 4.6 0 2.2 3 2.6 5-.1M12 12c3.2 0 6-2 6-4.6 0-2.2-3-2.6-5 .1M12 12c0 3.2-2 6-4.6 6-2.2 0-2.6-3 .1-5"/>',
+  ac: '<path d="M12 2v20M4.9 4.9l14.2 14.2M19.1 4.9L4.9 19.1"/>',
+  fire: '<path d="M12 2c2 3-1 4-1 7 0 1.4 1 2 2 2 2 0 2.8-1.4 2-3.3 2.7 1.2 3.5 4 3.5 6.3a6.5 6.5 0 1 1-13 0c0-2.8 1.8-4 2.8-6.5.9.9 1 1.8 1.7 1.8.9-2.7-1-4.6 2-7.3Z"/>',
+  garage: '<rect x="4" y="6" width="16" height="14" rx="1"/><path d="M4 10.3h16M4 14.7h16"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 1 1 8 0v4"/>',
+  camera: '<rect x="3" y="7" width="18" height="12" rx="2"/><circle cx="12" cy="13" r="4"/><path d="M9 7l1.3-2h3.4L15 7"/>',
+  washer: '<rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="13" r="5"/><circle cx="12" cy="13" r="2"/><path d="M7 6h2"/>',
+  dishwasher: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/>',
+  bolt: '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/>',
+};
+const ICON_OPTIONS = [
+  ['bulb', '💡 Żarówka/lampa'], ['outlet', '🔌 Gniazdko'], ['switch', '🔘 Przełącznik'],
+  ['door', '🚪 Drzwi (czujka)'], ['window', '🪟 Okno (czujka)'], ['motion', '🏃 Czujka ruchu'],
+  ['thermometer', '🌡️ Temperatura'], ['water', '💧 Woda/zmiękczacz'], ['alarm', '🚨 Alarm/syrena'],
+  ['fan', '🌀 Wentylator'], ['ac', '❄️ Klimatyzacja'], ['fire', '🔥 Ogrzewanie'],
+  ['garage', '🚗 Brama/garaż'], ['lock', '🔒 Zamek'], ['camera', '📷 Kamera'],
+  ['washer', '🧺 Pralka/AGD'], ['dishwasher', '🍽 Zmywarka'], ['bolt', '⚡ Inne'],
+];
+// Stare zapisane ikony trzymały emoji wprost w polu `emoji` - nowe zawsze
+// mają `icon_key`. Zamiast migracji danych, po prostu tłumaczymy stary
+// emoji na najbliższy klucz SVG przy odczycie (patrz iconKeyFor) -
+// zapis (edycja+"Zapisz ikonę") zawsze nadpisuje na nowe pole.
+const LEGACY_EMOJI_TO_ICON_KEY = {
+  '💡': 'bulb', '🔌': 'outlet', '🔘': 'switch', '🚪': 'door', '🪟': 'window', '🏃': 'motion',
+  '🌡️': 'thermometer', '💧': 'water', '🚨': 'alarm', '🌀': 'fan', '❄️': 'ac', '🔥': 'fire',
+  '🚗': 'garage', '🔒': 'lock', '📷': 'camera', '🧺': 'washer', '🍽': 'dishwasher', '⚡': 'bolt',
+};
+function iconKeyFor(icon) {
+  if (icon.icon_key && ICON_DEFS[icon.icon_key]) return icon.icon_key;
+  if (icon.emoji && LEGACY_EMOJI_TO_ICON_KEY[icon.emoji]) return LEGACY_EMOJI_TO_ICON_KEY[icon.emoji];
+  return 'bolt';
+}
+function iconSvg(key, size) {
+  size = size || 26;
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON_DEFS[key] || ICON_DEFS.bolt}</svg>`;
+}
+
+// ---- Meble/elementy architektoniczne (viewBox 0 0 100 100) - czysto
+// dekoracyjne symbole planu architektonicznego, bez statusu/aktywacji. ----
+const FURNITURE_DEFS = {
+  door: { label: 'Drzwi', svg: '<path d="M20 85V15"/><path d="M20 15a70 70 0 0 1 65 70"/>' },
+  window: { label: 'Okno', svg: '<rect x="8" y="42" width="84" height="16"/><line x1="8" y1="50" x2="92" y2="50"/>' },
+  table: { label: 'Stół', svg: '<rect x="12" y="25" width="76" height="50" rx="6"/>' },
+  cabinet: { label: 'Szafa', svg: '<rect x="15" y="15" width="70" height="70" rx="4"/><line x1="15" y1="15" x2="85" y2="85"/>' },
+  desk: { label: 'Biurko', svg: '<rect x="10" y="30" width="60" height="40" rx="3"/><circle cx="82" cy="70" r="10"/>' },
+};
+function furnitureSvg(type, size) {
+  size = size || 52;
+  const def = FURNITURE_DEFS[type] || FURNITURE_DEFS.table;
+  return `<svg viewBox="0 0 100 100" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">${def.svg}</svg>`;
+}
+
 const ROOM_COLORS = ['#4d8dfd','#3dd68c','#e5484d','#f5b83d','#a855f7','#14b8a6','#8b93a1'];
 // Wartości statusu traktowane jako "aktywne" (kolorowa ikona) - reszta (w tym
 // "niedostępne"/"poza siecią"/nieznane) jest wyszarzana. Nie próbujemy
 // rozróżniać znaczenia per kategoria (włączone światło vs naruszona czujka) -
 // wystarczy jeden uniwersalny zestaw "coś się dzieje/jest aktywne".
 const ACTIVE_VALUES = new Set(['włączone', 'naruszone', 'otwarte', 'tak', 'uzbrojona']);
+// Promień przyciągania (w lokalnych współrzędnych płótna, niezależny od
+// zoomu - dzielimy już przez canvasZoom przy liczeniu punktu) przy
+// rysowaniu/przeciąganiu narożników pomieszczeń - patrz snapPoint().
+const SNAP_THRESHOLD = 14;
 
-let mapData = { rooms: [], icons: [] };
+let mapData = { rooms: [], icons: [], furniture: [] };
 let context = { status_keys: [] };
 let automationsData = { reguły_ruchu: [] };
 let flowsList = [];
 let mode = 'view'; // view | control | edit
-let activeTool = null; // null | 'rect' | 'polygon' | 'icon'
+let activeTool = null; // null | 'rect' | 'polygon' | 'icon' | 'furniture:<type>'
 let drawPoints = [];
 let selectedRoomId = null;
 let selectedIconId = null;
+let selectedFurnitureId = null;
 let statusByKey = {};
 let idCounter = 1;
 function nextId(prefix) { return `${prefix}_${Date.now().toString(36)}_${idCounter++}`; }
@@ -318,17 +417,51 @@ function roomLinkedSummary(room) {
   return { iconsIn, ruleCount: ruleNames.size, flowCount: flowNames.size };
 }
 
+// ---- Przyciąganie (snapping) - przy rysowaniu/przeciąganiu narożnika
+// pomieszczenia szukamy najbliższego wierzchołka/krawędzi INNYCH już
+// narysowanych pomieszczeń w promieniu SNAP_THRESHOLD i "przyklejamy" do
+// niego punkt - dzięki temu osobno rysowane pomieszczenia stykają się
+// dokładnie tą samą ścianą zamiast zostawiać szpary/zachodzić na siebie
+// z niedokładnego klikania (to był jawny wymóg: "to że pomieszczenia będą
+// oddzielnie rysowane nie znaczy że nie mają być razem"). ----
+function closestPointOnSegment(p, a, b) {
+  const abx = b[0] - a[0], aby = b[1] - a[1];
+  const len2 = abx * abx + aby * aby;
+  if (len2 === 0) return { x: a[0], y: a[1], dist: Math.hypot(p.x - a[0], p.y - a[1]) };
+  let t = ((p.x - a[0]) * abx + (p.y - a[1]) * aby) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const x = a[0] + t * abx, y = a[1] + t * aby;
+  return { x, y, dist: Math.hypot(p.x - x, p.y - y) };
+}
+function snapPoint(pt, excludeRoomId) {
+  let best = null;
+  mapData.rooms.forEach(room => {
+    if (room.id === excludeRoomId) return;
+    room.points.forEach(v => {
+      const dist = Math.hypot(pt.x - v[0], pt.y - v[1]);
+      if (dist <= SNAP_THRESHOLD && (!best || dist < best.dist)) best = { x: v[0], y: v[1], dist };
+    });
+    for (let i = 0; i < room.points.length; i++) {
+      const a = room.points[i], b = room.points[(i + 1) % room.points.length];
+      const proj = closestPointOnSegment(pt, a, b);
+      if (proj.dist <= SNAP_THRESHOLD && (!best || proj.dist < best.dist)) best = proj;
+    }
+  });
+  return best ? { x: best.x, y: best.y } : pt;
+}
+
 async function loadMap() {
   mapData = await (await fetch('/api/config/home_map')).json();
   mapData.rooms = mapData.rooms || [];
   mapData.icons = mapData.icons || [];
+  mapData.furniture = mapData.furniture || [];
   renderCanvas();
 }
 
 async function saveMap() {
   const resp = await authorizedFetch('/api/config/home_map', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ rooms: mapData.rooms, icons: mapData.icons }),
+    body: JSON.stringify({ rooms: mapData.rooms, icons: mapData.icons, furniture: mapData.furniture }),
   });
   const data = await resp.json();
   if (resp.ok) showMsg(true, data.message || 'Zapisano');
@@ -355,6 +488,7 @@ document.getElementById('modeEditBtn').addEventListener('click', () => setMode('
 function clearSelection() {
   selectedRoomId = null;
   selectedIconId = null;
+  selectedFurnitureId = null;
   document.getElementById('sidePanelEmpty').style.display = '';
   document.getElementById('sidePanelContent').style.display = 'none';
   document.getElementById('sidePanelContent').innerHTML = '';
@@ -383,12 +517,14 @@ function statusKeyOptionsHtml(selected) {
 }
 
 function renderIconEditPanel(icon) {
+  const currentKey = iconKeyFor(icon);
   showSidePanel(`
-    <div class="field"><label>Emoji</label>
-      <div class="emoji-palette">
-        ${EMOJI_PALETTE.map(e => `<button type="button" class="secondary emoji-opt" data-emoji="${e}">${e}</button>`).join('')}
+    <div class="field"><label>Ikona</label>
+      <div class="icon-picker">
+        ${ICON_OPTIONS.map(([key, label]) => `
+          <button type="button" class="secondary icon-opt ${key === currentKey ? 'selected' : ''}" data-key="${key}" title="${escapeHtml(label)}">${iconSvg(key)}</button>
+        `).join('')}
       </div>
-      <input type="text" id="iconEmojiInput" value="${escapeHtml(icon.emoji || '⚡')}" maxlength="4">
     </div>
     <div class="field"><label>Etykieta</label>
       <input type="text" id="iconLabelInput" value="${escapeHtml(icon.label || '')}" placeholder="np. Lampa salon"></div>
@@ -397,11 +533,16 @@ function renderIconEditPanel(icon) {
     <button type="button" id="iconSaveBtn">✓ Zapisz ikonę</button>
     <button type="button" class="row-remove" id="iconDeleteBtn">🗑 Usuń ikonę</button>
   `);
-  document.querySelectorAll('.emoji-opt').forEach(btn => {
-    btn.addEventListener('click', () => { document.getElementById('iconEmojiInput').value = btn.dataset.emoji; });
+  let pendingIconKey = currentKey;
+  document.querySelectorAll('.icon-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pendingIconKey = btn.dataset.key;
+      document.querySelectorAll('.icon-opt').forEach(b => b.classList.toggle('selected', b === btn));
+    });
   });
   document.getElementById('iconSaveBtn').addEventListener('click', () => {
-    icon.emoji = (document.getElementById('iconEmojiInput').value || '⚡').trim() || '⚡';
+    icon.icon_key = pendingIconKey;
+    delete icon.emoji; // nowy zapis zawsze używa icon_key - stare pole tylko do wstecznej kompatybilności odczytu
     icon.label = document.getElementById('iconLabelInput').value.trim();
     const sel = document.getElementById('iconDeviceSelect');
     const opt = sel.selectedOptions[0];
@@ -452,6 +593,35 @@ function renderRoomEditPanel(room) {
   });
 }
 
+function renderFurnitureEditPanel(item) {
+  const def = FURNITURE_DEFS[item.type] || FURNITURE_DEFS.table;
+  showSidePanel(`
+    <div style="font-weight:600;margin-bottom:8px;">${furnitureSvg(item.type, 22)} ${escapeHtml(def.label)}</div>
+    <div class="field"><label>Etykieta (opcjonalnie)</label>
+      <input type="text" id="furnitureLabelInput" value="${escapeHtml(item.label || '')}" placeholder="np. Stół jadalny"></div>
+    <button type="button" class="secondary" id="furnitureRotateBtn" style="margin-bottom:10px;">🔄 Obróć o 90°</button>
+    <br>
+    <button type="button" id="furnitureSaveBtn">✓ Zapisz</button>
+    <button type="button" class="row-remove" id="furnitureDeleteBtn">🗑 Usuń</button>
+  `);
+  document.getElementById('furnitureRotateBtn').addEventListener('click', () => {
+    item.rotation = ((item.rotation || 0) + 90) % 360;
+    renderCanvas();
+    selectFurniture(item.id);
+  });
+  document.getElementById('furnitureSaveBtn').addEventListener('click', () => {
+    item.label = document.getElementById('furnitureLabelInput').value.trim();
+    renderCanvas();
+    selectFurniture(item.id);
+  });
+  document.getElementById('furnitureDeleteBtn').addEventListener('click', () => {
+    if (!confirm(`Na pewno usunąć "${def.label}" z mapy?`)) return;
+    mapData.furniture = mapData.furniture.filter(f => f.id !== item.id);
+    clearSelection();
+    renderCanvas();
+  });
+}
+
 function linkedAutomationsHtml(linked) {
   if (!linked.rules.length && !linked.flows.length) {
     return '<div class="empty-hint" style="margin-top:6px;">Brak powiązanych automatyzacji/flow.</div>';
@@ -472,7 +642,7 @@ function renderIconStatusPanel(icon) {
     controlHtml = '<div class="empty-hint" style="margin-top:8px;">To urządzenie nie obsługuje jeszcze sterowania z mapy (na razie tylko Tuya).</div>';
   }
   showSidePanel(`
-    <div style="font-size:28px;">${escapeHtml(icon.emoji || '⚡')}</div>
+    <div style="color:var(--text);">${iconSvg(iconKeyFor(icon), 40)}</div>
     <div style="font-weight:600;margin-bottom:6px;">${escapeHtml(icon.label || '(bez etykiety)')}</div>
     ${icon.status_key ? `
       <div class="status-row"><span class="k">Urządzenie</span><span>${escapeHtml(icon.status_device_label || icon.status_key)}</span></div>
@@ -493,7 +663,7 @@ function renderRoomLinksPanel(room) {
     <div style="font-weight:600;margin-bottom:8px;">${escapeHtml(room.label || '(bez nazwy)')}</div>
     ${summary.iconsIn.length ? summary.iconsIn.map(icon => `
       <div style="margin-bottom:10px;">
-        <div>${escapeHtml(icon.emoji || '⚡')} <strong>${escapeHtml(icon.label || icon.status_device_label || '?')}</strong></div>
+        <div style="display:flex;align-items:center;gap:6px;">${iconSvg(iconKeyFor(icon), 18)} <strong>${escapeHtml(icon.label || icon.status_device_label || '?')}</strong></div>
         ${linkedAutomationsHtml(findLinkedAutomations(icon))}
       </div>
     `).join('') : '<div class="empty-hint">Brak zamapowanych urządzeń w tym pomieszczeniu.</div>'}
@@ -525,6 +695,7 @@ async function pollMapCommand(commandId, btn, attempt = 0) {
 
 function selectIcon(id) {
   selectedRoomId = null;
+  selectedFurnitureId = null;
   selectedIconId = id;
   const icon = mapData.icons.find(i => i.id === id);
   if (!icon) { clearSelection(); return; }
@@ -534,6 +705,7 @@ function selectIcon(id) {
 }
 function selectRoom(id) {
   selectedIconId = null;
+  selectedFurnitureId = null;
   selectedRoomId = id;
   const room = mapData.rooms.find(r => r.id === id);
   if (!room) { clearSelection(); return; }
@@ -541,26 +713,40 @@ function selectRoom(id) {
   else renderRoomLinksPanel(room);
   renderCanvas();
 }
+function selectFurniture(id) {
+  selectedRoomId = null;
+  selectedIconId = null;
+  selectedFurnitureId = id;
+  const item = mapData.furniture.find(f => f.id === id);
+  if (!item) { clearSelection(); return; }
+  if (mode === 'edit') renderFurnitureEditPanel(item);
+  renderCanvas();
+}
 
-// ---- Rysowanie kształtów/ikon ----
+// ---- Rysowanie kształtów/ikon/mebli ----
 function updateDrawStatus() {
   const el = document.getElementById('drawStatus');
   const textEl = document.getElementById('drawStatusText');
   const finishBtn = document.getElementById('drawFinishBtn');
-  ['toolRectBtn', 'toolPolygonBtn', 'toolIconBtn'].forEach(id => document.getElementById(id).classList.remove('active'));
+  document.querySelectorAll('#palette .tool-btn').forEach(b => b.classList.remove('active'));
   if (!activeTool) { el.classList.remove('visible'); return; }
   el.classList.add('visible');
   finishBtn.style.display = 'none';
   if (activeTool === 'rect') {
-    document.getElementById('toolRectBtn').classList.add('active');
-    textEl.textContent = `Kliknij dwa przeciwległe rogi prostokąta (${drawPoints.length}/2)`;
+    document.querySelector('[data-tool="rect"]').classList.add('active');
+    textEl.textContent = `Kliknij dwa przeciwległe rogi prostokąta (${drawPoints.length}/2) - przyciąga do krawędzi sąsiednich pomieszczeń`;
   } else if (activeTool === 'polygon') {
-    document.getElementById('toolPolygonBtn').classList.add('active');
-    textEl.textContent = `Kliknij kolejne narożniki wieloboku (${drawPoints.length} pkt.)`;
+    document.querySelector('[data-tool="polygon"]').classList.add('active');
+    textEl.textContent = `Kliknij kolejne narożniki wieloboku (${drawPoints.length} pkt.) - przyciąga do krawędzi sąsiednich pomieszczeń`;
     if (drawPoints.length >= 3) finishBtn.style.display = '';
   } else if (activeTool === 'icon') {
-    document.getElementById('toolIconBtn').classList.add('active');
+    document.querySelector('[data-tool="icon"]').classList.add('active');
     textEl.textContent = 'Kliknij miejsce na płótnie, gdzie ma stanąć ikona';
+  } else if (activeTool.startsWith('furniture:')) {
+    const type = activeTool.split(':')[1];
+    const btn = document.querySelector(`[data-furniture="${type}"]`);
+    if (btn) btn.classList.add('active');
+    textEl.textContent = `Kliknij miejsce na płótnie dla: ${(FURNITURE_DEFS[type] || {}).label || type}`;
   }
 }
 function armTool(tool) {
@@ -569,17 +755,21 @@ function armTool(tool) {
   updateDrawStatus();
   renderCanvas();
 }
-document.getElementById('toolRectBtn').addEventListener('click', () => armTool('rect'));
-document.getElementById('toolPolygonBtn').addEventListener('click', () => armTool('polygon'));
-document.getElementById('toolIconBtn').addEventListener('click', () => armTool('icon'));
+document.querySelectorAll('#palette [data-tool]').forEach(btn => {
+  btn.addEventListener('click', () => armTool(btn.dataset.tool));
+});
+document.querySelectorAll('#palette [data-furniture]').forEach(btn => {
+  btn.addEventListener('click', () => armTool('furniture:' + btn.dataset.furniture));
+});
 document.getElementById('drawCancelBtn').addEventListener('click', () => { activeTool = null; drawPoints = []; updateDrawStatus(); renderCanvas(); });
 document.getElementById('drawFinishBtn').addEventListener('click', () => finishPolygon());
 
 function finishPolygon() {
   if (drawPoints.length < 3) return;
-  // drawPoints to obiekty {x,y} (patrz clientToLocalPoint) - room.points
-  // musi być tablicą par [x,y], tak samo jak dla prostokątów (finishRect)
-  // i jak zakłada reszta kodu (roomCentroid, renderCanvas, fitZoomToContent).
+  // drawPoints to obiekty {x,y} (patrz clientToLocalPoint, już po snapPoint) -
+  // room.points musi być tablicą par [x,y], tak samo jak dla prostokątów
+  // (finishRect) i jak zakłada reszta kodu (roomCentroid, renderCanvas,
+  // fitZoomToContent).
   const room = { id: nextId('room'), type: 'polygon', points: drawPoints.map(p => [p.x, p.y]), label: '', color: ROOM_COLORS[0] };
   mapData.rooms.push(room);
   activeTool = null; drawPoints = [];
@@ -597,12 +787,20 @@ function finishRect(a, b) {
   selectRoom(room.id);
 }
 function placeIcon(pt) {
-  const icon = { id: nextId('icon'), x: pt.x, y: pt.y, emoji: '⚡', label: '', status_key: null, status_category: null, status_device_label: null };
+  const icon = { id: nextId('icon'), x: pt.x, y: pt.y, icon_key: 'bolt', label: '', status_key: null, status_category: null, status_device_label: null };
   mapData.icons.push(icon);
   activeTool = null; drawPoints = [];
   updateDrawStatus();
   renderCanvas();
   selectIcon(icon.id);
+}
+function placeFurniture(pt, type) {
+  const item = { id: nextId('furn'), type, x: pt.x, y: pt.y, rotation: 0, label: '' };
+  mapData.furniture.push(item);
+  activeTool = null; drawPoints = [];
+  updateDrawStatus();
+  renderCanvas();
+  selectFurniture(item.id);
 }
 
 function clientToLocalPoint(e) {
@@ -613,9 +811,11 @@ function clientToLocalPoint(e) {
 
 document.getElementById('canvasWrap').addEventListener('click', (e) => {
   if (mode !== 'edit' || !activeTool) return;
-  if (e.target.closest('.map-icon')) return; // klik w ikonę ma swój handler
-  const pt = clientToLocalPoint(e);
-  if (activeTool === 'icon') { placeIcon(pt); return; }
+  if (e.target.closest('.map-icon') || e.target.closest('.map-furniture')) return; // mają własny handler
+  const rawPt = clientToLocalPoint(e);
+  if (activeTool === 'icon') { placeIcon(rawPt); return; }
+  if (activeTool.startsWith('furniture:')) { placeFurniture(rawPt, activeTool.split(':')[1]); return; }
+  const pt = snapPoint(rawPt, null);
   if (activeTool === 'rect') {
     drawPoints.push(pt);
     if (drawPoints.length === 2) finishRect(drawPoints[0], drawPoints[1]);
@@ -723,8 +923,9 @@ function renderCanvas() {
   }
 
   const canvasEl = document.getElementById('canvas');
-  canvasEl.querySelectorAll('.map-icon').forEach(el => el.remove());
+  canvasEl.querySelectorAll('.map-icon, .map-furniture').forEach(el => el.remove());
   mapData.icons.forEach(icon => canvasEl.appendChild(buildIconEl(icon)));
+  mapData.furniture.forEach(item => canvasEl.appendChild(buildFurnitureEl(item)));
 }
 
 function buildIconEl(icon) {
@@ -736,7 +937,7 @@ function buildIconEl(icon) {
   el.style.top = icon.y + 'px';
   el.dataset.iconId = icon.id;
   el.innerHTML = `
-    <div class="emoji">${escapeHtml(icon.emoji || '⚡')}</div>
+    <div class="icon-glyph">${iconSvg(iconKeyFor(icon))}</div>
     <div class="icon-label">${escapeHtml(icon.label || icon.status_device_label || '(bez etykiety)')}</div>
   `;
   if (mode === 'edit') {
@@ -754,6 +955,22 @@ function buildIconEl(icon) {
         toggleTuyaFromMapDirect(icon, isOn ? 'off' : 'on');
       }
     });
+  }
+  return el;
+}
+
+function buildFurnitureEl(item) {
+  const el = document.createElement('div');
+  el.className = 'map-furniture' + (item.id === selectedFurnitureId ? ' selected' : '');
+  el.style.left = item.x + 'px';
+  el.style.top = item.y + 'px';
+  el.dataset.furnitureId = item.id;
+  el.innerHTML = `
+    <div class="furniture-glyph" style="transform: rotate(${item.rotation || 0}deg);">${furnitureSvg(item.type)}</div>
+    ${item.label ? `<div class="icon-label">${escapeHtml(item.label)}</div>` : ''}
+  `;
+  if (mode === 'edit') {
+    el.addEventListener('pointerdown', (e) => { if (!activeTool) startFurnitureDrag(e, item); });
   }
   return el;
 }
@@ -787,6 +1004,24 @@ document.addEventListener('pointermove', (e) => {
 document.addEventListener('pointerup', () => { iconDragState = null; });
 document.addEventListener('pointercancel', () => { iconDragState = null; });
 
+let furnitureDragState = null;
+function startFurnitureDrag(e, item) {
+  selectFurniture(item.id);
+  furnitureDragState = { item, startX: e.clientX, startY: e.clientY, origX: item.x, origY: item.y };
+  try { e.target.closest('.map-furniture').setPointerCapture(e.pointerId); } catch (err) { /* patrz komentarz w flows.html */ }
+  e.preventDefault();
+}
+document.addEventListener('pointermove', (e) => {
+  if (!furnitureDragState) return;
+  const dx = (e.clientX - furnitureDragState.startX) / canvasZoom;
+  const dy = (e.clientY - furnitureDragState.startY) / canvasZoom;
+  furnitureDragState.item.x = Math.max(0, furnitureDragState.origX + dx);
+  furnitureDragState.item.y = Math.max(0, furnitureDragState.origY + dy);
+  renderCanvas();
+});
+document.addEventListener('pointerup', () => { furnitureDragState = null; });
+document.addEventListener('pointercancel', () => { furnitureDragState = null; });
+
 let vertexDragState = null;
 function startVertexDrag(e, room, index) {
   e.stopPropagation();
@@ -799,7 +1034,8 @@ document.addEventListener('pointermove', (e) => {
   const dx = (e.clientX - vertexDragState.startX) / canvasZoom;
   const dy = (e.clientY - vertexDragState.startY) / canvasZoom;
   const { room, index, orig } = vertexDragState;
-  room.points[index] = [Math.max(0, orig[0] + dx), Math.max(0, orig[1] + dy)];
+  const snapped = snapPoint({ x: Math.max(0, orig[0] + dx), y: Math.max(0, orig[1] + dy) }, room.id);
+  room.points[index] = [snapped.x, snapped.y];
   renderCanvas();
 });
 document.addEventListener('pointerup', () => { vertexDragState = null; });
@@ -822,7 +1058,9 @@ function setZoom(z) {
 }
 function fitZoomToContent() {
   const wrap = document.getElementById('canvasWrap');
-  const points = mapData.rooms.flatMap(r => r.points).concat(mapData.icons.map(i => [i.x, i.y]));
+  const points = mapData.rooms.flatMap(r => r.points)
+    .concat(mapData.icons.map(i => [i.x, i.y]))
+    .concat(mapData.furniture.map(f => [f.x, f.y]));
   if (!points.length || !wrap) { setZoom(1); return; }
   const maxX = Math.max(...points.map(p => p[0])) + 60;
   const maxY = Math.max(...points.map(p => p[1])) + 60;
