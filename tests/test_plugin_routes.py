@@ -1436,7 +1436,7 @@ class TestMqttPublishPluginPage:
         assert resp.status_code == 200
         assert await resp.get_json() == {
             "satel_topic": "satel", "tuya_topic": "tuya", "homewhiz_topic": "homewhiz",
-            "lg_thinq_topic": "lg_thinq",
+            "lg_thinq_topic": "lg_thinq", "iqua_topic": "iqua",
         }
 
     async def test_topics_post_without_auth_returns_401(self, client):
@@ -1449,7 +1449,7 @@ class TestMqttPublishPluginPage:
             "/api/plugins/mqtt_publish/topics",
             json={
                 "satel_topic": "moj_satel", "tuya_topic": "moje_tuya", "homewhiz_topic": "moj_homewhiz",
-                "lg_thinq_topic": "moj_lg_thinq",
+                "lg_thinq_topic": "moj_lg_thinq", "iqua_topic": "moj_iqua",
             },
             headers=_basic_auth_header("test_haslo_123"),
         ))
@@ -1460,6 +1460,7 @@ class TestMqttPublishPluginPage:
         saved = app_module.config_store.get("config")["mqtt_publish"]
         assert saved["topics"] == {
             "satel": "moj_satel", "tuya": "moje_tuya", "homewhiz": "moj_homewhiz", "lg_thinq": "moj_lg_thinq",
+            "iqua": "moj_iqua",
         }
         assert saved["log_level"] == "WARNING"
 
@@ -1472,7 +1473,7 @@ class TestMqttPublishPluginPage:
         data = await resp.get_json()
         assert data["topics"] == []
         assert set(data["known_prefixes"]) == {
-            "homeassistant", "home/bridge", "satel", "tuya", "homewhiz", "lg_thinq", "home/boiler",
+            "homeassistant", "home/bridge", "satel", "tuya", "homewhiz", "lg_thinq", "iqua", "home/boiler",
         }
 
     async def test_explorer_get_shows_recorded_topics(self, client):
@@ -2282,6 +2283,216 @@ class TestLgThinqPluginPage:
 
         resp = (await client.get(
             "/api/plugins/lg_thinq/devices/Pralka/states", headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 502
+
+
+class TestIquaPluginPage:
+    async def test_page_redirects_to_login_without_auth(self, client):
+        resp = (await client.get("/plugins/iqua", follow_redirects=False))
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    async def test_page_loads_when_authenticated(self, client):
+        resp = (await client.get("/plugins/iqua", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+
+    async def test_credentials_get_requires_auth_and_defaults_when_unconfigured(self, client):
+        assert (await client.get("/api/plugins/iqua/credentials")).status_code == 401
+        resp = (await client.get("/api/plugins/iqua/credentials", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert await resp.get_json() == {"username": "", "password_set": False}
+
+    async def test_credentials_post_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/iqua/credentials", json={"username": "x"})).status_code == 401
+
+    async def test_credentials_post_requires_username(self, client):
+        resp = (await client.post(
+            "/api/plugins/iqua/credentials", json={"username": "", "password": "haslo"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_credentials_post_requires_password_on_first_save(self, client):
+        resp = (await client.post(
+            "/api/plugins/iqua/credentials", json={"username": "user@example.com"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_credentials_post_persists_and_hides_password(self, client):
+        import dashboard.app as app_module
+
+        resp = (await client.post(
+            "/api/plugins/iqua/credentials",
+            json={"username": "user@example.com", "password": "s3cr3t"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["iqua"]
+        assert saved["username"] == "user@example.com"
+        assert saved["password"] == "s3cr3t"
+        text = await (await client.get(
+            "/api/plugins/iqua/credentials", headers=_basic_auth_header("test_haslo_123"),
+        )).get_data(as_text=True)
+        assert "s3cr3t" not in text
+
+        # Zapis bez hasła (np. sama zmiana loginu) NIE czyści zapisanego hasła.
+        (await client.post(
+            "/api/plugins/iqua/credentials", json={"username": "inny@example.com"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        saved_again = app_module.config_store.get("config")["iqua"]
+        assert saved_again["password"] == "s3cr3t"
+        assert saved_again["username"] == "inny@example.com"
+
+    async def test_devices_get_defaults_to_empty(self, client):
+        resp = (await client.get("/api/plugins/iqua/devices", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert await resp.get_json() == {"devices": []}
+
+    async def test_devices_post_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/iqua/devices", json={"devices": []})).status_code == 401
+
+    async def test_devices_post_requires_credentials_first(self, client):
+        resp = (await client.post(
+            "/api/plugins/iqua/devices",
+            json={"devices": [{"name": "Zmiękczacz", "serial_number": "DSN1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_rejects_missing_serial_number(self, client):
+        (await client.post(
+            "/api/plugins/iqua/credentials", json={"username": "user@example.com", "password": "haslo"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/iqua/devices", json={"devices": [{"name": "Zmiękczacz", "serial_number": ""}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_rejects_duplicate_names(self, client):
+        (await client.post(
+            "/api/plugins/iqua/credentials", json={"username": "user@example.com", "password": "haslo"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/iqua/devices",
+            json={"devices": [
+                {"name": "Zmiękczacz", "serial_number": "DSN1"}, {"name": "Zmiękczacz", "serial_number": "DSN2"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_persists(self, client):
+        import dashboard.app as app_module
+
+        (await client.post(
+            "/api/plugins/iqua/credentials", json={"username": "user@example.com", "password": "haslo"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/iqua/devices",
+            json={"devices": [{"name": "Zmiękczacz", "serial_number": "DSN123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["iqua"]
+        assert saved["devices"] == {"Zmiękczacz": {"serial_number": "DSN123"}}
+
+    async def test_settings_post_rejects_enabling_when_not_configured(self, client):
+        resp = (await client.post(
+            "/api/plugins/iqua/settings", json={"enabled": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_settings_post_succeeds_once_configured(self, client):
+        import dashboard.app as app_module
+
+        (await client.post(
+            "/api/plugins/iqua/credentials", json={"username": "user@example.com", "password": "haslo"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        (await client.post(
+            "/api/plugins/iqua/devices",
+            json={"devices": [{"name": "Zmiękczacz", "serial_number": "DSN123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/iqua/settings", json={"enabled": True, "log_level": "ERROR"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["iqua"]
+        assert saved["enabled"] is True
+        assert saved["log_level"] == "ERROR"
+        assert saved["username"] == "user@example.com"
+
+    async def test_device_test_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/iqua/devices/test", json={"serial_number": "DSN1"})).status_code == 401
+
+    async def test_device_test_requires_serial_number(self, client):
+        resp = (await client.post(
+            "/api/plugins/iqua/devices/test", json={"serial_number": ""},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_device_test_requires_credentials_first(self, client):
+        resp = (await client.post(
+            "/api/plugins/iqua/devices/test", json={"serial_number": "DSN1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_device_test_returns_data_from_client(self, client, monkeypatch):
+        import plugins.iqua.routes as iqua_routes_module
+
+        (await client.post(
+            "/api/plugins/iqua/credentials", json={"username": "user@example.com", "password": "haslo"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        async def fake_test_connection(username, password, serial_number):
+            assert username == "user@example.com"
+            assert serial_number == "DSN1"
+            return type("FakeData", (), {
+                "model": "ERO-EXP (123)",
+                "state": type("S", (), {"value": "Online"})(),
+                "salt_level_percent": 77,
+            })()
+
+        monkeypatch.setattr(iqua_routes_module, "test_connection", fake_test_connection)
+
+        resp = (await client.post(
+            "/api/plugins/iqua/devices/test", json={"serial_number": "DSN1"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data == {"model": "ERO-EXP (123)", "state": "Online", "salt_level_percent": 77}
+
+    async def test_device_test_reports_iqua_error(self, client, monkeypatch):
+        import plugins.iqua.routes as iqua_routes_module
+        from bridge.iqua_client import IquaError
+
+        (await client.post(
+            "/api/plugins/iqua/credentials", json={"username": "user@example.com", "password": "haslo"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        async def fake_test_connection(username, password, serial_number):
+            raise IquaError("nieprawidłowe dane logowania")
+
+        monkeypatch.setattr(iqua_routes_module, "test_connection", fake_test_connection)
+
+        resp = (await client.post(
+            "/api/plugins/iqua/devices/test", json={"serial_number": "DSN1"},
+            headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 502
 

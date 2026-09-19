@@ -717,6 +717,7 @@ function zoneOptions(selected) {
 function sourceDeviceOptions(selected, source) {
   const list = source === 'homewhiz_state' ? (context.homewhiz_appliances || [])
     : source === 'lg_thinq_state' ? (context.lg_thinq_devices || [])
+    : source === 'iqua_state' ? (context.iqua_devices || [])
     : (context.tuya_devices || []);
   return '<option value="">(wybierz)</option>' + list.map(n =>
     `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`
@@ -748,6 +749,8 @@ function triggerValueFieldHtml(source, selectedValue, dynamicStates) {
   let options = null;
   if (source === 'tuya_state') {
     options = STATE_VALUE_OPTIONS.tuya;
+  } else if (source === 'iqua_state') {
+    options = STATE_VALUE_OPTIONS.iqua;
   } else if ((source === 'homewhiz_state' || source === 'lg_thinq_state') && Array.isArray(dynamicStates) && dynamicStates.length > 0) {
     options = dynamicStates;
   }
@@ -787,6 +790,12 @@ const STATE_VALUE_OPTIONS = {
   tuya: ['włączone', 'wyłączone', 'niedostępne', 'poza siecią'],
   system_health: ['połączono'],
   automation: ['uruchomiona', 'bezczynna'],
+  // iQua (zmiękczacz wody) - w odróżnieniu od HomeWhiz/LG ThinQ nie ma
+  // per-model listy stanów (jedno, stałe pole połączenia dla WSZYSTKICH
+  // urządzeń) - stąd zwykła statyczna lista jak dla Tuya, bez dynamicznego
+  // pobierania z /api/plugins/iqua/devices/<nazwa>/states (taki endpoint
+  // w ogóle nie istnieje, bo nie jest tu do niczego potrzebny).
+  iqua: ['online', 'offline'],
 };
 function statusKeyCategory(key) {
   const found = (context.status_keys || []).find(s => s.key === key);
@@ -799,6 +808,7 @@ const STATUS_CATEGORY_LABELS = {
   tuya: 'Tuya',
   homewhiz: 'HomeWhiz (AGD)',
   lg_thinq: 'LG ThinQ (AGD)',
+  iqua: 'iQua (zmiękczacz wody)',
   boiler: 'Kocioł (eBUS)',
   system_health: 'Zdrowie połączeń',
   automation: 'Automatyzacja',
@@ -1083,6 +1093,7 @@ function renderNodeFields(node) {
       <option value="tuya_state" ${c.source === 'tuya_state' ? 'selected' : ''}>Tuya (stan urządzenia)</option>
       <option value="homewhiz_state" ${c.source === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz</option>
       <option value="lg_thinq_state" ${c.source === 'lg_thinq_state' ? 'selected' : ''}>LG ThinQ (AGD)</option>
+      <option value="iqua_state" ${c.source === 'iqua_state' ? 'selected' : ''}>iQua (zmiękczacz wody)</option>
     </select>`);
     if (c.source === 'satel_zone') {
       html += field(`<label>Wejście w Satelu</label><select data-field="zone_number">${zoneOptions(c.zone_number)}</select>`);

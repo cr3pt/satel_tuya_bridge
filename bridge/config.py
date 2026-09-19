@@ -160,3 +160,7 @@ class BridgeConfig:
     @property
     def lg_thinq(self) -> dict | None:
         return self.raw.get("lg_thinq")
+
+    @property
+    def iqua(self) -> dict | None:
+        return self.raw.get("iqua")

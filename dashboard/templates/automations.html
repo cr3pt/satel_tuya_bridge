@@ -382,6 +382,13 @@ function sourceDeviceOptionsHtml(system, selected) {
     }
     return devices.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
   }
+  if (system === 'iqua_state') {
+    const devices = context.iqua_devices || [];
+    if (devices.length === 0) {
+      return `<option value="">(brak skonfigurowanych urządzeń iQua - zakładka 🧩 Wtyczki)</option>`;
+    }
+    return devices.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+  }
   return deviceOptionsHtml(selected);
 }
 
@@ -599,6 +606,10 @@ const STATE_VALUE_OPTIONS = {
   tuya: ['włączone', 'wyłączone', 'niedostępne', 'poza siecią'],
   system_health: ['połączono'],
   automation: ['uruchomiona', 'bezczynna'],
+  // iQua (zmiękczacz wody) - stałe, uniwersalne pole połączenia dla
+  // wszystkich urządzeń (bez listy stanów per model) - statyczna lista jak
+  // dla Tuya, patrz identyczny komentarz w flows.html.
+  iqua: ['online', 'offline'],
 };
 
 function statusKeyCategory(key) {
@@ -612,6 +623,7 @@ const STATUS_CATEGORY_LABELS = {
   tuya: 'Tuya',
   homewhiz: 'HomeWhiz (AGD)',
   lg_thinq: 'LG ThinQ (AGD)',
+  iqua: 'iQua (zmiękczacz wody)',
   boiler: 'Kocioł (eBUS)',
   system_health: 'Zdrowie połączeń',
   automation: 'Automatyzacja',
@@ -640,6 +652,8 @@ function triggerValueFieldHtml(system, selectedValue, dynamicStates) {
   let options = null;
   if (system === 'tuya_state') {
     options = STATE_VALUE_OPTIONS.tuya;
+  } else if (system === 'iqua_state') {
+    options = STATE_VALUE_OPTIONS.iqua;
   } else if ((system === 'homewhiz_state' || system === 'lg_thinq_state') && Array.isArray(dynamicStates) && dynamicStates.length > 0) {
     options = dynamicStates;
   }
@@ -879,6 +893,7 @@ function buildExtraSourceRowHtml(entry) {
           <option value="tuya_state" ${system === 'tuya_state' ? 'selected' : ''}>Tuya (stan urządzenia)</option>
           <option value="homewhiz_state" ${system === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz (stan urządzenia AGD)</option>
           <option value="lg_thinq_state" ${system === 'lg_thinq_state' ? 'selected' : ''}>LG ThinQ (stan urządzenia AGD)</option>
+          <option value="iqua_state" ${system === 'iqua_state' ? 'selected' : ''}>iQua (zmiękczacz wody)</option>
         </select></div>
       <div class="field mr-ex-satel-fields" style="${system === 'satel_zone' ? '' : 'display:none;'}">
         <label>Wejście w Satelu</label>
@@ -1020,6 +1035,7 @@ function addMotionRuleCard(initial, startCollapsed) {
             <option value="tuya_state" ${sourceSystem === 'tuya_state' ? 'selected' : ''}>Tuya (stan urządzenia)</option>
             <option value="homewhiz_state" ${sourceSystem === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz (stan urządzenia AGD)</option>
             <option value="lg_thinq_state" ${sourceSystem === 'lg_thinq_state' ? 'selected' : ''}>LG ThinQ (stan urządzenia AGD)</option>
+            <option value="iqua_state" ${sourceSystem === 'iqua_state' ? 'selected' : ''}>iQua (zmiękczacz wody)</option>
           </select></div>
         <div class="field mr-satel-source-fields" style="${sourceSystem === 'satel_zone' ? '' : 'display:none;'}">
           <label>Wejście w Satelu</label>

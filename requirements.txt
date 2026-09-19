@@ -28,3 +28,7 @@ HAP-python==5.0.0
 # przez HTTP), NIE korzysta z wbudowanego kanału push przez AWS IoT/MQTT (stąd
 # brak dodatkowego skonfigurowania certyfikatów klienta w tej wersji).
 thinqconnect>=1.0.14
+# Zmiękczacze wody Ecowater/Viessmann Aquahome (aplikacja "iQua") -
+# bridge/iqua_client.py. Biblioteka jest SYNCHRONICZNA (requests) - każde
+# wywołanie odpytujemy w osobnym wątku (run_in_executor), tak jak tinytuya.
+iqua-softener>=1.0.1
