@@ -3145,19 +3145,27 @@ flow>`, więc łatwo przefiltrować historię jednego konkretnego flow.
 ## Mapa domu (beta) - interaktywny plan pomieszczeń
 
 Zakładka **🏠 Mapa** (`/map`) to wizualny plan domu: rysuje się na nim
-pomieszczenia (prostokąty i dowolne wieloboki) i rozmieszcza ikony
-(emoji) reprezentujące urządzenia/czujki, mapując każdą ikonę na
-istniejący status widoczny na panelu głównym (`/api/status`) - dokładnie
-te same wpisy, z których korzystają "Warunek stanu" we Flow i reguły
-ruchu. Ikona aktywnego urządzenia (włączone/naruszone/otwarte/uzbrojona)
-jest kolorowa, nieaktywnego (w tym "niedostępne"/"poza siecią") -
-wyszarzona (CSS `filter: grayscale`) - stan odświeża się co 2s, bez
-przeładowania strony.
+pomieszczenia (prostokąty i dowolne wieloboki), rozmieszcza na nich
+**dedykowane ikony SVG** urządzeń/czujek (ZAMKNIĘTA lista 18 ręcznie
+zrobionych ikon liniowych - nie dowolne emoji jak wcześniej), mapując
+każdą na istniejący status widoczny na panelu głównym (`/api/status`) -
+dokładnie te same wpisy, z których korzystają "Warunek stanu" we Flow i
+reguły ruchu - oraz **meble/elementy architektoniczne** (drzwi, okno,
+stół, szafa, biurko - czysto dekoracyjne symbole planu, bez statusu).
+Ikona aktywnego urządzenia (włączone/naruszone/otwarte/uzbrojona) jest
+**zielona**, nieaktywnego (w tym "niedostępne"/"poza siecią") -
+wyszarzona (kolor `--muted`, nie tylko odbarwienie filtrem jak wcześniej -
+zmiana koloru jest teraz wyraźniejsza) - stan odświeża się co 2s, bez
+przeładowania strony. Stare zapisane mapy z emoji nadal działają
+(`icon.emoji` tłumaczone na najbliższy klucz SVG przy odczycie) - zapis
+zawsze nadpisuje na nowe pole `icon.icon_key`.
 
 **Status: beta**, jak Flow - to czysto wizualny stan panelu (zapisywany
-jako osobny dokument `home_map` w bazie panelu, dokument `rooms`+`icons`),
-niepowiązany z `BridgeConfig`/silnikiem reguł - usunięcie/przebudowanie
-mapy nie wpływa na żadną automatyzację.
+jako osobny dokument `home_map` w bazie panelu, dokument
+`rooms`+`icons`+`furniture` - to ostatnie pole jest opcjonalne, starsze
+zapisane mapy bez niego nadal działają), niepowiązany z
+`BridgeConfig`/silnikiem reguł - usunięcie/przebudowanie mapy nie wpływa
+na żadną automatyzację.
 
 ### Trzy tryby pracy
 
@@ -3172,9 +3180,11 @@ mapy nie wpływa na żadną automatyzację.
   jeszcze odpowiednika generycznego przełącznika w panelu.
 - **✏️ Edycja** - rysowanie pomieszczeń (▭ Prostokąt - dwa kliknięcia na
   przeciwległych rogach; ⬠ Wielobok - dowolna liczba kliknięć + "✓
-  Zakończ", min. 3 punkty), dodawanie ikon (📍 - klik na płótnie stawia
-  ikonę), przeciąganie ich w nowe miejsce, oraz panel boczny do ustawienia
-  emoji/etykiety/mapowania na urządzenie i usuwania pomieszczenia/ikony.
+  Zakończ", min. 3 punkty), dodawanie ikon urządzeń (📍) i mebli/elementów
+  architektonicznych (🚪 Drzwi/🪟 Okno/🍽️ Stół/🗄️ Szafa/🖥️ Biurko - osobne
+  przyciski w palecie), przeciąganie ich w nowe miejsce, oraz panel boczny
+  do ustawienia ikony (grid 18 dedykowanych SVG do wyboru)/etykiety/
+  mapowania na urządzenie (dla ikon), obrotu co 90° (dla mebli) i usuwania.
   Zaznaczone pomieszczenie pokazuje na płótnie białe uchwyty na każdym
   narożniku - przeciągnięcie dowolnego z nich zmienia kształt (dotyczy też
   prostokątów - przeciągnięcie rogu prostokąta po prostu zamienia go w
@@ -3182,6 +3192,23 @@ mapy nie wpływa na żadną automatyzację.
 
 **Pamiętaj o przycisku "💾 Zapisz mapę"** - podobnie jak we Flow, zmiany
 w edytorze nie zapisują się same (dopiero `POST /api/config/home_map`).
+
+### Przyciąganie krawędzi (snapping) - spójny plan mimo osobnego rysowania
+
+To, że każde pomieszczenie rysuje się osobno, nie znaczy, że mają wyglądać
+jak osobne wyspy - przy rysowaniu NOWEGO pomieszczenia (▭/⬠) oraz przy
+przeciąganiu istniejącego narożnika (białe uchwyty, patrz wyżej) każdy
+klikany/przeciągany punkt jest sprawdzany pod kątem bliskości (14px w
+lokalnych współrzędnych płótna, niezależnie od poziomu powiększenia) do
+wierzchołków ALBO krawędzi INNYCH już narysowanych pomieszczeń
+(`snapPoint()` w `map.html` - rzut prostopadły na odcinek krawędzi, nie
+tylko przyciąganie do samych rogów) - w promieniu trafienia punkt jest
+"przyklejany" do dokładnie tej samej współrzędnej. Dzięki temu dwa osobno
+narysowane pomieszczenia stykają się dokładnie tą samą ścianą zamiast
+zostawiać szpary albo zachodzić na siebie z niedokładnego klikania.
+Przeciąganie narożnika WYKLUCZA własne pomieszczenie (nie przyciąga do
+swoich sąsiednich krawędzi we własnym kształcie) - przyciąga tylko do
+INNYCH pomieszczeń.
 
 ### Powiększanie i przewijanie płótna
 

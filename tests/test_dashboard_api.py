@@ -1663,6 +1663,19 @@ class TestHomeMap:
         get_resp = (await client.get("/api/config/home_map", headers=_basic_auth_header("test_haslo_123")))
         assert (await get_resp.get_json()) == payload
 
+    async def test_furniture_is_optional_and_round_trips_when_sent(self, client):
+        # "furniture" (meble/elementy architektoniczne) to nowsze pole -
+        # opcjonalne, żeby starsze zapisane mapy bez niego wciąż działały.
+        payload = {
+            "rooms": [], "icons": [],
+            "furniture": [{"id": "f_1", "type": "door", "x": 10, "y": 20, "rotation": 90}],
+        }
+        (await client.post(
+            "/api/config/home_map", json=payload, headers=_basic_auth_header("test_haslo_123"),
+        ))
+        get_resp = (await client.get("/api/config/home_map", headers=_basic_auth_header("test_haslo_123")))
+        assert (await get_resp.get_json()) == payload
+
     async def test_saving_map_does_not_touch_bridge_config(self, client, monkeypatch):
         # W odróżnieniu od /api/config/flows, zapis mapy NIE powinien
         # przeładowywać BridgeConfig/silnika - to czysto wizualny stan panelu.
