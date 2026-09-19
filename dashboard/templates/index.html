@@ -207,6 +207,13 @@
   </div>
 </div>
 
+<div class="card" data-collapse-key="statusSmartthings">
+  <div class="card-header"><h2>SmartThings</h2><span class="chevron">▾</span></div>
+  <div class="card-body">
+    <div id="statusSmartthings" class="status-grid"></div>
+  </div>
+</div>
+
 <div class="controls">
   <div class="sensor-multiselect">
     <button type="button" id="sensorMultiToggle" class="secondary">Czujniki (<span id="sensorSelectedCount">0</span>) ▾</button>
@@ -673,7 +680,7 @@ async function pollTuyaCommand(commandId, btn, originalText, attempt = 0) {
 }
 
 async function loadStatuses() {
-  const [health, tuya, inputs, outputs, boiler, homewhiz, lgThinq, iqua] = await Promise.all([
+  const [health, tuya, inputs, outputs, boiler, homewhiz, lgThinq, iqua, smartthings] = await Promise.all([
     fetch('/api/status?category=system_health').then(r => r.json()),
     fetch('/api/status?category=tuya').then(r => r.json()),
     fetch('/api/status?category=satel_input').then(r => r.json()),
@@ -682,6 +689,7 @@ async function loadStatuses() {
     fetch('/api/status?category=homewhiz').then(r => r.json()),
     fetch('/api/status?category=lg_thinq').then(r => r.json()),
     fetch('/api/status?category=iqua').then(r => r.json()),
+    fetch('/api/status?category=smartthings').then(r => r.json()),
   ]);
   renderStatusGrid('statusHealth', health);
   renderStatusGrid('statusTuya', tuya);
@@ -691,6 +699,7 @@ async function loadStatuses() {
   renderStatusGrid('statusHomewhiz', homewhiz);
   renderStatusGrid('statusLgThinq', lgThinq);
   renderStatusGrid('statusIqua', iqua);
+  renderStatusGrid('statusSmartthings', smartthings);
 }
 
 

@@ -389,6 +389,13 @@ function sourceDeviceOptionsHtml(system, selected) {
     }
     return devices.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
   }
+  if (system === 'smartthings_state') {
+    const devices = context.smartthings_devices || [];
+    if (devices.length === 0) {
+      return `<option value="">(brak skonfigurowanych urządzeń SmartThings - zakładka 🧩 Wtyczki)</option>`;
+    }
+    return devices.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+  }
   return deviceOptionsHtml(selected);
 }
 
@@ -624,6 +631,7 @@ const STATUS_CATEGORY_LABELS = {
   homewhiz: 'HomeWhiz (AGD)',
   lg_thinq: 'LG ThinQ (AGD)',
   iqua: 'iQua (zmiękczacz wody)',
+  smartthings: 'SmartThings',
   boiler: 'Kocioł (eBUS)',
   system_health: 'Zdrowie połączeń',
   automation: 'Automatyzacja',
@@ -894,6 +902,7 @@ function buildExtraSourceRowHtml(entry) {
           <option value="homewhiz_state" ${system === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz (stan urządzenia AGD)</option>
           <option value="lg_thinq_state" ${system === 'lg_thinq_state' ? 'selected' : ''}>LG ThinQ (stan urządzenia AGD)</option>
           <option value="iqua_state" ${system === 'iqua_state' ? 'selected' : ''}>iQua (zmiękczacz wody)</option>
+          <option value="smartthings_state" ${system === 'smartthings_state' ? 'selected' : ''}>SmartThings</option>
         </select></div>
       <div class="field mr-ex-satel-fields" style="${system === 'satel_zone' ? '' : 'display:none;'}">
         <label>Wejście w Satelu</label>
@@ -1036,6 +1045,7 @@ function addMotionRuleCard(initial, startCollapsed) {
             <option value="homewhiz_state" ${sourceSystem === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz (stan urządzenia AGD)</option>
             <option value="lg_thinq_state" ${sourceSystem === 'lg_thinq_state' ? 'selected' : ''}>LG ThinQ (stan urządzenia AGD)</option>
             <option value="iqua_state" ${sourceSystem === 'iqua_state' ? 'selected' : ''}>iQua (zmiękczacz wody)</option>
+            <option value="smartthings_state" ${sourceSystem === 'smartthings_state' ? 'selected' : ''}>SmartThings</option>
           </select></div>
         <div class="field mr-satel-source-fields" style="${sourceSystem === 'satel_zone' ? '' : 'display:none;'}">
           <label>Wejście w Satelu</label>

@@ -23,6 +23,9 @@ class TestPluginLoggersMapping:
     def test_iqua_logger_is_registered(self):
         assert PLUGIN_LOGGERS["iqua"] == ["bridge.iqua"]
 
+    def test_smartthings_logger_is_registered(self):
+        assert PLUGIN_LOGGERS["smartthings"] == ["bridge.smartthings"]
+
     def test_flow_engine_logger_is_registered(self):
         # Bez tego wpisu poziomu logowania Flow nie dało się w ogóle ustawić
         # (a logger bridge.flow_engine nigdy nie pojawiał się na liście

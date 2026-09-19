@@ -17,6 +17,7 @@ from .unifi_protect_events import UnifiProtectMotionListener
 from .homewhiz_client import HomeWhizClient
 from .iqua_client import IquaClient
 from .lg_thinq_client import LgThinqClient
+from .smartthings_client import SmartThingsClient
 from .ebus_client import EbusMqttListener
 from .weather_client import fetch_forecast
 from .boiler_output import build_boiler_publishers, MqttBoilerPublisher, TuyaVirtualDevicePublisher
@@ -133,6 +134,7 @@ class RulesEngine:
         self._homewhiz_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("homewhiz", "homewhiz")
         self._lg_thinq_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("lg_thinq", "lg_thinq")
         self._iqua_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("iqua", "iqua")
+        self._smartthings_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("smartthings", "smartthings")
         if mqtt_publish_cfg.get("enabled", True) and config.ebus.get("mqtt_host"):
             self.state_mqtt = HomeAssistantMqttBridge(
                 {"mqtt_host": config.ebus["mqtt_host"], "mqtt_port": config.ebus.get("mqtt_port", 1883)},
@@ -669,6 +671,15 @@ class RulesEngine:
         if self.state_mqtt:
             self.state_mqtt.publish_state(f"{self._iqua_mqtt_topic}/{device_name}/state", state_name)
 
+    async def _on_smartthings_state(self, device_name: str, state_name: str) -> None:
+        self.history.set_status(f"smartthings:{device_name}", "smartthings", state_name, label=device_name)
+        await self.handle_device_state("smartthings_state", device_name, state_name)
+
+        if self.ha_mqtt:
+            self.ha_mqtt.publish_state(f"{self._ha_topic_prefix}/smartthings/{device_name}/state", state_name)
+        if self.state_mqtt:
+            self.state_mqtt.publish_state(f"{self._smartthings_mqtt_topic}/{device_name}/state", state_name)
+
     async def handle_camera_motion(self, source: str, camera_id: str) -> None:
         now = datetime.now()
         for idx, rule in enumerate(self.config.camera_alarm_rules):
@@ -910,6 +921,7 @@ class RulesEngine:
         self._seed_homewhiz_status_labels()
         self._seed_lg_thinq_status_labels()
         self._seed_iqua_status_labels()
+        self._seed_smartthings_status_labels()
         self._seed_automation_status_labels()
 
         logger.info("Konfiguracja przeładowana bez restartu procesu")
@@ -1144,6 +1156,18 @@ class RulesEngine:
             iqua_keys |= {f"iqua:{name}:{suffix}" for name in device_names}
         self.history.prune_status("iqua", iqua_keys)
 
+    def _seed_smartthings_status_labels(self) -> None:
+        smartthings_cfg = self.config.smartthings or {}
+        device_names = set((smartthings_cfg.get("devices") or {}).keys())
+        seen = {s["key"] for s in self.history.get_status("smartthings")}
+        for name in device_names:
+            key = f"smartthings:{name}"
+            if key not in seen:
+                self.history.set_status(key, "smartthings", "nieznany", label=name)
+
+        smartthings_keys = {f"smartthings:{name}" for name in device_names}
+        self.history.prune_status("smartthings", smartthings_keys)
+
     def _seed_automation_status_labels(self) -> None:
         seen = {s["key"] for s in self.history.get_status("automation")}
         valid_keys = {f"automation:{scene_name}" for scene_name in self.scenes.scenes}
@@ -1209,6 +1233,7 @@ class RulesEngine:
         self._seed_homewhiz_status_labels()
         self._seed_lg_thinq_status_labels()
         self._seed_iqua_status_labels()
+        self._seed_smartthings_status_labels()
         self._seed_automation_status_labels()
 
         async def _on_zone_change(status: dict) -> None:
@@ -1323,6 +1348,13 @@ class RulesEngine:
                 history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
             )
             asyncio.create_task(iqua_client.run_forever())
+
+        if self.config.smartthings and self.config.smartthings.get("enabled", True):
+            smartthings_client = SmartThingsClient(
+                self.config.smartthings, self._on_smartthings_state,
+                history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
+            )
+            asyncio.create_task(smartthings_client.run_forever())
 
         if self.ha_mqtt:
             def _make_tuya_handler(name):

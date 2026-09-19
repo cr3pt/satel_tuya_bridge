@@ -1436,7 +1436,7 @@ class TestMqttPublishPluginPage:
         assert resp.status_code == 200
         assert await resp.get_json() == {
             "satel_topic": "satel", "tuya_topic": "tuya", "homewhiz_topic": "homewhiz",
-            "lg_thinq_topic": "lg_thinq", "iqua_topic": "iqua",
+            "lg_thinq_topic": "lg_thinq", "iqua_topic": "iqua", "smartthings_topic": "smartthings",
         }
 
     async def test_topics_post_without_auth_returns_401(self, client):
@@ -1449,7 +1449,7 @@ class TestMqttPublishPluginPage:
             "/api/plugins/mqtt_publish/topics",
             json={
                 "satel_topic": "moj_satel", "tuya_topic": "moje_tuya", "homewhiz_topic": "moj_homewhiz",
-                "lg_thinq_topic": "moj_lg_thinq", "iqua_topic": "moj_iqua",
+                "lg_thinq_topic": "moj_lg_thinq", "iqua_topic": "moj_iqua", "smartthings_topic": "moj_smartthings",
             },
             headers=_basic_auth_header("test_haslo_123"),
         ))
@@ -1460,7 +1460,7 @@ class TestMqttPublishPluginPage:
         saved = app_module.config_store.get("config")["mqtt_publish"]
         assert saved["topics"] == {
             "satel": "moj_satel", "tuya": "moje_tuya", "homewhiz": "moj_homewhiz", "lg_thinq": "moj_lg_thinq",
-            "iqua": "moj_iqua",
+            "iqua": "moj_iqua", "smartthings": "moj_smartthings",
         }
         assert saved["log_level"] == "WARNING"
 
@@ -1473,7 +1473,7 @@ class TestMqttPublishPluginPage:
         data = await resp.get_json()
         assert data["topics"] == []
         assert set(data["known_prefixes"]) == {
-            "homeassistant", "home/bridge", "satel", "tuya", "homewhiz", "lg_thinq", "iqua", "home/boiler",
+            "homeassistant", "home/bridge", "satel", "tuya", "homewhiz", "lg_thinq", "iqua", "smartthings", "home/boiler",
         }
 
     async def test_explorer_get_shows_recorded_topics(self, client):
@@ -2495,6 +2495,200 @@ class TestIquaPluginPage:
             headers=_basic_auth_header("test_haslo_123"),
         ))
         assert resp.status_code == 502
+
+
+class TestSmartThingsPluginPage:
+    async def test_page_redirects_to_login_without_auth(self, client):
+        resp = (await client.get("/plugins/smartthings", follow_redirects=False))
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    async def test_page_loads_when_authenticated(self, client):
+        resp = (await client.get("/plugins/smartthings", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+
+    async def test_credentials_get_requires_auth_and_defaults_when_unconfigured(self, client):
+        assert (await client.get("/api/plugins/smartthings/credentials")).status_code == 401
+        resp = (await client.get("/api/plugins/smartthings/credentials", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert await resp.get_json() == {"pat_set": False}
+
+    async def test_credentials_post_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/smartthings/credentials", json={"personal_access_token": "x"})).status_code == 401
+
+    async def test_credentials_post_requires_pat_on_first_save(self, client):
+        resp = (await client.post(
+            "/api/plugins/smartthings/credentials", json={},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_credentials_post_persists_and_hides_token(self, client):
+        import dashboard.app as app_module
+
+        resp = (await client.post(
+            "/api/plugins/smartthings/credentials",
+            json={"personal_access_token": "s3cr3t-pat"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["smartthings"]
+        assert saved["personal_access_token"] == "s3cr3t-pat"
+        text = await (await client.get(
+            "/api/plugins/smartthings/credentials", headers=_basic_auth_header("test_haslo_123"),
+        )).get_data(as_text=True)
+        assert "s3cr3t-pat" not in text
+
+    async def test_devices_get_defaults_to_empty(self, client):
+        resp = (await client.get("/api/plugins/smartthings/devices", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert await resp.get_json() == {"devices": []}
+
+    async def test_devices_post_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/smartthings/devices", json={"devices": []})).status_code == 401
+
+    async def test_devices_post_requires_credentials_first(self, client):
+        resp = (await client.post(
+            "/api/plugins/smartthings/devices",
+            json={"devices": [{"name": "Lampka", "device_id": "d1"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_rejects_missing_device_id(self, client):
+        (await client.post(
+            "/api/plugins/smartthings/credentials", json={"personal_access_token": "pat"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/smartthings/devices", json={"devices": [{"name": "Lampka", "device_id": ""}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_rejects_duplicate_names(self, client):
+        (await client.post(
+            "/api/plugins/smartthings/credentials", json={"personal_access_token": "pat"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/smartthings/devices",
+            json={"devices": [
+                {"name": "Lampka", "device_id": "d1"}, {"name": "Lampka", "device_id": "d2"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_persists_with_default_capability_and_attribute(self, client):
+        import dashboard.app as app_module
+
+        (await client.post(
+            "/api/plugins/smartthings/credentials", json={"personal_access_token": "pat"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/smartthings/devices",
+            json={"devices": [{"name": "Lampka", "device_id": "dev-123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["smartthings"]
+        assert saved["devices"] == {"Lampka": {"device_id": "dev-123", "capability": "switch", "attribute": "switch"}}
+
+    async def test_devices_post_persists_custom_capability_and_attribute(self, client):
+        import dashboard.app as app_module
+
+        (await client.post(
+            "/api/plugins/smartthings/credentials", json={"personal_access_token": "pat"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/smartthings/devices",
+            json={"devices": [{
+                "name": "Drzwi", "device_id": "dev-456", "capability": "contactSensor", "attribute": "contact",
+            }]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["smartthings"]
+        assert saved["devices"]["Drzwi"] == {"device_id": "dev-456", "capability": "contactSensor", "attribute": "contact"}
+
+    async def test_settings_post_rejects_enabling_when_not_configured(self, client):
+        resp = (await client.post(
+            "/api/plugins/smartthings/settings", json={"enabled": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_settings_post_succeeds_once_configured(self, client):
+        import dashboard.app as app_module
+
+        (await client.post(
+            "/api/plugins/smartthings/credentials", json={"personal_access_token": "pat"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        (await client.post(
+            "/api/plugins/smartthings/devices",
+            json={"devices": [{"name": "Lampka", "device_id": "dev-123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        resp = (await client.post(
+            "/api/plugins/smartthings/settings", json={"enabled": True, "log_level": "ERROR"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["smartthings"]
+        assert saved["enabled"] is True
+        assert saved["log_level"] == "ERROR"
+        assert saved["personal_access_token"] == "pat"
+
+    async def test_discover_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/smartthings/discover")).status_code == 401
+
+    async def test_discover_requires_credentials_first(self, client):
+        resp = (await client.post("/api/plugins/smartthings/discover", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 400
+
+    async def test_discover_returns_devices_from_client(self, client, monkeypatch):
+        import plugins.smartthings.routes as smartthings_routes_module
+
+        (await client.post(
+            "/api/plugins/smartthings/credentials", json={"personal_access_token": "pat"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        async def fake_list_devices(pat):
+            assert pat == "pat"
+            return [
+                {"device_id": "d1", "alias": "Lampka", "device_type": "OCF", "model_name": "V1"},
+                {"device_id": "d2", "alias": "Gniazdko", "device_type": "ZIGBEE", "model_name": "V2"},
+            ]
+
+        monkeypatch.setattr(smartthings_routes_module, "list_devices", fake_list_devices)
+
+        resp = (await client.post("/api/plugins/smartthings/discover", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        devices = (await resp.get_json())["devices"]
+        assert {d["device_id"] for d in devices} == {"d1", "d2"}
+
+    async def test_discover_reports_smartthings_error(self, client, monkeypatch):
+        import plugins.smartthings.routes as smartthings_routes_module
+        from bridge.smartthings_client import SmartThingsError
+
+        (await client.post(
+            "/api/plugins/smartthings/credentials", json={"personal_access_token": "pat"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+
+        async def fake_list_devices(pat):
+            raise SmartThingsError("nieprawidłowy token")
+
+        monkeypatch.setattr(smartthings_routes_module, "list_devices", fake_list_devices)
+
+        resp = (await client.post("/api/plugins/smartthings/discover", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 502
+        assert "token" in (await resp.get_json())["error"]
 
 
 class TestNotificationsPluginPage:

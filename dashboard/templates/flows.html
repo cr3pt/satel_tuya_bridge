@@ -718,6 +718,7 @@ function sourceDeviceOptions(selected, source) {
   const list = source === 'homewhiz_state' ? (context.homewhiz_appliances || [])
     : source === 'lg_thinq_state' ? (context.lg_thinq_devices || [])
     : source === 'iqua_state' ? (context.iqua_devices || [])
+    : source === 'smartthings_state' ? (context.smartthings_devices || [])
     : (context.tuya_devices || []);
   return '<option value="">(wybierz)</option>' + list.map(n =>
     `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`
@@ -809,6 +810,7 @@ const STATUS_CATEGORY_LABELS = {
   homewhiz: 'HomeWhiz (AGD)',
   lg_thinq: 'LG ThinQ (AGD)',
   iqua: 'iQua (zmiękczacz wody)',
+  smartthings: 'SmartThings',
   boiler: 'Kocioł (eBUS)',
   system_health: 'Zdrowie połączeń',
   automation: 'Automatyzacja',
@@ -1094,6 +1096,7 @@ function renderNodeFields(node) {
       <option value="homewhiz_state" ${c.source === 'homewhiz_state' ? 'selected' : ''}>HomeWhiz</option>
       <option value="lg_thinq_state" ${c.source === 'lg_thinq_state' ? 'selected' : ''}>LG ThinQ (AGD)</option>
       <option value="iqua_state" ${c.source === 'iqua_state' ? 'selected' : ''}>iQua (zmiękczacz wody)</option>
+      <option value="smartthings_state" ${c.source === 'smartthings_state' ? 'selected' : ''}>SmartThings</option>
     </select>`);
     if (c.source === 'satel_zone') {
       html += field(`<label>Wejście w Satelu</label><select data-field="zone_number">${zoneOptions(c.zone_number)}</select>`);
