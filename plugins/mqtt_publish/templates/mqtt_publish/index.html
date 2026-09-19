@@ -121,6 +121,10 @@
     <label>Temat LG ThinQ (pralki/AGD)</label>
     <input type="text" id="lgThinqTopicInput" placeholder="lg_thinq">
   </div>
+  <div class="field-group">
+    <label>Temat iQua (zmiękczacze wody)</label>
+    <input type="text" id="iquaTopicInput" placeholder="iqua">
+  </div>
   <div class="actions-bar">
     <button id="saveTopicsBtn" type="button">Zapisz</button>
   </div>
@@ -258,6 +262,7 @@ async function loadTopics() {
   document.getElementById('tuyaTopicInput').value = data.tuya_topic || 'tuya';
   document.getElementById('homewhizTopicInput').value = data.homewhiz_topic || 'homewhiz';
   document.getElementById('lgThinqTopicInput').value = data.lg_thinq_topic || 'lg_thinq';
+  document.getElementById('iquaTopicInput').value = data.iqua_topic || 'iqua';
 }
 loadTopics();
 
@@ -267,6 +272,7 @@ document.getElementById('saveTopicsBtn').addEventListener('click', async () => {
     tuya_topic: document.getElementById('tuyaTopicInput').value,
     homewhiz_topic: document.getElementById('homewhizTopicInput').value,
     lg_thinq_topic: document.getElementById('lgThinqTopicInput').value,
+    iqua_topic: document.getElementById('iquaTopicInput').value,
   };
   try {
     const resp = await authorizedFetch('/api/plugins/mqtt_publish/topics', {

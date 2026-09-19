@@ -2129,12 +2129,13 @@ system + urządzenie źródłowe + wyzwalacz + rodzaj akcji), **2. Wyjście**
 **4. Harmonogram**, **5. Eskalacja** - patrz sekcje niżej po szczegóły
 każdej z nich.
 
-### Wejście reguły ruchu: Satel, albo stan urządzenia Tuya/HomeWhiz/LG ThinQ (`source`)
+### Wejście reguły ruchu: Satel, albo stan urządzenia Tuya/HomeWhiz/LG ThinQ/iQua (`source`)
 
 Reguła ruchu wyzwala się nie tylko naruszeniem wejścia Satela - może też
 reagować na **stan dowolnego urządzenia Tuya albo urządzenia AGD
-HomeWhiz/LG ThinQ** (patrz sekcje "Zmywarki/AGD HomeWhiz" i "Pralki/AGD LG
-ThinQ" niżej). Pole "System" w sekcji "1. Wejście" wybiera źródło:
+HomeWhiz/LG ThinQ, albo zmiękczacza wody iQua** (patrz sekcje "Zmywarki/AGD
+HomeWhiz", "Pralki/AGD LG ThinQ" i "Zmiękczacze wody iQua" niżej). Pole
+"System" w sekcji "1. Wejście" wybiera źródło:
 
 - **Satel (wejście)** (`source: satel_zone`, domyślne) - jak dotąd:
   `zone_number` + `trigger_on` (naruszenie/ustanie).
@@ -2158,6 +2159,10 @@ ThinQ" niżej). Pole "System" w sekcji "1. Wejście" wybiera źródło:
   pobierane na żywo z deskryptora profilu TEGO KONKRETNEGO modelu (endpoint
   `/api/plugins/lg_thinq/devices/<nazwa>/states`, patrz sekcja "Pralki/AGD
   LG ThinQ" niżej).
+- **iQua (zmiękczacz wody)** (`source: iqua_state`) - `source_device` (nazwa
+  urządzenia iQua) + `trigger_value` (`online`/`offline` - stała lista, w
+  odróżnieniu od HomeWhiz/LG ThinQ nie ma tu per-modelowej listy stanów,
+  patrz sekcja "Zmiękczacze wody iQua" niżej).
 
 ```yaml
 reguły_ruchu:
@@ -2823,7 +2828,7 @@ to samo powiększenie, co przyciski/pasek, tylko sterowane gestem.
 
 | Węzeł | Rola | Konfiguracja |
 |---|---|---|
-| ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz/LG ThinQ), wyzwalacz |
+| ⚡ Trigger | wejście grafu | źródło (Satel/Tuya/HomeWhiz/LG ThinQ/iQua), wyzwalacz |
 | 📥 MQTT in | wejście grafu | temat MQTT (drugie możliwe wejście obok Trigger) |
 | ❓ Warunek | rozgałęzienie | operator (`>`,`<`,`>=`,`<=`,`==`,`!=`) i wartość porównania (payload wiadomości) - dwa wyjścia: "spełniony"/"inaczej" |
 | 🔍 Warunek stanu | rozgałęzienie | DOWOLNY klucz statusu widoczny na panelu głównym (np. `satel_input:9`, `tuya:gniazdko_salon`, wybierany dwustopniowo: System -> Status) + operator (równa się/różna od/większe/większe-równe/mniejsze/mniejsze-równe) - dwa wyjścia, jak Warunek, ale niezależnie od payloadu wiadomości |
@@ -3181,7 +3186,7 @@ używają (jako źródło ALBO cel akcji, w tym warunki zagnieżdżone w
 od razu widać liczbę powiązań (np. "🎬2 · 🔀1"), bez klikania - dzięki
 temu widać na pierwszy rzut oka, które pomieszczenia mają jakąś
 automatyzację. Dopasowanie urządzenia do reguły/flow działa po nazwie
-urządzenia (Tuya/HomeWhiz/LG ThinQ) albo numerze strefy (Satel) -
+urządzenia (Tuya/HomeWhiz/LG ThinQ/iQua) albo numerze strefy (Satel) -
 nie wymaga żadnej dodatkowej konfiguracji poza samym zamapowaniem ikony
 na urządzenie w trybie Edycji.
 
@@ -3287,6 +3292,54 @@ Stan trafia na stronę główną i jest dostępny jako warunek "stan" oraz jako
 trigger Flow/reguł ruchu (`source: lg_thinq_state`) - DOKŁADNIE tym samym
 mechanizmem co HomeWhiz (klucz statusu `lg_thinq:<nazwa>`, patrz sekcja
 "Stan urządzenia jako warunek ALBO wejście automatyzacji" wyżej).
+
+## Zmiękczacze wody iQua
+
+Bridge łączy się z chmurą **Ecowater/Viessmann Aquahome** (aplikacja
+mobilna "iQua", `https://apioem.ecowater.com`) przez pakiet PyPI
+`iqua-softener` (`bridge/iqua_client.py`) - autoryzacja zwykłym
+loginem/hasłem do konta iQua (jak w samej aplikacji), NIE tokenem PAT jak
+LG ThinQ. Biblioteka jest **synchroniczna** (`requests`), więc każde
+odpytanie wykonywane jest w osobnym wątku (`run_in_executor`), tak samo jak
+lokalny/chmurowy klient Tuya (`tuya_local.py`/`tuya_cloud.py`) robi to dla
+`tinytuya` - nie blokuje to event loopa bridge'a.
+
+**Brak API do sterowania.** W odróżnieniu od Tuya/HomeWhiz/LG ThinQ ta
+integracja jest **wyłącznie do odczytu** - zweryfikowane wprost w kodzie
+pakietu `iqua-softener`: `IquaSoftener` udostępnia tylko `get_data()`, bez
+żadnej metody zapisu (nie ma np. zdalnego zamykania zaworu wody). Dostępne
+odczyty (`IquaSoftenerData`): stan połączenia (online/offline), poziom soli
+(%), przewidywana liczba dni do wyczerpania soli, dzisiejsze zużycie wody i
+inne - odpytywane rzadko (domyślnie co 15 min, `status_poll_interval_seconds`,
+minimum 60s), bo poziom soli/zużycie wody zmieniają się w skali dni, nie
+sekund.
+
+**Brak listy urządzeń konta.** W odróżnieniu od LG ThinQ (przycisk "🔍
+Odkryj urządzenia") to API nie udostępnia listy urządzeń przypisanych do
+konta - numer seryjny (DSN#) trzeba przepisać ręcznie z etykiety na
+urządzeniu albo z samej aplikacji iQua. Przycisk "🔌 Testuj" przy każdym
+wierszu wykonuje realne pobranie danych, żeby zweryfikować poprawność
+numeru seryjnego PRZED zapisaniem.
+
+### Konfiguracja (zakładka 🧩 Wtyczki -> "💧 Zmiękczacze wody iQua")
+
+1. Wpisz login (e-mail) i hasło do konta iQua i zapisz.
+2. Dodaj urządzenie: nadaj mu nazwę (dowolną, unikalną) i numer seryjny
+   (DSN#), opcjonalnie kliknij "🔌 Testuj" żeby sprawdzić poprawność przed
+   zapisaniem listy urządzeń.
+3. Włącz wtyczkę - wymaga pełnego restartu procesu bridge'a, tak jak inne
+   integracje chmurowe (UniFi Protect, Tuya Cloud, HomeWhiz, LG ThinQ).
+
+Stan trafia na stronę główną i jest dostępny jako warunek "stan" oraz jako
+trigger Flow/reguł ruchu (`source: iqua_state`) - klucz statusu
+`iqua:<nazwa>` dla stanu połączenia, plus dodatkowe klucze
+`iqua:<nazwa>:salt_level_percent`, `iqua:<nazwa>:out_of_salt_estimated_days`
+i `iqua:<nazwa>:today_use` (widoczne automatycznie w generycznym pikerze
+"Warunek stanu", bez osobnego wyboru źródła) - patrz sekcja "Stan urządzenia
+jako warunek ALBO wejście automatyzacji" wyżej. W odróżnieniu od
+HomeWhiz/LG ThinQ lista wartości wyzwalających (`online`/`offline`) jest
+stała dla wszystkich urządzeń (jedno uniwersalne pole połączenia), więc nie
+jest pobierana dynamicznie per urządzenie.
 
 ## Synchronizacja czasu
 

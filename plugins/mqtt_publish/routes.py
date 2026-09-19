@@ -37,6 +37,7 @@ def _known_prefixes(config_raw: dict) -> list[str]:
     prefixes.add(topics.get("tuya", "tuya"))
     prefixes.add(topics.get("homewhiz", "homewhiz"))
     prefixes.add(topics.get("lg_thinq", "lg_thinq"))
+    prefixes.add(topics.get("iqua", "iqua"))
 
     boiler_mqtt = (config_raw.get("boiler_output", {}) or {}).get("mqtt", {}) or {}
     prefixes.add(boiler_mqtt.get("topic_prefix", "home/boiler"))
@@ -68,6 +69,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             "tuya_topic": topics.get("tuya", "tuya"),
             "homewhiz_topic": topics.get("homewhiz", "homewhiz"),
             "lg_thinq_topic": topics.get("lg_thinq", "lg_thinq"),
+            "iqua_topic": topics.get("iqua", "iqua"),
         })
 
     @app.route("/api/plugins/mqtt_publish/topics", methods=["POST"])
@@ -84,6 +86,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             "tuya": (form.get("tuya_topic") or "").strip() or "tuya",
             "homewhiz": (form.get("homewhiz_topic") or "").strip() or "homewhiz",
             "lg_thinq": (form.get("lg_thinq_topic") or "").strip() or "lg_thinq",
+            "iqua": (form.get("iqua_topic") or "").strip() or "iqua",
         }
         _save_mqtt_publish_section(section)
         reload_bridge_config()

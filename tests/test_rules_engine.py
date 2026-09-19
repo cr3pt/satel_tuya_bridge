@@ -1753,6 +1753,85 @@ class TestLgThinqStateCallback:
         assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
 
 
+class TestIquaStatusSeeding:
+
+    def _set_iqua_cfg(self, engine, devices: dict) -> None:
+        raw = engine.config.store.get("config")
+        raw["iqua"] = {"username": "user@example.com", "password": "haslo", "devices": devices}
+        engine.config.store.set("config", raw)
+
+    async def test_seeded_as_unknown_for_configured_device(self, engine):
+        self._set_iqua_cfg(engine, {"Zmiękczacz": {"serial_number": "DSN1"}})
+        await engine.reload_config()
+        assert engine.history.get_status_value("iqua:Zmiękczacz") == "nieznany"
+
+    async def test_seed_does_not_overwrite_already_running_status(self, engine):
+        self._set_iqua_cfg(engine, {"Zmiękczacz": {"serial_number": "DSN1"}})
+        await engine.reload_config()
+        engine.history.set_status("iqua:Zmiękczacz", "iqua", "online", label="Zmiękczacz")
+        engine._seed_iqua_status_labels()
+        assert engine.history.get_status_value("iqua:Zmiękczacz") == "online"
+
+    async def test_removed_device_prunes_stale_status(self, engine):
+        self._set_iqua_cfg(engine, {"Zmiękczacz": {"serial_number": "DSN1"}})
+        await engine.reload_config()
+        assert engine.history.get_status_value("iqua:Zmiękczacz") is not None
+
+        self._set_iqua_cfg(engine, {})
+        await engine.reload_config()
+        assert engine.history.get_status_value("iqua:Zmiękczacz") is None
+
+    async def test_no_iqua_config_is_a_noop(self, engine):
+        await engine.reload_config()
+        assert engine.history.get_status("iqua") == []
+
+    async def test_sub_reading_keys_survive_seeding_prune(self, engine):
+        # Klucze sub-odczytów (poziom soli itd.) zapisane przez _on_iqua_state
+        # NIE mogą zostać skasowane przez kolejne wywołanie seedowania -
+        # patrz komentarz przy iqua_suffixes w _seed_iqua_status_labels.
+        self._set_iqua_cfg(engine, {"Zmiękczacz": {"serial_number": "DSN1"}})
+        await engine.reload_config()
+        engine.history.set_status(
+            "iqua:Zmiękczacz:salt_level_percent", "iqua", "80%", label="Zmiękczacz (poziom soli)",
+        )
+        engine._seed_iqua_status_labels()
+        assert engine.history.get_status_value("iqua:Zmiękczacz:salt_level_percent") == "80%"
+
+
+class TestIquaStateCallback:
+
+    def _fake_iqua_data(self, state="Online", salt_level_percent=80, today_use=12, out_of_salt_estimated_days=30):
+        return type("FakeIquaSoftenerData", (), {
+            "state": type("S", (), {"value": state})(),
+            "salt_level_percent": salt_level_percent,
+            "today_use": today_use,
+            "out_of_salt_estimated_days": out_of_salt_estimated_days,
+        })()
+
+    async def test_publishes_state_and_sub_readings_as_status(self, engine):
+        await engine._on_iqua_state("Zmiękczacz", self._fake_iqua_data(salt_level_percent=65, today_use=40))
+        assert engine.history.get_status_value("iqua:Zmiękczacz") == "online"
+        assert engine.history.get_status_value("iqua:Zmiękczacz:salt_level_percent") == "65%"
+        assert engine.history.get_status_value("iqua:Zmiękczacz:today_use") == "40"
+        rows = engine.history.get_status("iqua")
+        assert any(r["label"] == "Zmiękczacz" for r in rows)
+
+    async def test_also_dispatches_to_device_state_motion_rules(self, engine, fake_tuya):
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [{
+                "source": "iqua_state", "source_device": "Zmiękczacz", "trigger_value": "offline",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+            }],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+
+        await engine._on_iqua_state("Zmiękczacz", self._fake_iqua_data(state="Offline"))
+        await asyncio.sleep(0)
+        assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+
 class TestHomeWhizStateCallback:
 
     async def test_publishes_state_as_status(self, engine):

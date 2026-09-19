@@ -121,7 +121,7 @@ _FLOW_NODE_TYPES = (
     "schedule", "escalation", "state", "condition_group", "tuya_dp", "stop",
 )
 _FLOW_STATE_OPS = ("equals", "not_equals", "gt", "lt", "gte", "lte")
-_FLOW_TRIGGER_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state", "lg_thinq_state")
+_FLOW_TRIGGER_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state", "lg_thinq_state", "iqua_state")
 _FLOW_CONDITION_OPS = (">", "<", ">=", "<=", "==", "!=")
 _FLOW_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
@@ -321,7 +321,7 @@ def _validate_condition(condition: dict | None, label: str, depth: int = 0) -> l
     return errors
 
 
-_MOTION_RULE_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state", "lg_thinq_state")
+_MOTION_RULE_SOURCES = ("satel_zone", "tuya_state", "homewhiz_state", "lg_thinq_state", "iqua_state")
 _MOTION_RULE_SOURCE_COMBINATORS = ("or", "and")
 
 

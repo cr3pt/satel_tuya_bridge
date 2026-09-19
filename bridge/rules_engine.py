@@ -15,6 +15,7 @@ from .tuya_dispatch import TuyaController
 from .tuya_cloud_events import TuyaCameraMotionListener
 from .unifi_protect_events import UnifiProtectMotionListener
 from .homewhiz_client import HomeWhizClient
+from .iqua_client import IquaClient
 from .lg_thinq_client import LgThinqClient
 from .ebus_client import EbusMqttListener
 from .weather_client import fetch_forecast
@@ -131,6 +132,7 @@ class RulesEngine:
         self._tuya_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("tuya", "tuya")
         self._homewhiz_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("homewhiz", "homewhiz")
         self._lg_thinq_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("lg_thinq", "lg_thinq")
+        self._iqua_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("iqua", "iqua")
         if mqtt_publish_cfg.get("enabled", True) and config.ebus.get("mqtt_host"):
             self.state_mqtt = HomeAssistantMqttBridge(
                 {"mqtt_host": config.ebus["mqtt_host"], "mqtt_port": config.ebus.get("mqtt_port", 1883)},
@@ -637,6 +639,36 @@ class RulesEngine:
         if self.state_mqtt:
             self.state_mqtt.publish_state(f"{self._lg_thinq_mqtt_topic}/{device_name}/state", state_name)
 
+    async def _on_iqua_state(self, device_name: str, data) -> None:
+        """`data` to całe `IquaSoftenerData` (patrz bridge/iqua_client.py), nie
+        gotowy string jak dla LG ThinQ/HomeWhiz - poziom soli i zużycie wody
+        zmieniają się niezależnie od stanu połączenia (online/offline), więc
+        zapisujemy je jako osobne statusy, tym samym wzorem co sub-odczyty
+        Tuya (`:brightness`/`:battery` w _apply_tuya_device_status) - dzięki
+        temu można ich użyć jako liczbowy warunek stanu (np. "poziom soli < 20%")
+        bez żadnego dodatkowego okablowania w UI (ten sam generyczny picker
+        kluczy statusu co wszędzie indziej)."""
+        state_name = data.state.value.lower() if data.state is not None else "nieznany"
+        self.history.set_status(f"iqua:{device_name}", "iqua", state_name, label=device_name)
+        self.history.set_status(
+            f"iqua:{device_name}:salt_level_percent", "iqua", f"{data.salt_level_percent}%",
+            label=f"{device_name} (poziom soli)",
+        )
+        self.history.set_status(
+            f"iqua:{device_name}:out_of_salt_estimated_days", "iqua", str(data.out_of_salt_estimated_days),
+            label=f"{device_name} (dni do wyczerpania soli)",
+        )
+        self.history.set_status(
+            f"iqua:{device_name}:today_use", "iqua", str(data.today_use),
+            label=f"{device_name} (zużycie wody dziś)",
+        )
+        await self.handle_device_state("iqua_state", device_name, state_name)
+
+        if self.ha_mqtt:
+            self.ha_mqtt.publish_state(f"{self._ha_topic_prefix}/iqua/{device_name}/state", state_name)
+        if self.state_mqtt:
+            self.state_mqtt.publish_state(f"{self._iqua_mqtt_topic}/{device_name}/state", state_name)
+
     async def handle_camera_motion(self, source: str, camera_id: str) -> None:
         now = datetime.now()
         for idx, rule in enumerate(self.config.camera_alarm_rules):
@@ -877,6 +909,7 @@ class RulesEngine:
         self._seed_tuya_status_labels()
         self._seed_homewhiz_status_labels()
         self._seed_lg_thinq_status_labels()
+        self._seed_iqua_status_labels()
         self._seed_automation_status_labels()
 
         logger.info("Konfiguracja przeładowana bez restartu procesu")
@@ -1092,6 +1125,25 @@ class RulesEngine:
         lg_thinq_keys = {f"lg_thinq:{name}" for name in device_names}
         self.history.prune_status("lg_thinq", lg_thinq_keys)
 
+    def _seed_iqua_status_labels(self) -> None:
+        iqua_cfg = self.config.iqua or {}
+        device_names = set((iqua_cfg.get("devices") or {}).keys())
+        seen = {s["key"] for s in self.history.get_status("iqua")}
+        for name in device_names:
+            key = f"iqua:{name}"
+            if key not in seen:
+                self.history.set_status(key, "iqua", "nieznany", label=name)
+
+        # Jak w _seed_tuya_status_labels - klucze sub-odczytów (poziom soli
+        # itd., patrz _on_iqua_state) muszą być w zbiorze "do zachowania",
+        # inaczej prune_status usunąłby je zaraz po zapisaniu przez pierwsze
+        # odpytanie (klucz spoza tego zbioru = do skasowania).
+        iqua_suffixes = ("salt_level_percent", "out_of_salt_estimated_days", "today_use")
+        iqua_keys = {f"iqua:{name}" for name in device_names}
+        for suffix in iqua_suffixes:
+            iqua_keys |= {f"iqua:{name}:{suffix}" for name in device_names}
+        self.history.prune_status("iqua", iqua_keys)
+
     def _seed_automation_status_labels(self) -> None:
         seen = {s["key"] for s in self.history.get_status("automation")}
         valid_keys = {f"automation:{scene_name}" for scene_name in self.scenes.scenes}
@@ -1156,6 +1208,7 @@ class RulesEngine:
         self._seed_tuya_status_labels()
         self._seed_homewhiz_status_labels()
         self._seed_lg_thinq_status_labels()
+        self._seed_iqua_status_labels()
         self._seed_automation_status_labels()
 
         async def _on_zone_change(status: dict) -> None:
@@ -1263,6 +1316,13 @@ class RulesEngine:
                 history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
             )
             asyncio.create_task(lg_thinq_client.run_forever())
+
+        if self.config.iqua and self.config.iqua.get("enabled", True):
+            iqua_client = IquaClient(
+                self.config.iqua, self._on_iqua_state,
+                history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
+            )
+            asyncio.create_task(iqua_client.run_forever())
 
         if self.ha_mqtt:
             def _make_tuya_handler(name):
