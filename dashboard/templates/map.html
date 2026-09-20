@@ -94,32 +94,60 @@
   }
 
   .map-icon {
-    position: absolute; width: 56px; margin-left: -28px; margin-top: -24px;
-    text-align: center; cursor: pointer; user-select: none; touch-action: none;
+    /* width/margin-left/margin-top liczone PER OBIEKT w JS (patrz getObjectSize/
+       buildIconEl) - rozmiar jest teraz edytowalny (uchwyty zmiany rozmiaru),
+       więc nie może być tu jedną sztywną wartością dla wszystkich ikon. */
+    position: absolute; text-align: center; cursor: pointer; user-select: none; touch-action: none;
   }
   /* Dedykowany zestaw ikon SVG (nie emoji) - kolor napędza wyraźną zmianę
      przy aktywacji/naruszeniu (zielony -> szary), nie tylko odsycenie jak
      poprzednio (filter: grayscale) - to samo info, ale mocniej widoczne. */
-  .map-icon .icon-glyph { display: inline-block; color: var(--ok); transition: color .15s, opacity .15s; opacity: 1; }
+  .map-icon .icon-glyph { display: block; width: 100%; height: 100%; color: var(--ok); transition: color .15s, opacity .15s; opacity: 1; }
   .map-icon .icon-glyph svg { display: block; margin: 0 auto; }
   .map-icon.inactive .icon-glyph { color: var(--muted); opacity: .55; }
-  .map-icon .icon-label {
-    font-size: 10px; color: var(--text); background: rgba(20,22,26,.75); border-radius: 4px;
-    padding: 1px 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    max-width: 70px; margin: 1px auto 0; line-height: 1.3;
-  }
   .map-icon.selected .icon-glyph svg { filter: drop-shadow(0 0 4px var(--accent)); }
   .map-icon.unmapped .icon-label { color: var(--muted); font-style: italic; }
 
   /* Meble/elementy architektoniczne (drzwi, okna, stoły, szafy, biurka) -
-     czysto dekoracyjne (bez statusu/aktywacji), stały kolor "furniture". */
+     czysto dekoracyjne (bez statusu/aktywacji), stały kolor "furniture".
+     Rozmiar (jak w .map-icon) liczony per obiekt w JS. */
   .map-furniture {
-    position: absolute; width: 60px; margin-left: -30px; margin-top: -30px;
-    text-align: center; cursor: pointer; user-select: none; touch-action: none; color: var(--furniture);
+    position: absolute; text-align: center; cursor: pointer; user-select: none; touch-action: none;
+    color: var(--furniture);
   }
-  .map-furniture .furniture-glyph { display: inline-block; }
+  .map-furniture .furniture-glyph { display: block; width: 100%; height: 100%; }
   .map-furniture .furniture-glyph svg { display: block; margin: 0 auto; }
   .map-furniture.selected .furniture-glyph svg { filter: drop-shadow(0 0 4px var(--accent)); }
+
+  /* Etykieta (ikon i mebli) wisi POD polem rozmiaru (position:absolute,
+     top:100%), żeby jej wysokość nie wchodziła w skład pola, wokół którego
+     liczone są uchwyty zmiany rozmiaru (patrz getObjectSize/buildIconEl -
+     width/height to rozmiar SAMEJ ikony/mebla, bez etykiety). Wspólna reguła
+     (nie zagnieżdżona w .map-icon/.map-furniture), żeby obie strony
+     dziedziczyły ten sam wygląd bez duplikowania stylu. */
+  .icon-label {
+    position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 2px;
+    font-size: 10px; color: var(--text); background: rgba(20,22,26,.75); border-radius: 4px;
+    padding: 1px 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 70px; line-height: 1.3;
+  }
+
+  /* Uchwyty zmiany rozmiaru ikon/mebli - 8 punktów (4 narożniki + 4 boki),
+     tylko na ZAZNACZONYM obiekcie w trybie Edycji. Narożnik = zachowanie
+     proporcji, bok = zmiana tylko jednego wymiaru (patrz startResize). */
+  .resize-handle {
+    position: absolute; width: 10px; height: 10px; margin: -5px;
+    background: var(--text); border: 2px solid var(--accent); border-radius: 3px;
+    touch-action: none; z-index: 1;
+  }
+  .resize-handle.rh-nw { top: 0; left: 0; cursor: nwse-resize; }
+  .resize-handle.rh-n  { top: 0; left: 50%; cursor: ns-resize; }
+  .resize-handle.rh-ne { top: 0; left: 100%; cursor: nesw-resize; }
+  .resize-handle.rh-w  { top: 50%; left: 0; cursor: ew-resize; }
+  .resize-handle.rh-e  { top: 50%; left: 100%; cursor: ew-resize; }
+  .resize-handle.rh-sw { top: 100%; left: 0; cursor: nesw-resize; }
+  .resize-handle.rh-s  { top: 100%; left: 50%; cursor: ns-resize; }
+  .resize-handle.rh-se { top: 100%; left: 100%; cursor: nwse-resize; }
 
   .side-panel {
     width: 340px; flex-shrink: 0; background: var(--card); border: 1px solid var(--border);
@@ -169,7 +197,10 @@
   narożnikach - przeciągnij dowolny, żeby zmienić kształt (też przyciąga do
   sąsiadów), kliknij (bez przeciągania) uchwyt, żeby go usunąć, albo kliknij
   na samej krawędzi między dwoma narożnikami, żeby dodać tam nowy punkt.
-  Klik w pomieszczenie (w każdym trybie) pokazuje, jakie
+  Zaznaczona ikona urządzenia lub mebel pokazuje 8 uchwytów zmiany rozmiaru -
+  przeciągnięcie NAROŻNIKA skaluje z zachowaniem proporcji, przeciągnięcie
+  BOKU zmienia tylko szerokość albo tylko wysokość. Klik w pomieszczenie
+  (w każdym trybie) pokazuje, jakie
   urządzenia w nim są i jakie reguły ruchu/flow ich używają - liczba pod
   nazwą pomieszczenia (🎬 reguły · 🔀 flow) widać od razu, bez klikania.
   Pamiętaj o "💾 Zapisz mapę" - zmiany nie zapisują się same.
@@ -316,9 +347,10 @@ function iconKeyFor(icon) {
   if (icon.emoji && LEGACY_EMOJI_TO_ICON_KEY[icon.emoji]) return LEGACY_EMOJI_TO_ICON_KEY[icon.emoji];
   return 'bolt';
 }
-function iconSvg(key, size) {
-  size = size || 26;
-  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON_DEFS[key] || ICON_DEFS.bolt}</svg>`;
+function iconSvg(key, width, height) {
+  width = width || 26;
+  height = height || width;
+  return `<svg viewBox="0 0 24 24" width="${width}" height="${height}" preserveAspectRatio="none" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON_DEFS[key] || ICON_DEFS.bolt}</svg>`;
 }
 
 // ---- Meble/elementy architektoniczne (viewBox 0 0 100 100) - czysto
@@ -330,10 +362,11 @@ const FURNITURE_DEFS = {
   cabinet: { label: 'Szafa', svg: '<rect x="15" y="15" width="70" height="70" rx="4"/><line x1="15" y1="15" x2="85" y2="85"/>' },
   desk: { label: 'Biurko', svg: '<rect x="10" y="30" width="60" height="40" rx="3"/><circle cx="82" cy="70" r="10"/>' },
 };
-function furnitureSvg(type, size) {
-  size = size || 52;
+function furnitureSvg(type, width, height) {
+  width = width || 52;
+  height = height || width;
   const def = FURNITURE_DEFS[type] || FURNITURE_DEFS.table;
-  return `<svg viewBox="0 0 100 100" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">${def.svg}</svg>`;
+  return `<svg viewBox="0 0 100 100" width="${width}" height="${height}" preserveAspectRatio="none" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">${def.svg}</svg>`;
 }
 
 const ROOM_COLORS = ['#4d8dfd','#3dd68c','#e5484d','#f5b83d','#a855f7','#14b8a6','#8b93a1'];
@@ -346,6 +379,26 @@ const ACTIVE_VALUES = new Set(['włączone', 'naruszone', 'otwarte', 'tak', 'uzb
 // zoomu - dzielimy już przez canvasZoom przy liczeniu punktu) przy
 // rysowaniu/przeciąganiu narożników pomieszczeń - patrz snapPoint().
 const SNAP_THRESHOLD = 14;
+
+// ---- Zmiana rozmiaru ikon/mebli (uchwyty na zaznaczonym obiekcie) ----
+// Domyślny rozmiar dla obiektów zapisanych PRZED wprowadzeniem edytowalnego
+// rozmiaru (brak pól width/height) - identyczny jak dawna sztywna wartość
+// w CSS, więc stare mapy wyglądają tak samo, dopóki ktoś ich nie przeskaluje.
+const DEFAULT_ICON_SIZE = 32;
+const DEFAULT_FURNITURE_SIZE = 60;
+const MIN_OBJECT_SIZE = 16;
+function getObjectSize(obj, kind) {
+  const fallback = kind === 'icon' ? DEFAULT_ICON_SIZE : DEFAULT_FURNITURE_SIZE;
+  return { width: obj.width || fallback, height: obj.height || fallback };
+}
+// dx/dy = który bok/narożnik przesuwa się przy przeciąganiu (patrz startResize) -
+// (0,0) się nie zdarza, oba niezerowe = narożnik (zachowanie proporcji),
+// dokładnie jeden niezerowy = bok (zmiana tylko jednego wymiaru).
+const RESIZE_HANDLES = [
+  { key: 'nw', dx: -1, dy: -1 }, { key: 'n', dx: 0, dy: -1 }, { key: 'ne', dx: 1, dy: -1 },
+  { key: 'w', dx: -1, dy: 0 }, { key: 'e', dx: 1, dy: 0 },
+  { key: 'sw', dx: -1, dy: 1 }, { key: 's', dx: 0, dy: 1 }, { key: 'se', dx: 1, dy: 1 },
+];
 
 let mapData = { rooms: [], icons: [], furniture: [] };
 let context = { status_keys: [] };
@@ -796,7 +849,10 @@ function finishRect(a, b) {
   selectRoom(room.id);
 }
 function placeIcon(pt) {
-  const icon = { id: nextId('icon'), x: pt.x, y: pt.y, icon_key: 'bolt', label: '', status_key: null, status_category: null, status_device_label: null };
+  const icon = {
+    id: nextId('icon'), x: pt.x, y: pt.y, width: DEFAULT_ICON_SIZE, height: DEFAULT_ICON_SIZE,
+    icon_key: 'bolt', label: '', status_key: null, status_category: null, status_device_label: null,
+  };
   mapData.icons.push(icon);
   activeTool = null; drawPoints = [];
   updateDrawStatus();
@@ -804,7 +860,10 @@ function placeIcon(pt) {
   selectIcon(icon.id);
 }
 function placeFurniture(pt, type) {
-  const item = { id: nextId('furn'), type, x: pt.x, y: pt.y, rotation: 0, label: '' };
+  const item = {
+    id: nextId('furn'), type, x: pt.x, y: pt.y,
+    width: DEFAULT_FURNITURE_SIZE, height: DEFAULT_FURNITURE_SIZE, rotation: 0, label: '',
+  };
   mapData.furniture.push(item);
   activeTool = null; drawPoints = [];
   updateDrawStatus();
@@ -959,20 +1018,38 @@ function renderCanvas() {
   mapData.furniture.forEach(item => canvasEl.appendChild(buildFurnitureEl(item)));
 }
 
+// Uchwyty zmiany rozmiaru (8 punktów) - wspólne dla ikon urządzeń i mebli,
+// dołączane TYLKO do zaznaczonego obiektu w trybie Edycji (patrz startResize).
+function appendResizeHandles(el, target, kind) {
+  RESIZE_HANDLES.forEach(h => {
+    const handle = document.createElement('div');
+    handle.className = 'resize-handle rh-' + h.key;
+    handle.addEventListener('pointerdown', (e) => startResize(e, target, h, kind));
+    el.appendChild(handle);
+  });
+}
+
 function buildIconEl(icon) {
   const el = document.createElement('div');
   const s = icon.status_key ? statusByKey[icon.status_key] : null;
   const active = s && ACTIVE_VALUES.has(String(s.value).toLowerCase());
-  el.className = 'map-icon' + (active ? '' : ' inactive') + (icon.id === selectedIconId ? ' selected' : '') + (icon.status_key ? '' : ' unmapped');
+  const selected = icon.id === selectedIconId;
+  el.className = 'map-icon' + (active ? '' : ' inactive') + (selected ? ' selected' : '') + (icon.status_key ? '' : ' unmapped');
+  const { width, height } = getObjectSize(icon, 'icon');
   el.style.left = icon.x + 'px';
   el.style.top = icon.y + 'px';
+  el.style.width = width + 'px';
+  el.style.height = height + 'px';
+  el.style.marginLeft = (-width / 2) + 'px';
+  el.style.marginTop = (-height / 2) + 'px';
   el.dataset.iconId = icon.id;
   el.innerHTML = `
-    <div class="icon-glyph">${iconSvg(iconKeyFor(icon))}</div>
+    <div class="icon-glyph">${iconSvg(iconKeyFor(icon), width, height)}</div>
     <div class="icon-label">${escapeHtml(icon.label || icon.status_device_label || '(bez etykiety)')}</div>
   `;
   if (mode === 'edit') {
     el.addEventListener('pointerdown', (e) => { if (!activeTool) startIconDrag(e, icon); });
+    if (selected && !activeTool) appendResizeHandles(el, icon, 'icon');
   } else {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -992,16 +1069,23 @@ function buildIconEl(icon) {
 
 function buildFurnitureEl(item) {
   const el = document.createElement('div');
-  el.className = 'map-furniture' + (item.id === selectedFurnitureId ? ' selected' : '');
+  const selected = item.id === selectedFurnitureId;
+  el.className = 'map-furniture' + (selected ? ' selected' : '');
+  const { width, height } = getObjectSize(item, 'furniture');
   el.style.left = item.x + 'px';
   el.style.top = item.y + 'px';
+  el.style.width = width + 'px';
+  el.style.height = height + 'px';
+  el.style.marginLeft = (-width / 2) + 'px';
+  el.style.marginTop = (-height / 2) + 'px';
   el.dataset.furnitureId = item.id;
   el.innerHTML = `
-    <div class="furniture-glyph" style="transform: rotate(${item.rotation || 0}deg);">${furnitureSvg(item.type)}</div>
+    <div class="furniture-glyph" style="transform: rotate(${item.rotation || 0}deg);">${furnitureSvg(item.type, width, height)}</div>
     ${item.label ? `<div class="icon-label">${escapeHtml(item.label)}</div>` : ''}
   `;
   if (mode === 'edit') {
     el.addEventListener('pointerdown', (e) => { if (!activeTool) startFurnitureDrag(e, item); });
+    if (selected && !activeTool) appendResizeHandles(el, item, 'furniture');
   }
   return el;
 }
@@ -1052,6 +1136,55 @@ document.addEventListener('pointermove', (e) => {
 });
 document.addEventListener('pointerup', () => { furnitureDragState = null; });
 document.addEventListener('pointercancel', () => { furnitureDragState = null; });
+
+// ---- Zmiana rozmiaru ikon/mebli - wspólna dla obu (target ma x/y/width/
+// height, kind tylko po to, żeby dobrać domyślny rozmiar gdy width/height
+// jeszcze nie były ustawione - patrz getObjectSize). Za NAROŻNIK: skala
+// (proporcje) liczona ze stosunku nowej do starej długości przekątnej,
+// zakotwiczona w przeciwległym rogu (ten się nie rusza). Za BOK: zmiana
+// TYLKO jednego wymiaru, zakotwiczona w przeciwległej krawędzi. ----
+let resizeDragState = null;
+function startResize(e, target, handle, kind) {
+  e.stopPropagation();
+  const { width, height } = getObjectSize(target, kind);
+  resizeDragState = { target, handle, origX: target.x, origY: target.y, origW: width, origH: height };
+  try { e.target.setPointerCapture(e.pointerId); } catch (err) { /* patrz komentarz przy startIconDrag/flows.html */ }
+  e.preventDefault();
+}
+document.addEventListener('pointermove', (e) => {
+  if (!resizeDragState) return;
+  const { target, handle, origX, origY, origW, origH } = resizeDragState;
+  const pt = clientToLocalPoint(e);
+  const left = origX - origW / 2, right = origX + origW / 2;
+  const top = origY - origH / 2, bottom = origY + origH / 2;
+  let newW = origW, newH = origH, newX = origX, newY = origY;
+
+  if (handle.dx !== 0 && handle.dy !== 0) {
+    const anchorX = handle.dx === 1 ? left : right;
+    const anchorY = handle.dy === 1 ? top : bottom;
+    const origDiag = Math.hypot(origW, origH) || 1;
+    const newDiag = Math.hypot(pt.x - anchorX, pt.y - anchorY);
+    const scale = Math.max(newDiag / origDiag, MIN_OBJECT_SIZE / Math.min(origW, origH));
+    newW = Math.max(MIN_OBJECT_SIZE, origW * scale);
+    newH = Math.max(MIN_OBJECT_SIZE, origH * scale);
+    newX = anchorX + handle.dx * newW / 2;
+    newY = anchorY + handle.dy * newH / 2;
+  } else if (handle.dx !== 0) {
+    const anchorX = handle.dx === 1 ? left : right;
+    newW = Math.max(MIN_OBJECT_SIZE, Math.abs(pt.x - anchorX));
+    newX = anchorX + handle.dx * newW / 2;
+  } else {
+    const anchorY = handle.dy === 1 ? top : bottom;
+    newH = Math.max(MIN_OBJECT_SIZE, Math.abs(pt.y - anchorY));
+    newY = anchorY + handle.dy * newH / 2;
+  }
+
+  target.width = newW; target.height = newH;
+  target.x = newX; target.y = newY;
+  renderCanvas();
+});
+document.addEventListener('pointerup', () => { resizeDragState = null; });
+document.addEventListener('pointercancel', () => { resizeDragState = null; });
 
 let vertexDragState = null;
 function startVertexDrag(e, room, index) {

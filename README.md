@@ -3188,10 +3188,35 @@ na żadną automatyzację.
   Zaznaczone pomieszczenie pokazuje na płótnie białe uchwyty na każdym
   narożniku - przeciągnięcie dowolnego z nich zmienia kształt (dotyczy też
   prostokątów - przeciągnięcie rogu prostokąta po prostu zamienia go w
-  dowolny czworokąt, bez utraty pozostałych narożników).
+  dowolny czworokąt, bez utraty pozostałych narożników). Klik (BEZ
+  przeciągnięcia) w istniejący uchwyt usuwa ten wierzchołek (nie schodzi
+  poniżej trójkąta - 3 punkty), a klik na samej krawędzi między dwoma
+  narożnikami dodaje tam nowy wierzchołek, dokładnie w klikniętym miejscu.
 
 **Pamiętaj o przycisku "💾 Zapisz mapę"** - podobnie jak we Flow, zmiany
 w edytorze nie zapisują się same (dopiero `POST /api/config/home_map`).
+
+### Zmiana rozmiaru ikon i mebli
+
+Zaznaczona ikona urządzenia albo mebel (w trybie ✏️ Edycja) pokazuje 8
+uchwytów zmiany rozmiaru na krawędzi swojego pola (4 narożniki + 4 boki) -
+dokładnie ten sam mechanizm dla obu typów obiektów:
+
+- **Przeciągnięcie NAROŻNIKA** skaluje obiekt z **zachowaniem proporcji**
+  (skala liczona ze stosunku nowej do starej długości przekątnej),
+  zakotwiczone w PRZECIWLEGŁYM rogu (ten się nie rusza).
+- **Przeciągnięcie BOKU** (lewy/prawy/góra/dół) zmienia **tylko jeden
+  wymiar** (szerokość albo wysokość) - drugi wymiar i przeciwległa krawędź
+  zostają bez zmian.
+
+Rozmiar (pola `width`/`height`, opcjonalne - starsze zapisane ikony/meble
+bez nich renderują się z takim samym domyślnym rozmiarem jak wcześniej)
+dotyczy SAMEJ ikony/mebla, bez etykiety pod spodem - etykieta ma stały
+rozmiar czcionki niezależnie od tego, jak bardzo powiększysz/zmniejszysz
+sam symbol. Meble o niekwadratowym kształcie (np. "Okno" - domyślnie
+szeroki, cienki pasek) można rozciągnąć bokiem, żeby dopasować je do
+długości ściany - grafika SVG rozciąga się nierównomiernie razem z polem
+(`preserveAspectRatio="none"`), zamiast się przycinać czy dodawać puste pasy.
 
 ### Przyciąganie krawędzi (snapping) - spójny plan mimo osobnego rysowania
 
