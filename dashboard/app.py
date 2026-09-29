@@ -190,6 +190,30 @@ async def _require_login_for_settings_and_control():
     return redirect(url_for("login_page", next=request.path))
 
 
+@app.after_request
+async def _set_security_headers(response):
+    # Panel jest wystawiany bez TLS (LAN, ewentualnie za odwrotnym proxy
+    # dodającym HTTPS) - nie ustawiamy tu HSTS, bo wymuszałoby to HTTPS
+    # nawet tam, gdzie go nie ma. CSP dopuszcza 'unsafe-inline' dla
+    # script/style, bo cały panel renderuje inline <script>/<style> w
+    # szablonach Jinja (przepisanie na zewnętrzne pliki to osobna, większa
+    # zmiana). cdnjs.cloudflare.com to jedyne zewnętrzne CDN używane przez
+    # panel (Chart.js na stronie głównej, Leaflet w wyborze lokalizacji na
+    # /automations), a kafelki mapy Leaflet ładowane są z OpenStreetMap.
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+        "img-src 'self' data: https://*.tile.openstreetmap.org; "
+        "connect-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'",
+    )
+    return response
+
+
 def _parse_range() -> tuple[float, float]:
     now = time.time()
     hours = float(request.args.get("hours", 24))

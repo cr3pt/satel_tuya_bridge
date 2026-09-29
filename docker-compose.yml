@@ -37,6 +37,19 @@ services:
     # zadziała ze zwykłą siecią mostkowaną, tylko bez możliwości
     # sparowania mostu HomeKit.
     network_mode: host
+    mem_limit: 512m
+    pids_limit: 200
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # Bridge nie wystawia portu HTTP (patrz network_mode: host) - sprawdzamy
+      # świeżość pliku heartbeat, który RulesEngine._heartbeat_loop zapisuje
+      # co ~20s obok config.db (patrz bridge/rules_engine.py).
+      test: ["CMD", "python", "-c", "import os,sys,time; p='/config/.bridge_heartbeat'; sys.exit(0 if os.path.exists(p) and time.time() - os.path.getmtime(p) < 90 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   dashboard:
     build: .
@@ -51,6 +64,10 @@ services:
     ports:
       - "8090:8090"
     restart: unless-stopped
+    mem_limit: 512m
+    pids_limit: 200
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=3)"]
       interval: 30s

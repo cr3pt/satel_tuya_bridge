@@ -1,4 +1,28 @@
+import os
+import stat
+import sys
 import time
+
+import pytest
+
+from bridge.history_store import HistoryStore
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uprawnienia POSIX niedostępne na Windows")
+class TestFilePermissions:
+    def test_db_file_is_created_with_owner_only_permissions(self, tmp_path):
+        db_path = tmp_path / "history.db"
+        HistoryStore(str(db_path))
+        mode = stat.S_IMODE(os.stat(db_path).st_mode)
+        assert mode == 0o600
+
+    def test_overly_permissive_existing_file_is_tightened_on_open(self, tmp_path):
+        db_path = tmp_path / "history.db"
+        HistoryStore(str(db_path))
+        os.chmod(db_path, 0o644)
+        HistoryStore(str(db_path))
+        mode = stat.S_IMODE(os.stat(db_path).st_mode)
+        assert mode == 0o600
 
 
 class TestReadings:

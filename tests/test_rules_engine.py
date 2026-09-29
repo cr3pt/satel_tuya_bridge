@@ -2278,6 +2278,50 @@ class TestStaleCheckLoop:
         )
 
 
+class TestHeartbeatLoop:
+
+    async def test_writes_timestamp_file_next_to_config_db(self, engine):
+        heartbeat_path = engine.config.db_path.parent / ".bridge_heartbeat"
+        assert not heartbeat_path.exists()
+
+        task = asyncio.create_task(engine._heartbeat_loop(interval_seconds=1000))
+        try:
+            for _ in range(50):
+                await asyncio.sleep(0.001)
+                if heartbeat_path.exists():
+                    break
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        assert heartbeat_path.exists()
+        assert float(heartbeat_path.read_text()) > 0
+
+    async def test_survives_write_error_and_keeps_looping(self, engine, monkeypatch, tmp_path):
+        real_sleep = asyncio.sleep
+        monkeypatch.setattr(asyncio, "sleep", lambda *a, **k: real_sleep(0))
+
+        calls = {"count": 0}
+        original_write_text = type(engine.config.db_path).write_text
+
+        def _raising_write_text(self, *a, **k):
+            calls["count"] += 1
+            raise OSError("dysk pełny")
+
+        monkeypatch.setattr(type(engine.config.db_path), "write_text", _raising_write_text)
+
+        task = asyncio.create_task(engine._heartbeat_loop())
+        for _ in range(30):
+            await real_sleep(0.001)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        monkeypatch.setattr(type(engine.config.db_path), "write_text", original_write_text)
+
+        assert calls["count"] >= 2, "Pętla heartbeat zatrzymała się trwale po błędzie zapisu"
+
+
 class TestStateMqttPublisher:
 
     def _build_engine(self, tmp_path, extra_yaml=""):

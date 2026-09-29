@@ -761,6 +761,21 @@ class RulesEngine:
             except Exception:
                 logger.exception("Błąd w pętli sprawdzania nieaktywnych czujników")
 
+    async def _heartbeat_loop(self, interval_seconds: float = 20.0) -> None:
+        # Proces bridge (w przeciwieństwie do panelu) nie wystawia żadnego
+        # portu HTTP - nie ma czego podpiąć pod `docker healthcheck` z zewnątrz.
+        # Zamiast tego zapisujemy okresowo znacznik czasu obok config.db;
+        # docker-compose sprawdza jego świeżość (patrz HEALTHCHECK w
+        # docker-compose.yml). Błąd zapisu (np. chwilowy problem z
+        # dyskiem/uprawnieniami) nie powinien wywalać całego bridge'a.
+        heartbeat_path = self.config.db_path.parent / ".bridge_heartbeat"
+        while True:
+            try:
+                heartbeat_path.write_text(str(time.time()))
+            except OSError:
+                logger.exception("Nie udało się zapisać pliku heartbeat (%s)", heartbeat_path)
+            await asyncio.sleep(interval_seconds)
+
     async def _maintenance_loop(self) -> None:
         maint_cfg = self.config.raw.get("maintenance", {})
         if not maint_cfg.get("run_in_process", True):
@@ -1226,6 +1241,7 @@ class RulesEngine:
     async def start(self) -> None:
         self.history.write_event("system", detail={"message": "Bridge uruchomiony"})
         asyncio.create_task(self._stale_check_loop())
+        asyncio.create_task(self._heartbeat_loop())
         self.flow_engine.start()
 
         self._seed_satel_status_labels()
