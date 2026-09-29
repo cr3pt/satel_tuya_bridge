@@ -1,3 +1,7 @@
+import os
+import stat
+import sys
+
 import pytest
 
 from bridge.config_store import ConfigStore
@@ -6,6 +10,23 @@ from bridge.config_store import ConfigStore
 @pytest.fixture
 def store(tmp_path):
     return ConfigStore(tmp_path / "config.db")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uprawnienia POSIX niedostępne na Windows")
+class TestFilePermissions:
+    def test_db_file_is_created_with_owner_only_permissions(self, tmp_path):
+        db_path = tmp_path / "config.db"
+        ConfigStore(db_path)
+        mode = stat.S_IMODE(os.stat(db_path).st_mode)
+        assert mode == 0o600
+
+    def test_overly_permissive_existing_file_is_tightened_on_open(self, tmp_path):
+        db_path = tmp_path / "config.db"
+        ConfigStore(db_path)
+        os.chmod(db_path, 0o644)
+        ConfigStore(db_path)
+        mode = stat.S_IMODE(os.stat(db_path).st_mode)
+        assert mode == 0o600
 
 
 class TestApiTokens:

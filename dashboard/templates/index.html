@@ -489,9 +489,9 @@ async function loadEvents() {
   tbody.innerHTML = events.map(e => `
     <tr>
       <td>${fmtTime(e.ts)}</td>
-      <td><span class="tag ${e.type}">${e.type}</span></td>
-      <td>${e.source || ''}</td>
-      <td>${JSON.stringify(e.detail)}</td>
+      <td><span class="tag ${escapeHtml(e.type)}">${escapeHtml(e.type)}</span></td>
+      <td>${escapeHtml(e.source || '')}</td>
+      <td>${escapeHtml(JSON.stringify(e.detail))}</td>
     </tr>`).join('');
 }
 
@@ -503,8 +503,8 @@ async function loadAlertsHistory() {
     <tr>
       <td>${fmtTime(a.started_ts)}</td>
       <td>${a.resolved_ts ? fmtTime(a.resolved_ts) : '<span class="tag camera_alarm">aktywny</span>'}</td>
-      <td>${a.rule_name}</td>
-      <td>${a.sensor || ''}</td>
+      <td>${escapeHtml(a.rule_name)}</td>
+      <td>${escapeHtml(a.sensor || '')}</td>
     </tr>`).join('');
 }
 

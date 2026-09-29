@@ -1495,6 +1495,30 @@ nieudanych próbach z tego samego adresu IP, dalsze próby są odrzucane
 przez `lockout_seconds` (domyślnie 300s) - **nawet z poprawnym hasłem**,
 dopóki blokada nie wygaśnie. Sprawdzone testem.
 
+#### Nagłówki bezpieczeństwa HTTP
+
+Każda odpowiedź panelu (`dashboard/app.py: _set_security_headers`, hook
+`after_request`) niesie `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: same-origin`, `Permissions-Policy` (blokujące
+geolokalizację/mikrofon/kamerę - panel z nich nie korzysta) oraz `Content-
+Security-Policy` ograniczające źródła skryptów/styli/obrazów do samego
+panelu plus jedynego używanego CDN (`cdnjs.cloudflare.com` - Chart.js na
+stronie głównej, Leaflet w wyborze lokalizacji na zakładce
+Automatyzacje) i kafelków mapy OpenStreetMap. Brak `Strict-Transport-
+Security` jest celowy - panel jest zwykle wystawiony bez TLS w sieci LAN;
+jeśli wystawiasz go za odwrotnym proxy z HTTPS, dodaj HSTS na tym proxy,
+nie w samej aplikacji.
+
+#### Uprawnienia plików bazy danych
+
+`data/config.db` (hash hasła, sekret podpisujący sesje, hashe tokenów API
+oraz - z natury protokołów Tuya-local/Satel - jawne klucze `local_key`/
+`integration_key`/`encryption_key`) i `data/bridge_history.db` dostają
+uprawnienia `600` (tylko właściciel) automatycznie przy każdym otwarciu
+połączenia (`ConfigStore`/`HistoryStore.__post_init__`) - samonaprawiająco,
+niezależnie od tego, z jakim umaskiem/przez co plik został utworzony
+(np. dockerd tworzący brakujący bind-mount jako `root:root`).
+
 #### Jak to działa w przeglądarce - logowanie sesyjne (`/login`)
 
 Prawdziwe logowanie, nie okienko `prompt()`: strona `/login` ma pole nazwy
@@ -1710,6 +1734,15 @@ Zwraca `200` jeśli wszystkie monitorowane komponenty są połączone, `503`
 jeśli którykolwiek zgłasza rozłączenie - wygodne do podpięcia pod
 zewnętrzny monitoring (np. [Uptime Kuma](https://github.com/louislam/uptime-kuma),
 `healthcheck.io`, albo prosty `curl` w skrypcie systemd/cron).
+
+Powyższe dotyczy **panelu** (`dashboard`). Proces **bridge** nie wystawia
+żadnego portu HTTP (patrz `network_mode: host` wyżej), więc nie ma czego
+podpiąć pod `curl` z zewnątrz - zamiast tego zapisuje co ok. 20s znacznik
+czasu do pliku `.bridge_heartbeat` obok `config.db`
+(`RulesEngine._heartbeat_loop`, `bridge/rules_engine.py`).
+`docker-compose.yml` definiuje dla kontenera `bridge` `HEALTHCHECK`
+sprawdzający świeżość tego pliku (widoczne w `docker ps`/`docker inspect`
+jako `Health.Status`, tak samo jak dla panelu).
 
 ## Home Assistant (MQTT Discovery)
 
@@ -3686,7 +3719,24 @@ stąd wymóg `chown` katalogu `data/` przed pierwszym uruchomieniem
 (inaczej Docker utworzy go jako root i kontener nie będzie mógł zapisać
 `config.db`). Sekrety (kod użytkownika centrali Satela, local_key urządzeń
 Tuya, hasła) trafiają wyłącznie do zamontowanego `./data/config.db` -
-nigdy do obrazu ani do warstw builda.
+nigdy do obrazu ani do warstw builda. Same pliki bazy dostają uprawnienia
+`600` na hoście, samonaprawiająco przy każdym starcie (patrz
+"Uprawnienia plików bazy danych" w sekcji "Bezpieczeństwo panelu" wyżej).
+
+`docker-compose.yml` dodatkowo ogranicza oba kontenery (`bridge`,
+`dashboard`): `mem_limit`/`pids_limit` (twardy limit RAM-u i liczby
+procesów - żaden z modułów tego repo nie odpala procesów potomnych, więc
+niski limit PID-ów nikomu nie przeszkadza) i `security_opt:
+[no-new-privileges:true]` (proces w kontenerze nie może zdobyć więcej
+uprawnień niż ma na starcie, nawet przez binarkę z bitem setuid).
+
+`Dockerfile` to **build wieloetapowy** (`AS builder` / `AS base`) -
+`gcc`/`libffi-dev` (potrzebne tylko do zbudowania kilku zależności, np.
+`bcrypt`, na architekturach bez gotowych wheeli, jak RPi armv7/arm64) są
+zainstalowane wyłącznie w etapie budowania; finalny obraz uruchomieniowy
+dostaje tylko zainstalowane pakiety Pythona (`COPY --from=builder
+/install /usr/local`), bez samego kompilatora - mniejszy obraz i mniejsza
+powierzchnia ataku.
 
 ### Ruch sieciowy PODCZAS BUILDA (pobieranie pakietów Python)
 

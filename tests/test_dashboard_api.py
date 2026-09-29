@@ -82,6 +82,21 @@ class TestPublicEndpoints:
         assert (await resp.get_json())["ok"] is True
 
 
+class TestSecurityHeaders:
+
+    async def test_response_sets_recommended_security_headers(self, client):
+        resp = await client.get("/healthz")
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.headers["Referrer-Policy"] == "same-origin"
+        assert "Permissions-Policy" in resp.headers
+        assert "default-src 'self'" in resp.headers["Content-Security-Policy"]
+
+    async def test_headers_present_on_login_redirect_too(self, client):
+        resp = await client.get("/", follow_redirects=False)
+        assert resp.status_code == 302
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+
+
 class TestSettingsRequireLogin:
 
     async def test_index_page_redirects_to_login_without_auth(self, client):

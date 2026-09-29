@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -81,6 +82,13 @@ class HistoryStore:
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.executescript(SCHEMA)
         self._conn.commit()
+        # Patrz analogiczny komentarz w bridge/config_store.py - ta baza nie
+        # zawiera sekretów, ale zawężamy uprawnienia konsekwentnie z
+        # config.db (samonaprawiająco, niezależnie od umask/dockerd).
+        try:
+            os.chmod(self.db_path, 0o600)
+        except OSError:
+            pass
 
     def write_reading(self, sensor: str, value: float, ts: float | None = None) -> None:
         ts = ts if ts is not None else time.time()

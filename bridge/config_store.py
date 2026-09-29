@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import secrets
 import sqlite3
@@ -54,6 +55,16 @@ class ConfigStore:
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.executescript(SCHEMA)
         self._conn.commit()
+        # Baza zawiera hash hasła administratora, sekret podpisujący sesje
+        # oraz - z natury protokołów Tuya-local/Satel - jawne klucze
+        # (local_key, integration_key/encryption_key). Wymuszamy 600 przy
+        # każdym starcie (samonaprawiająco), niezależnie od umask/dockerd,
+        # które przy pierwszym utworzeniu pliku mogły zostawić go szerzej
+        # czytelnym.
+        try:
+            os.chmod(self.db_path, 0o600)
+        except OSError:
+            pass
 
     def exists(self) -> bool:
         return self.db_path.exists()
