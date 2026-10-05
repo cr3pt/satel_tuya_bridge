@@ -25,7 +25,7 @@ kilka miejsc wymaga uzupełnienia danymi specyficznymi dla Twojej instalacji
   `register_callbacks()` + `await start(enable_monitoring=True)` zamiast
   blokującego `monitor_status()`, wbudowany keepalive/reconnect i
   wykrywanie "centrala zajęta" (`SatelPanelBusyError`). Wymaga Python
-  **3.12+** (patrz `Dockerfile` - obraz bazowy to `python:3.12-slim`).
+  **3.12+** (patrz `Dockerfile` - obraz bazowy to `python:3.13-slim`).
   **To jest ta sama linia API, której obecnie używa integracja Satel w
   Home Assistant** (patrz `homeassistant/components/satel_integra/client.py`)
   - jej źródła są dobrym odniesieniem architektonicznym (patrz niżej).
@@ -3579,13 +3579,13 @@ patrz "Instalacja bezpośrednio na hoście (bez Dockera) - PRZESTARZAŁE") -
 jeden obraz (`Dockerfile`),
 budowany **w całości lokalnie** poleceniem `docker compose build`/`up
 --build` z plików w tym repo (nic nie jest publikowane ani pobierane z
-żadnego prywatnego rejestru - obraz bazowy `python:3.12-slim` pochodzi z
+żadnego prywatnego rejestru - obraz bazowy `python:3.13-slim` pochodzi z
 oficjalnego, publicznego Docker Hub, tak jak w praktycznie każdym
 Dockerfile). Dwa kontenery z `docker-compose.yml` (bridge + panel
 webowy), dzielące wspólny wolumen na dane (`config.db` - cała
 konfiguracja, patrz "Konfiguracja w bazie danych" wyżej - plus
 `bridge_history.db` i backupy). Działa tak samo na RPi (arm64/armv7) jak
-na amd64 - `python:3.12-slim` ma gotowe obrazy dla obu architektur.
+na amd64 - `python:3.13-slim` ma gotowe obrazy dla obu architektur.
 Instalacja bezpośrednio na hoście (`venv`/systemd, patrz "Instalacja"
 wyżej) zostaje jako alternatywa dla tych, którzy wolą nie używać Dockera.
 
