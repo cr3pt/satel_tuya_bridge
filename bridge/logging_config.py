@@ -15,6 +15,7 @@ PLUGIN_LOGGERS: dict[str, list[str]] = {
     # widać było tylko pośrednio, w loggerze wywołującego (np. bridge.flow_engine).
     "tuya_local": ["bridge.tuya_local", "bridge.tuya_cloud"],
     "ebus": ["bridge.ebus"],
+    "wmbus": ["bridge.wmbus"],
     "home_assistant": ["bridge.ha_mqtt"],
     "mqtt_publish": ["bridge.ha_mqtt"],
     "unifi_protect": ["bridge.unifi_protect"],

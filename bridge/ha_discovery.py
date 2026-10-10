@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .wmbus import detect_phase, field_unit
+
 
 def _device_block(cfg: dict) -> dict:
     return {
@@ -242,3 +244,34 @@ def build_all_entities(config, boiler_topic_prefix: str) -> list[dict]:
     smartthings_cfg = getattr(config, "smartthings", None) or {}
     entities += build_smartthings_sensor_entities(smartthings_cfg.get("devices", {}), ha_cfg, topic_prefix)
     return entities
+
+
+def wmbus_state_topic(topic_prefix: str, meter_name: str, field: str) -> str:
+    return f"{topic_prefix}/wmbus/{meter_name}/{field}/state"
+
+
+def build_wmbus_field_entity(meter: dict, field: str, ha_cfg: dict, topic_prefix: str) -> dict:
+    """Sensor HA dla jednego pola licznika wM-Bus. Pola zależą od sterownika
+    wmbusmeters, więc encje powstają dynamicznie po pierwszym telegramie.
+    Fazy L1/L2/L3 dostają znacznik w nazwie."""
+    prefix = ha_cfg.get("discovery_prefix", "homeassistant")
+    object_id = f"wmbus_{meter['name']}_{field}"
+    state_topic = wmbus_state_topic(topic_prefix, meter["name"], field)
+    phase = detect_phase(field)
+    payload = {
+        "name": f"{meter.get('label', meter['name'])}: {field.replace('_', ' ')}" + (f" [L{phase}]" if phase else ""),
+        "unique_id": f"satel_tuya_bridge_{object_id}",
+        "state_topic": state_topic,
+        "device": _device_block(ha_cfg),
+    }
+    unit = field_unit(field)
+    if unit:
+        payload["unit_of_measurement"] = unit[0]
+        if unit[1]:
+            payload["device_class"] = unit[1]
+        if unit[2]:
+            payload["state_class"] = unit[2]
+    return {
+        "discovery_topic": f"{prefix}/sensor/satel_tuya_bridge/{object_id}/config",
+        "payload": payload, "state_topic": state_topic, "command_topic": None,
+    }
