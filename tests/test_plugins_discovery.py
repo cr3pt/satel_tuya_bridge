@@ -37,7 +37,7 @@ class TestDiscoverPluginMetas:
         assert ids == {
             "satel", "tuya_local", "ebus", "home_assistant",
             "mqtt_publish", "unifi_protect", "homewhiz", "lg_thinq", "iqua", "smartthings",
-            "presence_simulation", "notifications", "mcp_server", "homekit",
+            "presence_simulation", "notifications", "mcp_server", "homekit", "energy_cost",
         }
 
     def test_all_real_plugins_have_describe_state(self):
@@ -73,7 +73,7 @@ class TestDiscoverPluginMetas:
     def test_broken_plugin_does_not_prevent_real_plugins_from_loading(self, temp_plugin_dir):
         temp_plugin_dir("zz_test_broken_alongside_real", "raise RuntimeError('boom')\n")
         metas, errors = plugins.discover_plugin_metas()
-        assert len(metas) == 14
+        assert len(metas) == 15
         assert any(e.plugin_dir == "zz_test_broken_alongside_real" for e in errors)
 
     def test_underscore_prefixed_dirs_are_skipped_silently(self):
@@ -116,7 +116,7 @@ class TestRegisterAll:
             get_history=lambda: None,
             get_satel_partitions=lambda: {},
         )
-        assert len(metas) == 14
+        assert len(metas) == 15
         assert any(e.plugin_dir == "zz_test_register_boom" for e in errors)
 
     def test_register_all_reports_error_when_register_itself_raises(self, temp_plugin_dir):

@@ -1791,6 +1791,45 @@ Dzięki temu autoryzacja zostaje jedna, spójna, i w jednym miejscu -
 zamiast dwóch równoległych ścieżek sterowania o różnym poziomie
 zabezpieczeń.
 
+## Koszty energii wg taryfy (G11 / G12 / G12w / G13)
+
+Wtyczka **💰 Koszty energii** (`/plugins/energy_cost`) liczy koszt prądu z historii **narastającego
+licznika kWh** - dowolnego czujnika zapisywanego w historii (tabela `readings`). Nic nie działa w
+pętli bridge'a: koszt liczony jest na żądanie, więc nie obciąża procesora ani karty SD.
+
+**Wbudowane taryfy:** `G11` (jedna strefa), `G12` (dzienna/nocna), `G12w` (jak G12 + weekendy i
+święta tanio przez całą dobę), `G13` (Tauron: szczyt przedpołudniowy/popołudniowy/pozostałe, szczyty
+tylko w dni robocze, inne godziny latem i zimą). Można też zdefiniować **własną taryfę** (JSON w panelu).
+
+**Godziny stref różnią się między operatorami** - dlatego `G12`/`G12w` mają warianty godzin
+(`default` = 13-15 i 22-6, `pge_sezonowa` = latem 15-17, `enea` = 21-6). Warianty G12 przyjmują te same
+godziny co G12w w dni robocze. **Zawsze porównaj z taryfą swojego operatora** w sekcji "Podgląd stref";
+w razie różnic zdefiniuj własną taryfę. Święta ustawowe (w tym ruchome i Wigilia od 2025) są wyliczane automatycznie.
+
+### Jak to liczy
+- Zużycie między kolejnymi odczytami jest dzielone co 15 min na strefy wg czasu lokalnego
+  (Europe/Warsaw, z czasem letnim), zakładając stały pobór między odczytami.
+- Odcinki dłuższe niż "maks. przerwa" (domyślnie 6 h, np. licznik offline) **nie są rozkładane na
+  strefy** - panel pokazuje je jako "nieprzypisane" i nie wlicza do kosztu. Spadek licznika (reset/wymiana) pomija odcinek.
+- Cena strefy = energia + dystrybucja zmienna (+ pozostałe zmienne), podawane **netto**; opłaty stałe
+  (zł/mies.) naliczane proporcjonalnie do dni okresu; VAT na końcu (domyślnie 23%, można nadpisać per taryfa).
+- Strefa bez ceny jest oznaczana ostrzeżeniem (koszt liczony jako 0), a nie zgadywana.
+- **Porównanie taryf:** wynik pokazuje też, ile kosztowałoby to samo zużycie w pozostałych
+  skonfigurowanych taryfach ("czy G12w by się opłacało?").
+
+### Konfiguracja
+1. W panelu dodaj taryfy z cenami (netto) oraz licznik: nazwa, czujnik z historii, taryfa, mnożnik
+   (np. `0.001`, jeśli czujnik podaje Wh).
+2. Wybierz okres (dziś, wczoraj, 7/30 dni, ten/poprzedni miesiąc) i kliknij **Policz**.
+
+API (wymaga zalogowania): `GET /api/plugins/energy_cost/report?meter=NAZWA&period=this_month`
+(albo `from=`/`to=` jako unix timestamp, maks. 366 dni), `.../schedule?tariff=G12w`, `.../sensors`, `.../config`.
+Konfiguracja leży w dokumencie `config`, klucz `energy`.
+
+**Źródło odczytów:** wtyczka potrzebuje czujnika z narastającym licznikiem kWh w historii. Obecnie
+do historii trafiają odczyty czujników eBUS (`ebus.sensors` z `history: true`); zapis liczników
+energii Tuya i wM-Bus nie jest jeszcze częścią tego repozytorium.
+
 ## Serwer MCP (Model Context Protocol)
 
 Opcjonalna wtyczka (zakładka 🧩 Wtyczki -> "🤖 Serwer MCP"), która
@@ -3798,6 +3837,7 @@ satel_tuya_bridge/
     homewhiz_client.py        # stan zmywarek/AGD HomeWhiz (SigV4 + MQTT-over-WebSocket do AWS IoT Core)
     ebus_client.py           # odczyt danych z ebusd (MQTT) + discover_topics() (podpowiedź do /plugins/ebus)
     boiler_output.py         # publikacja danych kotła (MQTT / Tuya virtual device)
+    tariffs.py               # taryfy G11/G12/G12w/G13 + własne, święta PL, podział kWh na strefy, koszt
     history_store.py         # baza SQLite (odczyty + zdarzenia + alarmy + statusy)
     alarms.py                # silnik alarmów progowych + powiadomienia ntfy
     resilience.py            # reconnect z exponential backoff + zdrowie połączeń
@@ -3826,6 +3866,7 @@ satel_tuya_bridge/
     tuya_local/routes.py      # /plugins/tuya - JEDNA wtyczka dla wszystkiego: urządzenia lokalne +
                               # bramki/podurządzenia Zigbee + poświadczenia/import/sterowanie Tuya Cloud
                               # (/plugins/tuya_cloud przekierowuje tutaj - dawniej osobna wtyczka)
+    energy_cost/routes.py     # /plugins/energy_cost - koszty energii wg taryfy (raport + porównanie taryf)
     ebus/routes.py            # /plugins/ebus - broker MQTT (🔌 Połączenie) + czujniki kotła + wykrywanie tematów MQTT (w tle)
     home_assistant/routes.py  # /plugins/home_assistant - broker MQTT + prefiksy discovery/stanu
     mqtt_publish/routes.py    # /plugins/mqtt_publish - tematy MQTT (Satel/Tuya)

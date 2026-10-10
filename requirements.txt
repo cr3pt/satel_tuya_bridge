@@ -40,3 +40,6 @@ iqua-softener>=1.0.1
 # stąd znaczniki środowiska: na 3.12 zostaje 3.7.x, na 3.13+ jest 4.x.
 pysmartthings>=3.7.3,<4.0; python_version < "3.13"
 pysmartthings>=4.0.3,<5.0; python_version >= "3.13"
+
+# Strefa czasowa Europe/Warsaw dla bridge/tariffs.py (zoneinfo) - obrazy slim nie zawsze mają bazę stref
+tzdata>=2024.1

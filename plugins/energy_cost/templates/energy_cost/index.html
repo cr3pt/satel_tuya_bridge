@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Koszty energii - Panel Satel-Tuya-eBUS</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<style>
+  :root {
+    --bg: #14161a; --card: #1d2026; --border: #2c3038;
+    --text: #e6e8eb; --muted: #8b93a1; --accent: #4d8dfd;
+    --danger: #e5484d; --ok: #3dd68c; --warn: #e5a54d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 20px; width: 95%; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  h3 { font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
+  .section-hint { color: var(--muted); font-size: 13px; margin: 4px 0 14px; line-height: 1.5; }
+  .section { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 18px; overflow-x: auto; }
+  input[type=text], input[type=number], select, textarea {
+    background: #262a32; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 100%;
+  }
+  textarea { font-family: ui-monospace, Menlo, monospace; min-height: 120px; }
+  button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; font-weight: 500; }
+  button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
+  button.icon { background: transparent; color: var(--danger); padding: 2px 8px; font-size: 16px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 10px; }
+  .row > div { flex: 1; min-width: 140px; }
+  .row label, .field-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .actions-bar { display: flex; gap: 10px; margin-top: 14px; align-items: center; flex-wrap: wrap; }
+  .msg-box { font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; display: none; }
+  .msg-box.ok { display: block; background: #16281f; border: 1px solid var(--ok); color: var(--ok); }
+  .msg-box.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
+  .msg-box.warn { display: block; background: #2e2616; border: 1px solid var(--warn); color: var(--warn); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.total td { font-weight: 600; border-top: 2px solid var(--border); }
+  tr.active td { color: var(--ok); }
+  .tariff-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #262a32; color: var(--accent); }
+  .sched { font-size: 12px; color: var(--muted); line-height: 1.7; }
+</style>
+</head>
+<body>
+{% include "_nav.html" %}
+
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">💰 Koszty energii</h1>
+<div class="hint">
+  Koszt prądu wg taryfy (<strong>G11, G12, G12w, G13</strong> lub własnej) liczony z historii
+  <strong>narastającego licznika kWh</strong> - dowolnego czujnika zapisywanego w historii. Zużycie jest dzielone na strefy
+  wg czasu lokalnego, weekendów i polskich świąt. Godziny stref <strong>różnią się między operatorami</strong> -
+  sprawdź je w podglądzie niżej i porównaj z taryfą swojego operatora.
+</div>
+
+<div class="section">
+  <h2>Wynik</h2>
+  <div class="row">
+    <div><label>Licznik</label><select id="reportMeter"></select></div>
+    <div><label>Okres</label>
+      <select id="reportPeriod">
+        <option value="today">Dziś</option><option value="yesterday">Wczoraj</option>
+        <option value="7d">Ostatnie 7 dni</option><option value="30d">Ostatnie 30 dni</option>
+        <option value="this_month" selected>Ten miesiąc</option><option value="last_month">Poprzedni miesiąc</option>
+      </select>
+    </div>
+    <div style="flex:0"><button id="reportBtn" type="button">Policz</button></div>
+  </div>
+  <div id="reportMsg" class="msg-box"></div>
+  <div id="reportOut" style="display:none">
+    <table>
+      <thead><tr><th>Strefa</th><th class="num">kWh</th><th class="num">Cena netto/kWh</th><th class="num">Netto</th></tr></thead>
+      <tbody id="zoneRows"></tbody>
+    </table>
+    <table style="margin-top:10px; max-width:420px">
+      <tbody>
+        <tr><td>Energia i opłaty zmienne (netto)</td><td class="num" id="varNet"></td></tr>
+        <tr><td>Opłaty stałe (netto, proporcjonalnie do dni)</td><td class="num" id="fixedNet"></td></tr>
+        <tr><td>Razem netto</td><td class="num" id="totalNet"></td></tr>
+        <tr class="total"><td id="grossLabel">Razem brutto</td><td class="num" id="totalGross"></td></tr>
+      </tbody>
+    </table>
+    <h3>Porównanie taryf na tych samych odczytach</h3>
+    <table>
+      <thead><tr><th>Taryfa</th><th class="num">Brutto</th><th></th></tr></thead>
+      <tbody id="compareRows"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Podgląd stref</h2>
+  <div class="section-hint">Sprawdź, czy godziny zgadzają się z taryfą Twojego operatora (Tauron, PGE, Energa, Enea, E.ON).</div>
+  <div class="row">
+    <div><label>Taryfa</label><select id="schedTariff"></select></div>
+    <div><label>Wariant (G12 / G12w)</label><select id="schedVariant"></select></div>
+    <div style="flex:0"><button class="secondary" id="schedBtn" type="button">Pokaż</button></div>
+  </div>
+  <div id="schedOut" class="sched"></div>
+</div>
+
+<div class="section">
+  <h2>Konfiguracja</h2>
+  <div class="section-hint">Zapis wymaga zalogowania. Ceny podaj <strong>netto</strong> (z faktury lub cennika sprzedawcy i operatora).
+    Rozbicie "energia" + "dystrybucja" jest opcjonalne - wystarczy jedna łączna cena.</div>
+
+  <div class="row">
+    <div><label>VAT [%]</label><input type="number" id="vat" min="0" max="100" step="0.1" value="23"></div>
+    <div><label>Maks. przerwa między odczytami [min]</label><input type="number" id="maxGap" min="5" value="360"></div>
+  </div>
+  <div class="section-hint" style="margin-top:-4px">Odcinki dłuższe niż ta przerwa (np. licznik był offline) nie są rozkładane na strefy -
+    zużycie z nich pokazujemy osobno jako "nieprzypisane", zamiast zgadywać.</div>
+
+  <h3>Liczniki</h3>
+  <datalist id="sensorList"></datalist>
+  <table>
+    <thead><tr><th>Nazwa</th><th>Etykieta</th><th>Czujnik z historii (kWh narastająco)</th><th>Taryfa</th><th>Mnożnik</th><th></th></tr></thead>
+    <tbody id="meterRows"></tbody>
+  </table>
+  <div class="actions-bar"><button class="secondary" id="addMeterBtn" type="button">+ Dodaj licznik</button></div>
+  <div class="section-hint">Mnożnik zamienia jednostkę czujnika na kWh (np. 0.001 dla Wh, 1 dla kWh).</div>
+
+  <h3>Taryfy i ceny</h3>
+  <div id="tariffCards"></div>
+  <div class="actions-bar"><button class="secondary" id="addTariffBtn" type="button">+ Dodaj taryfę</button></div>
+
+  <h3>Własne taryfy (zaawansowane, JSON)</h3>
+  <div class="section-hint">Np. inne godziny niż wbudowane. Pierwsza pasująca reguła wygrywa; <code>days</code>: all | weekday | free (weekend + święta);
+    godziny co 15 min, zakres może przechodzić przez północ.</div>
+  <textarea id="customJson" placeholder='{"G12_moja": {"zones": ["dzienna","nocna"], "default_zone": "dzienna", "rules": [{"zone": "nocna", "hours": ["21:00-06:00"]}]}}'>{}</textarea>
+
+  <div class="actions-bar"><button id="saveBtn" type="button">Zapisz konfigurację</button></div>
+  <div id="saveMsg" class="msg-box"></div>
+</div>
+
+<script>
+let BUILTIN = {}, G12_VARIANTS = [];
+
+async function api(url, options = {}) {
+  const resp = await fetch(url, options);
+  if (resp.status === 401) {
+    window.location.href = '/login?next=' + encodeURIComponent(location.pathname);
+    throw new Error('Wymagane zalogowanie');
+  }
+  return resp;
+}
+async function refreshAuthNav() {
+  const link = document.getElementById('authNavLink');
+  try {
+    const status = await (await fetch('/api/auth/status')).json();
+    if (status.logged_in) {
+      link.textContent = '🔓 Wyloguj'; link.href = '#';
+      link.onclick = async (e) => { e.preventDefault(); await fetch('/api/logout', { method: 'POST' }); window.location.reload(); };
+    } else {
+      link.textContent = '🔒 Zaloguj'; link.href = '/login?next=' + encodeURIComponent(location.pathname);
+    }
+  } catch (e) {}
+}
+refreshAuthNav();
+
+function el(tag, props = {}, children = []) {
+  const e = document.createElement(tag);
+  Object.assign(e, props);
+  children.forEach(c => e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
+  return e;
+}
+function showMsg(id, kind, text) {
+  const box = document.getElementById(id);
+  box.className = 'msg-box ' + kind; box.textContent = text;
+}
+const zl = (n) => Number(n).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const kwh = (n) => Number(n).toLocaleString('pl-PL', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+
+function customTariffs() {
+  try { const v = JSON.parse(document.getElementById('customJson').value || '{}'); return v && typeof v === 'object' ? v : {}; }
+  catch (e) { return {}; }
+}
+function allTariffIds() { return [...Object.keys(BUILTIN), ...Object.keys(customTariffs())]; }
+function zonesFor(tid) {
+  const c = customTariffs()[tid];
+  if (c && Array.isArray(c.zones)) return c.zones;
+  return BUILTIN[tid] ? BUILTIN[tid].zones : [];
+}
+
+// ---------------- konfiguracja: licznik ----------------
+function tariffSelect(value) {
+  const s = el('select', { className: 'm-tariff' });
+  const ids = Array.from(document.querySelectorAll('.t-id')).map(x => x.value).filter(Boolean);
+  ids.forEach(id => s.appendChild(el('option', { value: id, textContent: id })));
+  if (value && !ids.includes(value)) s.appendChild(el('option', { value, textContent: value }));
+  s.value = value || ids[0] || '';
+  return s;
+}
+function addMeterRow(m = {}) {
+  const tr = document.createElement('tr');
+  const cells = [
+    el('input', { type: 'text', className: 'm-name', value: m.name || '', placeholder: 'dom' }),
+    el('input', { type: 'text', className: 'm-label', value: m.label || '', placeholder: 'Dom' }),
+    el('input', { type: 'text', className: 'm-sensor', value: m.sensor || '', placeholder: 'np. wmbus_prad_total_energy_consumption_kwh' }),
+    tariffSelect(m.tariff),
+    el('input', { type: 'number', className: 'm-scale', value: m.scale ?? 1, step: 'any', min: 0 }),
+  ];
+  cells[2].setAttribute('list', 'sensorList');
+  cells.forEach(c => tr.appendChild(el('td', {}, [c])));
+  const del = el('button', { className: 'icon', type: 'button', title: 'Usuń', textContent: '✕' });
+  del.addEventListener('click', () => { tr.remove(); refreshReportMeters(); });
+  tr.appendChild(el('td', {}, [del]));
+  document.getElementById('meterRows').appendChild(tr);
+}
+function refreshMeterTariffSelects() {
+  document.querySelectorAll('.m-tariff').forEach(sel => {
+    const cur = sel.value;
+    const fresh = tariffSelect(cur);
+    sel.replaceChildren(...Array.from(fresh.children));
+    sel.value = cur;
+  });
+}
+
+// ---------------- konfiguracja: taryfy ----------------
+function renderZonePrices(card, tid, prices = {}) {
+  const box = card.querySelector('.t-zones');
+  box.replaceChildren();
+  zonesFor(tid).forEach(zone => {
+    const p = prices[zone];
+    const isObj = p && typeof p === 'object';
+    const total = isObj ? '' : (p ?? '');
+    const row = el('div', { className: 'row' }, [
+      el('div', {}, [el('label', { textContent: `Strefa: ${zone} - cena łączna netto [zł/kWh]` }),
+        el('input', { type: 'number', step: 'any', min: 0, className: 'z-total', value: total })]),
+      el('div', {}, [el('label', { textContent: 'albo: energia netto' }),
+        el('input', { type: 'number', step: 'any', min: 0, className: 'z-energy', value: isObj ? (p.energy_net ?? '') : '' })]),
+      el('div', {}, [el('label', { textContent: '+ dystrybucja netto' }),
+        el('input', { type: 'number', step: 'any', min: 0, className: 'z-dist', value: isObj ? (p.distribution_net ?? '') : '' })]),
+    ]);
+    row.dataset.zone = zone;
+    box.appendChild(row);
+  });
+}
+function addTariffCard(tid = '', spec = {}) {
+  const card = el('div', { className: 'tariff-card' });
+  const idInput = el('input', { type: 'text', className: 't-id', value: tid, placeholder: 'G12w' });
+  idInput.setAttribute('list', 'tariffIdList');
+  const variant = el('select', { className: 't-variant' }, [el('option', { value: '', textContent: '(domyślny)' })]);
+  G12_VARIANTS.forEach(v => variant.appendChild(el('option', { value: v, textContent: v })));
+  variant.value = spec.variant || '';
+  const del = el('button', { className: 'icon', type: 'button', title: 'Usuń taryfę', textContent: '✕' });
+  del.addEventListener('click', () => { card.remove(); refreshMeterTariffSelects(); });
+  card.appendChild(el('div', { className: 'row' }, [
+    el('div', {}, [el('label', { textContent: 'Taryfa' }), idInput]),
+    el('div', {}, [el('label', { textContent: 'Wariant godzin (G12 / G12w)' }), variant]),
+    el('div', {}, [el('label', { textContent: 'Opłaty stałe netto [zł/mies.]' }),
+      el('input', { type: 'number', step: 'any', min: 0, className: 't-fixed', value: spec.fixed_monthly_net ?? 0 })]),
+    el('div', {}, [el('label', { textContent: 'Pozostałe zmienne netto [zł/kWh]' }),
+      el('input', { type: 'number', step: 'any', min: 0, className: 't-other', value: spec.other_per_kwh_net ?? 0 })]),
+    el('div', { style: 'flex:0' }, [del]),
+  ]));
+  card.appendChild(el('div', { className: 't-zones' }));
+  const onId = () => { renderZonePrices(card, idInput.value.trim(), collectPrices(card)); refreshMeterTariffSelects(); };
+  idInput.addEventListener('change', onId);
+  document.getElementById('tariffCards').appendChild(card);
+  renderZonePrices(card, tid, spec.prices || {});
+}
+function collectPrices(card) {
+  const prices = {};
+  card.querySelectorAll('.t-zones .row').forEach(row => {
+    const total = row.querySelector('.z-total').value, e = row.querySelector('.z-energy').value, d = row.querySelector('.z-dist').value;
+    if (e !== '' || d !== '') prices[row.dataset.zone] = { energy_net: Number(e || 0), distribution_net: Number(d || 0) };
+    else if (total !== '') prices[row.dataset.zone] = Number(total);
+  });
+  return prices;
+}
+function collectConfig() {
+  let custom;
+  try { custom = JSON.parse(document.getElementById('customJson').value || '{}'); }
+  catch (e) { throw new Error('Własne taryfy: niepoprawny JSON (' + e.message + ')'); }
+  const tariffs = {};
+  document.querySelectorAll('.tariff-card').forEach(card => {
+    const tid = card.querySelector('.t-id').value.trim();
+    if (!tid) return;
+    const spec = {
+      prices: collectPrices(card),
+      fixed_monthly_net: Number(card.querySelector('.t-fixed').value || 0),
+      other_per_kwh_net: Number(card.querySelector('.t-other').value || 0),
+    };
+    const v = card.querySelector('.t-variant').value;
+    if (v) spec.variant = v;
+    tariffs[tid] = spec;
+  });
+  const meters = Array.from(document.querySelectorAll('#meterRows tr')).map(tr => ({
+    name: tr.querySelector('.m-name').value.trim(),
+    label: tr.querySelector('.m-label').value.trim(),
+    sensor: tr.querySelector('.m-sensor').value.trim(),
+    tariff: tr.querySelector('.m-tariff').value,
+    scale: Number(tr.querySelector('.m-scale').value || 1),
+  }));
+  return {
+    vat_percent: Number(document.getElementById('vat').value || 23),
+    max_gap_minutes: Number(document.getElementById('maxGap').value || 360),
+    custom_tariffs: custom, tariffs, meters,
+  };
+}
+
+// ---------------- wynik ----------------
+function refreshReportMeters() {
+  const sel = document.getElementById('reportMeter');
+  const cur = sel.value;
+  sel.replaceChildren();
+  document.querySelectorAll('#meterRows tr').forEach(tr => {
+    const n = tr.querySelector('.m-name').value.trim();
+    if (n) sel.appendChild(el('option', { value: n, textContent: tr.querySelector('.m-label').value.trim() || n }));
+  });
+  if (cur) sel.value = cur;
+}
+async function runReport() {
+  const out = document.getElementById('reportOut');
+  out.style.display = 'none';
+  const meter = document.getElementById('reportMeter').value;
+  if (!meter) { showMsg('reportMsg', 'error', 'Najpierw zapisz konfigurację z co najmniej jednym licznikiem.'); return; }
+  const period = document.getElementById('reportPeriod').value;
+  const resp = await api(`/api/plugins/energy_cost/report?meter=${encodeURIComponent(meter)}&period=${encodeURIComponent(period)}`);
+  const data = await resp.json();
+  if (!resp.ok) { showMsg('reportMsg', 'error', data.error || 'Błąd'); return; }
+  const r = data.result;
+  const notes = [];
+  if (r.samples < 2) notes.push('Za mało odczytów w tym okresie (potrzebne co najmniej 2) - sprawdź, czy czujnik zapisuje się do historii.');
+  if (r.unallocated_kwh > 0) notes.push(`${kwh(r.unallocated_kwh)} kWh z okresów bez odczytów (${r.gaps} przerw) nie zostało przypisane do stref i NIE jest wliczone w koszt.`);
+  if (r.resets > 0) notes.push(`Wykryto ${r.resets} spadków licznika (reset/wymiana) - te odcinki pominięto.`);
+  if (r.missing_prices.length) notes.push('Brak ceny dla stref: ' + r.missing_prices.join(', ') + ' - ich koszt liczony jako 0.');
+  showMsg('reportMsg', notes.length ? 'warn' : 'ok', notes.length ? notes.join(' ') : 'Obliczono.');
+  const rows = document.getElementById('zoneRows'); rows.replaceChildren();
+  r.zones.forEach(z => rows.appendChild(el('tr', {}, [
+    el('td', { textContent: z.zone }), el('td', { className: 'num', textContent: kwh(z.kwh) }),
+    el('td', { className: 'num', textContent: z.price_net_per_kwh === null ? '—' : z.price_net_per_kwh.toFixed(4) }),
+    el('td', { className: 'num', textContent: zl(z.net) }),
+  ])));
+  rows.appendChild(el('tr', { className: 'total' }, [el('td', { textContent: 'Razem' }),
+    el('td', { className: 'num', textContent: kwh(r.total_kwh) }), el('td'), el('td')]));
+  document.getElementById('varNet').textContent = zl(r.variable_net) + ' zł';
+  document.getElementById('fixedNet').textContent = zl(r.fixed_net) + ' zł';
+  document.getElementById('totalNet').textContent = zl(r.total_net) + ' zł';
+  document.getElementById('grossLabel').textContent = `Razem brutto (VAT ${r.vat_percent}%)`;
+  document.getElementById('totalGross').textContent = zl(r.total_gross) + ' zł';
+  const cmp = document.getElementById('compareRows'); cmp.replaceChildren();
+  data.comparison.forEach(c => cmp.appendChild(el('tr', { className: c.active ? 'active' : '' }, [
+    el('td', { textContent: c.tariff }),
+    el('td', { className: 'num', textContent: c.error ? '—' : zl(c.total_gross) + ' zł' }),
+    el('td', { textContent: c.error ? c.error : (c.active ? 'obecna taryfa' : (c.missing_prices.length ? 'brak cen: ' + c.missing_prices.join(', ') : '')) }),
+  ])));
+  out.style.display = '';
+}
+
+// ---------------- podgląd stref ----------------
+async function showSchedule() {
+  const tid = document.getElementById('schedTariff').value;
+  const variant = document.getElementById('schedVariant').value;
+  const resp = await api(`/api/plugins/energy_cost/schedule?tariff=${encodeURIComponent(tid)}&variant=${encodeURIComponent(variant)}`);
+  const data = await resp.json();
+  const out = document.getElementById('schedOut'); out.replaceChildren();
+  if (!resp.ok) { out.textContent = data.error || 'Błąd'; return; }
+  const names = { lato: 'Lato (kwi–wrz)', zima: 'Zima (paź–mar)', roboczy: 'dzień roboczy', wolny: 'weekend / święto' };
+  Object.entries(data.schedule).forEach(([season, kinds]) => {
+    Object.entries(kinds).forEach(([kind, blocks]) => {
+      out.appendChild(el('div', {}, [el('strong', { textContent: `${names[season]}, ${names[kind]}: ` }),
+        document.createTextNode(blocks.map(b => `${b.od}–${b.do} ${b.strefa}`).join(' · '))]));
+    });
+  });
+}
+
+async function init() {
+  const cfgResp = await api('/api/plugins/energy_cost/config');
+  const data = await cfgResp.json();
+  BUILTIN = data.builtin; G12_VARIANTS = data.g12_variants;
+  const cfg = data.config;
+  document.getElementById('vat').value = cfg.vat_percent;
+  document.getElementById('maxGap').value = cfg.max_gap_minutes;
+  document.getElementById('customJson').value = JSON.stringify(cfg.custom_tariffs || {}, null, 2);
+
+  const ids = el('datalist', { id: 'tariffIdList' });
+  allTariffIds().forEach(id => ids.appendChild(el('option', { value: id })));
+  document.body.appendChild(ids);
+
+  const schedSel = document.getElementById('schedTariff');
+  allTariffIds().forEach(id => schedSel.appendChild(el('option', { value: id, textContent: id })));
+  const schedVar = document.getElementById('schedVariant');
+  schedVar.appendChild(el('option', { value: '', textContent: '(domyślny)' }));
+  G12_VARIANTS.forEach(v => schedVar.appendChild(el('option', { value: v, textContent: v })));
+
+  Object.entries(cfg.tariffs || {}).forEach(([tid, spec]) => addTariffCard(tid, spec));
+  (cfg.meters || []).forEach(m => addMeterRow(m));
+  refreshReportMeters();
+
+  try {
+    const s = await (await api('/api/plugins/energy_cost/sensors')).json();
+    const list = document.getElementById('sensorList');
+    const ordered = [...s.suggested, ...s.sensors.filter(x => !s.suggested.includes(x))];
+    ordered.forEach(x => list.appendChild(el('option', { value: x })));
+  } catch (e) {}
+}
+
+document.getElementById('addMeterBtn').addEventListener('click', () => addMeterRow());
+document.getElementById('addTariffBtn').addEventListener('click', () => { addTariffCard('G11'); refreshMeterTariffSelects(); });
+document.getElementById('reportBtn').addEventListener('click', runReport);
+document.getElementById('schedBtn').addEventListener('click', showSchedule);
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  let body;
+  try { body = collectConfig(); } catch (e) { showMsg('saveMsg', 'error', e.message); return; }
+  const resp = await api('/api/plugins/energy_cost/config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { showMsg('saveMsg', 'error', data.error || 'Błąd zapisu'); return; }
+  showMsg('saveMsg', 'ok', `Zapisano (${data.meters} liczników, ${data.tariffs} taryf).`);
+  refreshReportMeters();
+});
+init();
+</script>
+</body>
+</html>
