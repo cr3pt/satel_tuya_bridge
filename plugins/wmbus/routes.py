@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from quart import Quart, jsonify, render_template, request
 
 from bridge import wmbus
@@ -113,6 +115,36 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
     @app.route("/api/plugins/wmbus/readings", methods=["GET"])
     async def api_plugin_wmbus_readings():
         return jsonify(get_history().get_status("wmbus"))
+
+    @app.route("/api/plugins/wmbus/series", methods=["GET"])
+    async def api_plugin_wmbus_series():
+        """Szeregi czasowe pól licznika do wykresów (z downsamplingiem do `points`)."""
+        name = request.args.get("meter", "")
+        meter = next((m for m in _get_section().get("meters", []) or [] if m.get("name") == name), None)
+        if meter is None:
+            return jsonify({"error": f"Nie znaleziono licznika '{name}'"}), 404
+        try:
+            hours = min(max(float(request.args.get("hours", 24)), 0.1), 24 * 366)
+            points = min(max(int(request.args.get("points", 300)), 10), 2000)
+        except ValueError:
+            return jsonify({"error": "Nieprawidłowe 'hours' lub 'points'"}), 400
+        now = time.time()
+        history = get_history()
+        prefix = f"wmbus_{name}_"
+        series = []
+        for sensor in history.get_sensors():
+            if not sensor.startswith(prefix):
+                continue
+            field = sensor[len(prefix):]
+            info = wmbus.field_unit(field)
+            data = history.get_history(sensor, now - hours * 3600, now)
+            if not data:
+                continue
+            series.append({"field": field, "phase": wmbus.detect_phase(field),
+                           "unit": info[0] if info else "", "kind": (info[1] if info else None) or "other",
+                           "points": wmbus.downsample([[r["t"], r["v"]] for r in data], points)})
+        return jsonify({"meter": name, "label": meter.get("label") or name, "from": now - hours * 3600,
+                        "to": now, "series": series})
 
     register_settings_route(
         app, "wmbus", require_auth=require_auth, get_auth_guard=get_auth_guard,

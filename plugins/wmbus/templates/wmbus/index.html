@@ -36,7 +36,18 @@
   .msg.error { display: block; background: #3a1a1c; border: 1px solid var(--danger); color: var(--danger); }
   .phase { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #262a32; color: var(--accent); margin-left: 6px; }
   .small { font-size: 11px; color: var(--muted); }
+
+  .chart-box { position: relative; height: 280px; margin-top: 8px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 8px 0 0; }
+  .legend-item { background: transparent; color: var(--text); border: none; padding: 2px 4px; font-size: 12px; font-weight: 400; display: inline-flex; align-items: center; gap: 6px; }
+  .legend-item.off { opacity: .4; text-decoration: line-through; }
+  .legend-sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .chart-title { font-size: 13px; color: var(--muted); margin: 14px 0 0; }
+  .toolbar { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+  .toolbar > div { min-width: 140px; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/static/plugin_charts.js"></script>
 </head>
 <body>
 {% include "_nav.html" %}
@@ -69,6 +80,23 @@
     <button id="saveBtn" type="button">Zapisz i wygeneruj pliki wmbusmeters</button>
   </div>
   <div id="saveMessage" class="msg"></div>
+</div>
+
+<div class="card">
+  <h2>Wykresy</h2>
+  <div class="toolbar">
+    <div><label class="small">Licznik</label><select id="chartMeter"></select></div>
+    <div><label class="small">Okres</label>
+      <select id="chartHours">
+        <option value="1">Ostatnia godzina</option><option value="6">6 godzin</option>
+        <option value="24" selected>24 godziny</option><option value="168">7 dni</option><option value="720">30 dni</option>
+      </select></div>
+    <div style="flex:0"><button id="chartBtn" type="button">Odśwież</button></div>
+    <div style="flex:0"><button id="chartTableBtn" class="secondary" type="button">Tabela</button></div>
+  </div>
+  <div id="chartEmpty" class="small" style="margin-top:10px; display:none">Brak zapisanych odczytów tego licznika w wybranym okresie.</div>
+  <div id="chartsOut"></div>
+  <table id="chartTable" style="display:none; margin-top:10px"></table>
 </div>
 
 <div class="card">
@@ -206,7 +234,73 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
   }
 });
 
+// ---------------- wykresy ----------------
+let charts = [], lastSeries = null;
+const KIND_TITLES = { voltage: 'Napięcie', current: 'Prąd', power: 'Moc', energy: 'Energia', frequency: 'Częstotliwość',
+  temperature: 'Temperatura', signal_strength: 'Sygnał', other: 'Inne' };
+const KIND_ORDER = ['voltage', 'current', 'power', 'energy', 'frequency', 'temperature', 'other', 'signal_strength'];
+
+function seriesLabel(s) { return s.phase ? `L${s.phase} (${s.field})` : s.field; }
+
+async function loadChartMeters() {
+  const data = await (await fetch('/api/plugins/wmbus/meters')).json();
+  const sel = document.getElementById('chartMeter'); sel.replaceChildren();
+  data.meters.forEach(m => sel.appendChild(el('option', { value: m.name, textContent: m.label || m.name })));
+  if (data.meters.length) drawCharts();
+}
+
+async function drawCharts() {
+  const meter = document.getElementById('chartMeter').value;
+  if (!meter) return;
+  const hours = document.getElementById('chartHours').value;
+  const resp = await fetch(`/api/plugins/wmbus/series?meter=${encodeURIComponent(meter)}&hours=${hours}&points=300`);
+  if (resp.status === 401) { window.location.href = '/login?next=' + encodeURIComponent(location.pathname); return; }
+  const data = await resp.json();
+  charts.forEach(c => c.destroy()); charts = [];
+  const out = document.getElementById('chartsOut'); out.replaceChildren();
+  lastSeries = data.series || [];
+  document.getElementById('chartEmpty').style.display = lastSeries.length ? 'none' : 'block';
+  const groups = {};
+  lastSeries.forEach(s => { (groups[s.kind] = groups[s.kind] || []).push(s); });
+  KIND_ORDER.filter(k => groups[k]).forEach(kind => {
+    // jedna oś = jedna jednostka: różne jednostki w jednym rodzaju idą na osobne wykresy
+    const byUnit = {};
+    groups[kind].forEach(s => { (byUnit[s.unit] = byUnit[s.unit] || []).push(s); });
+    Object.keys(byUnit).forEach(unit => {
+      const list = byUnit[unit].sort((a, b) => (a.phase || 9) - (b.phase || 9) || a.field.localeCompare(b.field));
+      out.appendChild(el('div', { className: 'chart-title', textContent: `${KIND_TITLES[kind]} [${unit}]` }));
+      const leg = el('div', { className: 'legend' });
+      const box = el('div', { className: 'chart-box' });
+      const canvas = el('canvas');
+      box.appendChild(canvas); out.appendChild(leg); out.appendChild(box);
+      const ds = list.map((s, i) => ({ label: seriesLabel(s), color: PluginCharts.COLORS[(s.phase ? s.phase - 1 : i) % 3], points: s.points }));
+      const chart = PluginCharts.lineChart(canvas, ds, unit, data.to - data.from);
+      charts.push(chart);
+      if (ds.length > 1) PluginCharts.legend(leg, chart);
+    });
+  });
+  fillChartTable();
+}
+
+function fillChartTable() {
+  const rows = [];
+  (lastSeries || []).forEach(s => s.points.forEach(p => rows.push([seriesLabel(s), PluginCharts.fmtTime(p[0], true),
+    p[1].toLocaleString('pl-PL', { maximumFractionDigits: 3 }) + ' ' + s.unit])));
+  PluginCharts.fillTable(document.getElementById('chartTable'), ['Pole', 'Czas', 'Wartość'], rows);
+}
+
+document.getElementById('chartBtn').addEventListener('click', drawCharts);
+document.getElementById('chartMeter').addEventListener('change', drawCharts);
+document.getElementById('chartHours').addEventListener('change', drawCharts);
+document.getElementById('chartTableBtn').addEventListener('click', () => {
+  const t = document.getElementById('chartTable'), o = document.getElementById('chartsOut');
+  const showTable = t.style.display === 'none';
+  t.style.display = showTable ? '' : 'none'; o.style.display = showTable ? 'none' : '';
+  document.getElementById('chartTableBtn').textContent = showTable ? 'Wykres' : 'Tabela';
+});
+
 loadMeters();
+loadChartMeters();
 loadReadings();
 setInterval(loadReadings, 15000);
 </script>

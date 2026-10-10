@@ -1832,6 +1832,8 @@ jego telegramy z MQTT: `licznik → dongle USB → wmbusmeters (AES) → mosquit
 Klucze leżą w `config.db` (prawa 0600, jak klucze Tuya) i w wygenerowanych plikach wmbusmeters (0600). Panel **nigdy nie odsyła klucza do przeglądarki**
 (tylko ostatnie 4 znaki); puste pole klucza przy zapisie = zostaw dotychczasowy. Usunięcie licznika kasuje jego plik z kluczem.
 
+**Wykresy:** strona `/plugins/wmbus` rysuje szeregi czasowe z historii (napięcie, prąd, moc itd.), osobno wykres na każdą wielkość, z liniami L1/L2/L3 w stałych kolorach, legendą (klik = ukryj/pokaż), celownikiem z dymkiem i widokiem tabeli. Dane: `GET /api/plugins/wmbus/series?meter=<nazwa>&hours=24&points=300` (uśrednianie do `points` punktów).
+
 ## Koszty energii wg taryfy (G11 / G12 / G12w / G13)
 
 Wtyczka **💰 Koszty energii** (`/plugins/energy_cost`) liczy koszt prądu z historii **narastającego
@@ -1871,6 +1873,8 @@ Konfiguracja leży w dokumencie `config`, klucz `energy`.
 do historii trafiają odczyty czujników eBUS (`ebus.sensors` z `history: true`) oraz pola liczników
 wM-Bus (wtyczka ⚡ wM-Bus, np. `wmbus_prad_dom_total_energy_consumption_kwh`). Zapis liczników
 energii Tuya nie jest jeszcze częścią tego repozytorium.
+
+**Wykresy:** po kliknięciu „Policz” strona pokazuje dobowe zużycie wg stref (słupki skumulowane) i dobowy koszt brutto; dane w polu `daily` odpowiedzi `/api/plugins/energy_cost/report` (doby wg czasu Europe/Warsaw, pierwsza/ostatnia mogą być niepełne).
 
 ## Serwer MCP (Model Context Protocol)
 

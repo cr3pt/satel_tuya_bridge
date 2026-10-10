@@ -530,6 +530,30 @@ def _validate_energy_config(data) -> dict:
 # ----------------------------------------------------------------------
 # Raport dla jednego licznika (łączy powyższe elementy)
 # ----------------------------------------------------------------------
+def daily_breakdown(readings: list[dict], tariff: Tariff, pricing: dict, ts_from: float, ts_to: float,
+                    max_gap_seconds: float, scale: float, default_vat_percent: float = 23.0) -> list[dict]:
+    """Zużycie (kWh wg stref) i koszt brutto per doba lokalna (Europe/Warsaw).
+    Pierwsza i ostatnia doba bywają niepełne (okres przycięty). Opłata stała jest
+    rozliczana proporcjonalnie, tak samo jak w całym raporcie."""
+    days = []
+    d = datetime.fromtimestamp(ts_from, TZ).date()
+    last = datetime.fromtimestamp(ts_to, TZ).date()
+    pts = sorted(readings, key=lambda r: r["t"])
+    while d <= last:
+        d0 = max(datetime(d.year, d.month, d.day, tzinfo=TZ).timestamp(), ts_from)
+        nxt = d + timedelta(days=1)
+        d1 = min(datetime(nxt.year, nxt.month, nxt.day, tzinfo=TZ).timestamp(), ts_to)
+        if d1 > d0:
+            sub = [r for r in pts if d0 - max_gap_seconds <= r["t"] <= d1 + max_gap_seconds]
+            cons = consumption_by_zone(sub, tariff, d0, d1, max_gap_seconds=max_gap_seconds, scale=scale)
+            res = compute_cost(cons, pricing, tariff, d0, d1, default_vat_percent=default_vat_percent)
+            days.append({"date": d.isoformat(), "from": d0, "to": d1,
+                         "kwh_by_zone": {z["zone"]: z["kwh"] for z in res["zones"]},
+                         "total_kwh": res["total_kwh"], "cost_gross": res["total_gross"]})
+        d = nxt
+    return days
+
+
 def build_report(energy_cfg: dict, meter: dict, readings: list[dict], ts_from: float, ts_to: float) -> dict:
     """Koszt wg taryfy przypisanej do licznika + porównanie ze WSZYSTKIMI
     skonfigurowanymi taryfami na tych samych odczytach ("ile bym zapłacił w G12w?")."""
@@ -545,6 +569,9 @@ def build_report(energy_cfg: dict, meter: dict, readings: list[dict], ts_from: f
         return compute_cost(cons, pricing, tariff, ts_from, ts_to, default_vat_percent=vat)
 
     report = one(meter["tariff"])
+    pricing = energy_cfg["tariffs"][meter["tariff"]]
+    daily = daily_breakdown(readings, resolve_tariff(meter["tariff"], pricing.get("variant"), custom), pricing,
+                            ts_from, ts_to, max_gap_seconds=max_gap, scale=scale, default_vat_percent=vat)
     comparison = []
     for tid in energy_cfg["tariffs"]:
         try:
@@ -554,4 +581,4 @@ def build_report(energy_cfg: dict, meter: dict, readings: list[dict], ts_from: f
         except ValueError as exc:
             comparison.append({"tariff": tid, "error": str(exc), "active": tid == meter["tariff"]})
     return {"meter": {k: meter[k] for k in ("name", "label", "sensor", "tariff")},
-            "period": {"from": ts_from, "to": ts_to}, "result": report, "comparison": comparison}
+            "period": {"from": ts_from, "to": ts_to}, "result": report, "comparison": comparison, "daily": daily}

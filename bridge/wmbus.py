@@ -86,6 +86,20 @@ def field_unit(field: str) -> tuple[str, str | None, str | None] | None:
     return _UNITS.get(suffix)
 
 
+def downsample(points: list[list[float]], limit: int) -> list[list[float]]:
+    """Ogranicza szereg do ~`limit` punktów: w każdym przedziale zostaje średnia
+    (czas i wartość), więc wykres nie zalewa przeglądarki, a trend się nie zmienia."""
+    if limit <= 0 or len(points) <= limit:
+        return points
+    size = len(points) / limit
+    out = []
+    for i in range(limit):
+        chunk = points[int(i * size):int((i + 1) * size)]
+        if chunk:
+            out.append([sum(p[0] for p in chunk) / len(chunk), sum(p[1] for p in chunk) / len(chunk)])
+    return out
+
+
 def is_voltage_field(field: str) -> bool:
     unit = field_unit(field)
     return bool(unit and unit[1] == "voltage")

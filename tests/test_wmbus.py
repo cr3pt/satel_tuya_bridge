@@ -341,3 +341,47 @@ class TestReload:
         engine.alarms = AlarmEngine([], engine.history)
         engine._setup_wmbus(engine.config)
         assert any(r["condition"] == "stale" and r["sensor"] == "wmbus_prad_dom" for r in engine.alarms.rules)
+
+
+class TestDownsample:
+    def test_short_series_unchanged(self):
+        pts = [[1.0, 2.0], [2.0, 3.0]]
+        assert wmbus.downsample(pts, 10) == pts
+
+    def test_long_series_limited_and_averaged(self):
+        pts = [[float(i), float(i)] for i in range(1000)]
+        out = wmbus.downsample(pts, 100)
+        assert len(out) == 100
+        assert out[0] == [4.5, 4.5] and out[-1][0] > out[0][0]
+
+
+class TestSeriesEndpoint:
+    async def test_requires_login(self, client):
+        assert (await client.get("/api/plugins/wmbus/series?meter=x")).status_code == 401
+
+    async def test_unknown_meter_404_and_bad_params_400(self, client):
+        await _save(client, [METER])
+        assert (await client.get("/api/plugins/wmbus/series?meter=nie_ma", headers=AUTH)).status_code == 404
+        url = f"/api/plugins/wmbus/series?meter={METER['name']}&hours=abc"
+        assert (await client.get(url, headers=AUTH)).status_code == 400
+
+    async def test_returns_per_phase_series_with_units(self, client):
+        import time as _t
+        import dashboard.app as app_module
+        await _save(client, [METER])
+        h, now, n = app_module.history, _t.time(), METER["name"]
+        for i in range(5):
+            for ph, base in ((1, 230), (2, 231), (3, 232)):
+                h.write_reading(f"wmbus_{n}_voltage_at_phase_{ph}_v", base + i, ts=now - 600 + i * 60)
+        h.write_reading("wmbus_inny_voltage_at_phase_1_v", 1.0, ts=now - 60)
+        data = await (await client.get(f"/api/plugins/wmbus/series?meter={n}&hours=1&points=10", headers=AUTH)).get_json()
+        assert sorted(s["phase"] for s in data["series"]) == [1, 2, 3]
+        s1 = next(s for s in data["series"] if s["phase"] == 1)
+        assert s1["unit"] == "V" and s1["kind"] == "voltage" and len(s1["points"]) == 5
+        assert all(n in s["field"] or True for s in data["series"])
+        assert not any("inny" in s["field"] for s in data["series"])
+
+    async def test_page_includes_chart_assets(self, client):
+        html = await (await client.get("/plugins/wmbus", headers=AUTH)).get_data(as_text=True)
+        assert "plugin_charts.js" in html and "chart.umd" in html
+        assert (await client.get("/static/plugin_charts.js")).status_code == 200

@@ -48,7 +48,18 @@
   .tariff-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
   .badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #262a32; color: var(--accent); }
   .sched { font-size: 12px; color: var(--muted); line-height: 1.7; }
+
+  .chart-box { position: relative; height: 280px; margin-top: 8px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 8px 0 0; }
+  .legend-item { background: transparent; color: var(--text); border: none; padding: 2px 4px; font-size: 12px; font-weight: 400; display: inline-flex; align-items: center; gap: 6px; }
+  .legend-item.off { opacity: .4; text-decoration: line-through; }
+  .legend-sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .chart-title { font-size: 13px; color: var(--muted); margin: 14px 0 0; }
+  .toolbar { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+  .toolbar > div { min-width: 140px; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/static/plugin_charts.js"></script>
 </head>
 <body>
 {% include "_nav.html" %}
@@ -88,6 +99,16 @@
         <tr class="total"><td id="grossLabel">Razem brutto</td><td class="num" id="totalGross"></td></tr>
       </tbody>
     </table>
+    <h3>Wykresy dzienne</h3>
+    <div class="toolbar"><div style="flex:0"><button id="dailyTableBtn" class="secondary" type="button">Tabela</button></div></div>
+    <div id="dailyCharts">
+      <div class="chart-title">Zużycie dobowe wg stref [kWh]</div>
+      <div class="legend" id="kwhLegend"></div>
+      <div class="chart-box"><canvas id="kwhChart"></canvas></div>
+      <div class="chart-title">Koszt dobowy brutto [zł]</div>
+      <div class="chart-box"><canvas id="costChart"></canvas></div>
+    </div>
+    <table id="dailyTable" style="display:none; margin-top:10px"></table>
     <h3>Porównanie taryf na tych samych odczytach</h3>
     <table>
       <thead><tr><th>Taryfa</th><th class="num">Brutto</th><th></th></tr></thead>
@@ -355,7 +376,30 @@ async function runReport() {
     el('td', { textContent: c.error ? c.error : (c.active ? 'obecna taryfa' : (c.missing_prices.length ? 'brak cen: ' + c.missing_prices.join(', ') : '')) }),
   ])));
   out.style.display = '';
+  drawDaily(data.daily || [], r.zones.map(z => z.zone));
 }
+
+// ---------------- wykresy dzienne ----------------
+let dailyCharts = [];
+function drawDaily(daily, zones) {
+  dailyCharts.forEach(c => c.destroy()); dailyCharts = [];
+  const labels = daily.map(d => d.date.slice(5).split('-').reverse().join('.'));
+  const ds = zones.map((z, i) => ({ label: z, color: PluginCharts.COLORS[i % 3], values: daily.map(d => d.kwh_by_zone[z] || 0) }));
+  const kwhChart = PluginCharts.stackedBar(document.getElementById('kwhChart'), labels, ds, 'kWh');
+  const costChart = PluginCharts.simpleBar(document.getElementById('costChart'), labels, daily.map(d => d.cost_gross), 'zł');
+  dailyCharts.push(kwhChart, costChart);
+  if (zones.length > 1) PluginCharts.legend(document.getElementById('kwhLegend'), kwhChart);
+  else document.getElementById('kwhLegend').replaceChildren();
+  PluginCharts.fillTable(document.getElementById('dailyTable'),
+    ['Doba', ...zones.map(z => z + ' [kWh]'), 'Razem [kWh]', 'Koszt brutto [zł]'],
+    daily.map(d => [d.date, ...zones.map(z => (d.kwh_by_zone[z] || 0).toFixed(3)), d.total_kwh.toFixed(3), d.cost_gross.toFixed(2)]));
+}
+document.getElementById('dailyTableBtn').addEventListener('click', () => {
+  const t = document.getElementById('dailyTable'), c = document.getElementById('dailyCharts');
+  const show = t.style.display === 'none';
+  t.style.display = show ? '' : 'none'; c.style.display = show ? 'none' : '';
+  document.getElementById('dailyTableBtn').textContent = show ? 'Wykres' : 'Tabela';
+});
 
 // ---------------- podgląd stref ----------------
 async function showSchedule() {

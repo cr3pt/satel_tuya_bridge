@@ -157,3 +157,34 @@ class TestPluginsList:
         plugins = await (await client.get("/api/plugins", headers=AUTH)).get_json()
         p = next(p for p in plugins if p["id"] == "energy_cost")
         assert p["configured"] is True and p["detail"] == "liczników: 1"
+
+
+class TestDaily:
+    async def test_daily_breakdown_sums_to_total(self, client):
+        import dashboard.app as app_module
+        await _save(client)
+        h = app_module.history
+        # pn 13.07 i wt 14.07.2026: 1 kWh/h przez 48 h od północy
+        for i in range(49):
+            h.write_reading("licznik_kwh", 100.0 + i, ts=ts(2026, 7, 13) + i * 3600)
+        url = f"/api/plugins/energy_cost/report?meter=dom&from={ts(2026, 7, 13)}&to={ts(2026, 7, 15)}"
+        rep = await (await client.get(url, headers=AUTH)).get_json()
+        daily = rep["daily"]
+        assert [d["date"] for d in daily] == ["2026-07-13", "2026-07-14"]
+        assert all(d["total_kwh"] == pytest.approx(24.0) for d in daily)
+        assert sum(d["total_kwh"] for d in daily) == pytest.approx(rep["result"]["total_kwh"])
+        assert sum(d["cost_gross"] for d in daily) == pytest.approx(rep["result"]["total_gross"], abs=0.02)
+        assert set(daily[0]["kwh_by_zone"]) == {"dzienna", "nocna"}
+
+    async def test_partial_days_and_empty_history(self, client):
+        await _save(client)
+        url = f"/api/plugins/energy_cost/report?meter=dom&from={ts(2026, 7, 13, 12)}&to={ts(2026, 7, 14, 6)}"
+        daily = (await (await client.get(url, headers=AUTH)).get_json())["daily"]
+        assert len(daily) == 2 and daily[0]["from"] == ts(2026, 7, 13, 12) and daily[1]["to"] == ts(2026, 7, 14, 6)
+        assert all(d["total_kwh"] == 0 for d in daily)
+
+    async def test_dst_day_is_23_hours(self, client):
+        await _save(client)
+        url = f"/api/plugins/energy_cost/report?meter=dom&from={ts(2026, 3, 29)}&to={ts(2026, 3, 30)}"
+        d = (await (await client.get(url, headers=AUTH)).get_json())["daily"][0]
+        assert d["to"] - d["from"] == 23 * 3600
