@@ -54,6 +54,14 @@ class HomeAssistantMqttBridge:
         if self.history is not None:
             self.history.set_status(f"mqtt:{topic}", "mqtt_topic", payload, label=topic)
 
+    def publish_discovery(self, entity: dict) -> None:
+        """Dodaje encję w trakcie działania (np. pole licznika wM-Bus znane
+        dopiero po pierwszym telegramie); ponownie publikowana po reconnect."""
+        self.entities.append(entity)
+        payload = json.dumps(entity["payload"])
+        self._client.publish(entity["discovery_topic"], payload=payload, retain=True)
+        self._record_topic(entity["discovery_topic"], payload)
+
     def _on_connect(self, client, userdata, connect_flags, reason_code, properties) -> None:
         if reason_code != 0:
             logger.error("Nie udało się połączyć z MQTT (Home Assistant): kod %s", reason_code)

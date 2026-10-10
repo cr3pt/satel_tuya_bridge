@@ -19,6 +19,7 @@ from .iqua_client import IquaClient
 from .lg_thinq_client import LgThinqClient
 from .smartthings_client import SmartThingsClient
 from .ebus_client import EbusMqttListener
+from . import wmbus
 from .weather_client import fetch_forecast
 from .boiler_output import build_boiler_publishers, MqttBoilerPublisher, TuyaVirtualDevicePublisher
 from .history_store import HistoryStore
@@ -30,7 +31,7 @@ from .scenes import SceneRunner
 from .presence_simulation import PresenceSimulation
 from .boiler_automation import BoilerAutomation
 from .maintenance import run_maintenance
-from .ha_discovery import build_all_entities
+from .ha_discovery import build_wmbus_field_entity, wmbus_state_topic, build_all_entities
 from .ha_mqtt import HomeAssistantMqttBridge
 from .homekit_bridge import HomeKitBridge, resolve_homekit_config
 from .flow_engine import FlowEngine
@@ -87,6 +88,11 @@ class RulesEngine:
         self._alarm_status_debounce_task: asyncio.Task | None = None
         self.boiler_publishers = build_boiler_publishers(config, history=self.history)
         self.ebus_listener: EbusMqttListener | None = None
+        self.wmbus_listener: wmbus.WmbusMqttListener | None = None
+        self._wmbus_last_history_write: dict[str, float] = {}
+        self._wmbus_phases_seen: dict[str, set[int]] = {}
+        self._wmbus_announced: set[tuple[str, str]] = set()
+        self._wmbus_meters: dict[str, dict] = {}
         self._notify_cfg = notify_cfg
         self._grace_seconds = grace_seconds
         self._tuya_health: HealthReporter | None = None
@@ -116,6 +122,8 @@ class RulesEngine:
         self._camera_rule_last_triggered: dict[str, float] = {}
 
         self._loop = asyncio.get_event_loop()
+        self.alarms.set_loop(self._loop)
+        self._setup_wmbus(config)
 
         self.ha_mqtt: HomeAssistantMqttBridge | None = None
         self._ha_topic_prefix = config.raw.get("home_assistant", {}).get("state_topic_prefix", "home/bridge")
@@ -753,6 +761,95 @@ class RulesEngine:
             else:
                 self.boiler_publishers["tuya"].publish_to_dp(dp_code, value)
 
+    # ------------------------------------------------------------------
+    # wM-Bus (wmbusmeters -> MQTT). Handler wołany z wątku paho-mqtt. Każde
+    # pole liczbowe (osobno L1/L2/L3) to czujnik `wmbus_<licznik>_<pole>` -
+    # w historii, alarmach progowych, regułach kotła, HA i raporcie kosztów.
+    # ------------------------------------------------------------------
+    def _setup_wmbus(self, config) -> None:
+        """Wczytuje liczniki i rejestruje alarmy ciszy (stale). Wołane też po
+        reloadzie, bo reload tworzy nowy AlarmEngine."""
+        wm = config.raw.get("wmbus", {}) or {}
+        self._wmbus_meters = {}
+        if not wm.get("enabled"):
+            return
+        for raw_meter in wm.get("meters", []) or []:
+            m = wmbus.normalize_meter(raw_meter)
+            self._wmbus_meters[m["name"]] = m
+            if m["max_silence_minutes"] > 0:
+                self.alarms.add_rule({
+                    "name": f"Brak telegramów wM-Bus: {m['label']}", "sensor": f"wmbus_{m['name']}",
+                    "condition": "stale", "max_age_seconds": m["max_silence_minutes"] * 60,
+                })
+
+    def handle_wmbus_reading(self, meter_cfg: dict, telegram: dict) -> None:
+        meter = self._wmbus_meters.get(meter_cfg["name"]) or wmbus.normalize_meter(meter_cfg)
+        name, label = meter["name"], meter["label"]
+        now = time.time()
+        self.alarms.on_value(f"wmbus_{name}", "telegram")
+
+        fields = wmbus.numeric_fields(telegram)
+        write_history = (now - self._wmbus_last_history_write.get(name, 0)) >= meter["min_history_interval_seconds"]
+        if write_history:
+            self._wmbus_last_history_write[name] = now
+
+        for field, value in fields.items():
+            sensor = f"wmbus_{name}_{field}"
+            phase = wmbus.detect_phase(field)
+            field_label = f"{label}: {field}" + (f" [L{phase}]" if phase else "")
+            if write_history:
+                self.history.write_reading(sensor, value)
+            self.history.set_status(f"wmbus:{name}:{field}", "wmbus", value, label=field_label)
+            # progi napięcia muszą istnieć PRZED pierwszą oceną wartości
+            if phase and wmbus.is_voltage_field(field):
+                self._ensure_wmbus_voltage_rules(meter, sensor, phase)
+            self.alarms.on_value(sensor, value)
+            asyncio.run_coroutine_threadsafe(self.boiler_automation.on_value(sensor, value), self._loop)
+            if self.ha_mqtt and meter["home_assistant"]:
+                self._publish_wmbus_to_ha(meter, field, value)
+
+        if isinstance(telegram.get("status"), str):
+            self.history.set_status(f"wmbus:{name}:status", "wmbus", telegram["status"], label=f"{label}: status")
+        self._track_wmbus_phases(meter, fields)
+
+    def _ensure_wmbus_voltage_rules(self, meter: dict, sensor: str, phase: int) -> None:
+        label = meter["label"]
+        if "voltage_min" in meter:
+            self.alarms.add_rule({
+                "name": f"Niskie napięcie L{phase}: {label}", "sensor": sensor,
+                "condition": "below", "threshold": meter["voltage_min"], "hysteresis": 2,
+            })
+        if "voltage_max" in meter:
+            self.alarms.add_rule({
+                "name": f"Wysokie napięcie L{phase}: {label}", "sensor": sensor,
+                "condition": "above", "threshold": meter["voltage_max"], "hysteresis": 2,
+            })
+
+    def _track_wmbus_phases(self, meter: dict, fields: dict) -> None:
+        """Które fazy licznik faktycznie raportuje (suma z wielu telegramów -
+        część liczników rozdziela fazy na różne telegramy)."""
+        name = meter["name"]
+        seen = self._wmbus_phases_seen.setdefault(name, set())
+        before = set(seen)
+        seen |= wmbus.phases_in(fields)
+        if meter["phases"] != 3 and not seen:
+            return
+        expected = {1, 2, 3} if meter["phases"] == 3 else seen
+        missing = expected - seen
+        text = " ".join(f"L{p}" for p in sorted(seen)) or "brak"
+        if missing:
+            text += " (brak: " + ", ".join(f"L{p}" for p in sorted(missing)) + ")"
+        self.history.set_status(f"wmbus:{name}:phases", "wmbus", text, label=f"{meter['label']}: fazy")
+        if seen != before:
+            self.history.write_event("wmbus", source=name, detail={"phases": sorted(seen), "missing": sorted(missing)})
+
+    def _publish_wmbus_to_ha(self, meter: dict, field: str, value) -> None:
+        ha_cfg = self.config.raw.get("home_assistant", {})
+        if (meter["name"], field) not in self._wmbus_announced:
+            self._wmbus_announced.add((meter["name"], field))
+            self.ha_mqtt.publish_discovery(build_wmbus_field_entity(meter, field, ha_cfg, self._ha_topic_prefix))
+        self.ha_mqtt.publish_state(wmbus_state_topic(self._ha_topic_prefix, meter["name"], field), str(value))
+
     async def _stale_check_loop(self) -> None:
         while True:
             await asyncio.sleep(60)
@@ -896,6 +993,10 @@ class RulesEngine:
         self.flow_engine.location_cfg = self._location_cfg
         self.boiler_automation = BoilerAutomation(new_config.raw.get("boiler_rules", []), self.scenes)
         self.alarms = AlarmEngine(new_config.raw.get("alarm_rules", []), self.history, notify_cfg=self._notify_cfg)
+        self.alarms.set_loop(self._loop)
+        self._setup_wmbus(new_config)
+        if self.wmbus_listener is not None:
+            self.wmbus_listener.update_meters(list(self._wmbus_meters.values()))
 
         self.presence_simulation.cfg = new_config.raw.get("presence_simulation", {})
         self.presence_simulation.location_cfg = self._location_cfg
@@ -1323,6 +1424,20 @@ class RulesEngine:
         else:
             logger.info("eBUS wyłączony w ustawieniach (🧩 Wtyczki) - pomijam połączenie MQTT")
             self.history.set_status("health:ebus_mqtt", "system_health", "wyłączono (wtyczka)", label="ebus_mqtt")
+
+        wm_cfg = self.config.raw.get("wmbus", {}) or {}
+        if wm_cfg.get("enabled") and self._wmbus_meters:
+            self.wmbus_listener = wmbus.WmbusMqttListener(
+                {
+                    "mqtt_host": wm_cfg.get("mqtt_host") or self.config.ebus.get("mqtt_host") or "127.0.0.1",
+                    "mqtt_port": wm_cfg.get("mqtt_port") or self.config.ebus.get("mqtt_port", 1883),
+                    "topic_prefix": wm_cfg.get("topic_prefix", "wmbusmeters"),
+                },
+                list(self._wmbus_meters.values()), self.handle_wmbus_reading,
+                history=self.history, notify_cfg=self._notify_cfg,
+                grace_seconds=self._grace_seconds, loop=self._loop,
+            )
+            self.wmbus_listener.start()
 
         if "cloud" in self.config.tuya:
             camera_listener = TuyaCameraMotionListener(
