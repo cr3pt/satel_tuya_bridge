@@ -1,20 +1,5 @@
-# Uruchomienie całości w Dockerze: dwa kontenery (bridge + panel webowy)
-# z JEDNEGO obrazu (Dockerfile), plus opcjonalny broker MQTT dla eBUS.
-# Pełna instrukcja: README.md, sekcja "Uruchomienie w Dockerze".
-#
-# Przed pierwszym startem:
-#   mkdir -p data && sudo chown 1000:1000 data
-#
-# Start:
-#   docker compose up -d --build
-#   -> otwórz http://<adres-hosta>:8090/setup i przejdź kreator
-#      (tak samo jak przy uruchomieniu bez Dockera - cała konfiguracja
-#      wyląduje w ./data/config.db na hoście - SQLite, NIE plik .yaml do
-#      ręcznej edycji, patrz README sekcja "Konfiguracja w bazie danych")
-#
-# Restart bridge'a po zmianie konfiguracji z panelu (⚙ Ustawienia -
-# zwykle robi to sam, przyciskiem "Zrestartuj bridge i panel teraz"):
-#   docker compose restart bridge
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
 
 services:
   bridge:
@@ -28,23 +13,12 @@ services:
     environment:
       - TZ=Europe/Warsaw
     restart: unless-stopped
-    # Domyślnie sieć hosta (tylko Linux) - wymagane przez wtyczkę "Most
-    # HomeKit" (parowanie z aplikacją Dom opiera się na ogłoszeniach
-    # mDNS/Bonjour, które nie przechodzą przez domyślną sieć mostkowaną
-    # Dockera), a przy okazji upraszcza discovery po multicaście dla
-    # innych integracji. Na Mac/Windows (Docker Desktop nie obsługuje
-    # network_mode: host) zakomentuj poniższą linię - bridge nadal
-    # zadziała ze zwykłą siecią mostkowaną, tylko bez możliwości
-    # sparowania mostu HomeKit.
     network_mode: host
     mem_limit: 512m
     pids_limit: 200
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      # Bridge nie wystawia portu HTTP (patrz network_mode: host) - sprawdzamy
-      # świeżość pliku heartbeat, który RulesEngine._heartbeat_loop zapisuje
-      # co ~20s obok config.db (patrz bridge/rules_engine.py).
       test: ["CMD", "python", "-c", "import os,sys,time; p='/config/.bridge_heartbeat'; sys.exit(0 if os.path.exists(p) and time.time() - os.path.getmtime(p) < 90 else 1)"]
       interval: 30s
       timeout: 5s
@@ -75,12 +49,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # Opcjonalny lokalny broker MQTT - włącz TYLKO jeśli nie masz już
-  # brokera, na którym publikuje ebusd (najczęściej ebusd/mosquitto
-  # działają już bezpośrednio na RPi, poza Dockerem - wtedy w zakładce
-  # ⚙ Ustawienia -> Połączenia wskaż `mqtt_host` (eBUS) na adres LAN hosta,
-  # NIE na tę usługę).
-  # Domyślnie WYŁĄCZONY - uruchom przez: docker compose --profile broker up -d
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: satel-tuya-mosquitto

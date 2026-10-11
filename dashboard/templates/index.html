@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -278,7 +279,6 @@
 <script>
 let chart = null;
 
-
 async function authorizedFetch(url, options = {}) {
   const resp = await fetch(url, options);
   if (resp.status === 401) {
@@ -316,7 +316,6 @@ async function refreshAuthNav() {
 function fmtTime(ts) {
   return new Date(ts * 1000).toLocaleString('pl-PL');
 }
-
 
 function topicCircuit(topic) {
   const parts = (topic || '').split('/').filter(Boolean);
@@ -438,7 +437,6 @@ async function loadActiveAlerts() {
   ).join('');
 }
 
-
 const SENSOR_CHART_COLORS = ['#4d8dfd', '#3dd68c', '#e5484d', '#f2b93d', '#c792ea', '#5ecbe0', '#ff9f68', '#8b93a1'];
 
 async function loadHistory() {
@@ -508,7 +506,6 @@ async function loadAlertsHistory() {
     </tr>`).join('');
 }
 
-
 const SATEL_ZONE_TYPE_ICONS = { drzwi: '🚪', okno: '🪟', ruch: '🚶', dym: '🔥', zalanie: '💧', wibracja: '📳', sabotaz: '🚨', inne: '❔' };
 const SATEL_ZONE_TYPE_LABELS = { drzwi: 'Drzwi', okno: 'Okno', ruch: 'Ruch (PIR)', dym: 'Dym', zalanie: 'Zalanie', wibracja: 'Wibracja', sabotaz: 'Sabotaż/24h', inne: 'Inne' };
 const SATEL_OUTPUT_TYPE_ICONS = { syrena: '🔔', przekaznik: '🔌', oswietlenie: '💡', brama: '🚧', ogrzewanie: '♨️', inne: '❔' };
@@ -565,7 +562,6 @@ function statusCardTypeInfo(category, label) {
   }
   return { icon: '', typeLabel: '' };
 }
-
 
 function renderStatusGrid(elementId, items) {
   const el = document.getElementById(elementId);
@@ -702,7 +698,6 @@ async function loadStatuses() {
   renderStatusGrid('statusSmartthings', smartthings);
 }
 
-
 async function loadPartitionControls() {
   const el = document.getElementById('partitionControls');
   if (!isLoggedIn) {
@@ -793,7 +788,6 @@ function showArmMessage(kind, text) {
   el.textContent = text;
 }
 
-
 async function loadVirtualInputs() {
   const el = document.getElementById('virtualInputsSection');
   const data = await (await fetch('/api/satel/virtual-inputs')).json();
@@ -862,7 +856,6 @@ function showVirtualInputMessage(kind, text) {
   el.style.display = 'block';
   el.textContent = text;
 }
-
 
 function initCollapsibleCards() {
   document.querySelectorAll('.card[data-collapse-key]').forEach(card => {

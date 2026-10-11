@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 import asyncio
 import base64
 import time
@@ -927,8 +930,6 @@ class TestTuyaCloudPluginPage:
         assert saved["garaz"]["api_region"] == "us"
 
     async def test_settings_endpoint_no_longer_exists_separately(self, client):
-        # Tuya Cloud nie ma już własnego przełącznika włącz/wyłącz + poziom logowania -
-        # wtyczki zostały scalone w jedną ("tuya_local"), z jednym wspólnym ustawieniem.
         resp = (await client.get("/api/plugins/tuya_cloud/settings", headers=_basic_auth_header("test_haslo_123")))
         assert resp.status_code == 404
 
@@ -2072,9 +2073,6 @@ class TestLgThinqPluginPage:
         )).get_data(as_text=True)
         assert "s3cr3t-pat" not in text
 
-        # Zapis bez PAT (np. sama zmiana kraju) NIE zmienia client_id - musi
-        # zostać stały dla tego samego tokenu, inaczej LG traktuje to jak
-        # inne urządzenie kliencie.
         (await client.post(
             "/api/plugins/lg_thinq/credentials", json={"country_code": "DE"},
             headers=_basic_auth_header("test_haslo_123"),
@@ -2337,7 +2335,6 @@ class TestIquaPluginPage:
         )).get_data(as_text=True)
         assert "s3cr3t" not in text
 
-        # Zapis bez hasła (np. sama zmiana loginu) NIE czyści zapisanego hasła.
         (await client.post(
             "/api/plugins/iqua/credentials", json={"username": "inny@example.com"},
             headers=_basic_auth_header("test_haslo_123"),

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 import asyncio
 import threading
 import time
@@ -89,10 +92,6 @@ class FakeMultiDPDevice:
 
 @pytest.fixture
 def controller(monkeypatch):
-    # Diagnostyka po wyczerpaniu prób robi prawdziwe połączenie TCP (do 2s) -
-    # w testach, które nie sprawdzają samej diagnostyki, to tylko niepotrzebne
-    # opóźnienie/niedeterminizm (sandbox bez trasy do 192.168.x.x zwraca timeout,
-    # nie natychmiastowy błąd).
     monkeypatch.setattr("bridge.tuya_local._tcp_probe", lambda *a, **k: "diagnostyka pominięta w testach")
     ctrl = TuyaLocalController(DEVICES_CFG, retries=2, retry_delay=0.01)
     return ctrl
@@ -209,10 +208,6 @@ class TestScanNetwork:
         assert captured["poll"] is False
 
     def test_default_scan_duration_matches_tinytuya_default_of_18s(self, monkeypatch):
-        # maxretry tinytuya odbiera jako "scantime" (sekundy nasłuchu broadcastu
-        # UDP, nie liczbę prób) - domyślne 1s regularnie przegapiało urządzenia,
-        # które widać przy ręcznym uruchomieniu tinytuya z jego własnym,
-        # 18-sekundowym domyślnym czasem nasłuchu (tinytuya.SCANTIME).
         captured = {}
 
         def fake_scan(**kwargs):
@@ -337,11 +332,7 @@ class TestFetchCloudDevices:
         monkeypatch.setattr("bridge.tuya_local.scan_network", fake_scan_network)
         fetch_cloud_devices("eu", "access_id", "access_secret", networks=["192.168.1.0/24"])
         assert captured["networks"] == ["192.168.1.0/24"]
-        # "name" jest wymagane - tinytuya (scanner.py: found_key()) odczytuje
-        # dev['name'] bez .get(), więc jego brak wywala aktywny skan KeyErrorem.
         assert captured["tuyadevices"] == [{"id": "d1", "key": "localkey1", "name": "Gniazdko"}]
-        # maxretry NIE jest już wymuszane na 1s (za krótko na złapanie
-        # broadcastu Tuya) - import korzysta z domyślnego czasu scan_network().
         assert "maxretry" not in captured
 
     def test_lan_scan_failure_does_not_break_cloud_import(self, monkeypatch):
@@ -560,9 +551,6 @@ class TestFormatTuyaDps:
         assert extra == "temperatura: 23.5C"
 
     def test_temperature_falls_back_to_known_scale_when_schema_meta_missing(self):
-        # dp_schema z kodem, ale bez meta "scale" (typowe dla urządzeń dodanych
-        # bez pełnego skanu schematu) - bez fallbacku wartość wyświetlałaby się
-        # surowa (256 zamiast 25.6C).
         schema = {"4": {"code": "va_temperature", "type": "Value"}}
         is_on, extra = format_tuya_dps({"4": 256}, schema=schema)
         assert is_on is None
@@ -650,9 +638,6 @@ class TestExtractTuyaSensorReadings:
         assert readings["humidity_percent"] == 100.0
 
     def test_both_humidity_codes_present_expose_soil_as_secondary(self):
-        # Kombinowany czujnik zewnętrzny (gleba+powietrze) - va_humidity (powietrze)
-        # trafia do głównego humidity_percent, humidity_value (gleba) do drugiej,
-        # dodatkowej wartości - wcześniej druga wartość była całkowicie tracona.
         readings = extract_tuya_sensor_readings({"va_humidity": 55, "humidity_value": 32})
         assert readings == {"humidity_percent": 55.0, "soil_humidity_percent": 32.0}
 

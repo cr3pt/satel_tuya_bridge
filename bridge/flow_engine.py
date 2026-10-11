@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import asyncio
@@ -165,7 +168,6 @@ class FlowEngine:
         self._escalation_history.clear()
         self._setup_mqtt_triggers()
 
-    # ── Wejścia zdarzeń (te same co RulesEngine.handle_motion/handle_device_state) ──
 
     def _start_flow(self, flow: dict, node: dict, msg: dict) -> None:
         """Loguje odpalenie węzła wejściowego grafu (trigger/mqttIn/Warunek
@@ -277,7 +279,6 @@ class FlowEngine:
             self._start_flow(flow, node, msg)
             asyncio.create_task(self._propagate(flow, node, msg, 0))
 
-    # ── MQTT (opcjonalne - tylko gdy flow zawiera węzeł mqttIn/mqttOut) ──
 
     def _setup_mqtt_triggers(self) -> None:
         want_topics: set[str] = set()
@@ -339,7 +340,6 @@ class FlowEngine:
             self._start_flow(flow, node, fmsg)
             asyncio.run_coroutine_threadsafe(self._propagate(flow, node, fmsg, 0), self._loop)
 
-    # ── Wykonanie grafu ──
 
     async def _propagate(self, flow: dict, node: dict, msg: dict, depth: int) -> None:
         if depth > 50:

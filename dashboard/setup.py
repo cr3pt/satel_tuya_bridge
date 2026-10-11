@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import copy
@@ -60,11 +63,6 @@ def validate_satel_fields(form: dict) -> list[str]:
 
 def validate_tuya_devices(form: dict) -> list[str]:
     errors = []
-    # Adres IP bramki celowo NIE jest tu wymagany: bramka wykryta importem z Tuya
-    # Cloud, ale jeszcze nieodnaleziona w LAN, musi dać się zapisać (z pustym IP)
-    # razem ze wszystkimi podurządzeniami Zigbee, które przez nią działają - inaczej
-    # użytkownik nie ma jak zapisać reszty konfiguracji, dopóki bramka nie odpowie
-    # na skan sieci. IP uzupełnia się później ręcznie albo przez "🔍 Skanuj sieć".
     gateway_names = {
         g["name"].strip() for g in form.get("zigbee_gateways", [])
         if g.get("name") and g.get("id") and g.get("local_key")
@@ -146,14 +144,6 @@ def _validate_flow_node(node: dict, label: str, scene_names: set[str]) -> list[s
         else:
             if not (c.get("source_device") or "").strip():
                 errors.append(f"{label}: wybierz urządzenie źródłowe")
-            # UWAGA: bez tego warunku trigger "Konkretna wartość" (op != "changes")
-            # zapisywał się BEZ BŁĘDU z pustym trigger_value (np. gdy ktoś przełączył
-            # źródło z Satela na Tuya i nie kliknął jeszcze rozwijanej listy "Wartość
-            # wyzwalająca") - taki trigger nigdy się nie odpala, bo w
-            # FlowEngine.handle_device_state porównanie `value == cfg.get("trigger_value")`
-            # nigdy nie jest prawdziwe dla pustego stringa. Reguły ruchu
-            # (_validate_motion_rule_source) mają ten sam wymóg - to była luka
-            # specyficzna dla Flow.
             if c.get("op", "changes") != "changes" and not (c.get("trigger_value") or "").strip():
                 errors.append(f"{label}: wybierz wartość wyzwalającą (albo ustaw wyzwalacz na 'każda zmiana')")
     elif ntype == "condition":
@@ -238,10 +228,6 @@ def validate_flows(flows: list[dict], scene_names: set[str]) -> list[str]:
             node_label = f"{label} ('{name or '?'}'), węzeł #{j + 1}"
             errors.extend(_validate_flow_node(node, node_label, scene_names))
 
-        # "Warunek złożony" bez podłączonego wejścia (nikt do niego nie
-        # prowadzi przewodem w tym Flow) też liczy się jako węzeł wejściowy -
-        # FlowEngine odpytuje go samodzielnie jak trigger, patrz
-        # flow_engine._check_condition_group_entrypoints.
         incoming_ids: set = set()
         for n in nodes:
             for port_wires in n.get("wires") or []:
@@ -754,7 +740,6 @@ def _build_zigbee_gateways(form: dict) -> dict:
             "version": float(g.get("version") or 3.4),
         }
         for g in form.get("zigbee_gateways", [])
-        # IP celowo nieobowiązkowe - patrz komentarz w validate_tuya_devices().
         if g.get("name") and g.get("id") and g.get("local_key")
     }
 
@@ -764,17 +749,10 @@ def _build_cloud_devices(form: dict) -> dict:
         d["name"]: {
             "id": d["id"], "category": d.get("category", ""),
             "switch_code": (d.get("switch_code") or "switch_1").strip(),
-            # local_key/ip/version są zapisywane nawet dla urządzeń sterowanych
-            # chmurowo - Tuya Cloud zwraca je przy każdym imporcie za darmo, więc
-            # przełączenie tego urządzenia na sterowanie lokalne później (zakładka
-            # 🔌 Tuya (LAN)) nie wymaga ponownego pobierania danych.
             "local_key": d.get("local_key", ""),
             "ip": d.get("ip", ""),
             "version": d.get("version", ""),
             "dp_schema": d.get("dp_schema") or {},
-            # Puste = konto domyślne (pierwsze skonfigurowane) - patrz
-            # TuyaCloudController._account_name_for(). Dzięki temu urządzenia
-            # zapisane przed wprowadzeniem wielu kont dalej działają bez zmian.
             "cloud_account": (d.get("cloud_account") or "").strip(),
         }
         for d in form.get("cloud_devices", [])
@@ -827,8 +805,6 @@ def build_cloud_accounts_dict(form: dict, existing: dict | None = None) -> dict:
 
 
 def cloud_accounts_to_rows(accounts: dict) -> list[dict]:
-    # access_key NIGDY nie wraca do przeglądarki po zapisie - tylko informacja,
-    # czy jest ustawiony (ten sam wzorzec co dotychczasowe pojedyncze poświadczenia).
     return [
         {
             "name": name,

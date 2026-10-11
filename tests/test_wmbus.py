@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 """Testy wM-Bus: walidacja kluczy AES, generator konfiguracji wmbusmeters,
 rozpoznawanie faz L1/L2/L3, integracja z silnikiem reguł, panel i
 bezpieczeństwo kluczy, a także regresja bezpieczeństwa wątkowego alarmów."""
@@ -14,15 +17,13 @@ from bridge import wmbus
 from bridge.alarms import AlarmEngine
 from bridge.config import BridgeConfig
 from bridge.rules_engine import RulesEngine
-from tests.test_plugin_routes import _basic_auth_header, client  # noqa: F401
+from tests.test_plugin_routes import _basic_auth_header, client
 from tests.test_rules_engine import CONFIG_TEMPLATE, SENSORS_YAML
 
 KEY = "00112233445566778899AABBCCDDEEFF"
 
 METER = {"name": "prad_dom", "label": "Prąd dom", "id": "12345678", "driver": "auto", "key": KEY, "phases": 3}
 
-# Typowy kształt telegramu licznika 3-fazowego (nazwy pól różnią się
-# między sterownikami - dlatego rozpoznajemy fazy po wzorcu nazwy).
 TELEGRAM_3PH = {
     "media": "electricity", "meter": "amiplus", "name": "prad_dom", "id": "12345678",
     "total_energy_consumption_kwh": 1234.5,
@@ -104,7 +105,7 @@ class TestFiles:
         for p in [out / "etc/wmbusmeters.conf", out / "etc/wmbusmeters.d/prad_dom", out / "etc/wmbusmeters.d/drugi"]:
             assert stat.S_IMODE(os.stat(p).st_mode) == 0o600
         wmbus.write_wmbusmeters_files({"device": "auto"}, "127.0.0.1", 1883, [METER], out)
-        assert not (out / "etc/wmbusmeters.d/drugi").exists()  # klucz usuniętego licznika nie zostaje na dysku
+        assert not (out / "etc/wmbusmeters.d/drugi").exists()
 
     def test_invalid_meter_blocks_generation(self, tmp_path):
         with pytest.raises(ValueError):
@@ -144,9 +145,6 @@ class TestParsing:
         assert wmbus.phases_in(["voltage_at_phase_1_v", "current_at_phase_3_a", "total_kwh"]) == {1, 3}
 
 
-# ----------------------------------------------------------------------
-# Silnik reguł
-# ----------------------------------------------------------------------
 @pytest.fixture
 async def engine(tmp_path):
     (tmp_path / "sensors.yaml").write_text(SENSORS_YAML, encoding="utf-8")
@@ -208,8 +206,7 @@ class TestEngine:
         engine.handle_wmbus_reading(METER, TELEGRAM_3PH)
         engine.handle_wmbus_reading(METER, TELEGRAM_3PH)
         rows = engine.history.get_history("wmbus_prad_dom_total_energy_consumption_kwh", 0, 9e12)
-        assert len(rows) == 1  # drugi telegram nie obciąża karty SD
-        # ale status "na żywo" jest zawsze świeży
+        assert len(rows) == 1
         assert engine.history.get_status("wmbus")
 
     async def test_ha_discovery_published_once_per_field(self, engine):
@@ -228,9 +225,6 @@ class TestEngine:
         assert v2["payload"]["device_class"] == "voltage" and v2["payload"]["name"].endswith("[L2]")
 
 
-# ----------------------------------------------------------------------
-# Alarmy: powiadomienia z wątku MQTT (regresja)
-# ----------------------------------------------------------------------
 class TestAlarmNotificationFromThread:
     async def test_notification_from_non_asyncio_thread_is_delivered(self, history):
         sent = []
@@ -248,8 +242,8 @@ class TestAlarmNotificationFromThread:
 
         def worker():
             try:
-                engine.on_value("s", 5)  # jak callback paho-mqtt
-            except Exception as exc:  # wcześniej: RuntimeError: no running event loop
+                engine.on_value("s", 5)
+            except Exception as exc:
                 errors.append(exc)
 
         t = threading.Thread(target=worker)
@@ -260,9 +254,6 @@ class TestAlarmNotificationFromThread:
         assert sent and "r" in sent[0]
 
 
-# ----------------------------------------------------------------------
-# Panel (wtyczka wmbus)
-# ----------------------------------------------------------------------
 AUTH = _basic_auth_header("test_haslo_123")
 
 
@@ -336,7 +327,6 @@ class TestPanel:
 
 class TestReload:
     async def test_stale_rule_survives_alarm_engine_rebuild_on_reload(self, engine):
-        # reload_config tworzy NOWY AlarmEngine - alarm ciszy licznika musi zostać zarejestrowany ponownie
         from bridge.alarms import AlarmEngine
         engine.alarms = AlarmEngine([], engine.history)
         engine._setup_wmbus(engine.config)

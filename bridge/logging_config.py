@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import logging
@@ -6,13 +9,6 @@ VALID_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 PLUGIN_LOGGERS: dict[str, list[str]] = {
     "satel": ["bridge.satel"],
-    # Wtyczki "tuya_zigbee" i "tuya_cloud" zostały scalone do jednej "tuya_local"
-    # (jedna strona /plugins/tuya) - obie odrębne wcześniej listy loggerów muszą
-    # więc trafiać pod ten sam, jedyny już istniejący plugin_id, inaczej suwak
-    # poziomu logowania na stronie Tuya nigdy nie obejmował bridge.tuya_cloud
-    # (a przycisk "📜 Logi" na karcie wtyczki nie filtrował po nim wcale) -
-    # błędy komend do Tuya Cloud (np. "device pool quota is insufficient")
-    # widać było tylko pośrednio, w loggerze wywołującego (np. bridge.flow_engine).
     "tuya_local": ["bridge.tuya_local", "bridge.tuya_cloud"],
     "ebus": ["bridge.ebus"],
     "wmbus": ["bridge.wmbus"],
@@ -27,13 +23,6 @@ PLUGIN_LOGGERS: dict[str, list[str]] = {
     "notifications": ["bridge.notifier"],
     "mcp_server": ["bridge.mcp_server"],
     "homekit": ["bridge.homekit"],
-    # Flow (/flows) nie jest wtyczką z własną stroną w 🧩 Wtyczki (nie da się go
-    # wyłączyć), ale poziom logowania i tak trzeba dać się ustawić - stąd osobny
-    # wpis tutaj + mały panel "Poziom logowania" bezpośrednio na stronie /flows,
-    # zamiast pełnej karty wtyczki. Bez tego bridge.flow_engine w ogóle nie
-    # pojawiał się na liście loggerów w Historii logów (lista jest budowana z
-    # loggerów, które faktycznie coś zalogowały - a silnik Flow logował dotąd
-    # WYŁĄCZNIE błędy, nigdy zwykły przebieg węzłów).
     "flow_engine": ["bridge.flow_engine"],
 }
 

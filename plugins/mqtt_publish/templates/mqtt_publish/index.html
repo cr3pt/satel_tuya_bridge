@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -227,7 +228,6 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-
 const PLUGIN_ID = 'mqtt_publish';
 
 async function loadPluginSettings() {
@@ -258,7 +258,6 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
     showMsg('pluginSettingsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
-
 
 async function loadTopics() {
   const data = await (await fetch('/api/plugins/mqtt_publish/topics')).json();
@@ -297,7 +296,6 @@ document.getElementById('saveTopicsBtn').addEventListener('click', async () => {
     showMsg('topicsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
-
 
 function escapeHtml(s) {
   const d = document.createElement('div');

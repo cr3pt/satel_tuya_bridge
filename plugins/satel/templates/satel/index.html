@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -291,7 +292,6 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-
 const PLUGIN_ID = 'satel';
 
 async function loadPluginSettings() {
@@ -323,9 +323,7 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
   }
 });
 
-
 let connectionSnapshot = null;
-
 
 let savedVirtualInputMode = 'library';
 
@@ -364,7 +362,6 @@ async function loadConnection(auto) {
   }
 }
 document.getElementById('loadConnectionBtn').addEventListener('click', () => loadConnection(false));
-
 
 loadConnection(true);
 
@@ -497,7 +494,6 @@ document.getElementById('testHttpBtn').addEventListener('click', async () => {
   }
 });
 
-
 function addNameNumberRow(containerId, initial) {
   const container = document.getElementById(containerId);
   const row = document.createElement('div');
@@ -520,7 +516,6 @@ function collectNameNumberRows(containerId) {
     .map(row => ({ name: row.querySelector('.row-name').value.trim(), number: row.querySelector('.row-number').value }))
     .filter(r => r.name && r.number);
 }
-
 
 const SATEL_ZONE_TYPES = {
   drzwi: 'Drzwi', okno: 'Okno', ruch: 'Czujka ruchu (PIR)', dym: 'Czujka dymu',
@@ -565,7 +560,6 @@ function collectZoneOrOutputRows(containerId) {
     }))
     .filter(r => r.name && r.number);
 }
-
 
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 import asyncio
 import contextlib
 import time
@@ -179,10 +182,6 @@ class TestMotionRules:
         assert engine.history.get_status_value("tuya:gniazdko_salon") == "wyłączone"
 
     async def test_until_restored_rule_updates_cached_tuya_status_immediately(self, engine, fake_tuya):
-        # Regula strefy 16 (bez duration_seconds/action) trzyma urządzenie włączone
-        # dopóki trwa naruszenie - to właśnie ten kształt reguły odpowiadał za
-        # wielokrotne wysyłanie tej samej komendy Tuya, gdy strefa zgłaszała kolejne
-        # zdarzenia "naruszona" zanim nadszedł realny poll/push z potwierdzeniem stanu.
         await engine.handle_motion("satel_zone", 16, trigger="violated")
         assert engine.history.get_status_value("tuya:gniazdko_salon") == "włączone"
 
@@ -374,10 +373,6 @@ class TestVirtualInputHttpMode:
         engine._vi_mode = "http"
 
     async def test_no_duration_restore_does_not_repulse(self, engine, fake_tuya, fake_satel, fake_virtual_inputs):
-        # Regresja: WYŁĄCZ (restored) w trybie http NIE MOŻE wysłać tego samego impulsu co
-        # WŁĄCZ - protokół ETHM-1 zna tylko wyzwolenie, nie ma odpowiednika "wyłącz". Wcześniej
-        # oba wywołania wysyłały identyczny impuls, co powodowało samopodtrzymujące się
-        # przełączanie (flapowanie) w regułach/flow typu włącz->opóźnienie->wyłącz.
         await self._reload_with_rule(engine, fake_tuya, fake_satel, fake_virtual_inputs, {
             "source": "satel_zone", "zone_number": 12, "virtual_input": "motion_hall_camera",
         })
@@ -397,8 +392,6 @@ class TestVirtualInputHttpMode:
         await asyncio.sleep(0)
         assert fake_virtual_inputs.calls == [("trigger", "motion_hall_camera")]
         await asyncio.sleep(0.05)
-        # Po upływie duration silnik wywołuje "wyłącz" - w trybie http to no-op, więc
-        # licznik wywołań NIE rośnie (bez tego testu regresja wróciłaby niezauważona).
         assert fake_virtual_inputs.calls == [("trigger", "motion_hall_camera")]
 
 
@@ -731,9 +724,6 @@ class TestInstantTuyaStatePropagation:
         _repatch_fakes(engine, fake_tuya=fake_tuya)
 
         await engine.handle_device_state("tuya_state", "czujnik_drzwi", "włączone")
-        # Dwa poziomy asyncio.create_task (reguła A -> jej własny "on_for" ->
-        # dopiero W TRAKCIE jego wykonania odpala się reguła B, tworząc SWOJE
-        # własne "on_for") - jedno asyncio.sleep(0) puszcza tylko pierwszy poziom.
         await asyncio.sleep(0)
         await asyncio.sleep(0)
 
@@ -756,9 +746,6 @@ class TestInstantTuyaStatePropagation:
         _repatch_fakes(engine, fake_tuya=fake_tuya)
 
         await engine.scenes.run("impuls")
-        # Scena tworzy własny task dla "tuya_on_for_duration", a dopiero W
-        # TRAKCIE jego wykonania odpala się reguła obserwująca to urządzenie,
-        # tworząc SWÓJ WŁASNY task - stąd dwa asyncio.sleep(0).
         await asyncio.sleep(0)
         await asyncio.sleep(0)
 
@@ -883,8 +870,6 @@ class TestMotionRuleMultiSourceAndAction:
         }, fake_tuya=fake_tuya)
 
         await engine.handle_motion("satel_zone", 30)
-        # Wiele akcji biegnie jako jedna grupa (asyncio.gather) - potrzeba dodatkowego
-        # "ticku" event loopa względem pojedynczej akcji, żeby child-taski wystartowały.
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert ("on_for", "gniazdko_salon", 45, None) in fake_tuya.calls
@@ -1786,9 +1771,6 @@ class TestIquaStatusSeeding:
         assert engine.history.get_status("iqua") == []
 
     async def test_sub_reading_keys_survive_seeding_prune(self, engine):
-        # Klucze sub-odczytów (poziom soli itd.) zapisane przez _on_iqua_state
-        # NIE mogą zostać skasowane przez kolejne wywołanie seedowania -
-        # patrz komentarz przy iqua_suffixes w _seed_iqua_status_labels.
         self._set_iqua_cfg(engine, {"Zmiękczacz": {"serial_number": "DSN1"}})
         await engine.reload_config()
         engine.history.set_status(
@@ -2172,8 +2154,6 @@ class TestSeedTuyaStatusLabels:
         assert statuses["tuya:drzwi_wejsciowe:soil_humidity"] == "32.0%"
 
     async def test_dedicated_sensor_sub_keys_survive_reload_config(self, engine, fake_tuya):
-        # gniazdko_salon jest zdefiniowany w CONFIG_TEMPLATE, więc reload_config()
-        # (który odtwarza self.tuya z pliku configu, nie z fake_tuya) wciąż go zna.
         engine.history.set_status("tuya:gniazdko_salon:contact", "tuya", "tak", label="Gniazdko (kontaktron)")
 
         await engine.reload_config()
@@ -2246,8 +2226,6 @@ class TestSetTuyaDp:
         old_tuya = engine.tuya
         await engine.reload_config()
         assert engine.tuya is not old_tuya
-        # nie powinno rzucić - _set_tuya_dp odczytuje self.tuya na bieżąco, a nie
-        # w momencie budowy FlowEngine (analogicznie do _set_target_state)
         with pytest.raises(KeyError):
             await engine._set_tuya_dp("nieznane_urzadzenie", "manual_delay", "1")
 

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import argparse
@@ -192,14 +195,6 @@ async def _require_login_for_settings_and_control():
 
 @app.after_request
 async def _set_security_headers(response):
-    # Panel jest wystawiany bez TLS (LAN, ewentualnie za odwrotnym proxy
-    # dodającym HTTPS) - nie ustawiamy tu HSTS, bo wymuszałoby to HTTPS
-    # nawet tam, gdzie go nie ma. CSP dopuszcza 'unsafe-inline' dla
-    # script/style, bo cały panel renderuje inline <script>/<style> w
-    # szablonach Jinja (przepisanie na zewnętrzne pliki to osobna, większa
-    # zmiana). cdnjs.cloudflare.com to jedyne zewnętrzne CDN używane przez
-    # panel (Chart.js na stronie głównej, Leaflet w wyborze lokalizacji na
-    # /automations), a kafelki mapy Leaflet ładowane są z OpenStreetMap.
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "same-origin")
     response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
@@ -604,8 +599,6 @@ async def api_config_import_zip():
     })
 
 
-# Każda wtyczka deklaruje swój `toggle_route` w META (plugins/<id>/routes.py) - poniższe
-# zestawy są z niego wyprowadzone, zamiast być osobno utrzymywaną listą id w tym pliku.
 _CONNECTIONS_PLUGIN_IDS_RESTART = {
     m.id for m in _plugin_metas if m.toggle_route == "connections_restart"
 }
@@ -908,10 +901,6 @@ async def api_config_home_map_get():
 @app.route("/api/config/home_map", methods=["POST"])
 @require_auth()
 async def api_config_home_map_post():
-    # Mapa domu to czysto wizualny stan panelu (rozmieszczenie pomieszczeń/ikon
-    # na płótnie) - w odróżnieniu od flows/reguł ruchu NIE trafia do
-    # BridgeConfig/silnika reguł, więc zapis to zwykłe config_store.set bez
-    # przeładowania bridge'a.
     payload = await request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
@@ -920,10 +909,6 @@ async def api_config_home_map_post():
     if not isinstance(rooms, list) or not isinstance(icons, list):
         return jsonify({"error": "Nieprawidłowe dane formularza"}), 400
     to_save = {"rooms": rooms, "icons": icons}
-    # "furniture" (meble/elementy architektoniczne - drzwi, okna, stoły,
-    # szafy, biurka) to nowsze, OPCJONALNE pole - starsze zapisane mapy (i
-    # istniejące testy) go nie mają, więc dopisujemy je tylko, gdy klient
-    # faktycznie je przysłał, zamiast wymuszać domyślne [] wszędzie.
     furniture = payload.get("furniture")
     if isinstance(furniture, list):
         to_save["furniture"] = furniture

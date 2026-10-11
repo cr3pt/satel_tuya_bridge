@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import hashlib
@@ -55,12 +58,6 @@ class ConfigStore:
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.executescript(SCHEMA)
         self._conn.commit()
-        # Baza zawiera hash hasła administratora, sekret podpisujący sesje
-        # oraz - z natury protokołów Tuya-local/Satel - jawne klucze
-        # (local_key, integration_key/encryption_key). Wymuszamy 600 przy
-        # każdym starcie (samonaprawiająco), niezależnie od umask/dockerd,
-        # które przy pierwszym utworzeniu pliku mogły zostawić go szerzej
-        # czytelnym.
         try:
             os.chmod(self.db_path, 0o600)
         except OSError:

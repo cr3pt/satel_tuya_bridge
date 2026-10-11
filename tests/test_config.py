@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 import pytest
 import yaml
 
@@ -307,7 +310,6 @@ class TestCloudAccountsMigration:
         assert config.raw["tuya"]["cloud_accounts"] == {
             "domyślne": {"access_id": "aid1", "access_key": "secret1", "api_region": "eu"},
         }
-        # Stary klucz zostaje nietknięty (czyta z niego m.in. wirtualne urządzenie Tuya).
         assert config.raw["tuya"]["cloud"]["access_id"] == "aid1"
 
     def test_no_legacy_account_gives_empty_cloud_accounts(self, tmp_path):
@@ -340,8 +342,6 @@ class TestCloudAccountsMigration:
         (tmp_path / "config.yaml").write_text(config_text, encoding="utf-8")
         config = BridgeConfig.load(tmp_path / "config.yaml")
 
-        # Symuluje dokładnie to, co (przed poprawką) zapisywał POST
-        # /api/plugins/tuya_cloud/accounts z pustą listą "accounts" w formularzu.
         stored = config.store.get("config")
         stored["tuya"]["cloud_accounts"] = {}
         config.store.set("config", stored)

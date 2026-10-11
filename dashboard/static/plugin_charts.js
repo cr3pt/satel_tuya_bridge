@@ -1,6 +1,5 @@
-/* Wspólne wykresy wtyczek (Chart.js 4 musi być załadowany wcześniej).
- * Kolejność barw kategorii jest stała (L1/L2/L3, strefy) - kolor należy do bytu,
- * nie do pozycji po filtrowaniu. Paleta sprawdzona walidatorem na tle #1d2026. */
+/* Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+ * SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause */
 (function () {
   const COLORS = ['#3987e5', '#d95926', '#199e70'];
   const SURFACE = '#1d2026', TEXT = '#e6e8eb', MUTED = '#8b93a1', GRID = '#2c3038';
@@ -32,7 +31,6 @@
     }, extra || {});
   }
 
-  /* datasets: [{label, color, points: [[ts, value], ...]}] - jedna oś Y (jedna jednostka). */
   function lineChart(canvas, datasets, unit, spanSeconds) {
     const withDate = spanSeconds > 36 * 3600;
     const opts = baseOptions(unit);
@@ -52,7 +50,6 @@
     });
   }
 
-  /* datasets: [{label, color, values: []}], stos z 2px przerwą powierzchni między segmentami. */
   function stackedBar(canvas, labels, datasets, unit) {
     const opts = baseOptions(unit);
     opts.interaction = { mode: 'nearest', intersect: true };
@@ -74,7 +71,6 @@
     return stackedBar(canvas, labels, [{ label: 'Koszt brutto', values, color: color || COLORS[0] }], unit);
   }
 
-  /* Legenda HTML (tekst zawsze w kolorze tekstu, kolor tylko w znaczniku); klik = ukryj/pokaż. */
   function legend(container, chart) {
     container.replaceChildren();
     chart.data.datasets.forEach((ds, i) => {
@@ -90,7 +86,6 @@
     });
   }
 
-  /* Widok tabelowy tych samych danych: headers: [..], rows: [[..], ..] (textContent). */
   function fillTable(table, headers, rows) {
     table.replaceChildren();
     const thead = document.createElement('thead'), tr = document.createElement('tr');

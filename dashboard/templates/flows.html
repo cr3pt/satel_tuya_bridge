@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -45,26 +46,13 @@
   .editor-layout { display: flex; gap: 14px; align-items: flex-start; }
   .palette { width: 150px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
   .palette button { text-align: left; }
-  /* .canvas-col grupuje pasek zoomu + canvas-wrap w jedną kolumnę - dzięki
-     temu ten pasek nie liczy się jako osobna (czwarta) kolumna obok
-     palety/canvasu/panelu bocznego w .editor-layout. */
   .canvas-col { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   .canvas-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .canvas-toolbar button { padding: 4px 9px; font-size: 12px; }
   .canvas-toolbar .zoom-label { font-size: 12px; color: var(--muted); min-width: 38px; text-align: center; }
   .canvas-wrap {
-    /* flex: none (nie 1!) - .canvas-wrap jest teraz W ŚRODKU .canvas-col
-       (kolumnowy flex), więc "flex: 1" rządziłoby tu WYSOKOŚCIĄ i zagłuszało
-       jawne "height" (ten sam mechanizm, co opisany niżej dla wersji
-       mobilnej) - rozciąganie na szerokość/wysokość rodzica załatwia już
-       samo .canvas-col (flex: 1 w .editor-layout + width: 100% na mobile). */
     flex: none; overflow: auto; border: 1px solid var(--border); border-radius: 10px;
     background: #101216; position: relative; height: 560px; min-width: 0; width: 100%;
-    /* pan-x pan-y (nie "auto", nie "none") - pozwala przeglądarce nadal
-       przewijać płótno jednym palcem (natywny scroll .canvas-wrap), ale
-       wyłącza natywne przybliżanie/oddalanie CAŁEJ STRONY dwoma palcami -
-       dzięki temu gest szczypania trafia do JS (patrz pinch-zoom niżej)
-       zamiast do przeglądarki. */
     touch-action: pan-x pan-y;
   }
   .canvas { position: relative; width: 2200px; height: 1400px; }
@@ -120,43 +108,15 @@
     background: transparent; color: var(--danger); border: none; font-size: 15px;
     cursor: pointer; padding: 4px 6px; flex-shrink: 0;
   }
-  /* Widok mobilny - domyślny (desktopowy) `.editor-layout` to jeden rząd flex
-     BEZ zawijania (paleta 150px + canvas flex:1 + panel boczny 380px) - na
-     wąskim ekranie telefonu to razem szerzej niż viewport, więc panel boczny
-     był praktycznie niedostępny (trzeba by przewijać stronę w poziomie).
-     Poniżej 820px układamy trzy kolumny w pionie: paletę jako poziomy pasek
-     zawijanych przycisków, canvas na pełną szerokość, panel ustawień węzła
-     pod spodem (na pełną szerokość, bez sztywnego max-height). */
   @media (max-width: 820px) {
     body { width: 100%; padding: 12px; }
     .editor-layout { flex-direction: column; }
-    /* Paleta jako JEDEN poziomy, przewijany rząd (zamiast zawijanych kilku
-       rzędów) - inaczej same przyciski palety zjadały tyle wysokości ekranu,
-       że na canvas (czyli na sam graf, po to tu przyszliśmy) zostawało za
-       mało miejsca, żeby zobaczyć więcej niż 1-2 węzły naraz. */
     .palette {
       width: 100%; flex-direction: row; flex-wrap: nowrap; overflow-x: auto;
       -webkit-overflow-scrolling: touch; padding-bottom: 4px;
     }
     .palette button { flex: 0 0 auto; min-width: 100px; text-align: center; }
-    /* .canvas-col - tak samo jak .canvas-wrap niżej - potrzebuje JAWNEGO
-       width: 100%. .editor-layout ma align-items: flex-start (nie stretch),
-       więc bez tego .canvas-col kurczyłby się do naturalnej szerokości
-       swojej zawartości - czyli do 2200px canvasu w środku (mimo że sam
-       canvas-wrap ma "width: 100%" - to i tak 100% RODZICA, który wtedy
-       też jest wyliczany na podstawie zawartości) - i to canvas-col, nie
-       canvas-wrap, byłby źródłem przewijania całej strony w poziomie. */
     .canvas-col { width: 100%; }
-    /* 65vh zamiast poprzednich sztywnych 380px - na typowym telefonie w
-       pionie to i tak spory kawałek ekranu, a canvas ma pełną szerokość, więc
-       przy złożonym flow z wieloma węzłami dużo więcej widać bez przewijania
-       w obu osiach naraz. `flex: none` jest tu KONIECZNE - bazowa reguła
-       (desktop) ma `flex: 1`, co w POZIOMYM układzie rządzi tylko szerokością
-       (nieszkodliwie), ale po przestawieniu .editor-layout na
-       flex-direction: column staje się głównym wymiarem WYSOKOŚCI i
-       (flex-basis: 0% z tego skrótu) całkowicie ZAGŁUSZA powyższe
-       `height: 65vh` - bez tego canvas i tak rozciągał się do pełnej
-       wysokości swojej zawartości (~1400px). */
     .canvas-wrap { width: 100%; height: 65vh; flex: none; }
     .side-panel { width: 100%; max-height: none; }
   }
@@ -457,9 +417,6 @@ function selectFlow(i) {
   document.getElementById('flowEnabledInput').checked = flow.enabled !== false;
   renderCanvas();
   renderSidePanel();
-  // Na telefonie automatycznie dopasuj powiększenie do całego flow przy
-  // otwarciu - na desktopie zostaw 100%, tam canvas jest i tak dużo większy
-  // względem typowej liczby węzłów.
   if (window.innerWidth <= 820) fitZoomToContent(); else setZoom(1);
 }
 
@@ -588,9 +545,6 @@ function drawWires() {
         path.setAttribute('class', 'wire');
         svg.appendChild(path);
 
-        // Niewidoczna, szersza ścieżka pod spodem - łatwiejsze trafienie kliknięciem
-        // niż w cienki 2px przewód, i pozwala usunąć samo połączenie (bez kasowania
-        // całego węzła) klikając bezpośrednio na przewód na canvasie.
         const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         hit.setAttribute('d', d);
         hit.setAttribute('stroke', 'transparent');
@@ -617,22 +571,11 @@ function drawWires() {
 function startDrag(e, node) {
   selectNode(node.id);
   dragState = { node, startX: e.clientX, startY: e.clientY, origX: node.x || 0, origY: node.y || 0 };
-  // setPointerCapture: bez tego szybki ruch palca poza (małym) węzłem na
-  // ekranie dotykowym gubił dalsze zdarzenia pointermove/pointerup - z
-  // przechwyceniem wskaźnika trafiają nadal do TEGO ELEMENTU, niezależnie od
-  // tego, nad czym fizycznie znajdzie się palec/kursor. W try/catch, bo
-  // rzuca wyjątek, jeśli przeglądarka nie uznaje tego pointerId za aktywny
-  // (obserwowane np. przy syntetycznych zdarzeniach w testach).
-  try { e.target.setPointerCapture(e.pointerId); } catch (err) { /* nieistotne - patrz komentarz wyżej */ }
+  try { e.target.setPointerCapture(e.pointerId); } catch (err) { }
   e.preventDefault();
 }
 document.addEventListener('pointermove', (e) => {
   if (!dragState) return;
-  // Dzielenie przez canvasZoom - clientX/clientY są w pikselach EKRANU, a
-  // node.x/node.y w LOKALNYCH pikselach .canvas (przed powiększeniem/
-  // pomniejszeniem przez CSS "zoom"), więc bez tego przeciąganie przy
-  // zoomie innym niż 100% przesuwałoby węzeł o złą odległość względem
-  // ruchu palca/kursora.
   const dx = (e.clientX - dragState.startX) / canvasZoom;
   const dy = (e.clientY - dragState.startY) / canvasZoom;
   dragState.node.x = Math.max(0, dragState.origX + dx);
@@ -642,13 +585,6 @@ document.addEventListener('pointermove', (e) => {
 document.addEventListener('pointerup', () => { dragState = null; });
 document.addEventListener('pointercancel', () => { dragState = null; });
 
-// Powiększenie widoku canvasu (przydatne zwłaszcza na telefonie, gdzie graf
-// o wielu węzłach rozstawionych szeroko na płótnie 2200x1400 nie mieści się
-// w wąskim viewport bez ciągłego przewijania w obu osiach). CSS "zoom"
-// (nie "transform: scale") - w odróżnieniu od transform, realnie zmienia
-// rozmiar layoutu elementu, więc .canvas-wrap poprawnie liczy mniejszy
-// (przeskalowany) obszar przewijania zamiast pustego marginesu dookoła
-// pomniejszonej treści.
 let canvasZoom = 1;
 const CANVAS_MIN_ZOOM = 0.2;
 const CANVAS_MAX_ZOOM = 1.5;
@@ -673,19 +609,13 @@ document.getElementById('zoomOutBtn').addEventListener('click', () => setZoom(ca
 document.getElementById('zoomResetBtn').addEventListener('click', () => setZoom(1));
 document.getElementById('zoomFitBtn').addEventListener('click', fitZoomToContent);
 
-// Powiększanie/pomniejszanie "szczypaniem" dwoma palcami (typowy gest na
-// telefonie) - śledzimy wszystkie aktywne wskaźniki nad .canvas-wrap (nie
-// tylko te, które zaczęły się na węźle) i przy DWÓCH aktywnych liczymy
-// zmianę odległości między nimi względem chwili złapania drugiego palca.
-// `touch-action: pan-x pan-y` na .canvas-wrap (patrz CSS) wyłącza natywne
-// przybliżanie CAŁEJ STRONY, więc te zdarzenia w ogóle do nas docierają.
 const canvasWrapEl = document.getElementById('canvasWrap');
 const pinchPointers = new Map();
 let pinchStart = null;
 canvasWrapEl.addEventListener('pointerdown', (e) => {
   pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pinchPointers.size === 2) {
-    dragState = null; // drugi palec - to gest szczypania, nie przeciąganie węzła
+    dragState = null;
     const [a, b] = Array.from(pinchPointers.values());
     pinchStart = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: canvasZoom };
   }
@@ -791,11 +721,6 @@ const STATE_VALUE_OPTIONS = {
   tuya: ['włączone', 'wyłączone', 'niedostępne', 'poza siecią'],
   system_health: ['połączono'],
   automation: ['uruchomiona', 'bezczynna'],
-  // iQua (zmiękczacz wody) - w odróżnieniu od HomeWhiz/LG ThinQ nie ma
-  // per-model listy stanów (jedno, stałe pole połączenia dla WSZYSTKICH
-  // urządzeń) - stąd zwykła statyczna lista jak dla Tuya, bez dynamicznego
-  // pobierania z /api/plugins/iqua/devices/<nazwa>/states (taki endpoint
-  // w ogóle nie istnieje, bo nie jest tu do niczego potrzebny).
   iqua: ['online', 'offline'],
 };
 function statusKeyCategory(key) {

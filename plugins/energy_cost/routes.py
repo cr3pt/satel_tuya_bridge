@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import time
@@ -120,8 +123,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         if ts_to - ts_from > MAX_RANGE_SECONDS:
             return jsonify({"error": "Maksymalny okres to 366 dni"}), 400
 
-        # odczyty sprzed początku/po końcu okresu, żeby przyciąć skrajne odcinki
-        # proporcjonalnie, zamiast gubić zużycie na granicach okresu
         pad = float(energy.get("max_gap_minutes", 360)) * 60
         readings = get_history().get_history(meter["sensor"], ts_from - pad, ts_to + pad)
         try:

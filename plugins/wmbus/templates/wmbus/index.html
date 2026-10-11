@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -226,7 +227,7 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
     } else {
       msgEl.className = 'msg ok';
       msgEl.appendChild(document.createTextNode(`✅ Zapisano ${data.saved} liczników. ${data.message} (pliki: ${data.conf_dir})`));
-      loadMeters();  // odśwież - klucze znikają z pól, zostaje maska
+      loadMeters();
     }
   } catch (e) {
     msgEl.className = 'msg error';
@@ -234,7 +235,6 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
   }
 });
 
-// ---------------- wykresy ----------------
 let charts = [], lastSeries = null;
 const KIND_TITLES = { voltage: 'Napięcie', current: 'Prąd', power: 'Moc', energy: 'Energia', frequency: 'Częstotliwość',
   temperature: 'Temperatura', signal_strength: 'Sygnał', other: 'Inne' };
@@ -263,7 +263,6 @@ async function drawCharts() {
   const groups = {};
   lastSeries.forEach(s => { (groups[s.kind] = groups[s.kind] || []).push(s); });
   KIND_ORDER.filter(k => groups[k]).forEach(kind => {
-    // jedna oś = jedna jednostka: różne jednostki w jednym rodzaju idą na osobne wykresy
     const byUnit = {};
     groups[kind].forEach(s => { (byUnit[s.unit] = byUnit[s.unit] || []).push(s); });
     Object.keys(byUnit).forEach(unit => {

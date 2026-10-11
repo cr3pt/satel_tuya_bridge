@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import asyncio
@@ -17,13 +20,6 @@ class SceneRunner:
         self.satel_virtual_inputs = satel_virtual_inputs
         self.virtual_input_mode = virtual_input_mode
         self.history = history
-        # Bez tego callbacku scena włączająca/wyłączająca urządzenie Tuya nie
-        # aktualizowała JEGO statusu wcale (w odróżnieniu od tego samego
-        # działania wykonanego przez Flow/regułę ruchu, patrz
-        # RulesEngine._apply_tuya_own_state) - inny flow/reguła nasłuchujący
-        # na stan TEGO urządzenia widział zmianę dopiero przy najbliższym
-        # cyklu odpytywania Tuya (do status_poll_interval_seconds, domyślnie
-        # 30s) zamiast natychmiast po akcji sceny.
         self._on_tuya_state = on_tuya_state
 
     def exists(self, scene_name: str) -> bool:

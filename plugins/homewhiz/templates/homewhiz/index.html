@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -207,7 +208,6 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-
 const PLUGIN_ID = 'homewhiz';
 
 async function loadPluginSettings() {
@@ -238,7 +238,6 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
     showMsg('pluginSettingsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
-
 
 async function loadCredentials() {
   const data = await (await fetch('/api/plugins/homewhiz/credentials')).json();
@@ -272,7 +271,6 @@ document.getElementById('saveCredentialsBtn').addEventListener('click', async ()
     showMsg('credentialsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
-
 
 function addApplianceRow(initial) {
   const container = document.getElementById('appliancesRows');
@@ -324,7 +322,6 @@ document.getElementById('saveAppliancesBtn').addEventListener('click', async () 
     showMsg('appliancesMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
-
 
 document.getElementById('discoverBtn').addEventListener('click', async () => {
   const btn = document.getElementById('discoverBtn');

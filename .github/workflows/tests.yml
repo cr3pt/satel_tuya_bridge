@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 name: Testy
 
 on:
@@ -11,12 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # Projekt nie jest już ograniczony do RPi Zero. Dolna granica to
-        # teraz Python 3.12 - twardy wymóg satel-integra>=1.4.0
-        # (requires-python >=3.12, patrz requirements.txt), więc 3.11 nie
-        # da się już zainstalować (pip install -r requirements-dev.txt by
-        # się wywalił). 3.13 to najnowsza stabilna gałąź - testujemy ją
-        # razem z 3.12.
         python-version: ["3.12", "3.13"]
 
     steps:

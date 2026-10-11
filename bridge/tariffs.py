@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 """Taryfy energii elektrycznej (G11, G12, G12w, G13 i własne) oraz obliczanie
 kosztu na podstawie narastającego licznika kWh zapisanego w historii.
 
@@ -31,15 +34,12 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Europe/Warsaw")
-SLOT_SECONDS = 900  # rozdzielczość podziału na strefy: 15 minut
+SLOT_SECONDS = 900
 
 DAY_KINDS = ("all", "weekday", "free")
 _HOURS_RE = re.compile(r"^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$")
 
 
-# ----------------------------------------------------------------------
-# Kalendarz: święta ustawowe w Polsce
-# ----------------------------------------------------------------------
 def easter_sunday(year: int) -> date:
     """Wielkanoc (algorytm anonimowy gregoriański)."""
     a = year % 19
@@ -61,12 +61,12 @@ def polish_holidays(year: int) -> set[date]:
         date(year, 1, 1), date(year, 1, 6), date(year, 5, 1), date(year, 5, 3),
         date(year, 8, 15), date(year, 11, 1), date(year, 11, 11),
         date(year, 12, 25), date(year, 12, 26),
-        easter, easter + timedelta(days=1),      # Wielkanoc i Poniedziałek Wielkanocny
-        easter + timedelta(days=49),             # Zielone Świątki (niedziela)
-        easter + timedelta(days=60),             # Boże Ciało
+        easter, easter + timedelta(days=1),
+        easter + timedelta(days=49),
+        easter + timedelta(days=60),
     }
     if year >= 2025:
-        days.add(date(year, 12, 24))             # Wigilia - dzień wolny od 2025
+        days.add(date(year, 12, 24))
     return days
 
 
@@ -75,15 +75,12 @@ def is_free_day(d: date) -> bool:
     return d.weekday() >= 5 or d in polish_holidays(d.year)
 
 
-# ----------------------------------------------------------------------
-# Definicja taryfy: strefy + reguły (pierwsza pasująca wygrywa)
-# ----------------------------------------------------------------------
 @dataclass(frozen=True)
 class Rule:
     zone: str
-    days: str = "all"                       # all | weekday | free
-    months: tuple[int, ...] = ()            # puste = cały rok
-    ranges: tuple[tuple[int, int], ...] = ()  # [od, do) w minutach doby, bez przejścia przez północ
+    days: str = "all"
+    months: tuple[int, ...] = ()
+    ranges: tuple[tuple[int, int], ...] = ()
 
     def matches(self, d: date, minute_of_day: int, free: bool) -> bool:
         if self.days == "weekday" and free:
@@ -129,7 +126,7 @@ def parse_hours(spec: str) -> tuple[tuple[int, int], ...]:
         raise ValueError(f"Pusty zakres godzin: {spec!r}")
     if start < end:
         return ((start, end),)
-    return ((start, 1440), (0, end))  # przejście przez północ
+    return ((start, 1440), (0, end))
 
 
 def _rule(zone: str, hours: list[str], days: str = "all", months: tuple[int, ...] = ()) -> Rule:
@@ -142,7 +139,6 @@ def _rule(zone: str, hours: list[str], days: str = "all", months: tuple[int, ...
 _SUMMER = (4, 5, 6, 7, 8, 9)
 _WINTER = (10, 11, 12, 1, 2, 3)
 
-# Warianty godzin strefy nocnej (taniej) w dni robocze dla G12/G12w
 _G12_VARIANTS: dict[str, tuple[str, list[Rule]]] = {
     "default": ("Tauron / Energa / PGE zimą: 13-15 i 22-6", [_rule("nocna", ["13:00-15:00", "22:00-06:00"])]),
     "pge_sezonowa": ("PGE: zimą 13-15, latem 15-17, zawsze 22-6", [
@@ -170,13 +166,11 @@ def _build_g12w(variant: str | None) -> Tariff:
     key = variant or "default"
     if key not in _G12_VARIANTS:
         raise ValueError(f"Nieznany wariant G12w: {key!r} (dostępne: {', '.join(G12_VARIANT_IDS)})")
-    # weekendy i święta: cała doba w strefie nocnej (taniej), w dni robocze jak G12
     rules = (_rule("nocna", ["00:00-24:00"], days="free"), *_G12_VARIANTS[key][1])
     return Tariff("G12w", "G12w - dzienna / nocna, weekendy tanio", ("dzienna", "nocna"), "dzienna", rules)
 
 
 def _build_g13(_variant: str | None) -> Tariff:
-    # Tauron. Szczyty tylko w dni robocze; weekendy i święta = 'pozostałe'.
     rules = (
         _rule("szczyt_przedpołudniowy", ["07:00-13:00"], days="weekday"),
         _rule("szczyt_popołudniowy", ["19:00-22:00"], days="weekday", months=_SUMMER),
@@ -225,9 +219,6 @@ def resolve_tariff(tariff_id: str, variant: str | None = None, custom: dict | No
     return builder(variant)
 
 
-# ----------------------------------------------------------------------
-# Podział zużycia na strefy
-# ----------------------------------------------------------------------
 def zone_seconds(tariff: Tariff, t0: float, t1: float) -> dict[str, float]:
     """Ile sekund przedziału [t0, t1] przypada na każdą strefę."""
     out: dict[str, float] = {}
@@ -243,9 +234,9 @@ def zone_seconds(tariff: Tariff, t0: float, t1: float) -> dict[str, float]:
 @dataclass
 class Consumption:
     kwh_by_zone: dict[str, float] = field(default_factory=dict)
-    unallocated_kwh: float = 0.0   # odcinki z dziurą w danych - nie rozkładane na strefy
-    resets: int = 0                # spadki licznika (reset/wymiana)
-    gaps: int = 0                  # liczba odcinków dłuższych niż max_gap
+    unallocated_kwh: float = 0.0
+    resets: int = 0
+    gaps: int = 0
     samples: int = 0
 
     @property
@@ -282,9 +273,6 @@ def consumption_by_zone(readings: list[dict], tariff: Tariff, ts_from: float, ts
     return result
 
 
-# ----------------------------------------------------------------------
-# Ceny i koszt
-# ----------------------------------------------------------------------
 def _zone_price_net(prices: dict, zone: str, other: float) -> float | None:
     """Cena netto za kWh w strefie albo None, gdy cena nie jest ustawiona.
     Ceny można podać jako liczbę (suma) albo {energy_net, distribution_net}."""
@@ -363,9 +351,6 @@ def compute_cost(consumption: Consumption, pricing: dict, tariff: Tariff,
     }
 
 
-# ----------------------------------------------------------------------
-# Podgląd harmonogramu stref (do weryfikacji godzin w panelu)
-# ----------------------------------------------------------------------
 def describe_schedule(tariff: Tariff) -> dict:
     """Godziny stref dla typowego dnia roboczego i wolnego, osobno dla lata
     (lipiec) i zimy (styczeń): {"lato": {"roboczy": [{"od","do","strefa"}], ...}}.
@@ -392,9 +377,6 @@ def describe_schedule(tariff: Tariff) -> dict:
     return out
 
 
-# ----------------------------------------------------------------------
-# Okresy rozliczeniowe
-# ----------------------------------------------------------------------
 PERIODS = ("today", "yesterday", "7d", "30d", "this_month", "last_month")
 
 
@@ -423,9 +405,6 @@ def resolve_period(name: str, now: float) -> tuple[float, float]:
     return midnight(last_prev.replace(day=1)), midnight(first_this)
 
 
-# ----------------------------------------------------------------------
-# Walidacja konfiguracji (sekcja `energy` w config)
-# ----------------------------------------------------------------------
 _ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,20}$")
 _NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,40}$")
 
@@ -464,7 +443,7 @@ def _validate_energy_config(data) -> dict:
             raise ValueError(f"Nazwa taryfy '{tid}': litery, cyfry, _ i - (max 20 znaków)")
         if not isinstance(spec, dict):
             raise ValueError(f"Taryfa '{tid}': oczekiwano obiektu")
-        tariff_from_custom(tid, spec)  # rzuca ValueError z czytelnym komunikatem
+        tariff_from_custom(tid, spec)
         custom[tid] = spec
 
     tariffs_in = data.get("tariffs") or {}
@@ -527,9 +506,6 @@ def _validate_energy_config(data) -> dict:
             "tariffs": tariffs, "meters": meters}
 
 
-# ----------------------------------------------------------------------
-# Raport dla jednego licznika (łączy powyższe elementy)
-# ----------------------------------------------------------------------
 def daily_breakdown(readings: list[dict], tariff: Tariff, pricing: dict, ts_from: float, ts_to: float,
                     max_gap_seconds: float, scale: float, default_vat_percent: float = 23.0) -> list[dict]:
     """Zużycie (kWh wg stref) i koszt brutto per doba lokalna (Europe/Warsaw).

@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -584,7 +585,6 @@ sudo systemctl enable --now satel-tuya-bridge</pre>
 const TOTAL_STEPS = 10;
 let currentStep = 1;
 
-
 let debugEntries = [];
 const DEBUG_REDACT_KEYS = new Set([
   'password', 'admin_password', 'admin_password_confirm', 'access_key',
@@ -653,7 +653,6 @@ document.getElementById('debugClearBtn').addEventListener('click', () => {
   renderDebugPanel();
 });
 
-
 function addNameNumberRow(containerId, initial) {
   const container = document.getElementById(containerId);
   const row = document.createElement('div');
@@ -678,7 +677,6 @@ function collectNameNumberRows(containerId) {
     .map(row => ({ name: row.querySelector('.row-name').value.trim(), number: row.querySelector('.row-number').value }))
     .filter(r => r.name && r.number);
 }
-
 
 function addVirtualInputRow(initial) {
   const container = document.getElementById('virtualInputsRows');
@@ -791,7 +789,6 @@ document.getElementById('discoverSatelBtn').addEventListener('click', async () =
   }
 });
 
-
 function addTuyaDeviceRow(initial) {
   const container = document.getElementById('tuyaDevicesRows');
   const row = document.createElement('div');
@@ -843,7 +840,6 @@ function collectTuyaDevices() {
   }).filter(d => d.name || d.id || d.ip || d.local_key);
 }
 
-
 function upsertTuyaDeviceRow(device) {
   if (!device.id) { addTuyaDeviceRow(device); return; }
   const existingRow = Array.from(document.querySelectorAll('#tuyaDevicesRows .repeatable-row'))
@@ -860,7 +856,6 @@ function upsertTuyaDeviceRow(device) {
   addTuyaDeviceRow(device);
   return true;
 }
-
 
 document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -927,7 +922,6 @@ document.getElementById('fetchTuyaCloudBtn').addEventListener('click', async () 
   }
 });
 
-
 [
   ['tuya_cloud_import_id', 'tuya_access_id'],
   ['tuya_cloud_import_key', 'tuya_access_key'],
@@ -937,7 +931,6 @@ document.getElementById('fetchTuyaCloudBtn').addEventListener('click', async () 
   elA.addEventListener('input', () => { if (elB.value !== elA.value) elB.value = elA.value; });
   elB.addEventListener('input', () => { if (elA.value !== elB.value) elA.value = elB.value; });
 });
-
 
 const TUYA_REGION_ENDPOINTS = {
   'eu':   { api: 'https://openapi.tuyaeu.com',        mq: 'wss://mqe.tuyaeu.com:8285/' },
@@ -988,14 +981,12 @@ function refreshVirtualInputsDatalist() {
   list.innerHTML = getVirtualInputNames().map(n => `<option value="${escapeHtml(n)}">`).join('');
 }
 
-
 [['ha_enabled', 'haContent'], ['unifi_enabled', 'unifiContent'], ['tuya_cloud_enabled', 'tuyaCloudContent']]
   .forEach(([checkboxId, contentId]) => {
     document.getElementById(checkboxId).addEventListener('change', (e) => {
       document.getElementById(contentId).classList.toggle('show', e.target.checked);
     });
   });
-
 
 document.getElementById('ebus_run_local_broker').addEventListener('change', (e) => {
   const hostField = document.getElementById('ebus_mqtt_host');
@@ -1015,7 +1006,6 @@ function escapeHtml(s) {
   d.textContent = s;
   return d.innerHTML;
 }
-
 
 const SCENE_ACTION_LABELS = {
   tuya_on: 'Włącz urządzenie Tuya',
@@ -1132,7 +1122,6 @@ function collectScenes() {
     }),
   }));
 }
-
 
 function sceneOptionsHtml(selected) {
   const names = getSceneNames();
@@ -1259,7 +1248,6 @@ function collectMotionRules() {
   });
 }
 
-
 function collectFormData() {
   return {
     satel: {
@@ -1376,7 +1364,6 @@ function populateForm(data) {
   refreshRuleDropdowns();
 }
 
-
 const SCENE_ACTION_REQUIRED = {
   tuya_on: ['device'], tuya_off: ['device'], tuya_on_for_duration: ['device', 'duration_seconds'],
   satel_output: ['output_number'], satel_virtual_input: ['virtual_input'],
@@ -1464,7 +1451,6 @@ function showStepError(errors) {
   document.querySelector(`.step[data-step="${currentStep}"]`).appendChild(box);
   box.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
-
 
 function renderProgressDots() {
   const dots = document.getElementById('progressDots');
@@ -1592,7 +1578,6 @@ document.getElementById('discardDraftBtn').addEventListener('click', async () =>
   await saveDraft(1, {});
   location.reload();
 });
-
 
 (async function init() {
   addTuyaDeviceRow(); 

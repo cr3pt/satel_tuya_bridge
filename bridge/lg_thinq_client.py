@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import asyncio
@@ -13,15 +16,6 @@ logger = logging.getLogger("bridge.lg_thinq")
 _DEFAULT_POLL_INTERVAL_SECONDS = 60
 _MIN_POLL_INTERVAL_SECONDS = 20
 
-# Tłumaczenie wartości runState.currentState (oficjalny model danych LG ThinQ
-# Connect - te same nazwy zasobu/właściwości dla pralek, suszarek, zmywarek i
-# części pozostałego AGD, zweryfikowane wprost w kodzie pakietu thinqconnect:
-# devices/washer.py itp. mapują property_map={"runState": {"currentState":
-# Property.CURRENT_STATE}}). NIE KAŻDY model zna te same wartości - lista
-# faktycznie wspieranych stanów jest częścią deskryptora profilu urządzenia
-# (patrz list_possible_run_states); tu tłumaczymy tylko najczęstsze/udokumentowane,
-# nieznana wartość przechodzi bez zmian (zmniejszona wielkość liter) zamiast
-# znikać po cichu - dokładnie ten sam kompromis co HomeWhiz (to_friendly_name).
 _RUN_STATE_TRANSLATIONS = {
     "POWER_OFF": "wyłączona",
     "POWER_ON": "włączona",
@@ -91,8 +85,6 @@ def _wrap_api_errors(exc: Exception, *, context: str) -> LgThinqError:
     if isinstance(exc, ThinQAPIException):
         return LgThinqError(f"Chmura LG ThinQ zgłosiła błąd ({context}): {exc}")
     if isinstance(exc, RuntimeError):
-        # ThinQApi rzuca zwykły RuntimeError("Not supported country_code.")
-        # dla nieznanego kodu kraju - to jedyny taki przypadek w tym SDK.
         return LgThinqError(f"Nieprawidłowy kod kraju LG ThinQ ({context}): {exc}")
     if isinstance(exc, aiohttp.ClientError):
         return LgThinqError(f"Błąd połączenia z chmurą LG ThinQ ({context}): {exc}")

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 """Testy bridge/tariffs.py - strefy G11/G12/G12w/G13, kalendarz świąt, podział
 zużycia na strefy, koszt (netto/brutto/opłaty stałe) i walidacja konfiguracji."""
 from datetime import date, datetime
@@ -24,9 +27,9 @@ class TestCalendar:
 
     def test_movable_holidays_2026(self):
         h = tariffs.polish_holidays(2026)
-        assert date(2026, 4, 6) in h      # Poniedziałek Wielkanocny
-        assert date(2026, 6, 4) in h      # Boże Ciało
-        assert date(2026, 5, 24) in h     # Zielone Świątki
+        assert date(2026, 4, 6) in h
+        assert date(2026, 6, 4) in h
+        assert date(2026, 5, 24) in h
 
     def test_fixed_holidays(self):
         h = tariffs.polish_holidays(2026)
@@ -38,9 +41,9 @@ class TestCalendar:
         assert date(2024, 12, 24) not in tariffs.polish_holidays(2024)
 
     def test_free_day(self):
-        assert tariffs.is_free_day(date(2026, 7, 11))        # sobota
-        assert tariffs.is_free_day(date(2026, 11, 11))       # środa, święto
-        assert not tariffs.is_free_day(date(2026, 7, 8))     # zwykła środa
+        assert tariffs.is_free_day(date(2026, 7, 11))
+        assert tariffs.is_free_day(date(2026, 11, 11))
+        assert not tariffs.is_free_day(date(2026, 7, 8))
 
 
 class TestZones:
@@ -69,9 +72,9 @@ class TestZones:
         assert at("G12w", 2026, 7, 8, 13, 30) == "nocna"
 
     def test_pge_seasonal_variant(self):
-        assert at("G12", 2026, 7, 8, 16, variant="pge_sezonowa") == "nocna"     # lato 15-17
+        assert at("G12", 2026, 7, 8, 16, variant="pge_sezonowa") == "nocna"
         assert at("G12", 2026, 7, 8, 13, 30, variant="pge_sezonowa") == "dzienna"
-        assert at("G12", 2026, 1, 14, 16, variant="pge_sezonowa") == "dzienna"  # zima
+        assert at("G12", 2026, 1, 14, 16, variant="pge_sezonowa") == "dzienna"
         assert at("G12", 2026, 1, 14, 13, 30, variant="pge_sezonowa") == "nocna"
 
     def test_enea_variant(self):
@@ -122,7 +125,7 @@ class TestCustomTariff:
         assert t.zones == ("tania", "droga")
         assert t.zone_at(datetime(2026, 7, 8, 22)) == "tania"
         assert t.zone_at(datetime(2026, 7, 8, 12)) == "droga"
-        assert t.zone_at(datetime(2026, 7, 11, 12)) == "tania"  # days: free, domyślne hours = cała doba
+        assert t.zone_at(datetime(2026, 7, 11, 12)) == "tania"
 
     @pytest.mark.parametrize("spec", [
         {"zones": []},
@@ -142,7 +145,6 @@ class TestConsumption:
     G12 = tariffs.resolve_tariff("G12")
 
     def test_split_across_zone_boundary(self):
-        # 1 kWh między 21:00 a 23:00 -> po 0,5 kWh w strefie dziennej i nocnej
         r = [{"t": ts(2026, 7, 8, 21), "v": 100.0}, {"t": ts(2026, 7, 8, 23), "v": 101.0}]
         c = tariffs.consumption_by_zone(r, self.G12, ts(2026, 7, 8, 21), ts(2026, 7, 8, 23))
         assert c.kwh_by_zone["dzienna"] == pytest.approx(0.5)
@@ -160,7 +162,7 @@ class TestConsumption:
         assert c.total_kwh == pytest.approx(2.0)
 
     def test_scale_converts_units(self):
-        r = [{"t": ts(2026, 7, 8, 10), "v": 0.0}, {"t": ts(2026, 7, 8, 11), "v": 2500.0}]  # Wh
+        r = [{"t": ts(2026, 7, 8, 10), "v": 0.0}, {"t": ts(2026, 7, 8, 11), "v": 2500.0}]
         c = tariffs.consumption_by_zone(r, self.G12, ts(2026, 7, 8, 10), ts(2026, 7, 8, 11), scale=0.001)
         assert c.total_kwh == pytest.approx(2.5)
 
@@ -176,7 +178,6 @@ class TestConsumption:
         assert c.resets == 1 and c.total_kwh == pytest.approx(1.0)
 
     def test_dst_uses_local_time(self):
-        # 29.03.2026 zmiana na czas letni: 22:00-23:00 lokalnie to nadal strefa nocna
         r = [{"t": ts(2026, 3, 29, 22), "v": 0.0}, {"t": ts(2026, 3, 29, 23), "v": 1.0}]
         c = tariffs.consumption_by_zone(r, self.G12, ts(2026, 3, 29, 22), ts(2026, 3, 29, 23))
         assert c.kwh_by_zone["nocna"] == pytest.approx(1.0)
@@ -214,12 +215,12 @@ class TestCost:
     def test_fixed_fee_prorated_full_month(self):
         pricing = {"prices": {"dzienna": 1, "nocna": 1}, "fixed_monthly_net": 30.0}
         r = tariffs.compute_cost(self._cons(0, 0), pricing, self.G12, ts(2026, 9, 1), ts(2026, 10, 1))
-        assert r["fixed_net"] == pytest.approx(30.0)  # wrzesień ma 30 dni
+        assert r["fixed_net"] == pytest.approx(30.0)
 
     def test_fixed_fee_one_day(self):
         pricing = {"prices": {}, "fixed_monthly_net": 31.0}
         r = tariffs.compute_cost(self._cons(0, 0), pricing, self.G12, ts(2026, 7, 5), ts(2026, 7, 6))
-        assert r["fixed_net"] == pytest.approx(1.0)   # lipiec: 31 dni
+        assert r["fixed_net"] == pytest.approx(1.0)
 
     def test_missing_price_is_flagged_not_guessed(self):
         r = tariffs.compute_cost(self._cons(5, 5), {"prices": {"dzienna": 1.0}}, self.G12, ts(2026, 7, 1), ts(2026, 7, 2))
@@ -326,7 +327,6 @@ class TestReport:
             },
             "meters": [{"name": "dom", "sensor": "s", "tariff": "G12w"}],
         })
-        # sobota: całe zużycie w taniej strefie G12w
         r = [{"t": ts(2026, 7, 11, 8), "v": 0.0}, {"t": ts(2026, 7, 11, 20), "v": 12.0}]
         rep = tariffs.build_report(cfg, cfg["meters"][0], r, ts(2026, 7, 11, 8), ts(2026, 7, 11, 20))
         by = {c["tariff"]: c for c in rep["comparison"]}
