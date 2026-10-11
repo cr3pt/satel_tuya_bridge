@@ -1,15 +1,4 @@
-{# Wspólny górny pasek nawigacji - patrz ChoiceLoader w dashboard/app.py
-   (Jinja szuka szablonów najpierw w dashboard/templates/, więc {% include
-   "_nav.html" %} działa też ze stron wtyczek w plugins/<id>/templates/).
-
-   Pozycje menu (Wtyczki/Automatyzacje/Flow/Ogólne) renderowane jako
-   osobne przyciski z ikoną po lewej stronie, zamiast ukryte pod
-   rozwijanym "⚙ Ustawienia ▾" - każda widoczna od razu, bez dodatkowego
-   kliknięcia.
-
-   `request` jest dostępne w Jinja automatycznie (Flask wstrzykuje je do
-   każdego kontekstu szablonu) - używane tu tylko do ukrycia linku "Wróć do
-   panelu" na stronie głównej i podświetlenia aktywnej pozycji w menu. #}
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <div class="nav">
   {% if request.path != '/' %}<a href="/">&larr; Wróć do panelu</a> &nbsp;·&nbsp; {% endif %}
   <a href="/plugins" class="nav-btn {{ 'active' if request.path.startswith('/plugins') else '' }}"><span class="nav-icon">🧩</span>Wtyczki</a>
@@ -32,10 +21,6 @@
   .nav-btn.active { color: var(--text); font-weight: 600; border-color: var(--accent); }
   .nav-icon { font-size: 17px; line-height: 1; }
 
-  /* Zwijalny opis zakładki (patrz skrypt niżej) - dziedziczy color/font-size/
-     line-height z klasy .hint zdefiniowanej przez każdą stronę osobno (te
-     właściwości są dziedziczone przez CSS), więc wygląd rozwiniętego opisu
-     zostaje identyczny jak wcześniej, bez duplikowania stylu tutaj. */
   .hint-toggle {
     background: none; border: none; padding: 0; margin: 0; cursor: pointer;
     color: var(--accent); font-size: 13px; font-weight: 500; font-family: inherit;
@@ -45,14 +30,6 @@
   .hint-body { margin-top: 6px; }
 </style>
 <script>
-// Opisy zakładek (div.hint, jeden na górze niemal każdej strony panelu -
-// automatyzacje/flow/mapa/wtyczki itd.) zajmowały sporo miejsca na ekranie
-// mimo że czyta się je raz - zwijamy je WSZYSTKIE domyślnie do jednej linijki
-// z przyciskiem "rozwiń", scentralizowane tutaj (w _nav.html, dołączanym na
-// KAŻDEJ stronie panelu) zamiast kopiować ten sam kod do 20 osobnych
-// szablonów. Stan rozwinięcia pamiętany per adres strony w localStorage
-// (per przeglądarkę/urządzenie - nic nie wysyłamy na serwer), żeby nie trzeba
-// było rozwijać na nowo po każdym przejściu na tę samą zakładkę.
 document.addEventListener('DOMContentLoaded', function () {
   document.querySelectorAll('div.hint').forEach(function (hintEl, idx) {
     if (hintEl.dataset.hintInit) return;
@@ -60,7 +37,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     var storageKey = 'hint-expanded:' + location.pathname + ':' + idx;
     var expanded = false;
-    try { expanded = localStorage.getItem(storageKey) === '1'; } catch (e) { /* prywatne okno itp. - zostaje domyślnie zwinięty */ }
+    try { expanded = localStorage.getItem(storageKey) === '1'; } catch (e) { }
 
     var toggle = document.createElement('button');
     toggle.type = 'button';
@@ -68,14 +45,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
     var body = document.createElement('div');
     body.className = 'hint-body';
-    // Przenosimy ORYGINALNE węzły (nie przepisujemy jako tekst/innerHTML),
-    // żeby zachować linki/<strong>/<code> itd. dokładnie tak, jak strona je
-    // zdefiniowała, bez kopiowania treści na nowo w tym pliku.
     while (hintEl.firstChild) body.appendChild(hintEl.firstChild);
 
-    // Zamiast ogólnego "Opis tej zakładki" - pierwsze 3 słowa PRAWDZIWEGO
-    // tekstu opisu + "…", żeby zwinięta linijka od razu coś mówiła o
-    // treści, nie tylko o samej możliwości rozwinięcia.
     var snippetWords = (body.textContent || '').trim().split(/\s+/).filter(Boolean).slice(0, 3);
     var snippet = snippetWords.join(' ');
 
@@ -86,7 +57,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     toggle.addEventListener('click', function () {
       expanded = !expanded;
-      try { localStorage.setItem(storageKey, expanded ? '1' : '0'); } catch (e) { /* nieistotne */ }
+      try { localStorage.setItem(storageKey, expanded ? '1' : '0'); } catch (e) { }
       render();
     });
     render();

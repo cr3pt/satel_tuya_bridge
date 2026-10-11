@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 """Testy wtyczki plugins/energy_cost - API konfiguracji i raportu kosztów."""
 import time
 from datetime import datetime
@@ -5,7 +8,7 @@ from datetime import datetime
 import pytest
 
 from bridge.tariffs import TZ
-from tests.test_plugin_routes import _basic_auth_header, client  # noqa: F401
+from tests.test_plugin_routes import _basic_auth_header, client
 
 AUTH = _basic_auth_header("test_haslo_123")
 
@@ -81,7 +84,6 @@ class TestReport:
         import dashboard.app as app_module
         await _save(client)
         h = app_module.history
-        # sobota 11.07.2026, co godzinę 1 kWh, 8:00-20:00 -> wszystko w taniej strefie G12w
         for i in range(13):
             h.write_reading("licznik_kwh", 100.0 + i, ts=ts(2026, 7, 11, 8 + i))
 
@@ -164,7 +166,6 @@ class TestDaily:
         import dashboard.app as app_module
         await _save(client)
         h = app_module.history
-        # pn 13.07 i wt 14.07.2026: 1 kWh/h przez 48 h od północy
         for i in range(49):
             h.write_reading("licznik_kwh", 100.0 + i, ts=ts(2026, 7, 13) + i * 3600)
         url = f"/api/plugins/energy_cost/report?meter=dom&from={ts(2026, 7, 13)}&to={ts(2026, 7, 15)}"

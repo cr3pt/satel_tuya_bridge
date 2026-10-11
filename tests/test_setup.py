@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 import copy
 import pathlib
 
@@ -2020,9 +2023,6 @@ class TestFlows:
         assert not any("węzła wejściowego" in e for e in errors)
 
     def test_condition_group_fed_by_a_wire_does_not_count_as_entry_node(self):
-        # "cg" ma podłączone wejście (od "trig2", nie od trigger/mqttIn) -
-        # sam z siebie nie jest punktem wejściowym, więc flow nadal wymaga
-        # osobnego trigger/mqttIn/niepodłączonego condition_group.
         condition = {"type": "state", "key": "tuya:garaz", "equals": "v"}
         flow = self._simple_flow(nodes=[
             {"id": "trig2", "type": "condition", "config": {"op": "==", "value": "x"}, "wires": [["cg"], []]},
@@ -2060,10 +2060,6 @@ class TestFlows:
         assert any("wybierz urządzenie źródłowe" in e for e in errors)
 
     def test_trigger_device_state_with_specific_value_requires_trigger_value(self):
-        # Regres: trigger "Konkretna wartość" (op != "changes") zapisywał się
-        # bez błędu z pustym trigger_value - taki trigger nigdy się nie odpala
-        # (FlowEngine.handle_device_state porównuje value == cfg["trigger_value"],
-        # a pusty string nigdy nie pasuje do prawdziwej wartości urządzenia).
         flow = self._simple_flow(nodes=[
             {
                 "id": "trig", "type": "trigger",
@@ -2442,9 +2438,6 @@ class TestMotionRuleToFlow:
         by_type = self._nodes_by_type(flow)
         assert len(by_type["trigger"]) == 1
         assert by_type["trigger"][0]["config"] == {"source": "satel_zone", "zone_number": 5, "op": "violated"}
-        # "włącz na czas" reguły ruchu importuje się jako włącz->opóźnienie->wyłącz,
-        # tak jak faktycznie działa RulesEngine._run_on_for_duration - inaczej zaimportowany
-        # flow zostawiałby urządzenie włączone na zawsze (bez automatycznego wyłączenia).
         devices = by_type["device"]
         assert len(devices) == 2
         on_device = next(d for d in devices if d["config"]["value"] == "on")
@@ -2453,7 +2446,6 @@ class TestMotionRuleToFlow:
         assert off_device["config"]["target_device"] == "lampa_taras"
         delay = by_type["delay"][0]
         assert delay["config"] == {"seconds": 60}
-        # trigger -> device(on) -> delay -> device(off)
         assert flow["nodes"][0]["wires"] == [[on_device["id"]]]
         assert on_device["wires"] == [[delay["id"]]]
         assert delay["wires"] == [[off_device["id"]]]
@@ -2726,7 +2718,6 @@ class TestFlowToMotionRule:
         rule, _ = flow_to_motion_rule(flow, 0)
         assert rule["trigger_on"] == "restored"
 
-    # --- przypadki odrzucenia (flow pomijane w całości) ---
 
     def test_no_trigger_node_rejected(self):
         flow = self._flow([

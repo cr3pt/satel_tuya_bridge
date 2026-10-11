@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 import logging
 
 from bridge.logging_config import PLUGIN_LOGGERS, apply_log_levels, plugin_config_section
@@ -6,11 +9,6 @@ from bridge.logging_config import PLUGIN_LOGGERS, apply_log_levels, plugin_confi
 class TestPluginLoggersMapping:
 
     def test_tuya_local_covers_both_local_and_cloud_loggers(self):
-        # Wtyczki "tuya_zigbee"/"tuya_cloud" zostały scalone do jednej "tuya_local"
-        # (jedna strona /plugins/tuya) - błędy komend do Tuya Cloud muszą trafiać
-        # pod ten sam log_level co reszta Tuya, inaczej suwak poziomu logowania
-        # na stronie Tuya (i przycisk "📜 Logi" na jej karcie) po cichu pomija
-        # bridge.tuya_cloud.
         assert PLUGIN_LOGGERS["tuya_local"] == ["bridge.tuya_local", "bridge.tuya_cloud"]
 
     def test_no_orphaned_tuya_zigbee_or_tuya_cloud_plugin_ids(self):
@@ -27,9 +25,6 @@ class TestPluginLoggersMapping:
         assert PLUGIN_LOGGERS["smartthings"] == ["bridge.smartthings"]
 
     def test_flow_engine_logger_is_registered(self):
-        # Bez tego wpisu poziomu logowania Flow nie dało się w ogóle ustawić
-        # (a logger bridge.flow_engine nigdy nie pojawiał się na liście
-        # loggerów w Historii logów, bo nic go nie kontrolowało).
         assert PLUGIN_LOGGERS["flow_engine"] == ["bridge.flow_engine"]
 
 

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import asyncio
@@ -67,16 +70,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
              reload_bridge_config, enqueue_bridge_reload, **_ignored) -> PluginMeta:
 
     def _get_cloud_accounts() -> dict:
-        # UWAGA: musi czytać przez get_config_raw() (czyli BridgeConfig.load()),
-        # NIE bezpośrednio z ConfigStore - to właśnie BridgeConfig.load() migruje
-        # stare, pojedyncze konto (tuya.cloud) na tuya.cloud_accounts["domyślne"].
-        # Odczyt wprost z ConfigStore widziałby puste cloud_accounts dla każdej
-        # instalacji sprzed tej funkcji (dopóki nikt nie zapisze kont explicite) -
-        # import/rescan/pobieranie opisów pól zwracałyby błąd "brak konta", a co
-        # gorsza, zapis JAKIEGOKOLWIEK (nawet pustego) stanu kont z tej strony
-        # trwale zapisywałby do configu PUSTĄ/niepełną listę kont, którą
-        # TuyaCloudController potem uznaje za jedyne dostępne konto - odcinając
-        # od chmury WSZYSTKIE urządzenia bez jawnie wybranego konta.
         return get_config_raw().get("tuya", {}).get("cloud_accounts", {}) or {}
 
     def _save_cloud_accounts(accounts: dict) -> None:
@@ -85,9 +78,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
         get_config_store().set("config", current)
 
     def _resolve_account_name(device_cfg: dict, accounts: dict) -> str | None:
-        # Puste "cloud_account" (urządzenie sprzed wprowadzenia wielu kont, albo
-        # zapisane przez kreator, który zna tylko jedno konto) -> pierwsze
-        # skonfigurowane konto, tak samo jak w TuyaCloudController.
         return device_cfg.get("cloud_account") or (next(iter(accounts), None))
 
     @app.route("/plugins/tuya")
@@ -96,7 +86,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
 
     @app.route("/plugins/tuya_cloud")
     async def tuya_cloud_plugin_page_redirect():
-        # Tuya Cloud (dawniej osobna wtyczka) - teraz jedna, wspólna strona Tuya.
         return redirect("/plugins/tuya")
 
     @app.route("/api/plugins/tuya/devices", methods=["GET"])
@@ -190,10 +179,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             return jsonify({"error": f"Błąd skanowania: {exc}"}), 502
         for d in devices:
             d["known_name"] = known_by_id.get(d.get("id"), "")
-            # Bramka Zigbee zapisana już wcześniej (np. bez adresu IP, dopóki nie
-            # odpowiadała w sieci) - osobne pole niż known_name, żeby panel mógł
-            # od razu zaproponować uzupełnienie jej adresu IP zamiast dodawać
-            # duplikat jako zwykłe urządzenie.
             d["known_gateway_name"] = known_gateway_by_id.get(d.get("id"), "")
         return jsonify({"devices": devices})
 
@@ -429,11 +414,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
 
         cloud_devices = get_config_raw().get("tuya", {}).get("cloud_devices", {})
         by_id = {cfg["id"]: name for name, cfg in cloud_devices.items() if cfg.get("id")}
-        # Urządzenia JUŻ w trybie "Lokalnie (Zigbee)" - ich "cid" (node_id w sieci
-        # Zigbee danej bramki) wpisuje się raz, ręcznie albo przy imporcie, i nic
-        # później nie sprawdza, czy wciąż się zgadza z tym, co faktycznie zna Tuya
-        # Cloud - stąd druga, niezależna funkcja tego samego przycisku: weryfikacja
-        # (nigdy automatyczna korekta bez kliknięcia) już skonfigurowanych urządzeń.
         zigbee_devices = {
             name: cfg for name, cfg in get_config_raw().get("tuya", {}).get("devices", {}).items()
             if cfg.get("gateway") and cfg.get("id")
@@ -444,16 +424,9 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
                 "error": "Brak skonfigurowanych urządzeń chmurowych ani urządzeń Zigbee do przeskanowania",
             }), 400
         scan_networks = get_config_raw().get("tuya", {}).get("scan_networks") or []
-        # Bramki Zigbee już dodane ręcznie/z importu - potrzebne, żeby rozpoznać,
-        # które chmurowe urządzenie jest podurządzeniem Zigbee wskazującym na JUŻ
-        # skonfigurowaną bramkę (a nie tylko "widziane" przez Tuya Cloud).
         zigbee_gateways = get_config_raw().get("tuya", {}).get("zigbee_gateways", {})
         gateway_id_to_name = {cfg["id"]: name for name, cfg in zigbee_gateways.items() if cfg.get("id")}
 
-        # Każde konto ma swoją, niezależną listę urządzeń w Tuya Cloud - trzeba
-        # odpytać każde skonfigurowane konto osobno i dopasować wynik tylko do
-        # urządzeń, które faktycznie do niego należą (żeby nie mylić urządzeń
-        # o takim samym ID z różnych kont, choć w praktyce ID są globalnie unikalne).
         results = []
         cid_checks = []
         cloud_devices_by_account = _group_by_account(cloud_devices, accounts)

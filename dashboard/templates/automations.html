@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -219,7 +220,6 @@ let context = {
   dimmer_devices: [], satel_outputs: [], satel_zones: [], homewhiz_appliances: [],
 };
 
-
 async function authorizedFetch(url, options = {}) {
   const resp = await fetch(url, options);
   if (resp.status === 401) {
@@ -257,7 +257,6 @@ function escapeHtml(s) {
   d.textContent = s;
   return d.innerHTML;
 }
-
 
 function parseTimeSpec(value) {
   value = (value || '').trim();
@@ -304,7 +303,6 @@ function collectTimeSpec(cls, root) {
   return `${type}${offset > 0 ? '+' : ''}${offset}`;
 }
 
-
 const SCENE_ACTION_LABELS = {
   tuya_on: 'Włącz urządzenie Tuya',
   tuya_off: 'Wyłącz urządzenie Tuya',
@@ -328,14 +326,12 @@ function deviceOptionsHtml(selected) {
   return context.tuya_devices.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
 }
 
-
 function virtualInputOptionsHtml(selected) {
   if ((context.virtual_inputs || []).length === 0) {
     return `<option value="">(brak wirtualnych wejść - zakładka 🧩 Wtyczki -> Satel)</option>`;
   }
   return context.virtual_inputs.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
 }
-
 
 function zoneOptionsHtml(selected) {
   const zones = context.satel_zones || [];
@@ -365,7 +361,6 @@ function targetDeviceOptionsHtml(system, selected) {
   }
   return deviceOptionsHtml(selected);
 }
-
 
 function sourceDeviceOptionsHtml(system, selected) {
   if (system === 'homewhiz_state') {
@@ -398,7 +393,6 @@ function sourceDeviceOptionsHtml(system, selected) {
   }
   return deviceOptionsHtml(selected);
 }
-
 
 const homewhizStatesCache = {};
 function fetchHomewhizStates(applianceName) {
@@ -605,7 +599,6 @@ function collectScenes() {
   }));
 }
 
-
 const STATE_VALUE_OPTIONS = {
   satel_input: ['naruszone', 'OK'],
   satel_output: ['włączone', 'wyłączone'],
@@ -613,9 +606,6 @@ const STATE_VALUE_OPTIONS = {
   tuya: ['włączone', 'wyłączone', 'niedostępne', 'poza siecią'],
   system_health: ['połączono'],
   automation: ['uruchomiona', 'bezczynna'],
-  // iQua (zmiękczacz wody) - stałe, uniwersalne pole połączenia dla
-  // wszystkich urządzeń (bez listy stanów per model) - statyczna lista jak
-  // dla Tuya, patrz identyczny komentarz w flows.html.
   iqua: ['online', 'offline'],
 };
 
@@ -655,7 +645,6 @@ function statusCategoryOptionsHtml(selected) {
   return placeholder + opts;
 }
 
-
 function triggerValueFieldHtml(system, selectedValue, dynamicStates) {
   let options = null;
   if (system === 'tuya_state') {
@@ -682,7 +671,6 @@ function triggerValueFieldHtml(system, selectedValue, dynamicStates) {
     ${extra}
   </select>`;
 }
-
 
 function renderTriggerValueField(card, system, selectedValue) {
   const wrap = card.querySelector('.mr-trigger-value-wrap');
@@ -889,7 +877,6 @@ function thenTriggerRuleOptionsHtml(selected, ownNameEl) {
   return placeholder + names.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
 }
 
-
 function buildExtraSourceRowHtml(entry) {
   entry = entry || {};
   const system = entry.source || 'satel_zone';
@@ -997,7 +984,6 @@ function setMotionRuleCollapsed(card, collapsed) {
 function collapseAllMotionRules() {
   document.querySelectorAll('#motionRulesContainer .sub-card').forEach(card => setMotionRuleCollapsed(card, true));
 }
-
 
 function addMotionRuleCard(initial, startCollapsed) {
   initial = initial || {};
@@ -1182,7 +1168,6 @@ function addMotionRuleCard(initial, startCollapsed) {
     if (system !== 'satel_zone') renderTriggerValueField(card, system, '');
   });
 
-
   if ((sourceSystem === 'homewhiz_state' || sourceSystem === 'lg_thinq_state') && primarySource.source_device) {
     renderTriggerValueField(card, sourceSystem, primarySource.trigger_value);
   }
@@ -1211,9 +1196,7 @@ function addMotionRuleCard(initial, startCollapsed) {
     sceneFields.style.display = kind === 'scene' ? '' : 'none';
     vinputFields.style.display = kind === 'virtual_input' ? '' : 'none';
 
-
     durationField.style.display = (kind === 'device' || kind === 'virtual_input') ? '' : 'none';
-
 
     if (kind === 'device_off' || system === 'satel_output') {
       dimmerField.style.display = 'none';
@@ -1393,7 +1376,6 @@ function collectMotionRules() {
   });
 }
 
-
 function renderPresenceDevices(selectedDevices) {
   const container = document.getElementById('presenceDevices');
   if (context.tuya_devices.length === 0) {
@@ -1443,7 +1425,6 @@ function collectPresence() {
     },
   };
 }
-
 
 async function loadAll() {
   context = await (await fetch('/api/config/automation-context')).json();
@@ -1517,7 +1498,6 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
     msgEl.textContent = '❌ Błąd komunikacji z serwerem: ' + e;
   }
 });
-
 
 function showLocationMsg(ok, text) {
   const el = document.getElementById('locationMsg');

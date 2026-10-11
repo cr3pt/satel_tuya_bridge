@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import asyncio
@@ -16,11 +19,6 @@ _DEFAULT_CAPABILITY = "switch"
 _DEFAULT_ATTRIBUTE = "switch"
 _DEFAULT_COMPONENT = "main"
 
-# Wartości SmartThings są z reguły już czytelne bez tłumaczenia (open/closed,
-# active/inactive, liczby...) - tłumaczymy na polski tylko najczęstszy,
-# najbardziej "automatyzowalny" przypadek (switch: gniazdka/przełączniki),
-# ten sam kompromis co friendly_run_state (LG ThinQ) / to_friendly_name
-# (HomeWhiz) - nieznana/nietłumaczona wartość przechodzi bez zmian.
 _SWITCH_TRANSLATIONS = {"on": "włączone", "off": "wyłączone"}
 
 

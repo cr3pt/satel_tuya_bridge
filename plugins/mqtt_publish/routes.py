@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 from quart import Quart, jsonify, render_template, request
@@ -106,11 +109,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
     @app.route("/api/plugins/mqtt_publish/explorer", methods=["DELETE"])
     @require_auth(get_guard=get_auth_guard)
     async def api_plugin_mqtt_publish_explorer_delete():
-        # prune_status z pustą listą kluczy do zachowania usuwa WSZYSTKIE wpisy
-        # danej kategorii (patrz bridge/history_store.py) - tematy i tak wrócą
-        # same, gdy bridge znów coś opublikuje/odbierze, więc to tylko
-        # czyszczenie WIDOKU (nieużywanych/przestarzałych tematów), nie żadnej
-        # trwałej konfiguracji.
         get_history().prune_status("mqtt_topic", [])
         return jsonify({"message": "Wyczyszczono listę zaobserwowanych tematów."})
 

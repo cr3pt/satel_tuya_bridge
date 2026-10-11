@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import json
@@ -82,9 +85,6 @@ class HistoryStore:
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.executescript(SCHEMA)
         self._conn.commit()
-        # Patrz analogiczny komentarz w bridge/config_store.py - ta baza nie
-        # zawiera sekretów, ale zawężamy uprawnienia konsekwentnie z
-        # config.db (samonaprawiająco, niezależnie od umask/dockerd).
         try:
             os.chmod(self.db_path, 0o600)
         except OSError:

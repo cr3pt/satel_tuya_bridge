@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 """Obsługa liczników wM-Bus (przez `wmbusmeters`) - w tym liczników
 3-fazowych (osobne pola L1/L2/L3).
 
@@ -51,11 +54,8 @@ DEVICE_RE = re.compile(r"^[A-Za-z0-9_:/.\-]{1,80}$")
 HOST_RE = re.compile(r"^[A-Za-z0-9._\-]{1,253}$")
 TOPIC_RE = re.compile(r"^[A-Za-z0-9_\-/]{1,80}$")
 
-# Pola, które nie są odczytami (nie trafiają do wykresów jako liczby)
 _NON_READING_FIELDS = {"timestamp"}
 
-# sufiks nazwy pola (konwencja wmbusmeters: jednostka na końcu) ->
-# (jednostka, device_class HA, state_class HA)
 _UNITS: dict[str, tuple[str, str | None, str | None]] = {
     "kwh": ("kWh", "energy", "total_increasing"),
     "kw": ("kW", "power", "measurement"),
@@ -69,7 +69,6 @@ _UNITS: dict[str, tuple[str, str | None, str | None]] = {
     "dbm": ("dBm", "signal_strength", "measurement"),
 }
 
-# "phase_1", "phase1", "ph2", "l3" jako samodzielny człon nazwy pola
 _PHASE_RE = re.compile(r"(?:^|_)(?:phase|ph|l)_?([123])(?:_|$)")
 
 
@@ -112,9 +111,6 @@ def mask_key(key: str) -> str:
     return "•" * 28 + key[-4:]
 
 
-# ----------------------------------------------------------------------
-# Lista liczników (wmbus_meters.yaml)
-# ----------------------------------------------------------------------
 def validate_meter(meter: dict) -> list[str]:
     errors = []
     name = meter.get("name") or ""
@@ -170,9 +166,6 @@ def normalize_meter(m: dict) -> dict:
         "key": (m.get("key") or "").strip(),
         "phases": int(m.get("phases", 1) or 1),
         "max_silence_minutes": float(m["max_silence_minutes"]) if _is_number(m.get("max_silence_minutes")) else 60.0,
-        # Licznik potrafi nadawać co kilka sekund - zapis każdego telegramu
-        # do SQLite szybko zużywa kartę SD w RPi, więc historia jest
-        # ograniczona czasowo (statusy "na żywo" i alarmy mimo to każdy telegram).
         "min_history_interval_seconds": (
             float(m["min_history_interval_seconds"]) if _is_number(m.get("min_history_interval_seconds")) else 60.0
         ),
@@ -230,9 +223,6 @@ def public_view(meters: list[dict]) -> list[dict]:
     return out
 
 
-# ----------------------------------------------------------------------
-# Generator konfiguracji wmbusmeters
-# ----------------------------------------------------------------------
 def render_meter_file(meter: dict) -> str:
     lines = [
         f"name={meter['name']}",
@@ -252,9 +242,6 @@ def render_main_conf(wmbus_cfg: dict, mqtt_host: str, mqtt_port: int) -> str:
         raise ValueError(f"Nieprawidłowy host MQTT: {mqtt_host!r}")
     if not TOPIC_RE.match(prefix):
         raise ValueError(f"Nieprawidłowy prefiks tematu MQTT: {prefix!r}")
-    # $METER_NAME / $METER_JSON podstawia wmbusmeters przez zmienne
-    # środowiskowe powłoki - nic z danych telegramu nie jest wklejane
-    # do polecenia jako tekst.
     shell = f'mosquitto_pub -h {mqtt_host} -p {int(mqtt_port)} -t {prefix}/$METER_NAME -m "$METER_JSON"'
     return (
         "# Wygenerowane przez bridge (panel /wmbus) - nie edytuj ręcznie, zostanie nadpisane.\n"
@@ -293,9 +280,6 @@ def write_wmbusmeters_files(wmbus_cfg: dict, mqtt_host: str, mqtt_port: int,
     return written
 
 
-# ----------------------------------------------------------------------
-# Telegramy
-# ----------------------------------------------------------------------
 def parse_telegram(payload: bytes | str) -> dict | None:
     """JSON z wmbusmeters -> słownik albo None, gdy to nie jest poprawny telegram."""
     try:
@@ -387,5 +371,4 @@ class WmbusMqttListener:
         try:
             self.on_telegram(meter, telegram)
         except Exception:
-            # wyjątek w callbacku nie może ubić wątku sieciowego paho
             logger.exception("wM-Bus: błąd obsługi telegramu licznika '%s'", name)

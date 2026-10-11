@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import asyncio
@@ -400,19 +403,12 @@ class RulesEngine:
 
         duration = rule.get("duration_seconds")
         if len(targets) == 1:
-            # Ścieżka identyczna z tą sprzed wsparcia wielu akcji - bez dodatkowej
-            # warstwy asyncio.gather, żeby nie zmieniać liczby "przełączeń" event loopa
-            # (od tego zależy część istniejących testów asyncio.sleep(0)).
             device, target_system = self._resolve_target(targets[0], rule)
             dimmer = targets[0].get("dimmer_level_percent", rule.get("dimmer_level_percent"))
             self._active_timers[device] = asyncio.create_task(
                 self._run_on_for_duration(target_system, device, duration, dimmer, rule_name)
             )
         else:
-            # Wiele celów jednej reguły biegnie jako JEDNA grupa (asyncio.gather) zamiast
-            # osobnych zadań na urządzenie - dzięki temu status "automation:<nazwa>" odpowiada
-            # całej grupie (od startu pierwszego do końca ostatniego celu), a nie temu, który
-            # cel akurat skończy jako pierwszy.
             group_task = asyncio.create_task(self._run_targets_for_duration(targets, rule, duration, rule_name))
             for target in targets:
                 device, _ = self._resolve_target(target, rule)
@@ -605,8 +601,6 @@ class RulesEngine:
                     name,
                 )
                 return
-            # state is True lub None (zmiana stanu) - w trybie http oba oznaczają identyczny
-            # impuls, bo protokół nie zna pojęcia poziomu/stanu, tylko moment naruszenia.
             await self.satel_virtual_inputs.trigger(name)
             return
         output_number = self.satel.virtual_inputs.get(name)
@@ -761,11 +755,6 @@ class RulesEngine:
             else:
                 self.boiler_publishers["tuya"].publish_to_dp(dp_code, value)
 
-    # ------------------------------------------------------------------
-    # wM-Bus (wmbusmeters -> MQTT). Handler wołany z wątku paho-mqtt. Każde
-    # pole liczbowe (osobno L1/L2/L3) to czujnik `wmbus_<licznik>_<pole>` -
-    # w historii, alarmach progowych, regułach kotła, HA i raporcie kosztów.
-    # ------------------------------------------------------------------
     def _setup_wmbus(self, config) -> None:
         """Wczytuje liczniki i rejestruje alarmy ciszy (stale). Wołane też po
         reloadzie, bo reload tworzy nowy AlarmEngine."""
@@ -800,7 +789,6 @@ class RulesEngine:
             if write_history:
                 self.history.write_reading(sensor, value)
             self.history.set_status(f"wmbus:{name}:{field}", "wmbus", value, label=field_label)
-            # progi napięcia muszą istnieć PRZED pierwszą oceną wartości
             if phase and wmbus.is_voltage_field(field):
                 self._ensure_wmbus_voltage_rules(meter, sensor, phase)
             self.alarms.on_value(sensor, value)
@@ -859,12 +847,6 @@ class RulesEngine:
                 logger.exception("Błąd w pętli sprawdzania nieaktywnych czujników")
 
     async def _heartbeat_loop(self, interval_seconds: float = 20.0) -> None:
-        # Proces bridge (w przeciwieństwie do panelu) nie wystawia żadnego
-        # portu HTTP - nie ma czego podpiąć pod `docker healthcheck` z zewnątrz.
-        # Zamiast tego zapisujemy okresowo znacznik czasu obok config.db;
-        # docker-compose sprawdza jego świeżość (patrz HEALTHCHECK w
-        # docker-compose.yml). Błąd zapisu (np. chwilowy problem z
-        # dyskiem/uprawnieniami) nie powinien wywalać całego bridge'a.
         heartbeat_path = self.config.db_path.parent / ".bridge_heartbeat"
         while True:
             try:
@@ -1001,11 +983,6 @@ class RulesEngine:
         self.presence_simulation.cfg = new_config.raw.get("presence_simulation", {})
         self.presence_simulation.location_cfg = self._location_cfg
 
-        # Akcesoria HAP-python (urządzenia/strefy/sceny wystawione do Home.app) są
-        # budowane raz przy tworzeniu HomeKitBridge - jedyny sposób, żeby dodanie
-        # albo usunięcie urządzenia Tuya faktycznie zniknęło/pojawiło się w
-        # Home.app bez pełnego restartu procesu, to zbudowanie nowej instancji
-        # (z już przeładowanym self.tuya/self.scenes) i podmiana starej.
         old_homekit = self.homekit
         if old_homekit is not None:
             await old_homekit.async_stop()
@@ -1262,10 +1239,6 @@ class RulesEngine:
             if key not in seen:
                 self.history.set_status(key, "iqua", "nieznany", label=name)
 
-        # Jak w _seed_tuya_status_labels - klucze sub-odczytów (poziom soli
-        # itd., patrz _on_iqua_state) muszą być w zbiorze "do zachowania",
-        # inaczej prune_status usunąłby je zaraz po zapisaniu przez pierwsze
-        # odpytanie (klucz spoza tego zbioru = do skasowania).
         iqua_suffixes = ("salt_level_percent", "out_of_salt_estimated_days", "today_use")
         iqua_keys = {f"iqua:{name}" for name in device_names}
         for suffix in iqua_suffixes:

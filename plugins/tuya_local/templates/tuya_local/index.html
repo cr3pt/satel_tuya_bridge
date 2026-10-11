@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -300,7 +301,6 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-
 const PLUGIN_ID = 'tuya_local';
 
 async function loadPluginSettings() {
@@ -331,7 +331,6 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
     showMsg('pluginSettingsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
-
 
 const TUYA_CLOUD_REGIONS = {{ regions | tojson }};
 
@@ -425,7 +424,6 @@ document.getElementById('saveAccountsBtn').addEventListener('click', async () =>
   }
 });
 
-
 function addScanNetworkRow(value) {
   const container = document.getElementById('scanNetworksRows');
   const row = document.createElement('div');
@@ -468,7 +466,6 @@ document.getElementById('saveScanNetworksBtn').addEventListener('click', async (
     showMsg('scanNetworksMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
-
 
 function addGatewayRow(initial) {
   const container = document.getElementById('gatewaysRows');
@@ -519,7 +516,6 @@ function refreshGatewaySelects() {
     select.innerHTML = gatewayOptionsHtml(current);
   });
 }
-
 
 const DEVICE_MODES = {
   local_wifi: 'Lokalnie (WiFi)',
@@ -626,11 +622,6 @@ function addDeviceRow(initial) {
     modeSelect.value = initial.mode || 'local_wifi';
     row.querySelector('.dev-ip').value = initial.ip ?? '';
     row.querySelector('.dev-key').value = initial.local_key ?? '';
-    // BUG realny do niedawna: to pole nigdy nie było wypełniane z initial.cid,
-    // więc każde wczytanie strony pokazywało puste "cid" mimo zapisanej
-    // wartości w configu - a kolejny zapis formularza (np. po dodaniu innego
-    // urządzenia) cichcem nadpisywał ją pustym stringiem (collectDevices()
-    // czyta zawsze bieżącą wartość pola, patrz niżej).
     row.querySelector('.dev-cid').value = initial.cid ?? '';
     typeSelect.value = initial.type || 'socket';
     row.querySelector('.dev-dp').value = initial.dimmer_dp || '';
@@ -772,9 +763,6 @@ document.getElementById('scanLanBtn').addEventListener('click', async () => {
     const updatedDeviceNames = new Map();
     let added = 0;
     devices.forEach(dev => {
-      // Urządzenie już dodane jako bramka Zigbee (np. zaimportowana z Tuya Cloud
-      // bez znanego wtedy adresu IP) - zamiast dublować jako zwykłe urządzenie,
-      // uzupełniamy jej adres IP teraz, gdy odpowiedziała w sieci.
       const gatewayRow = gatewayRowsById.get(dev.id);
       if (gatewayRow || dev.known_gateway_name) {
         const gatewayName = gatewayRow ? gatewayRow.name : dev.known_gateway_name;
@@ -787,13 +775,6 @@ document.getElementById('scanLanBtn').addEventListener('click', async () => {
         updatedGatewayNames.set(dev.id, gatewayName);
         return;
       }
-      // Porównanie ID ze skanu LAN z ID już dodanego wiersza urządzenia (np.
-      // sterowanego przez chmurę, bo import nie znalazł wtedy adresu IP) - ten
-      // zwykły skan LAN tylko INFORMUJE o takim dopasowaniu (patrz status
-      // niżej), nie zmienia niczego w wierszu - świadome przełączenie na
-      // sterowanie lokalne (WiFi/Zigbee) wymaga kliknięcia dedykowanego
-      // przycisku "🔄 Rescan" w sekcji "Urządzenia", żeby migracja trybu
-      // nigdy nie działa się w tle bez wiedzy użytkownika.
       let matchedExisting = false;
       document.querySelectorAll('#devicesRows .repeatable-row').forEach(row => {
         if (row.querySelector('.dev-id').value.trim() !== dev.id) return;
@@ -852,23 +833,11 @@ function _renderGatewayCandidate(d, container) {
   row.querySelector('.set-as-gateway-btn').addEventListener('click', () => {
     addGatewayRow({ name: d.name || d.id, id: d.id, ip: d.ip || '', local_key: d.local_key, version: d.version });
     refreshGatewaySelects();
-    // Pełne przerysowanie zamiast tylko tego wiersza: podurządzenia Zigbee
-    // wskazujące na tę bramkę mogły wcześniej pokazywać "brakuje bramki" -
-    // teraz, gdy bramka istnieje (nawet bez IP), dostają przycisk dodania.
     renderImportResults(lastImportDevices);
   });
   container.appendChild(row);
 }
 
-// Import ZAWSZE dodaje w trybie "Przez chmurę", niezależnie od tego, czy
-// urządzenie ma komplet danych do sterowania lokalnego (IP+local_key) albo
-// widoczną bramkę Zigbee - świadome przełączenie na sterowanie lokalne/bramkę
-// to decyzja użytkownika, podejmowana później przyciskami "🔄/🌉 Rescan" w
-// sekcji "Urządzenia", nigdy przez sam import. local_key/IP/cid i tak zostają
-// zapisane (w ukrytych polach) przy urządzeniu, więc nic z tego, co Tuya
-// Cloud już zwróciła, nie ginie - Rescan ma z czego skorzystać bez ponownego
-// pobierania. Współdzielone przez pojedynczy przycisk "➡ Dodaj" i zbiorczy
-// "➕ Dodaj wszystkie".
 function _addImportedDeviceAsCloud(d, name) {
   const matchedGateway = d.gateway_id ? collectGateways().find(g => g.id === d.gateway_id) : null;
   addDeviceRow({
@@ -914,9 +883,6 @@ function renderImportResults(devices) {
   const localReady = devices.filter(d => !d.is_gateway && !d.gateway_id && d.ip && d.local_key);
   const cloudOnly = devices.filter(d => !d.is_gateway && !d.gateway_id && !(d.ip && d.local_key));
 
-  // Bramka NIE jest objęta "Dodaj wszystkie" - to osobna decyzja (struktura
-  // "zigbee_gateways", nie "urządzenie" z trybem sterowania), wymaga zawsze
-  // świadomego kliknięcia "🌉 Ustaw jako bramkę Zigbee" przy konkretnym wyniku.
   const existingIds = new Set(collectDevices().map(dev => dev.id));
   const addableDevices = [...subDevices, ...localReady, ...cloudOnly].filter(d => !existingIds.has(d.id));
   if (addableDevices.length) {
@@ -1061,10 +1027,6 @@ async function runDeviceRescan(kind) {
       _applyDeviceModeVisibility(row);
       switched++;
     });
-    // Druga, niezależna funkcja tego samego przycisku (tylko dla bramki/Zigbee):
-    // weryfikacja cid urządzeń JUŻ będących w trybie "Lokalnie (Zigbee)" wobec
-    // tego, co faktycznie zna Tuya Cloud - nigdy nie działa się to samo z siebie,
-    // tylko po tym samym jawnym kliknięciu "🌉 Rescan".
     let cidFixed = 0;
     if (kind === 'gateway') {
       (data.zigbee_cid_checks || []).forEach(c => {

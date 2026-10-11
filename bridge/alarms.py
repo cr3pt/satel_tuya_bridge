@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import asyncio
@@ -19,8 +22,6 @@ class AlarmEngine:
         self.notifier = Notifier(notify_cfg)
         self._state: dict[str, dict] = {r["name"]: {"alert_id": None} for r in rules}
         self._last_seen: dict[str, float] = {}
-        # on_value bywa wołane z wątków paho-mqtt (np. wM-Bus), check_stale_sensors
-        # z pętli asyncio - lista reguł może się zmieniać (add_rule) w trakcie.
         self._rules_lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pending_notifications: set = set()
@@ -106,7 +107,6 @@ class AlarmEngine:
             return
         except RuntimeError:
             pass
-        # wywołanie z obcego wątku (callback MQTT) - tu nie ma pętli asyncio
         if self._loop is None:
             coro.close()
             logger.warning("Alarm '%s': brak pętli asyncio - pomijam powiadomienie push", title)

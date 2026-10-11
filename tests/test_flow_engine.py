@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 import asyncio
 
 import pytest
@@ -115,7 +118,6 @@ class TestConditionNode:
         )
         engine, calls = _engine([flow])
         flow["nodes"][0]["config"] = {"source": "tuya_state", "source_device": "sensor1", "trigger_value": "irrelevant", "op": "changes"}
-        # simulate a numeric payload via device_state handler directly
         await engine.handle_device_state("tuya_state", "sensor1", "20")
         await asyncio.sleep(0.01)
         assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
@@ -356,7 +358,7 @@ class TestMqttInNode:
             ],
         }
         engine, calls = _engine([flow], mqtt_cfg={})
-        engine.start()  # no host configured -> logs warning, but subs are still populated
+        engine.start()
         engine._on_mqtt_message(None, None, FakeMqttMessage("home/in", b"payload"))
         await asyncio.sleep(0.01)
         assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
@@ -494,7 +496,6 @@ class TestDepthLimit:
         engine, _ = _engine([flow])
         await engine.handle_motion("satel_zone", 5)
         await asyncio.sleep(0.2)
-        # No exception raised, and it terminated (test itself completing is the assertion).
 
 
 class TestRunFlow:
@@ -560,8 +561,6 @@ class TestRunFlow:
         engine, calls = _engine([flow], get_status_value=lambda key: "v")
         await engine.run_flow("f1")
         await asyncio.sleep(0.01)
-        # Trigger node itself fires with payload None (its normal manual-test
-        # behavior) - but "cg" (fed by a wire) must not be independently run.
         assert calls["set_target_state"] == [("tuya", "lampa", True, None)]
 
 
@@ -866,9 +865,6 @@ class TestConditionGroupAsTrigger:
         values = {"tuya:garaz": "zamknięte"}
         engine, calls = _engine([flow], get_status_value=lambda key: values.get(key))
 
-        # Zdarzenie niezwiązane z prawdziwym triggerem (zona 5) - "cg" ma
-        # podłączone wejście, więc NIE wolno go traktować jak niezależny
-        # punkt wejściowy, mimo że jego warunek już jest spełniony.
         await engine.handle_motion("satel_zone", 99)
         await asyncio.sleep(0.01)
         assert calls["set_target_state"] == []
@@ -1142,7 +1138,7 @@ class TestFlowEventLogging:
         values = {"tuya:garaz": "otwarte"}
         engine, _calls, events = self._events_engine([flow])
         engine._get_status_value = lambda key: values.get(key)
-        await engine.handle_motion("satel_zone", 99)  # dowolne zdarzenie odpytuje entrypointy
+        await engine.handle_motion("satel_zone", 99)
         assert not events
 
         values["tuya:garaz"] = "zamknięte"

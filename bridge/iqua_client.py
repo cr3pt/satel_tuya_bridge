@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import asyncio
@@ -9,9 +12,6 @@ from iqua_softener import IquaSoftener, IquaSoftenerException
 
 logger = logging.getLogger("bridge.iqua")
 
-# Zmiękczacz soli reaguje na zmiany bardzo powoli (poziom soli/zużycie wody
-# liczą się w dniach, nie sekundach) - stąd znacznie dłuższy domyślny odstęp
-# niż przy AGD LG ThinQ/HomeWhiz (tam odpytywanie wykrywa np. koniec prania).
 _DEFAULT_POLL_INTERVAL_SECONDS = 900
 _MIN_POLL_INTERVAL_SECONDS = 60
 
@@ -95,9 +95,6 @@ class IquaClient:
 
         logger.info("iQua: uruchamiam odpytywanie %d urządzeń co %ss", len(self._devices), self._interval)
         loop = asyncio.get_event_loop()
-        # Jeden IquaSoftener na urządzenie (biblioteka wiąże sesję/token z
-        # konkretnym numerem seryjnym) - logowanie następuje leniwie przy
-        # pierwszym get_data(), a token jest odświeżany przez samą bibliotekę.
         clients = {
             watch.name: IquaSoftener(username, password, watch.serial_number)
             for watch in self._devices.values()
@@ -116,14 +113,6 @@ class IquaClient:
 
         state_name = data.state.value.lower() if data.state is not None else None
         logger.debug("iQua '%s': surowa odpowiedź=%r, stan=%r", watch.name, data, state_name)
-        # W odróżnieniu od LG ThinQ NIE pomijamy wywołania callbacku, gdy stan
-        # (online/offline) się nie zmienił - w tym wywołaniu niesiemy też
-        # poziom soli/zużycie wody, które zmieniają się NIEZALEŻNIE od stanu
-        # połączenia i praktycznie zawsze pozostaje ono "online" - pominięcie
-        # zamroziłoby te odczyty na wartości z pierwszego udanego odpytania.
-        # Ewentualne zbędne, powtarzające się odpalanie triggera Flow/reguły
-        # dla samego pola stanu i tak filtruje `RulesEngine.handle_device_state`
-        # (pamięta ostatnią wartość per urządzenie).
         if state_name != watch.last_state:
             watch.last_state = state_name
             logger.info("iQua '%s': stan -> %s", watch.name, state_name)

@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -211,7 +212,6 @@ function zonesFor(tid) {
   return BUILTIN[tid] ? BUILTIN[tid].zones : [];
 }
 
-// ---------------- konfiguracja: licznik ----------------
 function tariffSelect(value) {
   const s = el('select', { className: 'm-tariff' });
   const ids = Array.from(document.querySelectorAll('.t-id')).map(x => x.value).filter(Boolean);
@@ -245,7 +245,6 @@ function refreshMeterTariffSelects() {
   });
 }
 
-// ---------------- konfiguracja: taryfy ----------------
 function renderZonePrices(card, tid, prices = {}) {
   const box = card.querySelector('.t-zones');
   box.replaceChildren();
@@ -329,7 +328,6 @@ function collectConfig() {
   };
 }
 
-// ---------------- wynik ----------------
 function refreshReportMeters() {
   const sel = document.getElementById('reportMeter');
   const cur = sel.value;
@@ -379,7 +377,6 @@ async function runReport() {
   drawDaily(data.daily || [], r.zones.map(z => z.zone));
 }
 
-// ---------------- wykresy dzienne ----------------
 let dailyCharts = [];
 function drawDaily(daily, zones) {
   dailyCharts.forEach(c => c.destroy()); dailyCharts = [];
@@ -401,7 +398,6 @@ document.getElementById('dailyTableBtn').addEventListener('click', () => {
   document.getElementById('dailyTableBtn').textContent = show ? 'Wykres' : 'Tabela';
 });
 
-// ---------------- podgląd stref ----------------
 async function showSchedule() {
   const tid = document.getElementById('schedTariff').value;
   const variant = document.getElementById('schedVariant').value;

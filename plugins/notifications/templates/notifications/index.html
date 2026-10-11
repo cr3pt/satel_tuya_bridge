@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -144,7 +145,6 @@ function showMsg(elId, ok, text) {
   el.textContent = (ok ? '✅ ' : '❌ ') + text;
 }
 
-
 const PLUGIN_ID = 'notifications';
 
 async function loadPluginSettings() {
@@ -175,7 +175,6 @@ document.getElementById('savePluginSettingsBtn').addEventListener('click', async
     showMsg('pluginSettingsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
-
 
 async function loadTopic() {
   const data = await (await fetch('/api/plugins/notifications/topic')).json();

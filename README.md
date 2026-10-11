@@ -3926,3 +3926,12 @@ satel_tuya_bridge/
   .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.12/3.13
   maintenance.py              # CLI do rotacji/backupu bazy (do crona, patrz sekcja "Rotacja i backup bazy")
 ```
+
+## Licencja
+
+Copyright (c) 2026 cr3pt. Licencja: **BSD-3-Clause + Commons Clause** (pełny tekst w pliku [LICENSE](LICENSE)).
+
+- Wolno używać, modyfikować i dystrybuować za darmo, pod warunkiem zachowania noty copyright i treści licencji (razem z warunkiem Commons Clause).
+- Nie wolno sprzedawać oprogramowania ani pobierać opłat za jego wdrożenie, instalację, hosting lub wsparcie, jeśli wartość usługi wynika w całości lub w istotnej części z funkcji tego oprogramowania.
+- To licencja „source-available", a nie open source w rozumieniu OSI (przez ograniczenie sprzedaży).
+- Każdy plik źródłowy ma w nagłówku odnośnik do licencji (`SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause`).

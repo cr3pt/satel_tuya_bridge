@@ -1,26 +1,22 @@
-# Prawdziwa konfiguracja - zawiera poświadczenia, NIGDY nie commituj
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 config.yaml
 sensors.yaml
 automations.yaml
 satel_fields.yaml
 tuya_devices.yaml
 
-# Plik roboczy kreatora (postęp między krokami /setup) - może zawierać
-# poświadczenia wpisane, ale jeszcze nie zapisane do config.yaml
 .setup_draft.json
 .setup_draft.json.tmp
 
-# Dane zamontowane w Dockerze (docker-compose.yml: ./data:/config)
 data/
 
-# Baza danych historii
 *.db
 *.db-journal
 
-# Lokalne backupy bazy (jeśli backup_dir wskazuje na katalog w repo)
 backups/
 
-# Python
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -31,7 +27,6 @@ htmlcov/
 venv/
 .venv/
 
-# Edytory
 .vscode/
 .idea/
 *.swp

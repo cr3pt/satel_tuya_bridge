@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 import pytest
 
 from bridge import lg_thinq_client as lg
@@ -21,8 +24,6 @@ class TestFriendlyRunState:
 class TestDecodeRunState:
 
     def test_decodes_verified_status_shape(self):
-        # Kształt `{"runState": {"currentState": "..."}}` zweryfikowany wprost
-        # w kodzie pakietu thinqconnect (devices/washer.py: property_map).
         assert lg.decode_run_state({"runState": {"currentState": "RUNNING"}}) == "pranie"
 
     def test_missing_run_state_returns_none(self):
@@ -37,9 +38,6 @@ class TestDecodeRunState:
 class TestListPossibleRunStates:
 
     def test_extracts_readable_enum_values(self):
-        # Ścieżka profile["property"]["runState"]["currentState"]["value"]["r"]
-        # zweryfikowana wprost w kodzie ConnectDeviceProfile._get_properties()
-        # (stała PROPERTY_READABLE == "r").
         profile = {
             "property": {
                 "runState": {

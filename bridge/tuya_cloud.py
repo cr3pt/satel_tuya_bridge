@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import asyncio
@@ -21,15 +24,10 @@ class TuyaCloudController:
     def __init__(
         self, devices_cfg: dict, accounts_cfg: dict[str, dict], retries: int = 2, retry_delay: float = 1.5,
     ):
-        # .strip() na ID: config może pochodzić z importu paczki YAML/ręcznej edycji,
-        # nie tylko z panelu (gdzie pola są już przycięte w JS) - niewidoczna spacja
-        # na końcu ID psuje każde polecenie do Tuya Cloud dla tego urządzenia.
         self.devices_cfg = {
             name: {**cfg, "id": (cfg.get("id") or "").strip()} for name, cfg in devices_cfg.items()
         }
         self.accounts_cfg = accounts_cfg or {}
-        # Konto domyślne dla urządzeń bez jawnie wybranego "cloud_account" (np. sprzed
-        # wprowadzenia wielu kont) - pierwsze skonfigurowane konto.
         self._default_account = next(iter(self.accounts_cfg), None)
         self.retries = retries
         self.retry_delay = retry_delay
@@ -49,8 +47,6 @@ class TuyaCloudController:
         client = self._clients.get(account_name)
         if client is None:
             credentials = self.accounts_cfg[account_name]
-            # .strip() z tego samego powodu co ID wyżej - wklejone z konsoli Tuya IoT
-            # Access ID/Secret często niosą niewidoczne białe znaki.
             client = tinytuya.Cloud(
                 apiRegion=(credentials.get("api_region") or "eu").strip() or "eu",
                 apiKey=(credentials.get("access_id") or "").strip(),
@@ -104,10 +100,6 @@ class TuyaCloudController:
             return [explicit]
         if device_name in self._switch_codes_cache:
             return self._switch_codes_cache[device_name]
-        # Wykrywamy kody wyłącznie z listy "functions" (gwarantowanie zapisywalne DP) -
-        # sam status potrafi raportować też kody tylko-do-odczytu, których wysłanie
-        # w tej samej komendzie co prawdziwy przełącznik odrzuca całą paczkę (Tuya Cloud
-        # zwraca wtedy "command or value not support").
         codes = await self._detect_switch_codes_from_functions(device_name)
         if not codes:
             try:

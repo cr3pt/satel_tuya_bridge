@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import uuid
@@ -75,9 +78,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store,
         elif not existing.get("personal_access_token"):
             return jsonify({"error": "Token PAT (Personal Access Token) jest wymagany"}), 400
         section["country_code"] = country_code
-        # client_id musi być stały (ten sam token PAT + inny client_id = LG traktuje to
-        # jako inne urządzenie klienckie) - generujemy raz i trzymamy, żeby użytkownik
-        # nie musiał sam wymyślać UUID4.
         section.setdefault("client_id", existing.get("client_id") or str(uuid.uuid4()))
         section.setdefault("devices", existing.get("devices", {}))
         _save_section(section)

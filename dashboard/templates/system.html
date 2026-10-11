@@ -1,3 +1,4 @@
+{#- Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE. SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause -#}
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -289,7 +290,6 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-
 async function loadUsers() {
   const resp = await authorizedFetch('/api/system/users');
   const users = await resp.json();
@@ -345,7 +345,6 @@ document.getElementById('addUserBtn').addEventListener('click', async () => {
   loadUsers();
 });
 
-
 async function loadApiTokens() {
   const resp = await authorizedFetch('/api/system/api-tokens');
   const tokens = await resp.json();
@@ -388,7 +387,6 @@ document.getElementById('addApiTokenBtn').addEventListener('click', async () => 
   loadApiTokens();
 });
 
-
 async function loadSettings() {
   const resp = await authorizedFetch('/api/system/settings');
   const data = await resp.json();
@@ -426,7 +424,6 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
     showMsg('settingsMsg', true, data.message);
   }
 });
-
 
 document.getElementById('restartBtn').addEventListener('click', async () => {
   if (!confirm('Zrestartować bridge i panel teraz? Panel przestanie odpowiadać na kilka-kilkanaście sekund.')) {
@@ -508,7 +505,6 @@ document.getElementById('importYamlFile').addEventListener('change', async (e) =
   e.target.value = '';
 });
 
-
 let logsAutoTimer = null;
 
 async function loadLoggerOptions() {
@@ -522,10 +518,6 @@ async function loadLoggerOptions() {
 
   const resp = await authorizedFetch('/api/system/logs/loggers?' + params.toString());
   const loggers = await resp.json();
-  // Zachowaj obecnie wybrany logger jako opcję nawet, jeśli lista znanych
-  // loggerów go jeszcze nie zawiera (np. link "Logi" z karty wtyczki
-  // odesłany tu zanim ta wtyczka cokolwiek zalogowała) - inaczej filtr
-  // po dociągnięciu listy cichnie wracał do "wszystkie loggery".
   const options = current && !loggers.includes(current) ? [current, ...loggers] : loggers;
   select.innerHTML = '<option value="">wszystkie loggery</option>' +
     options.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
@@ -573,8 +565,6 @@ function setupAutoRefresh() {
 document.getElementById('autoRefreshLogs').addEventListener('change', setupAutoRefresh);
 setupAutoRefresh();
 
-// Wejście z linku "Logi" na karcie wtyczki (/plugins) - ?logger=bridge.xyz
-// wstępnie ustawia filtr loggera, zanim jeszcze znamy pełną listę loggerów.
 const initialLogger = new URLSearchParams(location.search).get('logger');
 if (initialLogger) {
   const select = document.getElementById('logLogger');

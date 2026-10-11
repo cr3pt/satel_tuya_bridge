@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 from quart import Quart, jsonify, render_template, request
@@ -133,10 +136,6 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store,
     @app.route("/api/plugins/iqua/devices/test", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
     async def api_plugin_iqua_devices_test():
-        # W odróżnieniu od LG ThinQ/HomeWhiz to API nie ma "listy urządzeń
-        # konta" (numer seryjny/DSN# trzeba przepisać z etykiety na
-        # urządzeniu albo z samej aplikacji iQua) - jedyny sposób sprawdzenia
-        # poprawności danych PRZED zapisaniem to realna próba pobrania stanu.
         form = await request.get_json(silent=True)
         if not isinstance(form, dict):
             return jsonify({"error": "Nieprawidłowe dane"}), 400

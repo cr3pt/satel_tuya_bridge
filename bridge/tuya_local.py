@@ -1,3 +1,6 @@
+# Copyright (c) 2026 cr3pt. BSD-3-Clause with Commons Clause (no selling). See LICENSE.
+# SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
+
 from __future__ import annotations
 
 import asyncio
@@ -80,9 +83,6 @@ _PHASE_RAW_CODES = {"phase_a", "phase_b", "phase_c"}
 _KNOWN_VALUE_SCALES = {
     "forward_energy_total": (2, " kWh"),
     "reverse_energy_total": (2, " kWh"),
-    # Fallback dla urządzeń, których dp_schema nie zawiera meta "scale" (typ "Value")
-    # - bez tego surowa wartość DP (np. 256) wyświetlałaby się bez podzielenia przez 10
-    # (25.6C), zamiast poprawnie przeskalowanej wartości.
     "va_temperature": (1, "°C"),
     "temp_current": (1, "°C"),
 }
@@ -168,9 +168,6 @@ TUYA_CLOUD_REGIONS = {
 
 
 def _login_cloud(api_region: str, access_id: str, access_key: str) -> tinytuya.Cloud:
-    # .strip() - wklejony Access ID/Secret z konsoli Tuya IoT często niesie ze sobą
-    # niewidoczną spację/nową linię, co Tuya Cloud zwraca jako mylące błędy logowania
-    # zamiast jasno powiedzieć "sprawdź białe znaki".
     try:
         cloud = tinytuya.Cloud(
             apiRegion=(api_region or "").strip(), apiKey=(access_id or "").strip(), apiSecret=(access_key or "").strip(),
@@ -251,8 +248,6 @@ def fetch_cloud_devices(
             "gateway_id": d.get("gateway_id", ""),
             "node_id": d.get("node_id", ""),
             "sub": bool(d.get("sub", False)),
-            # Bramka Zigbee - wykryta bez zgadywania kodów kategorii Tuya: to urządzenie,
-            # na które w tym samym imporcie wskazuje pole gateway_id innego urządzenia.
             "is_gateway": dev_id in gateway_ids,
             "dp_schema": dp_schema,
         })
@@ -474,13 +469,6 @@ def extract_tuya_sensor_readings(dps: dict, schema: dict | None = None) -> dict:
                 readings["temperature_celsius"] = round(numeric, 1)
             break
 
-    # Kombinowane czujniki zewnętrzne (np. gleba+powietrze) potrafią wystawić OBIE
-    # wartości wilgotności naraz na osobnych DP - pierwsza znaleziona (kolejność
-    # _HUMIDITY_CODES: va_humidity, potem humidity_value) trafia do głównego
-    # "humidity_percent" (jak dotychczas, dla zwykłych czujników z JEDNĄ wartością),
-    # a DRUGA - o ile też jest obecna na tym samym urządzeniu - do
-    # "soil_humidity_percent" (na czujnikach kombo humidity_value oznacza
-    # wilgotność gleby, w odróżnieniu od va_humidity = wilgotność powietrza).
     humidity_codes_present = [c for c in _HUMIDITY_CODES if c in by_code]
     for i, code in enumerate(humidity_codes_present):
         value, spec = by_code[code]
@@ -585,22 +573,8 @@ class TuyaLocalController:
         self.retry_delay = retry_delay
 
         self._gateways: dict[str, tinytuya.Device] = {}
-        # Jeden asyncio.Lock na bramkę: wszystkie podurządzenia Zigbee pod tą samą
-        # bramką dzielą JEDEN obiekt tinytuya.Device (i jego jedno gniazdo TCP) jako
-        # `parent` - tinytuya nie jest bezpieczne wątkowo, więc równoległe odpytanie
-        # (get_all_statuses robi to przez asyncio.gather na wielu wątkach naraz)
-        # dwóch podurządzeń tej samej bramki w tym samym momencie psuje współdzielone
-        # gniazdo obu wywołaniom na raz - stąd masowe, pozornie przypadkowe błędy
-        # "Check device key or version"/"Network Error" na wszystkich urządzeniach
-        # danej bramki jednocześnie. Blokada serializuje ruch per bramka (różne
-        # bramki i zwykłe urządzenia WiFi nadal działają w pełni równolegle).
         self._gateway_locks: dict[str, asyncio.Lock] = {}
         for name, cfg in self.zigbee_gateways_cfg.items():
-            # .strip() na ID/IP/local_key: config może pochodzić nie tylko z panelu
-            # (gdzie pola są już przycięte w JS), ale też z importu paczki YAML albo
-            # ręcznej edycji configu - niewidoczna spacja/nowa linia na końcu
-            # local_key wygląda identycznie jak poprawny klucz, a tinytuya i tak
-            # zgłasza to jako mylące "Check device key or version".
             gw = tinytuya.Device(cfg["id"].strip(), (cfg.get("ip") or "").strip(), cfg["local_key"].strip())
             gw.set_version(cfg.get("version") or 3.4)
             self._gateways[name] = gw
@@ -750,9 +724,6 @@ class TuyaLocalController:
         for dp_id, spec in schema.items():
             if spec.get("code") == dp_code:
                 return dp_id
-        # Brak opisu pól (dp_schema) albo kod nierozpoznany - zakładamy, że
-        # to już surowy numer DP (tak jak generyczna lista pól w panelu robi
-        # to samo, gdy schemat jest niepełny).
         return dp_code
 
     async def set_dp(self, device_name: str, dp_code: str, value: object, reason: str | None = None) -> None:
