@@ -243,6 +243,7 @@ notifications:
   ntfy_topic_url: "https://ntfy.sh/TWOJ_UNIKALNY_TOPIC"
 
   grace_seconds: 120
+  satel_alarm: true
 
 mqtt_publish:
   enabled: true

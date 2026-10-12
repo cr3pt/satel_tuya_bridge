@@ -27,6 +27,7 @@ from .weather_client import fetch_forecast
 from .boiler_output import build_boiler_publishers, MqttBoilerPublisher, TuyaVirtualDevicePublisher
 from .history_store import HistoryStore
 from .alarms import AlarmEngine
+from .notifier import Notifier
 from .resilience import HealthReporter
 from .scheduling import is_within_window
 from .conditions import evaluate_condition
@@ -97,6 +98,9 @@ class RulesEngine:
         self._wmbus_announced: set[tuple[str, str]] = set()
         self._wmbus_meters: dict[str, dict] = {}
         self._notify_cfg = notify_cfg
+        self.notifier = Notifier(notify_cfg)
+        self._satel_alarm_notify = bool((notify_cfg or {}).get("satel_alarm", True))
+        self._notified_triggered: set[int] = set()
         self._grace_seconds = grace_seconds
         self._tuya_health: HealthReporter | None = None
 
@@ -1290,6 +1294,7 @@ class RulesEngine:
         armed_numbers = self.satel.armed_partition_numbers
         triggered_numbers = self.satel.triggered_partition_numbers
         partition_name_by_number = {v: k for k, v in self.config.satel.get("partitions", {}).items()}
+        await self._notify_satel_alarm(triggered_numbers, partition_name_by_number)
         for partition_number in self.config.satel.get("partitions", {}).values():
             armed = partition_number in armed_numbers
             self.history.set_status(
@@ -1311,6 +1316,32 @@ class RulesEngine:
                 self.homekit.update_partition_state(
                     partition_number, armed, triggered=partition_number in triggered_numbers,
                 )
+
+
+    async def _notify_satel_alarm(self, triggered_numbers: set[int], names: dict[int, str]) -> None:
+        newly = set(triggered_numbers) - self._notified_triggered
+        cleared = self._notified_triggered - set(triggered_numbers)
+        self._notified_triggered = set(triggered_numbers)
+        if not newly and not cleared:
+            return
+
+        def label(numbers: set[int]) -> str:
+            return ", ".join(names.get(n, f"strefa {n}") for n in sorted(numbers))
+
+        if newly:
+            violated = [r["label"] for r in self.history.get_status("satel_input") if r["value"] == "naruszone"]
+            detail = {"partitions": sorted(newly), "violated_inputs": violated}
+            self.history.write_event("alarm", source="satel", detail=detail)
+            text = f"Alarm w strefie: {label(newly)}."
+            if violated:
+                text += " Naruszone wejścia: " + ", ".join(violated) + "."
+            logger.warning("ALARM Satel: %s", text)
+            if self._satel_alarm_notify and self.notifier.enabled:
+                await self.notifier.send("🚨 ALARM - naruszenie", text, priority="urgent")
+        if cleared:
+            self.history.write_event("alarm", source="satel", detail={"cleared_partitions": sorted(cleared)})
+            if self._satel_alarm_notify and self.notifier.enabled:
+                await self.notifier.send("✅ Alarm ustał", f"Strefa: {label(cleared)}.", priority="default")
 
     async def start(self) -> None:
         self.history.write_event("system", detail={"message": "Bridge uruchomiony"})

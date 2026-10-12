@@ -45,16 +45,20 @@
   .field-group { margin-bottom: 18px; }
   .field-group:last-child { margin-bottom: 0; }
   .field-group > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .chk { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 13px; }
+  .chk input { width: auto; }
+  button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
 </style>
 </head>
 <body>
 {% include "_nav.html" %}
 
-<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🔔 Powiadomienia (ntfy)</h1>
+<h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">🔔 Powiadomienia</h1>
 <div class="hint">
-  Push przy utracie/przywróceniu połączenia z centralą/MQTT/Tuya/kamerami
-  oraz przy alarmach progowych, przez <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy.sh</a>
-  (albo własny serwer ntfy). <strong>Wymagane zalogowanie administratora panelu</strong> - dotyczy zarówno przeglądania tej strony, jak i zapisu.
+  Powiadomienia przy <strong>alarmie Satel</strong> (naruszenie), utracie/przywróceniu połączenia z centralą/MQTT/Tuya/kamerami
+  oraz przy alarmach progowych. Kanały dla iPhone'a/Maca: <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a>,
+  e-mail, Pushover, Bark i Pushcut. Alarm idzie jako powiadomienie krytyczne (omija tryb Nie przeszkadzać). <strong>Wymagane zalogowanie administratora panelu</strong> - dotyczy zarówno przeglądania tej strony, jak i zapisu.
 </div>
 
 <div class="section" id="pluginSettingsSection">
@@ -103,6 +107,57 @@
     <button id="saveTopicBtn" type="button">Zapisz</button>
   </div>
   <div id="topicMsg" class="msg-box"></div>
+</div>
+
+<div class="section" id="channelsSection">
+  <h2>Kanały powiadomień</h2>
+  <div class="section-hint">
+    Sekrety (hasło SMTP, klucze Pushover/Bark/Pushcut) <strong>nigdy nie wracają do przeglądarki</strong>; puste pole przy zapisie
+    zachowuje dotychczasową wartość. Adres ntfy ustawiasz wyżej.
+  </div>
+  <label class="chk"><input type="checkbox" id="satelAlarm"> Powiadamiaj o alarmie Satel (wejście strefy w stan alarmu) i jego ustaniu</label>
+
+  <h2 style="margin-top:18px">✉️ E-mail (SMTP)</h2>
+  <label class="chk"><input type="checkbox" id="emEnabled"> Włączony</label>
+  <div class="row2">
+    <div class="field-group"><label>Serwer SMTP</label><input type="text" id="emHost" placeholder="smtp.gmail.com"></div>
+    <div class="field-group"><label>Port</label><input type="number" id="emPort" placeholder="587"></div>
+    <div class="field-group"><label>Szyfrowanie</label>
+      <select id="emSecurity"><option value="starttls">STARTTLS (587)</option><option value="ssl">SSL/TLS (465)</option><option value="none">brak (25)</option></select></div>
+    <div class="field-group"><label>Login</label><input type="text" id="emUser" autocomplete="off"></div>
+    <div class="field-group"><label>Hasło</label><input type="password" id="emPass" autocomplete="new-password"></div>
+    <div class="field-group"><label>Nadawca</label><input type="text" id="emFrom" placeholder="alarm@twojadomena.pl"></div>
+    <div class="field-group"><label>Odbiorcy (po przecinku)</label><input type="text" id="emTo" placeholder="ja@icloud.com"></div>
+  </div>
+
+  <h2 style="margin-top:18px">📱 Pushover (iPhone/iPad/Mac)</h2>
+  <label class="chk"><input type="checkbox" id="poEnabled"> Włączony</label>
+  <div class="row2">
+    <div class="field-group"><label>User key</label><input type="password" id="poUser" autocomplete="off"></div>
+    <div class="field-group"><label>App token</label><input type="password" id="poToken" autocomplete="off"></div>
+    <div class="field-group"><label>Urządzenie (opcjonalnie)</label><input type="text" id="poDevice"></div>
+  </div>
+
+  <h2 style="margin-top:18px">🍎 Bark (iPhone, powiadomienia krytyczne)</h2>
+  <label class="chk"><input type="checkbox" id="bkEnabled"> Włączony</label>
+  <div class="row2">
+    <div class="field-group"><label>Serwer</label><input type="text" id="bkServer" placeholder="https://api.day.app"></div>
+    <div class="field-group"><label>Klucz urządzenia</label><input type="password" id="bkKey" autocomplete="off"></div>
+    <div class="field-group"><label>Grupa (opcjonalnie)</label><input type="text" id="bkGroup" placeholder="satel-bridge"></div>
+  </div>
+
+  <h2 style="margin-top:18px">⚡ Pushcut (iPhone/Mac, uruchamia Skróty)</h2>
+  <label class="chk"><input type="checkbox" id="pcEnabled"> Włączony</label>
+  <div class="row2">
+    <div class="field-group"><label>Klucz API</label><input type="password" id="pcKey" autocomplete="off"></div>
+    <div class="field-group"><label>Nazwa powiadomienia</label><input type="text" id="pcName" placeholder="Alarm"></div>
+  </div>
+
+  <div class="actions-bar">
+    <button id="saveChannelsBtn" type="button">Zapisz kanały</button>
+    <button id="testBtn" class="secondary" type="button">Wyślij test (priorytet krytyczny)</button>
+  </div>
+  <div id="channelsMsg" class="msg-box"></div>
 </div>
 
 <script>
@@ -203,6 +258,65 @@ document.getElementById('saveTopicBtn').addEventListener('click', async () => {
     }
   } catch (e) {
     showMsg('topicMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+function $(id) { return document.getElementById(id); }
+function ph(input, has) { input.value = ''; input.placeholder = has ? '•••••• (zapisane - zostaw puste, by nie zmieniać)' : ''; }
+
+async function loadChannels() {
+  const d = await (await fetch('/api/plugins/notifications/channels')).json();
+  $('satelAlarm').checked = !!d.satel_alarm;
+  $('emEnabled').checked = d.email.enabled; $('emHost').value = d.email.host; $('emPort').value = d.email.port;
+  $('emSecurity').value = d.email.security; $('emUser').value = d.email.username; $('emFrom').value = d.email.from;
+  $('emTo').value = d.email.to; ph($('emPass'), d.email.has_password);
+  $('poEnabled').checked = d.pushover.enabled; $('poDevice').value = d.pushover.device;
+  ph($('poUser'), d.pushover.has_user_key); ph($('poToken'), d.pushover.has_app_token);
+  $('bkEnabled').checked = d.bark.enabled; $('bkServer').value = d.bark.server; $('bkGroup').value = d.bark.group;
+  ph($('bkKey'), d.bark.has_device_key);
+  $('pcEnabled').checked = d.pushcut.enabled; $('pcName').value = d.pushcut.notification_name; ph($('pcKey'), d.pushcut.has_api_key);
+}
+loadChannels();
+
+function channelsPayload() {
+  return {
+    satel_alarm: $('satelAlarm').checked,
+    email: { enabled: $('emEnabled').checked, host: $('emHost').value, port: $('emPort').value, security: $('emSecurity').value,
+             username: $('emUser').value, password: $('emPass').value, from: $('emFrom').value, to: $('emTo').value },
+    pushover: { enabled: $('poEnabled').checked, user_key: $('poUser').value, app_token: $('poToken').value, device: $('poDevice').value },
+    bark: { enabled: $('bkEnabled').checked, server: $('bkServer').value, device_key: $('bkKey').value, group: $('bkGroup').value },
+    pushcut: { enabled: $('pcEnabled').checked, api_key: $('pcKey').value, notification_name: $('pcName').value },
+  };
+}
+
+$('saveChannelsBtn').addEventListener('click', async () => {
+  try {
+    const resp = await authorizedFetch('/api/plugins/notifications/channels', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(channelsPayload()),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showMsg('channelsMsg', false, (data.error || 'Błąd zapisu') + ' ' + (data.details || []).join('; '));
+    } else {
+      showMsg('channelsMsg', true, data.message + (data.channels.length ? ' Aktywne kanały: ' + data.channels.join(', ') + '.' : ''));
+      await loadChannels();
+    }
+  } catch (e) {
+    showMsg('channelsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
+  }
+});
+
+$('testBtn').addEventListener('click', async () => {
+  try {
+    const resp = await authorizedFetch('/api/plugins/notifications/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ priority: 'urgent' }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { showMsg('channelsMsg', false, data.error || 'Błąd'); return; }
+    const parts = Object.entries(data.results).map(([k, v]) => k + ': ' + (v === null ? 'OK' : v));
+    showMsg('channelsMsg', data.ok, 'Wynik testu - ' + parts.join(', '));
+  } catch (e) {
+    showMsg('channelsMsg', false, 'Błąd komunikacji z serwerem: ' + e);
   }
 });
 </script>
