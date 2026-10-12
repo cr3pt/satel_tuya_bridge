@@ -8,8 +8,8 @@ import pytest
 
 from bridge import notifier as nt
 from bridge.notifier import Notifier
-from tests.test_plugin_routes import _basic_auth_header, client  # noqa: F401
-from tests.test_rules_engine import CONFIG_TEMPLATE, SENSORS_YAML, engine  # noqa: F401
+from tests.test_plugin_routes import _basic_auth_header, client
+from tests.test_rules_engine import CONFIG_TEMPLATE, SENSORS_YAML, engine
 
 AUTH = _basic_auth_header("test_haslo_123")
 PO_USER = "u" * 30
