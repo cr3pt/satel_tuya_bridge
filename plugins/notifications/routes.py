@@ -5,23 +5,26 @@ from __future__ import annotations
 
 from quart import Quart, jsonify, render_template, request
 
+from bridge import notifier as notifier_mod
+
 from plugins import PluginMeta, register_settings_route
 
 def describe_state(config_raw: dict) -> dict:
     notifications = config_raw.get("notifications", {}) or {}
+    channels = notifier_mod.Notifier(notifications).channels
     return {
-        "enabled": notifications.get("enabled", True) and bool(notifications.get("ntfy_topic_url")),
-        "configured": bool(notifications.get("ntfy_topic_url")),
-        "detail": "skonfigurowane" if notifications.get("ntfy_topic_url") else "nieskonfigurowane",
+        "enabled": notifications.get("enabled", True) and bool(channels),
+        "configured": bool(channels),
+        "detail": "kanały: " + ", ".join(channels) if channels else "nieskonfigurowane",
     }
 
 
 META = PluginMeta(
     id="notifications",
-    name="Powiadomienia push (ntfy)",
+    name="Powiadomienia (ntfy, e-mail, Pushover, Bark, Pushcut)",
     icon="🔔",
-    description="Push przy utracie/przywróceniu połączenia z centralą/MQTT/Tuya/kamerami oraz przy "
-                "alarmach progowych.",
+    description="Powiadomienia (ntfy, e-mail, Pushover, Bark, Pushcut - iPhone/Apple) przy alarmie "
+                "Satel, utracie połączenia z centralą/MQTT/Tuya/kamerami oraz przy alarmach progowych.",
     config_url="/plugins/notifications",
     config_key="notifications",
     describe_state=describe_state,
@@ -77,6 +80,43 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store,
         enqueue_bridge_reload()
 
         return jsonify({"message": "Zapisano. Bridge sam przeładuje konfigurację w ciągu ok. 1-2s, bez restartu procesu."})
+
+    @app.route("/api/plugins/notifications/channels", methods=["GET"])
+    async def api_plugin_notifications_channels_get():
+        return jsonify(notifier_mod.public_view(_get_notifications_section()))
+
+    @app.route("/api/plugins/notifications/channels", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_notifications_channels_post():
+        form = await request.get_json(silent=True)
+        if not isinstance(form, dict):
+            return jsonify({"error": "Nieprawidłowe dane"}), 400
+        existing = _get_notifications_section()
+        clean, errors = notifier_mod.validate_channels(form, existing)
+        if errors:
+            return jsonify({"error": "Popraw błędy:", "details": errors}), 400
+        section = dict(existing)
+        section.update(clean)
+        if "satel_alarm" in form:
+            section["satel_alarm"] = bool(form["satel_alarm"])
+        _save_notifications_section(section)
+        reload_bridge_config()
+        enqueue_bridge_reload()
+        return jsonify({"message": "Zapisano. Bridge przeładuje konfigurację w ciągu ok. 1-2s.",
+                        "channels": notifier_mod.Notifier(section).channels})
+
+    @app.route("/api/plugins/notifications/test", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_notifications_test():
+        body = await request.get_json(silent=True) or {}
+        priority = body.get("priority") if body.get("priority") in notifier_mod.PRIORITIES else "default"
+        notifier = notifier_mod.Notifier(_get_notifications_section())
+        if not notifier.enabled:
+            return jsonify({"error": "Żaden kanał powiadomień nie jest skonfigurowany"}), 400
+        results = await notifier.send_detailed(
+            "🔔 Test powiadomień", "Testowe powiadomienie z panelu Satel-Tuya-eBUS.", priority=priority,
+        )
+        return jsonify({"results": results, "ok": all(v is None for v in results.values())})
 
     register_settings_route(
         app, "notifications", require_auth=require_auth, get_auth_guard=get_auth_guard,

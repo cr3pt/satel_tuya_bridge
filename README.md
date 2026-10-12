@@ -1697,6 +1697,39 @@ tymi samymi poświadczeniami z zakładki wyżej, z własnym, leniwie
 tworzonym i buforowanym klientem (jedna próba ponowienia ze świeżym
 klientem przy błędzie, np. wygasłej sesji).
 
+### Powiadomienia o alarmie (iPhone/Mac: e-mail, Pushover, Bark, Pushcut, ntfy)
+
+Gdy strefa Satel przejdzie w stan **alarmu** (naruszenie przy uzbrojonej strefie), bridge:
+
+- zapisuje zdarzenie typu `alarm` w historii (strefy + lista naruszonych wejść),
+- wysyła powiadomienie **krytyczne** na wszystkie skonfigurowane kanały, a po ustaniu alarmu zwykłe „Alarm ustał".
+
+Kanały ustawiasz w panelu: `/plugins/notifications` (przycisk „Wyślij test"), albo w `config.yaml`:
+
+```yaml
+notifications:
+  ntfy_topic_url: "https://ntfy.sh/TWOJ_TEMAT"
+  satel_alarm: true
+  email: {enabled: true, host: smtp.gmail.com, port: 587, security: starttls, username: ja@gmail.com, password: "haslo-aplikacji", from: ja@gmail.com, to: [ja@icloud.com]}
+  pushover: {enabled: true, user_key: "...30 znaków...", app_token: "...30 znaków..."}
+  bark: {enabled: true, server: "https://api.day.app", device_key: "..."}
+  pushcut: {enabled: true, api_key: "...", notification_name: "Alarm"}
+```
+
+| Kanał | Apple | Priorytet „alarm" |
+|---|---|---|
+| ntfy | aplikacja ntfy (iOS) | `urgent` |
+| e-mail (SMTP) | Poczta na iPhonie/Macu (np. do `@icloud.com`) | `X-Priority: 1` |
+| Pushover | aplikacja Pushover (iOS/Mac) | priorytet 2 - powtarza do potwierdzenia |
+| Bark | aplikacja Bark (iOS) | `level=critical` - omija Nie przeszkadzać |
+| Pushcut | aplikacja Pushcut (iOS/Mac), może uruchomić Skrót | time-sensitive |
+
+Bezpośredni APNs wymaga konta Apple Developer i własnej aplikacji, dlatego używamy wymienionych usług.
+Sekrety (hasło SMTP, klucze) nigdy nie wracają do przeglądarki - puste pole przy zapisie zachowuje wartość.
+Każdy kanał działa niezależnie: awaria jednego (np. SMTP) nie blokuje pozostałych.
+`satel_alarm: false` wyłącza wysyłkę (zdarzenie w historii zostaje). Te same kanały obsługują też
+alarmy progowe, utratę połączeń i węzeł `notify` we flow.
+
 ### Powiadomienia push o utracie/przywróceniu połączenia
 
 Oprócz samego panelu, bridge wysyła **powiadomienie push (ntfy)**, gdy
@@ -3888,7 +3921,7 @@ satel_tuya_bridge/
     history_store.py         # baza SQLite (odczyty + zdarzenia + alarmy + statusy)
     alarms.py                # silnik alarmów progowych + powiadomienia ntfy
     resilience.py            # reconnect z exponential backoff + zdrowie połączeń
-    notifier.py               # wspólna wysyłka powiadomień push (ntfy)
+    notifier.py               # wspólna wysyłka powiadomień (ntfy, e-mail, Pushover, Bark, Pushcut)
     scheduling.py             # okna czasowe (stałe godziny / wschód-zachód słońca)
     scenes.py                 # sceny - grupy akcji na wielu urządzeniach naraz
     presence_simulation.py    # losowe przełączanie urządzeń w oknie czasowym
@@ -3920,7 +3953,7 @@ satel_tuya_bridge/
     mqtt_publish/routes.py    # /plugins/mqtt_publish - tematy MQTT (Satel/Tuya)
     unifi_protect/routes.py   # /plugins/unifi_protect - host/login/hasło kontrolera UniFi OS
     homewhiz/routes.py        # /plugins/homewhiz - konto HomeWhiz + odkrywanie/wybór monitorowanych urządzeń
-    notifications/routes.py   # /plugins/notifications - adres tematu ntfy + okres ciszy
+    notifications/routes.py   # /plugins/notifications - kanały (ntfy, e-mail, Pushover, Bark, Pushcut), test, okres ciszy
     presence_simulation/routes.py  # /plugins/presence_simulation - włącznik/log_level (lista urządzeń w /automations)
   tests/                     # testy pytest (patrz sekcja "Testy automatyczne")
   .github/workflows/tests.yml  # CI - uruchamia testy na Python 3.12/3.13
