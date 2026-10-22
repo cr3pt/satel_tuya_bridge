@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import sys
 from pathlib import Path
 
@@ -80,8 +81,14 @@ class FakeSatel:
         self._zone_cb = None
         self._output_cb = None
         self._alarm_status_cb = None
+        self._own_output_ts: dict[int, float] = {}
+
+    def recent_own_output(self, number, within_seconds):
+        ts = self._own_output_ts.get(number)
+        return ts is not None and time.monotonic() - ts <= within_seconds
 
     async def set_output(self, number, state):
+        self._own_output_ts[number] = time.monotonic()
         self.calls.append(("output", number, state))
         if state:
             if number not in self.violated_outputs:

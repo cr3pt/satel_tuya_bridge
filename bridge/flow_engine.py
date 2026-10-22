@@ -198,18 +198,19 @@ class FlowEngine:
         entry, entry_gen, flow_id, flow_gen = run
         return self._entry_gen.get(entry, 0) == entry_gen and self._flow_gen.get(flow_id, 0) == flow_gen
 
-    def _invalidate_for_device(self, device_name: str) -> None:
+    def invalidate_device(self, system: str, device_name: str) -> None:
         for flow in self.flows:
             for node in flow.get("nodes", []):
                 c = node.get("config") or {}
-                targets_tuya = (node.get("type") == "device" and c.get("target_system", "tuya") == "tuya") \
-                    or node.get("type") == "tuya_dp"
-                if targets_tuya and c.get("target_device") == device_name:
+                node_type = node.get("type")
+                hits = (node_type == "device" and c.get("target_system", "tuya") == system) \
+                    or (node_type == "tuya_dp" and system == "tuya")
+                if hits and c.get("target_device") == device_name:
                     flow_id = str(flow.get("id"))
                     self._flow_gen[flow_id] = self._flow_gen.get(flow_id, 0) + 1
                     logger.info(
-                        "Flow '%s': urządzenie '%s' zmieniono z zewnątrz - trwające opóźnienia zostają anulowane",
-                        flow.get("name"), device_name,
+                        "Flow '%s': cel '%s' (%s) zmieniono z zewnątrz - trwające opóźnienia zostają anulowane",
+                        flow.get("name"), device_name, system,
                     )
                     break
 
@@ -242,7 +243,7 @@ class FlowEngine:
 
     async def handle_device_state(self, source: str, device_name: str, value: str, external: bool = False) -> None:
         if external and source == "tuya_state":
-            self._invalidate_for_device(device_name)
+            self.invalidate_device("tuya", device_name)
         logger.debug(
             "Flow: handle_device_state(source=%s, device_name=%s, value=%s) - %s flow(s) do sprawdzenia",
             source, device_name, value, len(self.flows),

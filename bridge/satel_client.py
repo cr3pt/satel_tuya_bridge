@@ -105,6 +105,14 @@ async def test_connection(host: str, port: int, timeout_seconds: float = 5.0,
             pass
 
 
+def _violated_zone_numbers(client) -> list[int]:
+    return [number for number, state in client.state.zones.items() if state.violated is True]
+
+
+def _active_output_numbers(client) -> list[int]:
+    return [number for number, state in client.state.outputs.items() if state.active is True]
+
+
 async def discover_active_zones_and_outputs(host: str, port: int, timeout_seconds: float = 60.0,
                                              encryption_key: str | None = None) -> dict:
     from satel_integra import AsyncSatel
@@ -118,10 +126,10 @@ async def discover_active_zones_and_outputs(host: str, port: int, timeout_second
     seen_outputs: set[int] = set()
 
     def _on_zone(_status: dict) -> None:
-        seen_zones.update(client.violated_zones)
+        seen_zones.update(_violated_zone_numbers(client))
 
     def _on_output(_status: dict) -> None:
-        seen_outputs.update(client.violated_outputs)
+        seen_outputs.update(_active_output_numbers(client))
 
     client.register_callbacks(zone_changed_callback=_on_zone, output_changed_callback=_on_output)
 
@@ -321,6 +329,7 @@ class SatelIntegraClient:
         self._zone_cb = None
         self._output_cb = None
         self._alarm_status_cb = None
+        self._own_output_ts: dict[int, float] = {}
         self._reading_loop_alive = True
         self._supervisor = Supervisor("satel", history=history, notify_cfg=notify_cfg, grace_seconds=grace_seconds)
         self.status_poll_interval_seconds = status_poll_interval_seconds
@@ -393,6 +402,10 @@ class SatelIntegraClient:
                 logger.exception("Nie udało się dopytać o stan wejść/wyjść Satela - ponowię próbę")
             await asyncio.sleep(self.status_poll_interval_seconds)
 
+    def recent_own_output(self, output_number: int, within_seconds: float) -> bool:
+        ts = self._own_output_ts.get(output_number)
+        return ts is not None and time.monotonic() - ts <= within_seconds
+
     async def set_output(self, output_number: int, state: bool) -> None:
         if self._client is None:
             raise RuntimeError("Klient Satel nie jest połączony - wywołaj connect() najpierw")
@@ -404,6 +417,7 @@ class SatelIntegraClient:
         from satel_integra.commands import SatelWriteCommand
         from satel_integra.messages import SatelWriteMessage
 
+        self._own_output_ts[output_number] = time.monotonic()
         mode_command = SatelWriteCommand.OUTPUTS_ON if state else SatelWriteCommand.OUTPUTS_OFF
         msg = SatelWriteMessage(mode_command, code=self.integration_key, zones_or_outputs=[output_number])
         await _wait_for_command_result(self._client, f"wyjście {output_number} -> {state}", msg)
@@ -485,18 +499,18 @@ class SatelIntegraClient:
 
     @property
     def violated_zones(self) -> list[int]:
-        return list(self._client.violated_zones) if self._client else []
+        return _violated_zone_numbers(self._client) if self._client else []
 
     @property
     def violated_outputs(self) -> list[int]:
-        return list(self._client.violated_outputs) if self._client else []
+        return _active_output_numbers(self._client) if self._client else []
 
     @property
     def armed_partition_numbers(self) -> set[int]:
         if self._client is None:
             return set()
         numbers: set[int] = set()
-        for partitions in self._client.partition_states.values():
+        for partitions in self._client.state.partition_states.values():
             numbers.update(partitions)
         return numbers
 
@@ -507,7 +521,7 @@ class SatelIntegraClient:
         from satel_integra import AlarmState
         numbers: set[int] = set()
         for state in (AlarmState.TRIGGERED, AlarmState.TRIGGERED_FIRE):
-            numbers.update(self._client.partition_states.get(state, []))
+            numbers.update(self._client.state.partition_states.get(state, []))
         return numbers
 
     @property

@@ -91,6 +91,8 @@ class RulesEngine:
         self._active_timers: dict[str, asyncio.Task] = {}
         self._device_state_last_value: dict[tuple[str, str], str] = {}
         self._own_change_ts: dict[str, float] = {}
+        self._target_gen: dict[tuple[str, int], int] = {}
+        self._output_last: dict[int, bool] = {}
         self._zone_violated_state: dict[int, bool] = {}
         self._rule_and_state: dict[str, bool] = {}
         self._alarm_status_debounce_task: asyncio.Task | None = None
@@ -116,6 +118,7 @@ class RulesEngine:
             config.raw.get("scenes", []), self.tuya, self.satel,
             satel_virtual_inputs=self.satel_virtual_inputs, virtual_input_mode=self._vi_mode,
             history=self.history, on_tuya_state=self._apply_tuya_own_state,
+            on_satel_output=self.supersede_satel_output,
         )
         self.boiler_automation = BoilerAutomation(config.raw.get("boiler_rules", []), self.scenes)
         self.presence_simulation = PresenceSimulation(
@@ -298,6 +301,7 @@ class RulesEngine:
         )
         if external:
             self.tuya.cancel_pending_off(device_name)
+            self.scenes.invalidate_device("tuya", device_name)
         await self.flow_engine.handle_device_state(source, device_name, value, external=external)
 
         now = datetime.now()
@@ -461,9 +465,31 @@ class RulesEngine:
             return target["virtual_input"], "satel_virtual_input"
         return target["target_device"], target.get("target_system", rule.get("target_system", "tuya"))
 
+    def _satel_output_number(self, target_system: str, device: str) -> int | None:
+        if target_system == "satel_output":
+            return self.satel.monitored_outputs.get(device)
+        if target_system == "satel_virtual_input" and self._vi_mode != "http":
+            return self.satel.virtual_inputs.get(device)
+        return None
+
+    def supersede_satel_output(self, output_number: int) -> int:
+        key = ("satel_output", output_number)
+        self._target_gen[key] = self._target_gen.get(key, 0) + 1
+        return self._target_gen[key]
+
+    def _external_satel_change(self, output_number: int) -> None:
+        self.supersede_satel_output(output_number)
+        for name, number in self.satel.monitored_outputs.items():
+            if number == output_number:
+                self.flow_engine.invalidate_device("satel_output", name)
+        for name, number in self.satel.virtual_inputs.items():
+            if number == output_number:
+                self.flow_engine.invalidate_device("satel_virtual_input", name)
+        self.scenes.invalidate_device("satel_output", output_number)
+
     async def _set_target_state(
         self, target_system: str, device: str, on: bool | None, dimmer: int | None = None,
-        reason: str | None = None,
+        reason: str | None = None, supersede: bool = True,
     ) -> None:
         """`on=None` oznacza "zmiana stanu" (toggle) - odwrócenie AKTUALNEGO stanu
         celu zamiast wymuszenia konkretnego. Dla `satel_output` i `satel_virtual_input`
@@ -478,6 +504,10 @@ class RulesEngine:
         strefa ruchu zgłaszająca "naruszona" co kilka sekund, dopóki trwa ruch)
         czytałby wciąż nieaktualny, stary stan i wysyłał tę samą komendę do Tuya
         wielokrotnie zamiast raz."""
+        if supersede:
+            number = self._satel_output_number(target_system, device)
+            if number is not None:
+                self.supersede_satel_output(number)
         if target_system == "satel_output":
             output_number = self.satel.monitored_outputs.get(device)
             if output_number is None:
@@ -535,9 +565,16 @@ class RulesEngine:
             self.history.set_status(f"automation:{rule_name}", "automation", "uruchomiona", label=rule_name)
         try:
             if target_system in ("satel_output", "satel_virtual_input"):
-                await self._set_target_state(target_system, device, True, reason=reason)
+                number = self._satel_output_number(target_system, device)
+                generation = self.supersede_satel_output(number) if number is not None else None
+                await self._set_target_state(target_system, device, True, reason=reason, supersede=False)
                 await asyncio.sleep(duration)
-                await self._set_target_state(target_system, device, False, reason=reason)
+                if number is not None and self._target_gen.get(("satel_output", number)) != generation:
+                    logger.info(
+                        "Pominięto wyłączenie '%s' po czasie - odliczanie zostało zastąpione lub anulowane", device,
+                    )
+                    return
+                await self._set_target_state(target_system, device, False, reason=reason, supersede=False)
             else:
                 async def _on_state_change(is_on: bool, device=device) -> None:
                     await self._apply_tuya_own_state(device, "włączone" if is_on else "wyłączone")
@@ -988,6 +1025,7 @@ class RulesEngine:
             new_config.raw.get("scenes", []), self.tuya, self.satel,
             satel_virtual_inputs=self.satel_virtual_inputs, virtual_input_mode=self._vi_mode,
             history=self.history, on_tuya_state=self._apply_tuya_own_state,
+            on_satel_output=self.supersede_satel_output,
         )
         self.flow_engine.update_flows(new_config.raw.get("flows", []))
         self.flow_engine.location_cfg = self._location_cfg
@@ -1292,6 +1330,30 @@ class RulesEngine:
 
         self.history.prune_status("automation", valid_keys)
 
+    async def _on_satel_output_change(self, status: dict) -> None:
+        output_name_by_number = {v: k for k, v in self.satel.monitored_outputs.items()}
+        for output_number, active in status.items():
+            previous = self._output_last.get(output_number)
+            self._output_last[output_number] = bool(active)
+            if (previous is not None and previous != bool(active)
+                    and not self.satel.recent_own_output(output_number, OWN_ECHO_GRACE_SECONDS)):
+                self._external_satel_change(output_number)
+            self.history.set_status(
+                f"satel_output:{output_number}", "satel_output",
+                "włączone" if active else "wyłączone",
+                label=output_name_by_number.get(output_number, f"wyjście {output_number}"),
+            )
+            if self.ha_mqtt:
+                self.ha_mqtt.publish_state(
+                    f"{self._ha_topic_prefix}/satel/output/{output_number}/state",
+                    "ON" if active else "OFF",
+                )
+            if self.state_mqtt:
+                self.state_mqtt.publish_state(
+                    f"{self._satel_mqtt_topic}/output/{output_number}/state",
+                    "ON" if active else "OFF",
+                )
+
     async def _on_alarm_status_change(self) -> None:
         if self._alarm_status_debounce_task is not None and not self._alarm_status_debounce_task.done():
             self._alarm_status_debounce_task.cancel()
@@ -1394,27 +1456,8 @@ class RulesEngine:
                     trigger="violated" if violated else "restored",
                 )
 
-        async def _on_output_change(status: dict) -> None:
-            output_name_by_number = {v: k for k, v in self.satel.monitored_outputs.items()}
-            for output_number, active in status.items():
-                self.history.set_status(
-                    f"satel_output:{output_number}", "satel_output",
-                    "włączone" if active else "wyłączone",
-                    label=output_name_by_number.get(output_number, f"wyjście {output_number}"),
-                )
-                if self.ha_mqtt:
-                    self.ha_mqtt.publish_state(
-                        f"{self._ha_topic_prefix}/satel/output/{output_number}/state",
-                        "ON" if active else "OFF",
-                    )
-                if self.state_mqtt:
-                    self.state_mqtt.publish_state(
-                        f"{self._satel_mqtt_topic}/output/{output_number}/state",
-                        "ON" if active else "OFF",
-                    )
-
         self.satel.register_zone_callback(_on_zone_change)
-        self.satel.register_output_callback(_on_output_change)
+        self.satel.register_output_callback(self._on_satel_output_change)
         self.satel.register_alarm_status_callback(self._on_alarm_status_change)
 
         if self.config.satel.get("enabled", True):
