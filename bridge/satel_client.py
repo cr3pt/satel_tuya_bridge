@@ -321,6 +321,7 @@ class SatelIntegraClient:
         self._zone_cb = None
         self._output_cb = None
         self._alarm_status_cb = None
+        self._own_output_ts: dict[int, float] = {}
         self._reading_loop_alive = True
         self._supervisor = Supervisor("satel", history=history, notify_cfg=notify_cfg, grace_seconds=grace_seconds)
         self.status_poll_interval_seconds = status_poll_interval_seconds
@@ -393,6 +394,10 @@ class SatelIntegraClient:
                 logger.exception("Nie udało się dopytać o stan wejść/wyjść Satela - ponowię próbę")
             await asyncio.sleep(self.status_poll_interval_seconds)
 
+    def recent_own_output(self, output_number: int, within_seconds: float) -> bool:
+        ts = self._own_output_ts.get(output_number)
+        return ts is not None and time.monotonic() - ts <= within_seconds
+
     async def set_output(self, output_number: int, state: bool) -> None:
         if self._client is None:
             raise RuntimeError("Klient Satel nie jest połączony - wywołaj connect() najpierw")
@@ -404,6 +409,7 @@ class SatelIntegraClient:
         from satel_integra.commands import SatelWriteCommand
         from satel_integra.messages import SatelWriteMessage
 
+        self._own_output_ts[output_number] = time.monotonic()
         mode_command = SatelWriteCommand.OUTPUTS_ON if state else SatelWriteCommand.OUTPUTS_OFF
         msg = SatelWriteMessage(mode_command, code=self.integration_key, zones_or_outputs=[output_number])
         await _wait_for_command_result(self._client, f"wyjście {output_number} -> {state}", msg)
