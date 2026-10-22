@@ -105,6 +105,14 @@ async def test_connection(host: str, port: int, timeout_seconds: float = 5.0,
             pass
 
 
+def _violated_zone_numbers(client) -> list[int]:
+    return [number for number, state in client.state.zones.items() if state.violated is True]
+
+
+def _active_output_numbers(client) -> list[int]:
+    return [number for number, state in client.state.outputs.items() if state.active is True]
+
+
 async def discover_active_zones_and_outputs(host: str, port: int, timeout_seconds: float = 60.0,
                                              encryption_key: str | None = None) -> dict:
     from satel_integra import AsyncSatel
@@ -118,10 +126,10 @@ async def discover_active_zones_and_outputs(host: str, port: int, timeout_second
     seen_outputs: set[int] = set()
 
     def _on_zone(_status: dict) -> None:
-        seen_zones.update(client.violated_zones)
+        seen_zones.update(_violated_zone_numbers(client))
 
     def _on_output(_status: dict) -> None:
-        seen_outputs.update(client.violated_outputs)
+        seen_outputs.update(_active_output_numbers(client))
 
     client.register_callbacks(zone_changed_callback=_on_zone, output_changed_callback=_on_output)
 
@@ -491,18 +499,18 @@ class SatelIntegraClient:
 
     @property
     def violated_zones(self) -> list[int]:
-        return list(self._client.violated_zones) if self._client else []
+        return _violated_zone_numbers(self._client) if self._client else []
 
     @property
     def violated_outputs(self) -> list[int]:
-        return list(self._client.violated_outputs) if self._client else []
+        return _active_output_numbers(self._client) if self._client else []
 
     @property
     def armed_partition_numbers(self) -> set[int]:
         if self._client is None:
             return set()
         numbers: set[int] = set()
-        for partitions in self._client.partition_states.values():
+        for partitions in self._client.state.partition_states.values():
             numbers.update(partitions)
         return numbers
 
@@ -513,7 +521,7 @@ class SatelIntegraClient:
         from satel_integra import AlarmState
         numbers: set[int] = set()
         for state in (AlarmState.TRIGGERED, AlarmState.TRIGGERED_FIRE):
-            numbers.update(self._client.partition_states.get(state, []))
+            numbers.update(self._client.state.partition_states.get(state, []))
         return numbers
 
     @property
