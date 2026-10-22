@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause AND LicenseRef-Commons-Clause
 
 import asyncio
+from types import SimpleNamespace
 import contextlib
 import time
 
@@ -47,9 +48,7 @@ class FakeAsyncSatel:
         self._confirm_response = confirm_response if confirm_response is not None else _ok_result()
         self._hang_confirm = hang_confirm
 
-        self.violated_zones: list[int] = []
-        self.violated_outputs: list[int] = []
-        self.partition_states: dict = {}
+        self.state = SimpleNamespace(zones={}, outputs={}, partition_states={})
 
         self._stopped = False
         self.closed_called = False
@@ -239,8 +238,8 @@ class FakeAsyncSatelDiscovery(FakeAsyncSatel):
 
     async def _play_events(self):
         for zones, outputs in self._events:
-            self.violated_zones = zones
-            self.violated_outputs = outputs
+            self.state.zones = {n: SimpleNamespace(violated=True) for n in zones}
+            self.state.outputs = {n: SimpleNamespace(active=True) for n in outputs}
             if self._zone_changed_callback:
                 self._zone_changed_callback({})
             if self._output_changed_callback:
@@ -543,7 +542,7 @@ class TestPatchSatelIntegraVariableLengthBitmasks:
 
         client._zones_violated(msg)
 
-        assert client.violated_zones == [1, 3]
+        assert [n for n, z in client.state.zones.items() if z.violated is True] == [1, 3]
 
     def test_matching_length_still_decoded_correctly(self):
         from bridge.satel_client import _patch_satel_integra_variable_length_bitmasks
@@ -770,7 +769,7 @@ class TestArmedPartitionNumbers:
         client = SatelIntegraClient("127.0.0.1", 7094, "key")
 
         class FakeClient:
-            partition_states = {"mode_a": [1, 2], "mode_b": [2, 3]}
+            state = SimpleNamespace(partition_states={"mode_a": [1, 2], "mode_b": [2, 3]})
 
         client._client = FakeClient()
         assert client.armed_partition_numbers == {1, 2, 3}
@@ -779,7 +778,7 @@ class TestArmedPartitionNumbers:
         client = SatelIntegraClient("127.0.0.1", 7094, "key")
 
         class FakeClient:
-            partition_states = {}
+            state = SimpleNamespace(partition_states={})
 
         client._client = FakeClient()
         assert client.armed_partition_numbers == set()
@@ -797,11 +796,11 @@ class TestTriggeredPartitionNumbers:
         client = SatelIntegraClient("127.0.0.1", 7094, "key")
 
         class FakeClient:
-            partition_states = {
+            state = SimpleNamespace(partition_states={
                 AlarmState.TRIGGERED: [1],
                 AlarmState.TRIGGERED_FIRE: [2],
                 AlarmState.ARMED_MODE0: [3],
-            }
+            })
 
         client._client = FakeClient()
         assert client.triggered_partition_numbers == {1, 2}
@@ -815,7 +814,7 @@ class TestDisarmClearsAlarmMemory:
         client = SatelIntegraClient("127.0.0.1", 7094, "1234")
 
         class FakeClient:
-            partition_states = {AlarmState.TRIGGERED: triggered_partitions}
+            state = SimpleNamespace(partition_states={AlarmState.TRIGGERED: triggered_partitions})
 
             def __init__(self):
                 self.sent: list = []
@@ -1029,3 +1028,41 @@ class TestVirtualInputHttpTrigger:
             await satel_test_virtual_input_http(
                 "192.168.1.50", 9786, "http://{host}:{port}/{name}", "zmywarka",
             )
+
+
+class TestStateAccessors:
+
+    def _client(self, zones=None, outputs=None, partitions=None):
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+        client._client = SimpleNamespace(state=SimpleNamespace(
+            zones={n: SimpleNamespace(violated=v) for n, v in (zones or {}).items()},
+            outputs={n: SimpleNamespace(active=v) for n, v in (outputs or {}).items()},
+            partition_states=partitions or {},
+        ))
+        return client
+
+    def test_violated_zones_only_true(self):
+        client = self._client(zones={1: True, 2: False, 3: None, 4: True})
+        assert client.violated_zones == [1, 4]
+
+    def test_violated_outputs_only_active(self):
+        client = self._client(outputs={1: False, 2: True, 3: None})
+        assert client.violated_outputs == [2]
+
+    def test_empty_when_not_connected(self):
+        client = SatelIntegraClient("127.0.0.1", 7094, "key")
+        assert client.violated_zones == [] and client.violated_outputs == []
+
+    def test_no_deprecated_library_attributes_used(self, recwarn):
+        client = self._client(zones={1: True}, outputs={2: True}, partitions={})
+        client.violated_zones, client.violated_outputs, client.armed_partition_numbers, client.triggered_partition_numbers
+        assert [w for w in recwarn if issubclass(w.category, DeprecationWarning)] == []
+
+    def test_real_library_state_roundtrip(self):
+        from bridge.satel_client import _active_output_numbers, _violated_zone_numbers
+        from satel_integra import AsyncSatel
+
+        real = AsyncSatel("127.0.0.1", 7094)
+        real.state.zones[3].violated = True
+        real.state.outputs[7].active = True
+        assert _violated_zone_numbers(real) == [3] and _active_output_numbers(real) == [7]
