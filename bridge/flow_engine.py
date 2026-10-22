@@ -55,7 +55,11 @@ class FlowEngine:
     MQTT/HTTP). Nie zastępuje jeszcze reguł ruchu (`RulesEngine.handle_motion`/
     `handle_device_state`) - działa obok, nasłuchując tych samych zdarzeń.
 
-    Flow: {id, name, enabled, nodes: [Node]}
+    Flow: {id, name, enabled, retrigger?: restart|parallel, nodes: [Node]}
+      retrigger "restart" (domyślnie): ponowne wyzwolenie tego samego wejścia unieważnia
+      jeszcze trwające opóźnienia poprzednich przebiegów (odliczanie liczy się od nowa);
+      "parallel": przebiegi działają niezależnie. Ręczna (zewnętrzna) zmiana urządzenia
+      Tuya, które flow steruje, unieważnia jego trwające opóźnienia w obu trybach.
     Node: {id, type, config: {...}, wires: [[target_id, ...], ...]}
       wires[port] = lista id węzłów podłączonych do danego wyjścia węzła.
 
@@ -148,6 +152,8 @@ class FlowEngine:
         self._mqtt_subs: dict[str, list[tuple[dict, dict]]] = {}
         self._mqtt_topics: set[str] = set()
         self._trigger_state: dict[str, bool] = {}
+        self._entry_gen: dict[str, int] = {}
+        self._flow_gen: dict[str, int] = {}
         self._get_status_value = get_status_value or (lambda key: None)
         self._escalation_history: dict[str, list[float]] = {}
         self.location_cfg = location_cfg
@@ -179,6 +185,33 @@ class FlowEngine:
             "flow", f"flow:{flow.get('name')}",
             {"node_type": node.get("type"), "node_id": node.get("id"), "key": msg.get("key"), "source": msg.get("source")},
         )
+        flow_id = str(flow.get("id"))
+        entry = f"{flow_id}:{node.get('id')}"
+        if flow.get("retrigger", "restart") != "parallel":
+            self._entry_gen[entry] = self._entry_gen.get(entry, 0) + 1
+        msg["_run"] = (entry, self._entry_gen.get(entry, 0), flow_id, self._flow_gen.get(flow_id, 0))
+
+    def _run_is_current(self, msg: dict) -> bool:
+        run = msg.get("_run")
+        if not run:
+            return True
+        entry, entry_gen, flow_id, flow_gen = run
+        return self._entry_gen.get(entry, 0) == entry_gen and self._flow_gen.get(flow_id, 0) == flow_gen
+
+    def _invalidate_for_device(self, device_name: str) -> None:
+        for flow in self.flows:
+            for node in flow.get("nodes", []):
+                c = node.get("config") or {}
+                targets_tuya = (node.get("type") == "device" and c.get("target_system", "tuya") == "tuya") \
+                    or node.get("type") == "tuya_dp"
+                if targets_tuya and c.get("target_device") == device_name:
+                    flow_id = str(flow.get("id"))
+                    self._flow_gen[flow_id] = self._flow_gen.get(flow_id, 0) + 1
+                    logger.info(
+                        "Flow '%s': urządzenie '%s' zmieniono z zewnątrz - trwające opóźnienia zostają anulowane",
+                        flow.get("name"), device_name,
+                    )
+                    break
 
     async def handle_motion(self, source: str, zone_or_device_id, trigger: str = "violated") -> None:
         logger.debug(
@@ -207,7 +240,9 @@ class FlowEngine:
                 asyncio.create_task(self._propagate(flow, node, msg, 0))
             self._check_condition_group_entrypoints(flow)
 
-    async def handle_device_state(self, source: str, device_name: str, value: str) -> None:
+    async def handle_device_state(self, source: str, device_name: str, value: str, external: bool = False) -> None:
+        if external and source == "tuya_state":
+            self._invalidate_for_device(device_name)
         logger.debug(
             "Flow: handle_device_state(source=%s, device_name=%s, value=%s) - %s flow(s) do sprawdzenia",
             source, device_name, value, len(self.flows),
@@ -486,6 +521,12 @@ class FlowEngine:
 
         if ntype == "delay":
             await asyncio.sleep(float(c.get("seconds") or 0))
+            if not self._run_is_current(msg):
+                logger.info("Flow '%s': opóźnienie przerwane - przebieg został zastąpiony lub anulowany", flow.get("name"))
+                self._write_event(
+                    "flow", f"flow:{flow.get('name')}", {"node": "delay", "node_id": node.get("id"), "cancelled": True},
+                )
+                return []
             return [msg]
 
         if ntype == "notify":

@@ -754,6 +754,7 @@ class TuyaLocalController:
     async def turn_on_for_duration(
         self, device_name: str, duration_seconds: int, dimmer_level_percent: int | None = None,
         reason: str | None = None, on_state_change: Callable[[bool], Awaitable[None]] | None = None,
+        still_valid: Callable[[], bool] | None = None,
     ) -> None:
         """`on_state_change(True/False)` - wołane od razu po udanym
         turn_on/turn_off, ZANIM minie `duration_seconds` - bez tego (patrz
@@ -771,6 +772,9 @@ class TuyaLocalController:
             if on_state_change:
                 await on_state_change(True)
         await asyncio.sleep(duration_seconds)
+        if still_valid is not None and not still_valid():
+            logger.info("Pominięto wyłączenie '%s' po czasie - odliczanie zostało zastąpione lub anulowane", device_name)
+            return
         try:
             await self.turn_off(device_name, reason=reason)
         except ConnectionError:

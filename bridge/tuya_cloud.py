@@ -177,6 +177,7 @@ class TuyaCloudController:
     async def turn_on_for_duration(
         self, device_name: str, duration_seconds: int, dimmer_level_percent: int | None = None,
         reason: str | None = None, on_state_change: Callable[[bool], Awaitable[None]] | None = None,
+        still_valid: Callable[[], bool] | None = None,
     ) -> None:
         try:
             await self.turn_on(device_name, dimmer_level_percent, reason=reason)
@@ -186,6 +187,9 @@ class TuyaCloudController:
             if on_state_change:
                 await on_state_change(True)
         await asyncio.sleep(duration_seconds)
+        if still_valid is not None and not still_valid():
+            logger.info("Pominięto wyłączenie '%s' po czasie - odliczanie zostało zastąpione lub anulowane", device_name)
+            return
         try:
             await self.turn_off(device_name, reason=reason)
         except ConnectionError:

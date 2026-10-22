@@ -193,6 +193,12 @@
   <div class="toolbar">
     <input type="text" id="flowNameInput" placeholder="Nazwa flow">
     <label style="font-size:13px;"><input type="checkbox" id="flowEnabledInput" checked> Włączony</label>
+    <label style="font-size:13px;" title="Co się dzieje, gdy flow wyzwoli się ponownie, zanim skończy się opóźnienie">Ponowne wyzwolenie:
+      <select id="flowRetriggerInput">
+        <option value="restart">restartuj odliczanie</option>
+        <option value="parallel">uruchom równolegle</option>
+      </select>
+    </label>
     <button id="testFlowBtn" type="button" class="secondary">▶ Testuj</button>
     <button id="deleteFlowBtn" type="button" class="secondary" style="color:var(--danger);">✕ Usuń flow</button>
   </div>
@@ -415,6 +421,7 @@ function selectFlow(i) {
   if (!flow) return;
   document.getElementById('flowNameInput').value = flow.name || '';
   document.getElementById('flowEnabledInput').checked = flow.enabled !== false;
+  document.getElementById('flowRetriggerInput').value = flow.retrigger === 'parallel' ? 'parallel' : 'restart';
   renderCanvas();
   renderSidePanel();
   if (window.innerWidth <= 820) fitZoomToContent(); else setZoom(1);
@@ -439,6 +446,11 @@ document.getElementById('flowNameInput').addEventListener('input', (e) => {
   if (activeFlowIndex < 0) return;
   flows[activeFlowIndex].name = e.target.value;
   renderFlowList();
+});
+document.getElementById('flowRetriggerInput').addEventListener('change', (e) => {
+  if (activeFlowIndex < 0) return;
+  if (e.target.value === 'parallel') flows[activeFlowIndex].retrigger = 'parallel';
+  else delete flows[activeFlowIndex].retrigger;
 });
 document.getElementById('flowEnabledInput').addEventListener('change', (e) => {
   if (activeFlowIndex < 0) return;

@@ -26,6 +26,10 @@ class FakeTuya:
         self.reasons: list = []
         self.fail_devices: set[str] = set()
         self.devices_cfg: dict = {}
+        self.cancelled: list[str] = []
+
+    def cancel_pending_off(self, device):
+        self.cancelled.append(device)
 
     async def turn_on(self, device, dimmer_level_percent=None, reason=None):
         if device in self.fail_devices:
@@ -46,7 +50,7 @@ class FakeTuya:
         self.reasons.append(reason)
 
     async def turn_on_for_duration(self, device, duration, dimmer_level_percent=None, reason=None,
-                                    on_state_change=None):
+                                    on_state_change=None, still_valid=None):
         self.calls.append(("on_for", device, duration, dimmer_level_percent))
         self.reasons.append(reason)
         if on_state_change:

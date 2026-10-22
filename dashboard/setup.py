@@ -216,6 +216,9 @@ def validate_flows(flows: list[dict], scene_names: set[str]) -> list[str]:
         if not name:
             errors.append(f"{label}: nazwa jest wymagana")
 
+        if flow.get("retrigger") not in (None, "", "restart", "parallel"):
+            errors.append(f"{label} ('{name or '?'}'): 'retrigger' musi być 'restart' albo 'parallel'")
+
         nodes = flow.get("nodes") or []
         if not nodes:
             errors.append(f"{label} ('{name or '?'}'): musi mieć co najmniej jeden węzeł")
@@ -1359,6 +1362,8 @@ def build_flows(flows_form: list[dict]) -> list[dict]:
         built = {"id": flow.get("id") or name, "name": name, "nodes": built_nodes}
         if flow.get("enabled") is False:
             built["enabled"] = False
+        if flow.get("retrigger") == "parallel":
+            built["retrigger"] = "parallel"
         flows.append(built)
     return flows
 
