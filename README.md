@@ -3068,6 +3068,15 @@ czekają na opóźnieniu. Dlatego:
 - Każda komenda bridge'a (włącz/wyłącz/przełącz) dla urządzenia także zastępuje oczekujące
   wyłączenie „na czas”, a nowe „włącz na czas” restartuje poprzednie.
 - Anulowane opóźnienie zapisuje zdarzenie `flow` z `cancelled: true` w Historii zdarzeń.
+- **To dotyczy każdego rodzaju akcji, nie tylko oświetlenia.** Restart przy ponownym wyzwoleniu
+  działa na węźle „Opóźnienie” niezależnie od tego, co jest za nim (Tuya, wyjście/wirtualne wejście
+  Satela, scena, powiadomienie, MQTT, HTTP). Ręczna zmiana anuluje oczekujące akcje także dla celów
+  Satela (wyjście zmienione z klawiatury/innej automatyzacji spoza bridge'a; echo własnej komendy
+  przez 10 s jest ignorowane), a **sceny** z akcją „Opóźnienie” restartują się przy ponownym
+  uruchomieniu i są anulowane, gdy ręcznie zmieniono urządzenie/wyjście, którym sterują. Reguły
+  ruchu „na czas” dla wyjść Satela mają to samo co Tuya (restart, anulowanie przy ręcznej zmianie i
+  przy jawnej komendzie dla tego samego wyjścia). Nie dotyczy to akcji, które nie mają „urządzenia”
+  do ręcznej zmiany (powiadomienia, MQTT, HTTP) - tam działa tylko restart przy ponownym wyzwoleniu.
 
 Każdy flow musi mieć co najmniej jeden węzeł wejściowy (Trigger albo
 MQTT in) - bez tego graf nigdy się nie uruchomi, co jest sprawdzane przy
