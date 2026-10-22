@@ -42,6 +42,9 @@ from .flow_engine import FlowEngine
 
 logger = logging.getLogger("bridge.rules")
 
+_SWITCH_STATES = ("włączone", "wyłączone")
+OWN_ECHO_GRACE_SECONDS = 10.0
+
 
 def _build_tuya_controller(tuya_cfg: dict) -> TuyaController:
     local = TuyaLocalController(tuya_cfg["devices"], tuya_cfg.get("zigbee_gateways"))
@@ -87,6 +90,7 @@ class RulesEngine:
         )
         self._active_timers: dict[str, asyncio.Task] = {}
         self._device_state_last_value: dict[tuple[str, str], str] = {}
+        self._own_change_ts: dict[str, float] = {}
         self._zone_violated_state: dict[int, bool] = {}
         self._rule_and_state: dict[str, bool] = {}
         self._alarm_status_debounce_task: asyncio.Task | None = None
@@ -277,14 +281,24 @@ class RulesEngine:
 
             await self._fire_motion_rule(rule, rule_key, source, zone_or_device_id, effective_trigger)
 
-    async def handle_device_state(self, source: str, device_name: str, value: str) -> None:
+    async def handle_device_state(self, source: str, device_name: str, value: str, own: bool = False) -> None:
         state_key = (source, device_name)
         old_value = self._device_state_last_value.get(state_key)
         self._device_state_last_value[state_key] = value
+        now_mono = time.monotonic()
+        if source == "tuya_state" and own:
+            self._own_change_ts[device_name] = now_mono
         if old_value == value:
             return
 
-        await self.flow_engine.handle_device_state(source, device_name, value)
+        external = (
+            source == "tuya_state" and not own
+            and old_value in _SWITCH_STATES and value in _SWITCH_STATES
+            and now_mono - self._own_change_ts.get(device_name, float("-inf")) > OWN_ECHO_GRACE_SECONDS
+        )
+        if external:
+            self.tuya.cancel_pending_off(device_name)
+        await self.flow_engine.handle_device_state(source, device_name, value, external=external)
 
         now = datetime.now()
         for idx, rule in enumerate(self.config.motion_rules):
@@ -502,7 +516,7 @@ class RulesEngine:
         fizycznie/z apki), reakcja przychodziła z opóźnieniem do 30s zamiast
         natychmiast."""
         self.history.set_status(f"tuya:{device}", "tuya", value, label=device)
-        await self.handle_device_state("tuya_state", device, value)
+        await self.handle_device_state("tuya_state", device, value, own=True)
 
     async def _set_tuya_dp(self, device: str, dp_code: str, value: object, reason: str | None = None) -> None:
         """Wrapper wołany przez FlowEngine (węzeł "Ustaw pole Tuya") - jak

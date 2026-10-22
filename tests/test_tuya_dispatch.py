@@ -29,7 +29,7 @@ class FakeSubController:
         return {name: {"1": True} for name in self.devices_cfg}
 
     async def turn_on_for_duration(self, device_name, duration_seconds, dimmer_level_percent=None, reason=None,
-                                    on_state_change=None):
+                                    on_state_change=None, still_valid=None):
         self.calls.append(("turn_on_for_duration", device_name, duration_seconds, dimmer_level_percent))
         self.on_state_change_callbacks.append(on_state_change)
 

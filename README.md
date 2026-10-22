@@ -3051,6 +3051,24 @@ W trybie `library` (wirtualne wejście zmapowane na prawdziwe wyjście)
 "Wyłącz"/"Włącz"/"Zmiana stanu" działają jak zwykłe wyjście Satela -
 bez tego ograniczenia.
 
+**Ponowne wyzwolenie i ręczna zmiana a opóźnienie.** Węzeł „Kończący” (Stop) kończy
+tylko bieżącą gałąź bieżącego przebiegu - nie anuluje innych przebiegów, które wciąż
+czekają na opóźnieniu. Dlatego:
+
+- **Ponowne wyzwolenie** (przełącznik „Ponowne wyzwolenie” w edytorze flow, pole `retrigger`):
+  domyślnie `restart` - kolejne wyzwolenie tego samego wejścia unieważnia trwające opóźnienia
+  poprzednich przebiegów, więc odliczanie (np. 3 minuty) liczy się od nowa i jest tylko jedno
+  wyłączenie. `parallel` - przebiegi działają niezależnie (jak dawniej).
+- **Ręczna zmiana urządzenia** (z przełącznika/aplikacji, wykryta z odpytywania Tuya, tylko
+  przejścia włączone/wyłączone, nie liczą się odpowiedzi w ciągu 10 s od komendy bridge'a):
+  anuluje trwające opóźnienia flow, które to urządzenie sterują, oraz oczekujące wyłączenie
+  reguł ruchu/scen „włącz na czas”. Jeśli trigger flow to „urządzenie włączone”, ręczne włączenie
+  uruchamia go od nowa (czyli pełne odliczanie od początku); reguła ruchu z czasem po ręcznym
+  włączeniu nie wyłączy światła, dopóki czujka nie uruchomi jej ponownie.
+- Każda komenda bridge'a (włącz/wyłącz/przełącz) dla urządzenia także zastępuje oczekujące
+  wyłączenie „na czas”, a nowe „włącz na czas” restartuje poprzednie.
+- Anulowane opóźnienie zapisuje zdarzenie `flow` z `cancelled: true` w Historii zdarzeń.
+
 Każdy flow musi mieć co najmniej jeden węzeł wejściowy (Trigger albo
 MQTT in) - bez tego graf nigdy się nie uruchomi, co jest sprawdzane przy
 zapisie.

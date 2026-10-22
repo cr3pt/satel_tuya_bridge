@@ -14,6 +14,7 @@ class TuyaController:
     def __init__(self, local: TuyaLocalController, cloud: TuyaCloudController):
         self.local = local
         self.cloud = cloud
+        self._timer_gen: dict[str, int] = {}
 
     @property
     def devices_cfg(self) -> dict:
@@ -28,15 +29,21 @@ class TuyaController:
             return self.cloud
         raise KeyError(f"Nieznane urządzenie Tuya: '{device_name}'")
 
+    def cancel_pending_off(self, device_name: str) -> None:
+        self._timer_gen[device_name] = self._timer_gen.get(device_name, 0) + 1
+
     async def turn_on(
         self, device_name: str, dimmer_level_percent: int | None = None, reason: str | None = None,
     ) -> None:
+        self.cancel_pending_off(device_name)
         await self._resolve(device_name).turn_on(device_name, dimmer_level_percent, reason=reason)
 
     async def turn_off(self, device_name: str, reason: str | None = None) -> None:
+        self.cancel_pending_off(device_name)
         await self._resolve(device_name).turn_off(device_name, reason=reason)
 
     async def toggle(self, device_name: str, reason: str | None = None) -> None:
+        self.cancel_pending_off(device_name)
         await self._resolve(device_name).toggle(device_name, reason=reason)
 
     async def set_dp(self, device_name: str, dp_code: str, value: object, reason: str | None = None) -> None:
@@ -55,6 +62,9 @@ class TuyaController:
         self, device_name: str, duration_seconds: int, dimmer_level_percent: int | None = None,
         reason: str | None = None, on_state_change: Callable[[bool], Awaitable[None]] | None = None,
     ) -> None:
+        self.cancel_pending_off(device_name)
+        generation = self._timer_gen[device_name]
         await self._resolve(device_name).turn_on_for_duration(
             device_name, duration_seconds, dimmer_level_percent, reason=reason, on_state_change=on_state_change,
+            still_valid=lambda: self._timer_gen.get(device_name) == generation,
         )
