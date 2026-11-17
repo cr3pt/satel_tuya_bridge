@@ -42,6 +42,7 @@ def _known_prefixes(config_raw: dict) -> list[str]:
     prefixes.add(topics.get("lg_thinq", "lg_thinq"))
     prefixes.add(topics.get("iqua", "iqua"))
     prefixes.add(topics.get("smartthings", "smartthings"))
+    prefixes.add(topics.get("wmbus", "wmbus"))
 
     boiler_mqtt = (config_raw.get("boiler_output", {}) or {}).get("mqtt", {}) or {}
     prefixes.add(boiler_mqtt.get("topic_prefix", "home/boiler"))
@@ -75,6 +76,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             "lg_thinq_topic": topics.get("lg_thinq", "lg_thinq"),
             "iqua_topic": topics.get("iqua", "iqua"),
             "smartthings_topic": topics.get("smartthings", "smartthings"),
+            "wmbus_topic": topics.get("wmbus", "wmbus"),
         })
 
     @app.route("/api/plugins/mqtt_publish/topics", methods=["POST"])
@@ -93,6 +95,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_raw, get_co
             "lg_thinq": (form.get("lg_thinq_topic") or "").strip() or "lg_thinq",
             "iqua": (form.get("iqua_topic") or "").strip() or "iqua",
             "smartthings": (form.get("smartthings_topic") or "").strip() or "smartthings",
+            "wmbus": (form.get("wmbus_topic") or "").strip() or "wmbus",
         }
         _save_mqtt_publish_section(section)
         reload_bridge_config()

@@ -2315,6 +2315,7 @@ class TestStateMqttPublisher:
         assert engine.state_mqtt is not None
         assert engine._satel_mqtt_topic == "satel"
         assert engine._tuya_mqtt_topic == "tuya"
+        assert engine._wmbus_mqtt_topic == "wmbus"
 
     async def test_can_be_disabled_via_config(self, tmp_path):
         engine = self._build_engine(tmp_path, "\nmqtt_publish:\n  enabled: false\n")
@@ -2323,11 +2324,24 @@ class TestStateMqttPublisher:
     async def test_custom_topics_from_config(self, tmp_path):
         engine = self._build_engine(
             tmp_path,
-            "\nmqtt_publish:\n  enabled: true\n  topics:\n    satel: alarm\n    tuya: smart_home\n",
+            "\nmqtt_publish:\n  enabled: true\n  topics:\n    satel: alarm\n    tuya: smart_home\n"
+            "    wmbus: liczniki\n",
         )
         assert engine.state_mqtt is not None
         assert engine._satel_mqtt_topic == "alarm"
         assert engine._tuya_mqtt_topic == "smart_home"
+        assert engine._wmbus_mqtt_topic == "liczniki"
+
+    async def test_wmbus_reading_published_to_state_mqtt(self, tmp_path, mocker):
+        engine = self._build_engine(tmp_path)
+        mocker.patch.object(engine, "boiler_automation")
+        engine.boiler_automation.on_value = mocker.AsyncMock()
+        publish_mock = mocker.patch.object(engine.state_mqtt, "publish_state")
+        meter = {"name": "kuchnia", "label": "Licznik kuchnia", "home_assistant": False,
+                 "phases": 1, "min_history_interval_seconds": 0}
+        engine._wmbus_meters = {"kuchnia": meter}
+        engine.handle_wmbus_reading(meter, {"total_energy_consumption_kwh": 15.5})
+        publish_mock.assert_any_call("wmbus/kuchnia/total_energy_consumption_kwh/state", 15.5)
 
     async def test_independent_of_home_assistant_enabled(self, tmp_path):
         engine = self._build_engine(tmp_path)
