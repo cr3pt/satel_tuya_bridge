@@ -157,6 +157,7 @@ class RulesEngine:
         self._lg_thinq_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("lg_thinq", "lg_thinq")
         self._iqua_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("iqua", "iqua")
         self._smartthings_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("smartthings", "smartthings")
+        self._wmbus_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("wmbus", "wmbus")
         if mqtt_publish_cfg.get("enabled", True) and config.ebus.get("mqtt_host"):
             self.state_mqtt = HomeAssistantMqttBridge(
                 {"mqtt_host": config.ebus["mqtt_host"], "mqtt_port": config.ebus.get("mqtt_port", 1883)},
@@ -850,6 +851,8 @@ class RulesEngine:
             asyncio.run_coroutine_threadsafe(self.boiler_automation.on_value(sensor, value), self._loop)
             if self.ha_mqtt and meter["home_assistant"]:
                 self._publish_wmbus_to_ha(meter, field, value)
+            if self.state_mqtt:
+                self.state_mqtt.publish_state(f"{self._wmbus_mqtt_topic}/{name}/{field}/state", value)
 
         if isinstance(telegram.get("status"), str):
             self.history.set_status(f"wmbus:{name}:status", "wmbus", telegram["status"], label=f"{label}: status")

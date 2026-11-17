@@ -1438,6 +1438,7 @@ class TestMqttPublishPluginPage:
         assert await resp.get_json() == {
             "satel_topic": "satel", "tuya_topic": "tuya", "homewhiz_topic": "homewhiz",
             "lg_thinq_topic": "lg_thinq", "iqua_topic": "iqua", "smartthings_topic": "smartthings",
+            "wmbus_topic": "wmbus",
         }
 
     async def test_topics_post_without_auth_returns_401(self, client):
@@ -1451,6 +1452,7 @@ class TestMqttPublishPluginPage:
             json={
                 "satel_topic": "moj_satel", "tuya_topic": "moje_tuya", "homewhiz_topic": "moj_homewhiz",
                 "lg_thinq_topic": "moj_lg_thinq", "iqua_topic": "moj_iqua", "smartthings_topic": "moj_smartthings",
+                "wmbus_topic": "moj_wmbus",
             },
             headers=_basic_auth_header("test_haslo_123"),
         ))
@@ -1461,7 +1463,7 @@ class TestMqttPublishPluginPage:
         saved = app_module.config_store.get("config")["mqtt_publish"]
         assert saved["topics"] == {
             "satel": "moj_satel", "tuya": "moje_tuya", "homewhiz": "moj_homewhiz", "lg_thinq": "moj_lg_thinq",
-            "iqua": "moj_iqua", "smartthings": "moj_smartthings",
+            "iqua": "moj_iqua", "smartthings": "moj_smartthings", "wmbus": "moj_wmbus",
         }
         assert saved["log_level"] == "WARNING"
 
@@ -1474,7 +1476,8 @@ class TestMqttPublishPluginPage:
         data = await resp.get_json()
         assert data["topics"] == []
         assert set(data["known_prefixes"]) == {
-            "homeassistant", "home/bridge", "satel", "tuya", "homewhiz", "lg_thinq", "iqua", "smartthings", "home/boiler",
+            "homeassistant", "home/bridge", "satel", "tuya", "homewhiz", "lg_thinq", "iqua", "smartthings",
+            "home/boiler", "wmbus",
         }
 
     async def test_explorer_get_shows_recorded_topics(self, client):

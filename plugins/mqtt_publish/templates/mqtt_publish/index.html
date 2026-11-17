@@ -64,7 +64,7 @@
 
 <h1><img src="/static/logo.svg" alt="" width="28" height="28" style="vertical-align:middle;margin-right:8px;border-radius:6px;">📡 Publikacja stanu MQTT</h1>
 <div class="hint">
-  Generyczna publikacja stanu Satela i Tuya na temacie MQTT (osobno od
+  Generyczna publikacja stanu Satela, Tuya i liczników wM-Bus na temacie MQTT (osobno od
   Home Assistant Discovery - zakładka
   <a href="/plugins/home_assistant">🏠 Home Assistant</a>), do własnego
   odbioru (Node-RED, skrypty, inne systemy). Broker MQTT ustawiony jest w
@@ -129,6 +129,10 @@
   <div class="field-group">
     <label>Temat SmartThings</label>
     <input type="text" id="smartthingsTopicInput" placeholder="smartthings">
+  </div>
+  <div class="field-group">
+    <label>Temat wM-Bus (liczniki wody/ciepła/energii)</label>
+    <input type="text" id="wmbusTopicInput" placeholder="wmbus">
   </div>
   <div class="actions-bar">
     <button id="saveTopicsBtn" type="button">Zapisz</button>
@@ -267,6 +271,7 @@ async function loadTopics() {
   document.getElementById('lgThinqTopicInput').value = data.lg_thinq_topic || 'lg_thinq';
   document.getElementById('iquaTopicInput').value = data.iqua_topic || 'iqua';
   document.getElementById('smartthingsTopicInput').value = data.smartthings_topic || 'smartthings';
+  document.getElementById('wmbusTopicInput').value = data.wmbus_topic || 'wmbus';
 }
 loadTopics();
 
@@ -278,6 +283,7 @@ document.getElementById('saveTopicsBtn').addEventListener('click', async () => {
     lg_thinq_topic: document.getElementById('lgThinqTopicInput').value,
     iqua_topic: document.getElementById('iquaTopicInput').value,
     smartthings_topic: document.getElementById('smartthingsTopicInput').value,
+    wmbus_topic: document.getElementById('wmbusTopicInput').value,
   };
   try {
     const resp = await authorizedFetch('/api/plugins/mqtt_publish/topics', {
