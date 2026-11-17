@@ -528,20 +528,32 @@ class TestPatchSatelIntegraVariableLengthBitmasks:
         assert msg.get_active_bits(32) == [1, 3]
 
     def test_zones_violated_handler_survives_16_byte_panel(self):
+        # satel-integra>=1.7.0 przebudował dispatch wiadomości (stara,
+        # prywatna metoda AsyncSatel._zones_violated zniknęła na rzecz
+        # MessageHandlerRegistry + SatelTypedReadMessage) - i przy okazji
+        # SAMA biblioteka zaczęła poprawnie obsługiwać panele 16-bajtowe
+        # (ZONES_VIOLATED ma teraz deklarowane expected_data_lengths=(16, 32)),
+        # więc nasz monkeypatch jest tu już nieużywany (ale nadal
+        # nieszkodliwy - patrz test_patch_is_idempotent). Test zostaje,
+        # żeby pilnować, że 16-bajtowe panele nadal działają, tylko przez
+        # aktualne, publiczne API biblioteki zamiast prywatnej metody.
         from bridge.satel_client import _patch_satel_integra_variable_length_bitmasks
         from satel_integra import AsyncSatel
         from satel_integra.commands import SatelReadCommand
-        from satel_integra.messages import SatelReadMessage
+        from satel_integra.messages import SatelTypedReadMessage
+        from satel_integra.models import SatelBitmaskData
 
         _patch_satel_integra_variable_length_bitmasks()
 
         client = AsyncSatel("127.0.0.1", 7094)
         msg_data = bytearray(16)
         msg_data[0] = 0b00000101
-        msg = SatelReadMessage(SatelReadCommand.ZONES_VIOLATED, msg_data)
+        msg = SatelTypedReadMessage(
+            SatelReadCommand.ZONES_VIOLATED, msg_data,
+            data_type=SatelBitmaskData, expected_data_lengths=(16, 32),
+        )
 
-        client._zones_violated(msg)
-
+        assert client._message_handler_registry.dispatch(msg) is True
         assert [n for n, z in client.state.zones.items() if z.violated is True] == [1, 3]
 
     def test_matching_length_still_decoded_correctly(self):
