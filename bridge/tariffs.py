@@ -273,6 +273,55 @@ def consumption_by_zone(readings: list[dict], tariff: Tariff, ts_from: float, ts
     return result
 
 
+def _delta_kwh_in_range(readings: list[dict], ts_from: float, ts_to: float,
+                        max_gap_seconds: float, scale: float) -> tuple[float, float, int, int, int]:
+    """Przyrost licznika w [ts_from, ts_to] BEZ podziału na strefy wg czasu -
+    do rejestrów, które licznik/urządzenie JUŻ rozdzielił na strefy (np.
+    wM-Bus `total_energy_consumption_tariff_1_kwh`/`tariff_2_kwh` - osobny
+    rejestr per strefa, zamiast jednego dzielonego wg godzin).
+    Zwraca (kwh, unallocated_kwh, resets, gaps, samples)."""
+    points = sorted(((r["t"], r["v"] * scale) for r in readings), key=lambda p: p[0])
+    kwh = unallocated = 0.0
+    resets = gaps = 0
+    for (t0, v0), (t1, v1) in zip(points, points[1:]):
+        dt = t1 - t0
+        if dt <= 0:
+            continue
+        dv = v1 - v0
+        if dv < 0:
+            resets += 1
+            continue
+        a, b = max(t0, ts_from), min(t1, ts_to)
+        if b <= a:
+            continue
+        dv *= (b - a) / dt
+        if dt > max_gap_seconds:
+            gaps += 1
+            unallocated += dv
+            continue
+        kwh += dv
+    return kwh, unallocated, resets, gaps, len(points)
+
+
+def consumption_from_zone_sensors(zone_readings: dict[str, list[dict]], zones: tuple[str, ...], ts_from: float, ts_to: float,
+                                   max_gap_seconds: float = 6 * 3600, scale: float = 1.0) -> Consumption:
+    """Jak `consumption_by_zone`, ale gdy KAŻDA strefa ma WŁASNY, osobny
+    czujnik/rejestr (zamiast jednego rejestru dzielonego wg godzin) - zużycie
+    każdej strefy liczone jest z jej własnych odczytów, bez podziału czasowego
+    (sam podział już zrobił licznik)."""
+    result = Consumption(kwh_by_zone={z: 0.0 for z in zones})
+    for zone in zones:
+        kwh, unallocated, resets, gaps, samples = _delta_kwh_in_range(
+            zone_readings.get(zone) or [], ts_from, ts_to, max_gap_seconds, scale,
+        )
+        result.kwh_by_zone[zone] = kwh
+        result.unallocated_kwh += unallocated
+        result.resets += resets
+        result.gaps += gaps
+        result.samples += samples
+    return result
+
+
 def _zone_price_net(prices: dict, zone: str, other: float) -> float | None:
     """Cena netto za kWh w strefie albo None, gdy cena nie jest ustawiona.
     Ceny można podać jako liczbę (suma) albo {energy_net, distribution_net}."""
@@ -492,15 +541,34 @@ def _validate_energy_config(data) -> dict:
             raise ValueError(f"Zduplikowana nazwa licznika: '{name}'")
         seen.add(name)
         sensor = str(m.get("sensor") or "").strip()
-        if not sensor:
-            raise ValueError(f"Licznik '{name}': wskaż czujnik z historii (narastający licznik kWh)")
         tid = str(m.get("tariff") or "").strip()
         if tid not in tariffs:
             raise ValueError(f"Licznik '{name}': taryfa '{tid}' nie jest skonfigurowana (dodaj ją z cenami)")
+        tariff_obj = resolve_tariff(tid, tariffs[tid].get("variant"), custom)
+
+        zone_sensors_in = m.get("zone_sensors") or {}
+        if not isinstance(zone_sensors_in, dict):
+            raise ValueError(f"Licznik '{name}': zone_sensors - oczekiwano obiektu {{strefa: czujnik}}")
+        zone_sensors: dict[str, str] = {}
+        for zone, sens in zone_sensors_in.items():
+            if zone not in tariff_obj.zones:
+                raise ValueError(
+                    f"Licznik '{name}': nieznana strefa '{zone}' dla taryfy '{tid}' "
+                    f"(strefy: {', '.join(tariff_obj.zones)})",
+                )
+            sens = str(sens or "").strip()
+            if sens:
+                zone_sensors[zone] = sens
+
+        if not sensor and not zone_sensors:
+            raise ValueError(
+                f"Licznik '{name}': wskaż czujnik z historii (narastający licznik kWh) "
+                f"albo osobny czujnik dla każdej strefy",
+            )
         raw_scale = m.get("scale")
         scale = _num(1 if raw_scale in (None, "") else raw_scale, f"Licznik '{name}': mnożnik", 1e-9)
         meters.append({"name": name, "label": str(m.get("label") or name).strip(), "sensor": sensor,
-                       "tariff": tid, "scale": scale})
+                       "tariff": tid, "scale": scale, "zone_sensors": zone_sensors})
 
     return {"vat_percent": vat, "max_gap_minutes": max_gap, "custom_tariffs": custom,
             "tariffs": tariffs, "meters": meters}
@@ -530,24 +598,77 @@ def daily_breakdown(readings: list[dict], tariff: Tariff, pricing: dict, ts_from
     return days
 
 
-def build_report(energy_cfg: dict, meter: dict, readings: list[dict], ts_from: float, ts_to: float) -> dict:
+def daily_breakdown_zone_sensors(zone_readings: dict[str, list[dict]], tariff: Tariff, pricing: dict,
+                                 ts_from: float, ts_to: float, max_gap_seconds: float, scale: float,
+                                 default_vat_percent: float = 23.0) -> list[dict]:
+    """Jak `daily_breakdown`, ale dla liczników z osobnym czujnikiem per
+    strefa (patrz `consumption_from_zone_sensors`)."""
+    days = []
+    d = datetime.fromtimestamp(ts_from, TZ).date()
+    last = datetime.fromtimestamp(ts_to, TZ).date()
+    pts_by_zone = {z: sorted(r, key=lambda r: r["t"]) for z, r in zone_readings.items()}
+    while d <= last:
+        d0 = max(datetime(d.year, d.month, d.day, tzinfo=TZ).timestamp(), ts_from)
+        nxt = d + timedelta(days=1)
+        d1 = min(datetime(nxt.year, nxt.month, nxt.day, tzinfo=TZ).timestamp(), ts_to)
+        if d1 > d0:
+            sub = {
+                z: [r for r in pts if d0 - max_gap_seconds <= r["t"] <= d1 + max_gap_seconds]
+                for z, pts in pts_by_zone.items()
+            }
+            cons = consumption_from_zone_sensors(sub, tariff.zones, d0, d1, max_gap_seconds=max_gap_seconds, scale=scale)
+            res = compute_cost(cons, pricing, tariff, d0, d1, default_vat_percent=default_vat_percent)
+            days.append({"date": d.isoformat(), "from": d0, "to": d1,
+                         "kwh_by_zone": {z["zone"]: z["kwh"] for z in res["zones"]},
+                         "total_kwh": res["total_kwh"], "cost_gross": res["total_gross"]})
+        d = nxt
+    return days
+
+
+def build_report(energy_cfg: dict, meter: dict, readings: list[dict] | None, ts_from: float, ts_to: float,
+                 zone_readings: dict[str, list[dict]] | None = None) -> dict:
     """Koszt wg taryfy przypisanej do licznika + porównanie ze WSZYSTKIMI
-    skonfigurowanymi taryfami na tych samych odczytach ("ile bym zapłacił w G12w?")."""
+    skonfigurowanymi taryfami na tych samych odczytach ("ile bym zapłacił w G12w?").
+
+    Dwa tryby (patrz `meter.get("zone_sensors")`):
+     - pojedynczy czujnik (`readings`) - zużycie dzielone na strefy WG GODZIN
+       zgodnie z harmonogramem taryfy (`consumption_by_zone`);
+     - osobny czujnik per strefa (`zone_readings`) - licznik SAM already
+       rozdzielił zużycie na rejestry (np. wM-Bus tariff_1/tariff_2), więc
+       liczymy wprost z nich (`consumption_from_zone_sensors`), bez podziału
+       wg godzin. Porównanie z innymi taryfami działa wtedy TYLKO dla taryf
+       o identycznym zestawie stref (inaczej nie wiadomo, który rejestr
+       odpowiada której strefie innej taryfy)."""
     custom = energy_cfg.get("custom_tariffs") or {}
     vat = float(energy_cfg.get("vat_percent", 23))
     max_gap = float(energy_cfg.get("max_gap_minutes", 360)) * 60
     scale = float(meter.get("scale", 1) or 1)
+    meter_pricing = energy_cfg["tariffs"][meter["tariff"]]
+    meter_tariff = resolve_tariff(meter["tariff"], meter_pricing.get("variant"), custom)
+    using_zone_sensors = bool(meter.get("zone_sensors"))
 
     def one(tid: str) -> dict:
         pricing = energy_cfg["tariffs"][tid]
         tariff = resolve_tariff(tid, pricing.get("variant"), custom)
-        cons = consumption_by_zone(readings, tariff, ts_from, ts_to, max_gap_seconds=max_gap, scale=scale)
+        if using_zone_sensors:
+            if tariff.zones != meter_tariff.zones:
+                raise ValueError(
+                    f"Taryfa '{tid}': inny zestaw stref niż czujniki per strefa tego licznika "
+                    f"({', '.join(meter_tariff.zones)}) - porównanie niemożliwe",
+                )
+            cons = consumption_from_zone_sensors(zone_readings or {}, tariff.zones, ts_from, ts_to,
+                                                  max_gap_seconds=max_gap, scale=scale)
+        else:
+            cons = consumption_by_zone(readings or [], tariff, ts_from, ts_to, max_gap_seconds=max_gap, scale=scale)
         return compute_cost(cons, pricing, tariff, ts_from, ts_to, default_vat_percent=vat)
 
     report = one(meter["tariff"])
-    pricing = energy_cfg["tariffs"][meter["tariff"]]
-    daily = daily_breakdown(readings, resolve_tariff(meter["tariff"], pricing.get("variant"), custom), pricing,
-                            ts_from, ts_to, max_gap_seconds=max_gap, scale=scale, default_vat_percent=vat)
+    if using_zone_sensors:
+        daily = daily_breakdown_zone_sensors(zone_readings or {}, meter_tariff, meter_pricing, ts_from, ts_to,
+                                             max_gap_seconds=max_gap, scale=scale, default_vat_percent=vat)
+    else:
+        daily = daily_breakdown(readings or [], meter_tariff, meter_pricing, ts_from, ts_to,
+                                max_gap_seconds=max_gap, scale=scale, default_vat_percent=vat)
     comparison = []
     for tid in energy_cfg["tariffs"]:
         try:
@@ -556,5 +677,10 @@ def build_report(energy_cfg: dict, meter: dict, readings: list[dict], ts_from: f
                                "missing_prices": r["missing_prices"], "active": tid == meter["tariff"]})
         except ValueError as exc:
             comparison.append({"tariff": tid, "error": str(exc), "active": tid == meter["tariff"]})
-    return {"meter": {k: meter[k] for k in ("name", "label", "sensor", "tariff")},
-            "period": {"from": ts_from, "to": ts_to}, "result": report, "comparison": comparison, "daily": daily}
+    return {
+        "meter": {
+            "name": meter["name"], "label": meter["label"], "sensor": meter.get("sensor", ""),
+            "tariff": meter["tariff"], "zone_sensors": meter.get("zone_sensors") or {},
+        },
+        "period": {"from": ts_from, "to": ts_to}, "result": report, "comparison": comparison, "daily": daily,
+    }
