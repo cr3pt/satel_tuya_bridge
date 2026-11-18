@@ -134,6 +134,10 @@
     <label>Temat wM-Bus (liczniki wody/ciepła/energii)</label>
     <input type="text" id="wmbusTopicInput" placeholder="wmbus">
   </div>
+  <div class="field-group">
+    <label>Temat ESPHome</label>
+    <input type="text" id="esphomeTopicInput" placeholder="esphome">
+  </div>
   <div class="actions-bar">
     <button id="saveTopicsBtn" type="button">Zapisz</button>
   </div>
@@ -272,6 +276,7 @@ async function loadTopics() {
   document.getElementById('iquaTopicInput').value = data.iqua_topic || 'iqua';
   document.getElementById('smartthingsTopicInput').value = data.smartthings_topic || 'smartthings';
   document.getElementById('wmbusTopicInput').value = data.wmbus_topic || 'wmbus';
+  document.getElementById('esphomeTopicInput').value = data.esphome_topic || 'esphome';
 }
 loadTopics();
 
@@ -284,6 +289,7 @@ document.getElementById('saveTopicsBtn').addEventListener('click', async () => {
     iqua_topic: document.getElementById('iquaTopicInput').value,
     smartthings_topic: document.getElementById('smartthingsTopicInput').value,
     wmbus_topic: document.getElementById('wmbusTopicInput').value,
+    esphome_topic: document.getElementById('esphomeTopicInput').value,
   };
   try {
     const resp = await authorizedFetch('/api/plugins/mqtt_publish/topics', {

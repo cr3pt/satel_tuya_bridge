@@ -2280,14 +2280,14 @@ system + urządzenie źródłowe + wyzwalacz + rodzaj akcji), **2. Wyjście**
 **4. Harmonogram**, **5. Eskalacja** - patrz sekcje niżej po szczegóły
 każdej z nich.
 
-### Wejście reguły ruchu: Satel, albo stan urządzenia Tuya/HomeWhiz/LG ThinQ/iQua/SmartThings (`source`)
+### Wejście reguły ruchu: Satel, albo stan urządzenia Tuya/HomeWhiz/LG ThinQ/iQua/SmartThings/ESPHome (`source`)
 
 Reguła ruchu wyzwala się nie tylko naruszeniem wejścia Satela - może też
 reagować na **stan dowolnego urządzenia Tuya albo urządzenia AGD
-HomeWhiz/LG ThinQ, zmiękczacza wody iQua, albo dowolnego urządzenia
-SmartThings** (patrz sekcje "Zmywarki/AGD HomeWhiz", "Pralki/AGD LG ThinQ",
-"Zmiękczacze wody iQua" i "SmartThings" niżej). Pole "System" w sekcji
-"1. Wejście" wybiera źródło:
+HomeWhiz/LG ThinQ, zmiękczacza wody iQua, dowolnego urządzenia
+SmartThings, albo encji urządzenia ESPHome** (patrz sekcje "Zmywarki/AGD
+HomeWhiz", "Pralki/AGD LG ThinQ", "Zmiękczacze wody iQua", "SmartThings" i
+"ESPHome" niżej). Pole "System" w sekcji "1. Wejście" wybiera źródło:
 
 - **Satel (wejście)** (`source: satel_zone`, domyślne) - jak dotąd:
   `zone_number` + `trigger_on` (naruszenie/ustanie).
@@ -2323,6 +2323,14 @@ SmartThings** (patrz sekcje "Zmywarki/AGD HomeWhiz", "Pralki/AGD LG ThinQ",
   pobieranej na żywo listy, bo capability SmartThings są zbyt różnorodne,
   żeby sensownie zredukować je do jednej listy wyboru), patrz sekcja
   "SmartThings" niżej.
+- **ESPHome** (`source: esphome_state`) - `source_device` w formacie
+  `<urządzenie>:<object_id>` (lista wyboru pochodzi z już ZAOBSERWOWANYCH
+  encji, nie z samej konfiguracji - w odróżnieniu od pozostałych integracji
+  encje ESPHome są odkrywane dynamicznie, więc urządzenie musi się
+  najpierw przynajmniej raz połączyć z bridgem, zanim jego encje pojawią
+  się na liście) + `trigger_value` (zwykłe pole tekstowe - `włączone`/
+  `wyłączone` dla przełączników/czujników binarnych, liczba dla czujników),
+  patrz sekcja "ESPHome" niżej.
 
 ```yaml
 reguły_ruchu:
@@ -3637,6 +3645,68 @@ wejście automatyzacji" wyżej). W odróżnieniu od nich pole wartości
 wyzwalającej jest zwykłym tekstem (bez stałej ani pobieranej listy) - zbyt
 wiele różnych capability, żeby sensownie zredukować je do jednej listy
 wyboru.
+
+## ESPHome
+
+Natywne połączenie z urządzeniami [ESPHome](https://esphome.io/) (ESP32/ESP8266) przez biblioteką
+`aioesphomeapi` (`bridge/esphome_client.py`) - binarny protokół API na porcie **6053**, BEZ
+pośrednictwa MQTT czy Home Assistant. W odróżnieniu od pozostałych integracji AGD/IoT w tym
+projekcie (cloud-polling: Tuya, iQua, HomeWhiz, LG ThinQ, SmartThings) to jest **lokalne,
+push-based** połączenie: bridge łączy się bezpośrednio z urządzeniem w sieci lokalnej i dostaje
+zmiany stanu natychmiast, z automatycznym ponawianiem połączenia (`aioesphomeapi.ReconnectLogic` -
+narastające odstępy między próbami + nasłuch mDNS, żeby wykryć urządzenie, gdy znów jest w sieci).
+
+**Dowolna encja, nie tylko czujniki.** Każde urządzenie ESPHome wystawia własny, dynamicznie
+odkrywany zestaw encji (czujniki, czujniki binarne, przełączniki, światła, przyciski...) - bridge
+odkrywa je automatycznie po połączeniu (`list_entities_services()`), bez żadnej konfiguracji
+encji w panelu. Każda staje się osobnym statusem pod kluczem `esphome:<urządzenie>:<object_id>` i
+osobnym wejściem automatyzacji (`source: esphome_state`, `source_device: <urządzenie>:<object_id>`)
+- dokładnie tym samym mechanizmem co pozostałe integracje (patrz sekcja "Stan urządzenia jako
+warunek ALBO wejście automatyzacji" wyżej). Wartości logiczne (przełączniki/czujniki binarne)
+tłumaczone są na polski (`włączone`/`wyłączone`), liczbowe (czujniki) trafiają też do historii
+narastających odczytów (`esphome_<urządzenie>_<object_id>`) - przydatne np. dla wtyczki 💰 Koszty
+energii, jeśli urządzenie ESPHome ma własny licznik energii.
+
+**Sterowanie z panelu.** W odróżnieniu od HomeWhiz/LG ThinQ/iQua/SmartThings (tylko odczyt), ESPHome
+wspiera też WYSYŁANIE komend: przełączniki (wł/wył), światła (wł/wył/jasność) i przyciski
+(naciśnięcie) - z zakładki wtyczki, w sekcji "Stan na żywo i sterowanie". Komendy, jak w całym
+panelu, przechodzą przez kolejkę komend bazy danych (ten sam mechanizm co uzbrajanie Satela czy
+włączanie gniazdek Tuya) - panel i proces bridge'a to dwa niezależne procesy, które NIE dzielą
+pamięci, więc sterowanie nigdy nie jest bezpośrednim wywołaniem w procesie panelu.
+
+### Konfiguracja (zakładka 🧩 Wtyczki -> "🔌 ESPHome")
+
+1. W urządzeniu ESPHome musi być włączony komponent `api:` (domyślny w każdym nowym projekcie
+   ESPHome). Jeśli używasz `encryption:`/`api.encryption.key` (zalecane - szyfrowanie Noise), skopiuj
+   tę wartość do pola "Klucz Noise" w panelu; bez szyfrowania zostaw pole puste.
+2. Na `/plugins/esphome` dodaj urządzenie: nazwa (dowolna, unikalna - to ona trafia do klucza
+   statusu), host/IP, port (domyślnie **6053**), opcjonalnie etykieta.
+3. Kliknij "🔍 Testuj połączenie", żeby zweryfikować dane PRZED zapisem (pokazuje nazwę, model,
+   wersję ESPHome i liczbę encji urządzenia) - ten test łączy się z urządzeniem z procesu panelu,
+   niezależnie od procesu bridge'a.
+4. Zapisz urządzenia, włącz wtyczkę w 🧩 Wtyczki i **zrestartuj proces bridge'a w całości** -
+   połączenia ESPHome (tak jak UniFi Protect) są nawiązywane tylko przy starcie procesu, nie
+   przeładowują się samym "Zapisz" jak większość ustawień.
+
+Puste pole "Klucz Noise"/"Hasło" przy zapisie = zostaw bez zmian (ten sam wzorzec co klucze AES
+liczników wM-Bus) - hasło/klucz nigdy nie wracają do przeglądarki po zapisie.
+
+### Przykład: ESP32-S3 + CC1101 jako odbiornik wM-Bus
+
+ESPHome z komponentem [`esphome-components`](https://github.com/SzczepanLeon/esphome-components)
+(`wmbus_radio`/`wmbus_meter`) może pełnić funkcję odbiornika wM-Bus dla liczników wody/ciepła/prądu
+(np. Apator/ELGAMA Gama 350, sterownik `amiplus` w `wmbusmeters`) na module CC1101 podłączonym do
+ESP32 - bez osobnego dongla USB i `wmbusmeters` na odrębnej maszynie. Dwie drogi integracji z tym
+projektem:
+- **Pełne wsparcie ESPHome (ta sekcja)** - akcja `wmbus_meter.send_telegram_with_mqtt` w YAML
+  urządzenia publikuje zdekodowany telegram na MQTT w formacie zgodnym z `wmbusmeters`, ALBO -
+  prościej - same odczyty (moc, energia, napięcie na fazę...) trafiają jako zwykłe encje `sensor:`
+  ESPHome, odkrywane i odczytywane tak jak każde inne urządzenie opisane wyżej, bez żadnej
+  dodatkowej konfiguracji MQTT.
+- **Wtyczka ⚡ Liczniki wM-Bus** - jeśli wolisz trzymać się formatu `wmbusmeters` (np. masz już inne
+  liczniki na prawdziwym `wmbusmeters`), skonfiguruj `wmbus_meter.send_telegram_with_mqtt` na temat
+  `wmbusmeters/<nazwa>` i dodaj licznik na `/plugins/wmbus` jak każdy inny - bridge nie rozróżnia,
+  skąd pochodzi telegram.
 
 ## Synchronizacja czasu
 

@@ -2316,6 +2316,7 @@ class TestStateMqttPublisher:
         assert engine._satel_mqtt_topic == "satel"
         assert engine._tuya_mqtt_topic == "tuya"
         assert engine._wmbus_mqtt_topic == "wmbus"
+        assert engine._esphome_mqtt_topic == "esphome"
 
     async def test_can_be_disabled_via_config(self, tmp_path):
         engine = self._build_engine(tmp_path, "\nmqtt_publish:\n  enabled: false\n")
@@ -2325,12 +2326,13 @@ class TestStateMqttPublisher:
         engine = self._build_engine(
             tmp_path,
             "\nmqtt_publish:\n  enabled: true\n  topics:\n    satel: alarm\n    tuya: smart_home\n"
-            "    wmbus: liczniki\n",
+            "    wmbus: liczniki\n    esphome: urzadzenia\n",
         )
         assert engine.state_mqtt is not None
         assert engine._satel_mqtt_topic == "alarm"
         assert engine._tuya_mqtt_topic == "smart_home"
         assert engine._wmbus_mqtt_topic == "liczniki"
+        assert engine._esphome_mqtt_topic == "urzadzenia"
 
     async def test_wmbus_reading_published_to_state_mqtt(self, tmp_path, mocker):
         engine = self._build_engine(tmp_path)
@@ -2397,3 +2399,176 @@ class TestAlarmStatusDebounce:
         statuses = {s["label"]: s["value"] for s in engine.history.get_status("satel_partition")}
         assert statuses["Dom"] == "uzbrojona"
         assert statuses["Garaz"] == "uzbrojona"
+
+
+def _fake_esphome_entity(object_id="relay", name="Przekaźnik", key=1):
+    return type("FakeEntityInfo", (), {"object_id": object_id, "name": name, "key": key})()
+
+
+class TestEsphomeEntitiesCallback:
+
+    async def test_writes_meta_status_for_each_entity(self, engine):
+        entity = _fake_esphome_entity()
+        await engine._on_esphome_entities("gama350", [entity])
+        rows = engine.history.get_status("esphome_meta")
+        assert any(
+            r["key"] == "esphome_meta:gama350:relay" and r["label"] == "Przekaźnik" and r["value"] == "FakeEntityInfo"
+            for r in rows
+        )
+
+    async def test_falls_back_to_key_when_object_id_missing(self, engine):
+        entity = _fake_esphome_entity(object_id="", key=7)
+        await engine._on_esphome_entities("gama350", [entity])
+        assert engine.history.get_status_value("esphome_meta:gama350:7") is not None
+
+
+class TestEsphomeStateCallback:
+
+    async def test_numeric_value_written_to_history_and_alarms(self, engine, mocker):
+        engine.boiler_automation.on_value = mocker.AsyncMock()
+        alarm_mock = mocker.patch.object(engine.alarms, "on_value")
+        entity = _fake_esphome_entity(object_id="power", name="Moc chwilowa")
+        await engine._on_esphome_state("gama350", entity, 1234.5)
+
+        assert engine.history.get_status_value("esphome:gama350:power") == "1234.5"
+        rows = {r["label"]: r for r in engine.history.get_status("esphome")}
+        assert rows["gama350: Moc chwilowa"]["value"] == "1234.5"
+        assert engine.history.get_history("esphome_gama350_power", 0, time.time() + 1)
+        alarm_mock.assert_any_call("esphome_gama350_power", 1234.5)
+
+    async def test_boolean_value_formatted_as_wlaczone_wylaczone(self, engine, mocker):
+        engine.boiler_automation.on_value = mocker.AsyncMock()
+        entity = _fake_esphome_entity(object_id="relay", name="Przekaźnik")
+
+        await engine._on_esphome_state("gama350", entity, True)
+        assert engine.history.get_status_value("esphome:gama350:relay") == "włączone"
+
+        await engine._on_esphome_state("gama350", entity, False)
+        assert engine.history.get_status_value("esphome:gama350:relay") == "wyłączone"
+
+    async def test_also_dispatches_to_device_state_motion_rules(self, engine, fake_tuya, mocker):
+        engine.boiler_automation.on_value = mocker.AsyncMock()
+        engine.config.store.set("automations", {
+            "scenes": [], "presence_simulation": {"enabled": False},
+            "reguły_ruchu": [{
+                "source": "esphome_state", "source_device": "gama350:ruch", "trigger_value": "włączone",
+                "target_device": "gniazdko_salon", "duration_seconds": 5,
+            }],
+        })
+        await engine.reload_config()
+        _repatch_fakes(engine, fake_tuya=fake_tuya)
+        engine.boiler_automation.on_value = mocker.AsyncMock()
+
+        entity = _fake_esphome_entity(object_id="ruch", name="Czujnik ruchu")
+        await engine._on_esphome_state("gama350", entity, True)
+        await asyncio.sleep(0)
+        assert any(c[0] == "on_for" and c[1] == "gniazdko_salon" for c in fake_tuya.calls)
+
+    async def test_published_to_state_mqtt_when_configured(self, tmp_path, mocker):
+        engine = TestStateMqttPublisher()._build_engine(tmp_path)
+        mocker.patch.object(engine, "boiler_automation")
+        engine.boiler_automation.on_value = mocker.AsyncMock()
+        publish_mock = mocker.patch.object(engine.state_mqtt, "publish_state")
+
+        entity = _fake_esphome_entity(object_id="power", name="Moc")
+        await engine._on_esphome_state("gama350", entity, 42.0)
+
+        publish_mock.assert_any_call("esphome/gama350:power/state", 42.0)
+
+
+class TestExecuteCommandEsphome:
+
+    class _FakeDevice:
+        def __init__(self, error: Exception | None = None):
+            self._error = error
+            self.switch_calls = []
+            self.light_calls = []
+            self.button_calls = []
+
+        def _maybe_raise(self):
+            if self._error is not None:
+                raise self._error
+
+        def switch_set(self, object_id, state):
+            self._maybe_raise()
+            self.switch_calls.append((object_id, state))
+
+        def light_set(self, object_id, state, brightness=None):
+            self._maybe_raise()
+            self.light_calls.append((object_id, state, brightness))
+
+        def button_press(self, object_id):
+            self._maybe_raise()
+            self.button_calls.append(object_id)
+
+    class _FakeManager:
+        def __init__(self, devices: dict):
+            self._devices = devices
+
+        def get_device(self, name):
+            return self._devices.get(name)
+
+    async def test_switch_command_marks_done(self, engine):
+        device = self._FakeDevice()
+        engine.esphome_manager = self._FakeManager({"gama350": device})
+        cmd_id = engine.history.enqueue_command(
+            "esphome_switch", {"device": "gama350", "object_id": "relay", "state": True},
+        )
+        await engine._execute_command(engine.history.get_command(cmd_id))
+
+        assert device.switch_calls == [("relay", True)]
+        assert engine.history.get_command(cmd_id)["status"] == "done"
+
+    async def test_light_command_with_brightness_marks_done(self, engine):
+        device = self._FakeDevice()
+        engine.esphome_manager = self._FakeManager({"gama350": device})
+        cmd_id = engine.history.enqueue_command(
+            "esphome_light", {"device": "gama350", "object_id": "lamp", "state": True, "brightness": 0.5},
+        )
+        await engine._execute_command(engine.history.get_command(cmd_id))
+
+        assert device.light_calls == [("lamp", True, 0.5)]
+        assert engine.history.get_command(cmd_id)["status"] == "done"
+
+    async def test_button_command_marks_done(self, engine):
+        device = self._FakeDevice()
+        engine.esphome_manager = self._FakeManager({"gama350": device})
+        cmd_id = engine.history.enqueue_command("esphome_button", {"device": "gama350", "object_id": "restart"})
+        await engine._execute_command(engine.history.get_command(cmd_id))
+
+        assert device.button_calls == ["restart"]
+        assert engine.history.get_command(cmd_id)["status"] == "done"
+
+    async def test_unknown_device_marks_error(self, engine):
+        engine.esphome_manager = self._FakeManager({})
+        cmd_id = engine.history.enqueue_command(
+            "esphome_switch", {"device": "nieznane", "object_id": "relay", "state": True},
+        )
+        await engine._execute_command(engine.history.get_command(cmd_id))
+
+        result = engine.history.get_command(cmd_id)
+        assert result["status"] == "error"
+        assert "nieznane" in result["result"]["error"]
+
+    async def test_no_manager_configured_marks_error(self, engine):
+        assert engine.esphome_manager is None
+        cmd_id = engine.history.enqueue_command(
+            "esphome_switch", {"device": "gama350", "object_id": "relay", "state": True},
+        )
+        await engine._execute_command(engine.history.get_command(cmd_id))
+
+        assert engine.history.get_command(cmd_id)["status"] == "error"
+
+    async def test_device_connection_error_marks_command_error(self, engine):
+        from bridge.esphome_client import EsphomeError
+
+        device = self._FakeDevice(error=EsphomeError("urządzenie nie jest połączone"))
+        engine.esphome_manager = self._FakeManager({"gama350": device})
+        cmd_id = engine.history.enqueue_command(
+            "esphome_switch", {"device": "gama350", "object_id": "relay", "state": True},
+        )
+        await engine._execute_command(engine.history.get_command(cmd_id))
+
+        result = engine.history.get_command(cmd_id)
+        assert result["status"] == "error"
+        assert "połączone" in result["result"]["error"]

@@ -756,6 +756,18 @@ async def api_config_automation_context():
     lg_thinq_devices = sorted((config_raw.get("lg_thinq") or {}).get("devices", {}).keys())
     iqua_devices = sorted((config_raw.get("iqua") or {}).get("devices", {}).keys())
     smartthings_devices = sorted((config_raw.get("smartthings") or {}).get("devices", {}).keys())
+    # ESPHome: w odróżnieniu od pozostałych integracji AGD/IoT, poprawne
+    # "urządzenia źródłowe" (device:object_id) nie są znane z samej
+    # konfiguracji (encje są odkrywane dynamicznie po połączeniu) - lista
+    # pochodzi z już zaobserwowanych encji (kategoria "esphome_meta",
+    # zapisywana przez RulesEngine._on_esphome_entities).
+    esphome_entities = sorted(
+        (
+            {"value": s["key"].removeprefix("esphome_meta:"), "label": f"{s['key'].removeprefix('esphome_meta:')} ({s['label']})"}
+            for s in history.get_status("esphome_meta")
+        ),
+        key=lambda e: e["value"],
+    )
     tuya_dp_options = {
         name: sorted(
             (
@@ -773,6 +785,7 @@ async def api_config_automation_context():
         "dimmer_devices": dimmer_devices, "satel_outputs": satel_outputs, "satel_zones": satel_zones,
         "homewhiz_appliances": homewhiz_appliances, "lg_thinq_devices": lg_thinq_devices,
         "iqua_devices": iqua_devices, "smartthings_devices": smartthings_devices,
+        "esphome_entities": esphome_entities,
         "tuya_dp_options": tuya_dp_options,
     })
 

@@ -19,6 +19,7 @@ from .tuya_cloud_events import TuyaCameraMotionListener
 from .unifi_protect_events import UnifiProtectMotionListener
 from .homewhiz_client import HomeWhizClient
 from .iqua_client import IquaClient
+from .esphome_client import EsphomeManager
 from .lg_thinq_client import LgThinqClient
 from .smartthings_client import SmartThingsClient
 from .ebus_client import EbusMqttListener
@@ -121,6 +122,7 @@ class RulesEngine:
             on_satel_output=self.supersede_satel_output,
         )
         self.boiler_automation = BoilerAutomation(config.raw.get("boiler_rules", []), self.scenes)
+        self.esphome_manager: EsphomeManager | None = None
         self.presence_simulation = PresenceSimulation(
             config.raw.get("presence_simulation", {}), self.tuya, location_cfg=self._location_cfg, history=self.history,
         )
@@ -158,6 +160,7 @@ class RulesEngine:
         self._iqua_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("iqua", "iqua")
         self._smartthings_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("smartthings", "smartthings")
         self._wmbus_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("wmbus", "wmbus")
+        self._esphome_mqtt_topic = mqtt_publish_cfg.get("topics", {}).get("esphome", "esphome")
         if mqtt_publish_cfg.get("enabled", True) and config.ebus.get("mqtt_host"):
             self.state_mqtt = HomeAssistantMqttBridge(
                 {"mqtt_host": config.ebus["mqtt_host"], "mqtt_port": config.ebus.get("mqtt_port", 1883)},
@@ -738,6 +741,43 @@ class RulesEngine:
         if self.state_mqtt:
             self.state_mqtt.publish_state(f"{self._smartthings_mqtt_topic}/{device_name}/state", state_name)
 
+    async def _on_esphome_state(self, device_name: str, entity, value) -> None:
+        """W odróżnieniu od Tuya/HomeWhiz/LG ThinQ (jedno urządzenie = jeden
+        stan on/off), urządzenie ESPHome wystawia wiele niezależnych encji
+        (czujniki, przełączniki, światła...) - stąd każda encja jest tu
+        traktowana jak odrębny "wirtualny" czujnik/urządzenie (klucz
+        `urządzenie:object_id`), żeby dało się ją użyć w regułach ruchu i
+        alarmach dokładnie tak samo jak dowolny inny stan."""
+        object_id = entity.object_id or str(entity.key)
+        sensor_key = f"{device_name}:{object_id}"
+        label = f"{device_name}: {entity.name}" if entity.name else sensor_key
+        value_text = ("włączone" if value else "wyłączone") if isinstance(value, bool) else str(value)
+
+        self.history.set_status(f"esphome:{sensor_key}", "esphome", value_text, label=label)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            self.history.write_reading(f"esphome_{device_name}_{object_id}", value)
+        await self.handle_device_state("esphome_state", sensor_key, value_text)
+        self.alarms.on_value(f"esphome_{device_name}_{object_id}", value_text if isinstance(value, bool) else value)
+
+        if self.ha_mqtt:
+            self.ha_mqtt.publish_state(f"{self._ha_topic_prefix}/esphome/{sensor_key}/state", value)
+        if self.state_mqtt:
+            self.state_mqtt.publish_state(f"{self._esphome_mqtt_topic}/{sensor_key}/state", value)
+
+    async def _on_esphome_entities(self, device_name: str, entities) -> None:
+        """Wywoływane raz po (re)połączeniu z urządzeniem - zapisuje METADANE
+        (typ encji) dla WSZYSTKICH encji, w tym przycisków, które nigdy nie
+        wysyłają stanu (patrz komentarz przy `OnEntities` w esphome_client.py),
+        żeby panel mógł je wyświetlić i obsłużyć zaraz po starcie, zanim
+        nadejdzie pierwszy odczyt."""
+        for info in entities:
+            object_id = info.object_id or str(info.key)
+            sensor_key = f"{device_name}:{object_id}"
+            self.history.set_status(
+                f"esphome_meta:{sensor_key}", "esphome_meta", type(info).__name__,
+                label=info.name or sensor_key,
+            )
+
     async def handle_camera_motion(self, source: str, camera_id: str) -> None:
         now = datetime.now()
         for idx, rule in enumerate(self.config.camera_alarm_rules):
@@ -993,6 +1033,23 @@ class RulesEngine:
                 else:
                     publisher.publish_raw(topic, payload, retain=retain)
                     self.history.mark_command_done(cmd["id"], {"message": f"Opublikowano na '{topic}'"})
+            elif cmd["command"] in ("esphome_switch", "esphome_light", "esphome_button"):
+                device_name = cmd["params"]["device"]
+                object_id = cmd["params"]["object_id"]
+                device = self.esphome_manager.get_device(device_name) if self.esphome_manager else None
+                if device is None:
+                    self.history.mark_command_error(cmd["id"], f"Nieznane urządzenie ESPHome: '{device_name}'")
+                elif cmd["command"] == "esphome_switch":
+                    device.switch_set(object_id, bool(cmd["params"]["state"]))
+                    self.history.mark_command_done(cmd["id"], {"message": f"Przełącznik '{object_id}' ustawiony"})
+                elif cmd["command"] == "esphome_light":
+                    device.light_set(
+                        object_id, bool(cmd["params"]["state"]), brightness=cmd["params"].get("brightness"),
+                    )
+                    self.history.mark_command_done(cmd["id"], {"message": f"Światło '{object_id}' ustawione"})
+                else:
+                    device.button_press(object_id)
+                    self.history.mark_command_done(cmd["id"], {"message": f"Przycisk '{object_id}' naciśnięty"})
             elif cmd["command"] == "reload_config":
                 result = await self.reload_config()
                 self.history.mark_command_done(cmd["id"], result)
@@ -1550,6 +1607,13 @@ class RulesEngine:
                 history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
             )
             asyncio.create_task(smartthings_client.run_forever())
+
+        if self.config.esphome and self.config.esphome.get("enabled", True):
+            self.esphome_manager = EsphomeManager(
+                self.config.esphome, self._on_esphome_state, self._on_esphome_entities,
+                history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
+            )
+            asyncio.create_task(self.esphome_manager.run_forever())
 
         if self.ha_mqtt:
             def _make_tuya_handler(name):
