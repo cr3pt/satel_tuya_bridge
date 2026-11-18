@@ -164,8 +164,18 @@
   <div class="section-hint">Mnożnik zamienia jednostkę czujnika na kWh (np. 0.001 dla Wh, 1 dla kWh).</div>
 
   <h3>Taryfy i ceny</h3>
+  <div class="section-hint">
+    Dodaj kartę dla każdej taryfy, której chcesz użyć (ID wpisujesz/wybierasz
+    z podpowiedzi - G11/G12/G12w/G13 albo własna) i uzupełnij ceny stref -
+    dopiero wtedy pojawi się do wyboru przy liczniku niżej. Przycisk "+ Dodaj
+    wszystkie wbudowane" wstawia od razu karty G11/G12/G12w/G13 (zostają
+    tylko ceny do uzupełnienia).
+  </div>
   <div id="tariffCards"></div>
-  <div class="actions-bar"><button class="secondary" id="addTariffBtn" type="button">+ Dodaj taryfę</button></div>
+  <div class="actions-bar">
+    <button class="secondary" id="addTariffBtn" type="button">+ Dodaj taryfę</button>
+    <button class="secondary" id="addAllBuiltinTariffsBtn" type="button">+ Dodaj wszystkie wbudowane</button>
+  </div>
 
   <h3>Własne taryfy (zaawansowane, JSON)</h3>
   <div class="section-hint">Np. inne godziny niż wbudowane. Pierwsza pasująca reguła wygrywa; <code>days</code>: all | weekday | free (weekend + święta);
@@ -226,9 +236,17 @@ function zonesFor(tid) {
 }
 
 function tariffSelect(value) {
+  // Pełny katalog (wbudowane + własne), NIE tylko te, dla których już
+  // dodano kartę z cenami niżej - inaczej licznik widziałby do wyboru
+  // wyłącznie taryfy, które akurat mają już kartę (zwykle samo G11, bo
+  // "+ Dodaj taryfę" zawsze zaczynał od G11), co było mylące: G12/G12w/G13
+  // są dostępne od razu, kartę z cenami trzeba dodać dopiero przy zapisie.
   const s = el('select', { className: 'm-tariff' });
-  const ids = Array.from(document.querySelectorAll('.t-id')).map(x => x.value).filter(Boolean);
-  ids.forEach(id => s.appendChild(el('option', { value: id, textContent: id })));
+  const ids = allTariffIds();
+  const cardIds = new Set(Array.from(document.querySelectorAll('.t-id')).map(x => x.value).filter(Boolean));
+  ids.forEach(id => s.appendChild(el('option', {
+    value: id, textContent: cardIds.has(id) ? id : `${id} (brak cen - dodaj kartę niżej)`,
+  })));
   if (value && !ids.includes(value)) s.appendChild(el('option', { value, textContent: value }));
   s.value = value || ids[0] || '';
   return s;
@@ -496,7 +514,12 @@ async function loadFlaggedSensors() {
 }
 
 document.getElementById('addMeterBtn').addEventListener('click', () => addMeterRow());
-document.getElementById('addTariffBtn').addEventListener('click', () => { addTariffCard('G11'); refreshMeterTariffSelects(); });
+document.getElementById('addTariffBtn').addEventListener('click', () => { addTariffCard(''); refreshMeterTariffSelects(); });
+document.getElementById('addAllBuiltinTariffsBtn').addEventListener('click', () => {
+  const existing = new Set(Array.from(document.querySelectorAll('.t-id')).map(x => x.value.trim()).filter(Boolean));
+  Object.keys(BUILTIN).filter(id => !existing.has(id)).forEach(id => addTariffCard(id));
+  refreshMeterTariffSelects();
+});
 document.getElementById('reportBtn').addEventListener('click', runReport);
 document.getElementById('schedBtn').addEventListener('click', showSchedule);
 document.getElementById('saveBtn').addEventListener('click', async () => {
