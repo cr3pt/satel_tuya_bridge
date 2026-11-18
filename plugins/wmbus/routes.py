@@ -115,6 +115,11 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
                        "wtyczki wymaga restartu.",
         })
 
+    @app.route("/api/plugins/wmbus/discovered", methods=["GET"])
+    async def api_plugin_wmbus_discovered():
+        configured = [m.get("name") for m in _get_section().get("meters", []) or []]
+        return jsonify({"discovered": wmbus.discovered_meters(get_history(), configured)})
+
     @app.route("/api/plugins/wmbus/readings", methods=["GET"])
     async def api_plugin_wmbus_readings():
         return jsonify(get_history().get_status("wmbus"))

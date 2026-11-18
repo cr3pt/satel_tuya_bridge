@@ -59,6 +59,10 @@
   Zapisany klucz <strong>nigdy nie wraca do przeglądarki</strong>; pole klucza zostaw puste, żeby go nie zmieniać.
   Dla liczników <strong>3-fazowych</strong> ustaw "Fazy: 3" - panel pokaże wartości osobno dla L1, L2, L3 i
   pilnuje napięcia na każdej fazie (progi min/max).
+  <br>Jeśli telegram przychodzi już ROZSZYFROWANY/zdekodowany (np. z własnego
+  urządzenia ESPHome) - zostaw pole klucza puste; sekcja "🔍 Wykryte liczniki
+  na MQTT" niżej pozwoli go dodać jednym kliknięciem, bez ręcznego
+  wpisywania nazwy/ID.
   <br>Włącz wtyczkę w <a href="/plugins">🧩 Wtyczki</a> (wymaga restartu bridge'a).
 </div>
 
@@ -81,6 +85,25 @@
     <button id="saveBtn" type="button">Zapisz i wygeneruj pliki wmbusmeters</button>
   </div>
   <div id="saveMessage" class="msg"></div>
+</div>
+
+<div class="card" id="discoveredCard">
+  <h2>🔍 Wykryte liczniki na MQTT</h2>
+  <div class="hint" style="margin-bottom:10px">
+    Telegramy odebrane na temacie <code>wmbusmeters/&lt;nazwa&gt;</code>
+    (albo innym ustawionym wyżej prefiksie), który NIE pasuje do żadnej
+    nazwy licznika zapisanej niżej - np. z własnego urządzenia ESPHome,
+    które samo dekoduje telegram i publikuje gotowy JSON, bez AES/sterownika
+    po stronie bridge'a. Kliknij "+ Dodaj", żeby wstawić wykryty licznik do
+    listy niżej (nazwę/ID/fazy uzupełnione automatycznie) - potem tylko
+    nadaj etykietę i zapisz.
+  </div>
+  <table>
+    <thead><tr><th>Nazwa (temat)</th><th>ID</th><th>Sterownik/media</th><th>Pól</th><th>Ostatnio widziano</th><th></th></tr></thead>
+    <tbody id="discoveredRows"></tbody>
+  </table>
+  <div class="small" id="discoveredEmpty">Jeszcze nic nie wykryto - włącz wtyczkę i upewnij się, że coś publikuje na MQTT.</div>
+  <div class="actions-bar"><button class="secondary" id="refreshDiscoveredBtn" type="button">🔄 Odśwież</button></div>
 </div>
 
 <div class="card">
@@ -207,6 +230,34 @@ document.getElementById('addRowBtn').addEventListener('click', () => {
   document.getElementById('meterRows').appendChild(makeRow());
 });
 
+async function loadDiscovered() {
+  const data = await (await authorizedFetch('/api/plugins/wmbus/discovered')).json();
+  const tbody = document.getElementById('discoveredRows');
+  tbody.replaceChildren();
+  const rows = data.discovered || [];
+  document.getElementById('discoveredEmpty').style.display = rows.length ? 'none' : 'block';
+  rows.forEach(d => {
+    const tr = document.createElement('tr');
+    const addBtn = el('button', { className: 'secondary', type: 'button', textContent: '+ Dodaj' });
+    addBtn.addEventListener('click', () => {
+      document.getElementById('meterRows').appendChild(
+        makeRow({ name: d.name, id: d.id, driver: d.driver || 'auto', phases: d.phases }),
+      );
+      document.getElementById('discoveredCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+    [
+      cell(document.createTextNode(d.name)),
+      cell(document.createTextNode(d.id || '—')),
+      cell(document.createTextNode(d.driver || '—')),
+      cell(document.createTextNode(String(d.field_count ?? '—'))),
+      cell(document.createTextNode(new Date(d.ts * 1000).toLocaleString('pl-PL'))),
+      cell(addBtn),
+    ].forEach(c => tr.appendChild(c));
+    tbody.appendChild(tr);
+  });
+}
+document.getElementById('refreshDiscoveredBtn').addEventListener('click', loadDiscovered);
+
 document.getElementById('saveBtn').addEventListener('click', async () => {
   const msgEl = document.getElementById('saveMessage');
   msgEl.className = 'msg';
@@ -301,7 +352,9 @@ document.getElementById('chartTableBtn').addEventListener('click', () => {
 loadMeters();
 loadChartMeters();
 loadReadings();
+loadDiscovered();
 setInterval(loadReadings, 15000);
+setInterval(loadDiscovered, 15000);
 </script>
 </body>
 </html>

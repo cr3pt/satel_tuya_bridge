@@ -223,6 +223,25 @@ def public_view(meters: list[dict]) -> list[dict]:
     return out
 
 
+def discovered_meters(history, configured_names) -> list[dict]:
+    """Liczniki widziane na MQTT na temacie, który NIE pasuje do żadnej
+    skonfigurowanej nazwy (patrz `WmbusMqttListener._record_discovered`) -
+    do przycisku "Dodaj licznik z MQTT" na stronie wtyczki."""
+    configured = set(configured_names)
+    out = []
+    for row in history.get_status("wmbus_seen"):
+        name = row["key"].removeprefix("wmbus_seen:")
+        if name in configured:
+            continue
+        try:
+            summary = json.loads(row["value"])
+        except (ValueError, TypeError):
+            continue
+        out.append({"name": name, "ts": row["ts"], **summary})
+    out.sort(key=lambda d: d["name"])
+    return out
+
+
 def render_meter_file(meter: dict) -> str:
     lines = [
         f"name={meter['name']}",
@@ -313,6 +332,7 @@ class WmbusMqttListener:
                  loop: asyncio.AbstractEventLoop | None = None):
         self.cfg = cfg
         self.on_telegram = on_telegram
+        self.history = history
         self._meters = {m["name"]: m for m in meters}
         self._lock = threading.Lock()
         self._prefix = cfg.get("topic_prefix", "wmbusmeters")
@@ -363,6 +383,7 @@ class WmbusMqttListener:
             meter = self._meters.get(name)
         if meter is None:
             logger.debug("wM-Bus: telegram z nieskonfigurowanego licznika '%s' - pomijam", name)
+            self._record_discovered(name, msg.payload)
             return
         telegram = parse_telegram(msg.payload)
         if telegram is None:
@@ -372,3 +393,24 @@ class WmbusMqttListener:
             self.on_telegram(meter, telegram)
         except Exception:
             logger.exception("wM-Bus: błąd obsługi telegramu licznika '%s'", name)
+
+    def _record_discovered(self, name: str, payload: bytes | str) -> None:
+        """Zapisuje próbkę telegramu z NIESKONFIGUROWANEGO tematu, żeby
+        wtyczka (/plugins/wmbus) mogła zaproponować "Dodaj licznik z MQTT"
+        zamiast wymagać ręcznego zgadywania nazwy/ID - patrz
+        `discovered_meters()`."""
+        if self.history is None:
+            return
+        telegram = parse_telegram(payload)
+        if telegram is None:
+            return
+        fields = numeric_fields(telegram)
+        summary = {
+            "id": str(telegram.get("id") or ""),
+            "driver": str(telegram.get("meter") or telegram.get("media") or ""),
+            "phases": 3 if phases_in(fields) else 1,
+            "field_count": len(fields),
+        }
+        self.history.set_status(
+            f"wmbus_seen:{name}", "wmbus_seen", json.dumps(summary, ensure_ascii=False), label=name,
+        )
