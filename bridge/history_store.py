@@ -185,6 +185,11 @@ class HistoryStore:
             self._conn.commit()
             return cur.rowcount
 
+    def delete_status(self, key: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM status WHERE key = ?", (key,))
+            self._conn.commit()
+
     def enqueue_command(self, command: str, params: dict) -> int:
         ts = time.time()
         with self._lock:

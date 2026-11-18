@@ -413,6 +413,68 @@ class TestPanel:
         resp = await client.get("/api/plugins/wmbus/discovered", headers=AUTH)
         assert (await resp.get_json()) == {"discovered": []}
 
+    async def test_readings_include_sensor_and_energy_flag_for_field_rows(self, client):
+        import dashboard.app as app_module
+        app_module.history.set_status(
+            "wmbus:dom:total_energy_consumption_kwh", "wmbus", "123.4", label="Dom: total_energy_consumption_kwh",
+        )
+        resp = await client.get("/api/plugins/wmbus/readings", headers=AUTH)
+        rows = await resp.get_json()
+        row = next(r for r in rows if r["key"] == "wmbus:dom:total_energy_consumption_kwh")
+        assert row["sensor"] == "wmbus_dom_total_energy_consumption_kwh"
+        assert row["is_energy_meter"] is False
+
+    async def test_readings_do_not_attach_sensor_to_phases_or_status_rows(self, client):
+        import dashboard.app as app_module
+        app_module.history.set_status("wmbus:dom:phases", "wmbus", "L1 L2 L3", label="Dom: fazy")
+        app_module.history.set_status("wmbus:dom:status", "wmbus", "OK", label="Dom: status")
+        resp = await client.get("/api/plugins/wmbus/readings", headers=AUTH)
+        rows = await resp.get_json()
+        for r in rows:
+            if r["key"] in ("wmbus:dom:phases", "wmbus:dom:status"):
+                assert "sensor" not in r
+
+    async def test_readings_reflect_flagged_energy_meter(self, client):
+        import dashboard.app as app_module
+        from bridge import energy_meters
+
+        app_module.history.set_status(
+            "wmbus:dom:total_energy_consumption_kwh", "wmbus", "123.4", label="Dom: total_energy_consumption_kwh",
+        )
+        energy_meters.mark_energy_meter(app_module.history, "wmbus_dom_total_energy_consumption_kwh", "Dom")
+        resp = await client.get("/api/plugins/wmbus/readings", headers=AUTH)
+        rows = await resp.get_json()
+        row = next(r for r in rows if r["key"] == "wmbus:dom:total_energy_consumption_kwh")
+        assert row["is_energy_meter"] is True
+
+    async def test_energy_meter_toggle_requires_auth(self, client):
+        assert (await client.post(
+            "/api/plugins/wmbus/energy_meter", json={"sensor": "wmbus_dom_x"},
+        )).status_code == 401
+
+    async def test_energy_meter_toggle_marks_and_unmarks(self, client):
+        import dashboard.app as app_module
+        from bridge import energy_meters
+
+        resp = await client.post(
+            "/api/plugins/wmbus/energy_meter", json={"sensor": "wmbus_dom_total_energy_consumption_kwh", "flag": True},
+            headers=AUTH,
+        )
+        assert resp.status_code == 200
+        assert energy_meters.is_energy_meter(app_module.history, "wmbus_dom_total_energy_consumption_kwh") is True
+
+        await client.post(
+            "/api/plugins/wmbus/energy_meter", json={"sensor": "wmbus_dom_total_energy_consumption_kwh", "flag": False},
+            headers=AUTH,
+        )
+        assert energy_meters.is_energy_meter(app_module.history, "wmbus_dom_total_energy_consumption_kwh") is False
+
+    async def test_energy_meter_toggle_rejects_sensor_outside_wmbus_namespace(self, client):
+        resp = await client.post(
+            "/api/plugins/wmbus/energy_meter", json={"sensor": "esphome_gama350_power"}, headers=AUTH,
+        )
+        assert resp.status_code == 400
+
 
 class TestReload:
     async def test_stale_rule_survives_alarm_engine_rebuild_on_reload(self, engine):

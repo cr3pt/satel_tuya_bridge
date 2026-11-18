@@ -75,6 +75,9 @@
   edytorze <a href="/automations">🎬 Automatyzacje</a> pod kluczem
   <code>urządzenie:object_id</code> (prefiks statusu:
   <code>esphome:&lt;urządzenie&gt;:&lt;object_id&gt;</code>).
+  Zaznacz "⚡ Energia" przy czujniku narastającego zużycia (kWh), żeby był
+  od razu widoczny do wyboru w wtyczce <a href="/plugins/energy_cost">💰 Koszty energii</a> -
+  dotyczy to też liczników z taryfami dzień/noc (G12/G12w).
   <strong>Wymagane zalogowanie administratora panelu</strong> do zapisu i sterowania.
 </div>
 
@@ -350,6 +353,29 @@ function renderEntityControl(device, entity) {
   return '';
 }
 
+async function toggleEnergyMeter(checkbox, device, objectId) {
+  try {
+    const resp = await authorizedFetch('/api/plugins/esphome/energy_meter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device, object_id: objectId, flag: checkbox.checked }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { alert('❌ ' + (data.error || 'Błąd zapisu')); checkbox.checked = !checkbox.checked; }
+  } catch (e) {
+    alert('❌ Błąd komunikacji: ' + e);
+    checkbox.checked = !checkbox.checked;
+  }
+}
+
+function renderEnergyToggle(device, entity) {
+  if (entity.kind !== 'SensorInfo') return '';
+  const checked = entity.is_energy_meter ? 'checked' : '';
+  return `<label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;" title="Oznacz jako licznik energii - będzie widoczny do wyboru w 💰 Koszty energii">
+    <input type="checkbox" ${checked} onchange="toggleEnergyMeter(this,'${device}','${entity.object_id}')">
+    ⚡</label>`;
+}
+
 async function refreshLive() {
   const data = await (await fetch('/api/plugins/esphome/status')).json();
   const devices = data.devices || [];
@@ -364,6 +390,7 @@ async function refreshLive() {
         <td>${escapeHtml(e.name)}<br><span style="color:var(--muted); font-size:11px;">${escapeHtml(e.object_id)}</span></td>
         <td>${escapeHtml(e.value ?? '—')}</td>
         <td>${renderEntityControl(d.name, e)}</td>
+        <td>${renderEnergyToggle(d.name, e)}</td>
       </tr>`).join('');
     card.innerHTML = `
       <div class="device-status-head">
@@ -373,7 +400,7 @@ async function refreshLive() {
       </div>
       ${d.entities && d.entities.length ? `
       <table>
-        <thead><tr><th>Encja</th><th>Wartość</th><th>Sterowanie</th></tr></thead>
+        <thead><tr><th>Encja</th><th>Wartość</th><th>Sterowanie</th><th>⚡ Energia</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>` : '<div class="empty-hint">Brak zarejestrowanych encji - urządzenie jeszcze się nie połączyło.</div>'}`;
     container.appendChild(card);

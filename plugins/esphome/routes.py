@@ -7,6 +7,7 @@ import asyncio
 
 from quart import Quart, jsonify, render_template, request
 
+from bridge import energy_meters
 from plugins import PluginMeta, register_settings_route
 
 
@@ -179,6 +180,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
                     "kind": meta_entry["value"],
                     "value": value_entry["value"] if value_entry else None,
                     "ts": value_entry["ts"] if value_entry else None,
+                    "is_energy_meter": energy_meters.is_energy_meter(history, f"esphome_{name}_{object_id}"),
                 })
             entities.sort(key=lambda e: e["object_id"])
             result.append({
@@ -191,6 +193,28 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
                 "entities": entities,
             })
         return jsonify({"devices": result})
+
+    @app.route("/api/plugins/esphome/energy_meter", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_esphome_energy_meter():
+        form = await request.get_json(silent=True)
+        if not isinstance(form, dict):
+            return jsonify({"error": "Nieprawidłowe dane"}), 400
+        device = (form.get("device") or "").strip()
+        object_id = (form.get("object_id") or "").strip()
+        if not device or not object_id:
+            return jsonify({"error": "Wymagane: device, object_id"}), 400
+
+        sensor = f"esphome_{device}_{object_id}"
+        history = get_history()
+        if form.get("flag", True):
+            label = (form.get("label") or "").strip() or f"{device}: {object_id}"
+            energy_meters.mark_energy_meter(history, sensor, label)
+            message = f"Oznaczono '{object_id}' jako licznik energii."
+        else:
+            energy_meters.unmark_energy_meter(history, sensor)
+            message = f"Odznaczono '{object_id}' jako licznik energii."
+        return jsonify({"sensor": sensor, "message": message})
 
     @app.route("/api/plugins/esphome/control", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)

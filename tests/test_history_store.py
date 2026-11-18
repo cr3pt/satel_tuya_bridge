@@ -164,6 +164,16 @@ class TestStatus:
         assert removed == 0
         assert len(history.get_status("satel_input")) == 2
 
+    def test_delete_status_removes_single_key(self, history):
+        history.set_status("a", "cat", "1")
+        history.set_status("b", "cat", "2")
+        history.delete_status("a")
+        assert history.get_status_value("a") is None
+        assert history.get_status_value("b") == "2"
+
+    def test_delete_status_on_missing_key_is_a_noop(self, history):
+        history.delete_status("nigdy_nie_istniał")
+
 
 class TestLogs:
     def test_get_log_loggers_returns_distinct_sorted_names(self, history):

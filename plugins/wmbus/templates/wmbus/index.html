@@ -125,8 +125,13 @@
 
 <div class="card">
   <h2>Ostatnie odczyty</h2>
+  <div class="small" style="margin-bottom:8px">
+    Zaznacz "⚡ Energia" przy polu narastającego zużycia (kWh), żeby było od razu
+    widoczne do wyboru w <a href="/plugins/energy_cost">💰 Koszty energii</a> -
+    dotyczy to też liczników z taryfami dzień/noc (G12/G12w).
+  </div>
   <table>
-    <thead><tr><th>Pole</th><th>Wartość</th><th>Odczyt</th></tr></thead>
+    <thead><tr><th>Pole</th><th>Wartość</th><th>Odczyt</th><th>⚡ Energia</th></tr></thead>
     <tbody id="readingRows"></tbody>
   </table>
   <div class="small" id="readingsEmpty">Brak danych - uruchom wmbusmeters i bridge'a.</div>
@@ -212,6 +217,21 @@ async function loadMeters() {
   data.meters.forEach(m => tbody.appendChild(makeRow(m)));
 }
 
+async function toggleWmbusEnergyMeter(checkbox, sensor, label) {
+  try {
+    const resp = await authorizedFetch('/api/plugins/wmbus/energy_meter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sensor, label, flag: checkbox.checked }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { alert('❌ ' + (data.error || 'Błąd zapisu')); checkbox.checked = !checkbox.checked; }
+  } catch (e) {
+    alert('❌ Błąd komunikacji: ' + e);
+    checkbox.checked = !checkbox.checked;
+  }
+}
+
 async function loadReadings() {
   const rows = await (await authorizedFetch('/api/plugins/wmbus/readings')).json();
   const tbody = document.getElementById('readingRows');
@@ -222,6 +242,18 @@ async function loadReadings() {
     tr.appendChild(cell(document.createTextNode(r.label)));
     tr.appendChild(cell(document.createTextNode(r.value)));
     tr.appendChild(cell(document.createTextNode(new Date(r.ts * 1000).toLocaleString('pl-PL'))));
+    const energyCell = document.createElement('td');
+    if (r.sensor) {
+      const label = document.createElement('label');
+      label.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;';
+      label.title = 'Oznacz jako licznik energii';
+      const cb = el('input', { type: 'checkbox', checked: !!r.is_energy_meter });
+      cb.addEventListener('change', () => toggleWmbusEnergyMeter(cb, r.sensor, r.label));
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode('⚡'));
+      energyCell.appendChild(label);
+    }
+    tr.appendChild(energyCell);
     tbody.appendChild(tr);
   });
 }

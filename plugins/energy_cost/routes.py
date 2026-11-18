@@ -7,7 +7,7 @@ import time
 
 from quart import Quart, jsonify, render_template, request
 
-from bridge import tariffs
+from bridge import energy_meters, tariffs
 from plugins import PluginMeta
 
 MAX_RANGE_SECONDS = 366 * 86400
@@ -93,10 +93,25 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
 
     @app.route("/api/plugins/energy_cost/sensors", methods=["GET"])
     async def api_plugin_energy_cost_sensors():
-        """Czujniki z historii, które mogą być licznikiem kWh (podpowiedź w formularzu)."""
+        """Czujniki z historii, które mogą być licznikiem kWh (podpowiedź w formularzu).
+        Jawnie oznaczone jako "licznik energii" (⚡ w ESPHome/wM-Bus) są
+        priorytetowe - w odróżnieniu od dopasowania po nazwie pola nie
+        zależą od tego, czy nazwa zawiera "kwh"/"energy" (np. polskie nazwy
+        encji ESPHome zwykle nie zawierają)."""
         sensors = get_history().get_sensors()
-        return jsonify({"sensors": sensors,
-                        "suggested": [s for s in sensors if "kwh" in s.lower() or "energy" in s.lower()]})
+        flagged = {m["sensor"] for m in energy_meters.list_energy_meter_sensors(get_history())}
+        by_name = [s for s in sensors if "kwh" in s.lower() or "energy" in s.lower()]
+        suggested = [s for s in sensors if s in flagged] + [s for s in by_name if s not in flagged]
+        return jsonify({"sensors": sensors, "suggested": suggested})
+
+    @app.route("/api/plugins/energy_cost/flagged_sensors", methods=["GET"])
+    async def api_plugin_energy_cost_flagged_sensors():
+        """Czujniki oznaczone gdzie indziej (ESPHome/wM-Bus) jako "licznik
+        energii", a jeszcze NIE użyte jako licznik tutaj - do sekcji
+        "gotowe liczniki" (jedno kliknięcie zamiast ręcznego wpisywania)."""
+        used = {m.get("sensor") for m in _get_energy().get("meters", []) or []}
+        flagged = energy_meters.list_energy_meter_sensors(get_history())
+        return jsonify({"flagged": [f for f in flagged if f["sensor"] not in used]})
 
     @app.route("/api/plugins/energy_cost/report", methods=["GET"])
     async def api_plugin_energy_cost_report():
