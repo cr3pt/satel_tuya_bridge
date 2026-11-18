@@ -139,9 +139,18 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
             return jsonify({"error": "Maksymalny okres to 366 dni"}), 400
 
         pad = float(energy.get("max_gap_minutes", 360)) * 60
-        readings = get_history().get_history(meter["sensor"], ts_from - pad, ts_to + pad)
+        zone_sensors = meter.get("zone_sensors") or {}
+        if zone_sensors:
+            readings = None
+            zone_readings = {
+                zone: get_history().get_history(sensor, ts_from - pad, ts_to + pad)
+                for zone, sensor in zone_sensors.items()
+            }
+        else:
+            readings = get_history().get_history(meter["sensor"], ts_from - pad, ts_to + pad)
+            zone_readings = None
         try:
-            return jsonify(tariffs.build_report(energy, meter, readings, ts_from, ts_to))
+            return jsonify(tariffs.build_report(energy, meter, readings, ts_from, ts_to, zone_readings=zone_readings))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 

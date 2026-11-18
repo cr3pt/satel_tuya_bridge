@@ -141,6 +141,49 @@ class TestSchedule:
         assert data["zones"] == ["a", "b"]
 
 
+class TestReportZoneSensors:
+    ZONE_CFG = {
+        "vat_percent": 23,
+        "max_gap_minutes": 120,
+        "tariffs": {
+            "G12w": {"prices": {"dzienna": 1.2, "nocna": 0.6}},
+            "G11": {"prices": {"całodobowa": 1.0}},
+        },
+        "meters": [{"name": "dom", "label": "Dom", "tariff": "G12w",
+                   "zone_sensors": {"dzienna": "s_dzien", "nocna": "s_noc"}}],
+    }
+
+    async def test_report_uses_each_zones_own_sensor(self, client):
+        import dashboard.app as app_module
+        await _save(client, self.ZONE_CFG)
+        h = app_module.history
+        for i in range(4):
+            h.write_reading("s_dzien", 10.0 + i, ts=ts(2026, 7, 11, 8 + i))
+            h.write_reading("s_noc", 5.0 + i * 0.5, ts=ts(2026, 7, 11, 8 + i))
+
+        url = f"/api/plugins/energy_cost/report?meter=dom&from={ts(2026, 7, 11, 8)}&to={ts(2026, 7, 11, 11)}"
+        resp = await client.get(url, headers=AUTH)
+        assert resp.status_code == 200
+        rep = await resp.get_json()
+        zones = {z["zone"]: z["kwh"] for z in rep["result"]["zones"]}
+        assert zones["dzienna"] == pytest.approx(3.0)
+        assert zones["nocna"] == pytest.approx(1.5)
+        assert rep["meter"]["zone_sensors"] == {"dzienna": "s_dzien", "nocna": "s_noc"}
+
+    async def test_comparison_with_incompatible_tariff_reports_error_not_crash(self, client):
+        import dashboard.app as app_module
+        await _save(client, self.ZONE_CFG)
+        h = app_module.history
+        h.write_reading("s_dzien", 10.0, ts=ts(2026, 7, 11, 8))
+        h.write_reading("s_dzien", 12.0, ts=ts(2026, 7, 11, 9))
+
+        url = f"/api/plugins/energy_cost/report?meter=dom&from={ts(2026, 7, 11, 8)}&to={ts(2026, 7, 11, 9)}"
+        resp = await client.get(url, headers=AUTH)
+        assert resp.status_code == 200
+        by = {c["tariff"]: c for c in (await resp.get_json())["comparison"]}
+        assert "error" in by["G11"]
+
+
 class TestSensors:
     async def test_suggests_kwh_sensors(self, client):
         import dashboard.app as app_module

@@ -47,6 +47,7 @@
   tr.total td { font-weight: 600; border-top: 2px solid var(--border); }
   tr.active td { color: var(--ok); }
   .tariff-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .m-zone-row td { background: #181b21; padding: 10px 6px 14px; }
   .badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #262a32; color: var(--accent); }
   .sched { font-size: 12px; color: var(--muted); line-height: 1.7; }
 
@@ -253,19 +254,74 @@ function tariffSelect(value) {
 }
 function addMeterRow(m = {}) {
   const tr = document.createElement('tr');
+  tr.className = 'm-row';
+  const hasZoneSensors = m.zone_sensors && Object.keys(m.zone_sensors).length > 0;
+
+  const sensorInput = el('input', {
+    type: 'text', className: 'm-sensor', value: m.sensor || '',
+    placeholder: 'np. wmbus_prad_total_energy_consumption_kwh',
+  });
+  sensorInput.setAttribute('list', 'sensorList');
+  const sensorTd = el('td', {}, [sensorInput]);
+
+  const tSel = tariffSelect(m.tariff);
+
   const cells = [
     el('input', { type: 'text', className: 'm-name', value: m.name || '', placeholder: 'dom' }),
     el('input', { type: 'text', className: 'm-label', value: m.label || '', placeholder: 'Dom' }),
-    el('input', { type: 'text', className: 'm-sensor', value: m.sensor || '', placeholder: 'np. wmbus_prad_total_energy_consumption_kwh' }),
-    tariffSelect(m.tariff),
-    el('input', { type: 'number', className: 'm-scale', value: m.scale ?? 1, step: 'any', min: 0 }),
   ];
-  cells[2].setAttribute('list', 'sensorList');
-  cells.forEach(c => tr.appendChild(el('td', {}, [c])));
+  tr.appendChild(el('td', {}, [cells[0]]));
+  tr.appendChild(el('td', {}, [cells[1]]));
+  tr.appendChild(sensorTd);
+  tr.appendChild(el('td', {}, [tSel]));
+  tr.appendChild(el('td', {}, [el('input', { type: 'number', className: 'm-scale', value: m.scale ?? 1, step: 'any', min: 0 })]));
+
+  // Druga, rozpinana wierszem niżej opcja: osobny czujnik dla KAŻDEJ strefy
+  // taryfy, zamiast jednego czujnika dzielonego wg godzin - do liczników,
+  // które same rozdzielają zużycie na rejestry (np. wM-Bus tariff_1/2_kwh).
+  const zoneRow = document.createElement('tr');
+  zoneRow.className = 'm-zone-row';
+  const modeSelect = el('select', { className: 'm-mode' }, [
+    el('option', { value: 'single', textContent: 'Jeden czujnik (podział wg godzin)' }),
+    el('option', { value: 'zones', textContent: 'Osobny czujnik per strefa' }),
+  ]);
+  modeSelect.value = hasZoneSensors ? 'zones' : 'single';
+  const zonesBox = el('div', { className: 'm-zones-box' });
+  function renderZones() {
+    zonesBox.replaceChildren();
+    if (modeSelect.value !== 'zones') return;
+    zonesFor(tSel.value).forEach(zone => {
+      const input = el('input', {
+        type: 'text', className: 'm-zone-sensor',
+        value: (m.zone_sensors || {})[zone] || '', placeholder: `czujnik dla strefy "${zone}"`,
+      });
+      input.dataset.zone = zone;
+      input.setAttribute('list', 'sensorList');
+      zonesBox.appendChild(el('div', { className: 'row', style: 'margin-bottom:6px;' }, [
+        el('div', { style: 'flex:0 0 160px;' }, [el('label', { className: 'field-label', textContent: `Strefa: ${zone}` })]),
+        el('div', { style: 'flex:1;' }, [input]),
+      ]));
+    });
+  }
+  modeSelect.addEventListener('change', () => {
+    sensorTd.style.display = modeSelect.value === 'zones' ? 'none' : '';
+    renderZones();
+  });
+  tSel.addEventListener('change', renderZones);
+  const zoneTd = el('td', { colSpan: 6 }, [el('div', { className: 'row' }, [
+    el('div', { style: 'flex:0 0 220px;' }, [el('label', { className: 'field-label', textContent: 'Tryb liczenia stref' }), modeSelect]),
+    el('div', { style: 'flex:1;' }, [zonesBox]),
+  ])]);
+  zoneRow.appendChild(zoneTd);
+
   const del = el('button', { className: 'icon', type: 'button', title: 'Usuń', textContent: '✕' });
-  del.addEventListener('click', () => { tr.remove(); refreshReportMeters(); loadFlaggedSensors(); });
+  del.addEventListener('click', () => { zoneRow.remove(); tr.remove(); refreshReportMeters(); loadFlaggedSensors(); });
   tr.appendChild(el('td', {}, [del]));
+
   document.getElementById('meterRows').appendChild(tr);
+  document.getElementById('meterRows').appendChild(zoneRow);
+  if (hasZoneSensors) sensorTd.style.display = 'none';
+  renderZones();
 }
 function refreshMeterTariffSelects() {
   document.querySelectorAll('.m-tariff').forEach(sel => {
@@ -345,13 +401,28 @@ function collectConfig() {
     if (v) spec.variant = v;
     tariffs[tid] = spec;
   });
-  const meters = Array.from(document.querySelectorAll('#meterRows tr')).map(tr => ({
-    name: tr.querySelector('.m-name').value.trim(),
-    label: tr.querySelector('.m-label').value.trim(),
-    sensor: tr.querySelector('.m-sensor').value.trim(),
-    tariff: tr.querySelector('.m-tariff').value,
-    scale: Number(tr.querySelector('.m-scale').value || 1),
-  }));
+  const meters = Array.from(document.querySelectorAll('#meterRows tr.m-row')).map(tr => {
+    const zoneRow = tr.nextElementSibling;
+    const mode = zoneRow ? zoneRow.querySelector('.m-mode').value : 'single';
+    const out = {
+      name: tr.querySelector('.m-name').value.trim(),
+      label: tr.querySelector('.m-label').value.trim(),
+      tariff: tr.querySelector('.m-tariff').value,
+      scale: Number(tr.querySelector('.m-scale').value || 1),
+    };
+    if (mode === 'zones') {
+      out.sensor = '';
+      out.zone_sensors = {};
+      zoneRow.querySelectorAll('.m-zone-sensor').forEach(inp => {
+        const v = inp.value.trim();
+        if (v) out.zone_sensors[inp.dataset.zone] = v;
+      });
+    } else {
+      out.sensor = tr.querySelector('.m-sensor').value.trim();
+      out.zone_sensors = {};
+    }
+    return out;
+  });
   return {
     vat_percent: Number(document.getElementById('vat').value || 23),
     max_gap_minutes: Number(document.getElementById('maxGap').value || 360),
@@ -363,7 +434,7 @@ function refreshReportMeters() {
   const sel = document.getElementById('reportMeter');
   const cur = sel.value;
   sel.replaceChildren();
-  document.querySelectorAll('#meterRows tr').forEach(tr => {
+  document.querySelectorAll('#meterRows tr.m-row').forEach(tr => {
     const n = tr.querySelector('.m-name').value.trim();
     if (n) sel.appendChild(el('option', { value: n, textContent: tr.querySelector('.m-label').value.trim() || n }));
   });
@@ -479,7 +550,9 @@ async function init() {
 }
 
 function usedSensors() {
-  return new Set(Array.from(document.querySelectorAll('#meterRows .m-sensor')).map(i => i.value.trim()));
+  const single = Array.from(document.querySelectorAll('#meterRows .m-sensor')).map(i => i.value.trim());
+  const perZone = Array.from(document.querySelectorAll('#meterRows .m-zone-sensor')).map(i => i.value.trim());
+  return new Set([...single, ...perZone]);
 }
 
 function slugify(text) {

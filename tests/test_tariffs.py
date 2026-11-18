@@ -194,6 +194,61 @@ class TestConsumption:
         assert tariffs.consumption_by_zone(r, self.G12, ts(2026, 7, 8, 10), ts(2026, 7, 8, 11)).total_kwh == pytest.approx(1.0)
 
 
+class TestZoneSensors:
+    """Tryb "osobny czujnik per strefa" - zużycie liczone wprost z deltą
+    KAŻDEGO rejestru, BEZ podziału wg godzin (sam podział już zrobił
+    licznik/urządzenie, np. wM-Bus tariff_1/tariff_2_kwh)."""
+    G12 = tariffs.resolve_tariff("G12")
+
+    def test_each_zone_uses_its_own_register_regardless_of_time_of_day(self):
+        # "dzienna" rośnie w nocy (23:00) - w trybie per-strefa i tak liczy się
+        # do "dzienna", bo to rejestr już przypisany do tej strefy przez licznik.
+        day = [{"t": ts(2026, 7, 8, 23), "v": 10.0}, {"t": ts(2026, 7, 9, 1), "v": 12.0}]
+        night = [{"t": ts(2026, 7, 8, 23), "v": 5.0}, {"t": ts(2026, 7, 9, 1), "v": 5.0}]
+        c = tariffs.consumption_from_zone_sensors(
+            {"dzienna": day, "nocna": night}, self.G12.zones, ts(2026, 7, 8, 23), ts(2026, 7, 9, 1),
+        )
+        assert c.kwh_by_zone["dzienna"] == pytest.approx(2.0)
+        assert c.kwh_by_zone["nocna"] == pytest.approx(0.0)
+        assert c.total_kwh == pytest.approx(2.0)
+
+    def test_missing_zone_readings_default_to_zero(self):
+        c = tariffs.consumption_from_zone_sensors({"dzienna": []}, self.G12.zones, ts(2026, 7, 8), ts(2026, 7, 9))
+        assert c.kwh_by_zone == {"dzienna": 0.0, "nocna": 0.0}
+
+    def test_scale_applies_per_zone(self):
+        day = [{"t": ts(2026, 7, 8, 0), "v": 0.0}, {"t": ts(2026, 7, 8, 1), "v": 2500.0}]
+        c = tariffs.consumption_from_zone_sensors(
+            {"dzienna": day}, self.G12.zones, ts(2026, 7, 8, 0), ts(2026, 7, 8, 1), scale=0.001,
+        )
+        assert c.kwh_by_zone["dzienna"] == pytest.approx(2.5)
+
+    def test_gap_in_one_zone_goes_to_unallocated(self):
+        day = [{"t": ts(2026, 7, 8, 0), "v": 0.0}, {"t": ts(2026, 7, 8, 20), "v": 10.0}]
+        c = tariffs.consumption_from_zone_sensors(
+            {"dzienna": day}, self.G12.zones, ts(2026, 7, 8), ts(2026, 7, 9), max_gap_seconds=6 * 3600,
+        )
+        assert c.kwh_by_zone["dzienna"] == 0 and c.unallocated_kwh == pytest.approx(10.0) and c.gaps == 1
+
+    def test_reset_in_one_zone_is_skipped_and_counted(self):
+        day = [{"t": ts(2026, 7, 8, 10), "v": 500.0}, {"t": ts(2026, 7, 8, 11), "v": 3.0}]
+        c = tariffs.consumption_from_zone_sensors(
+            {"dzienna": day}, self.G12.zones, ts(2026, 7, 8, 10), ts(2026, 7, 8, 11),
+        )
+        assert c.resets == 1 and c.kwh_by_zone["dzienna"] == 0
+
+    def test_daily_breakdown_zone_sensors_sums_to_total(self):
+        hours = [0, 4, 8, 12, 16, 20]
+        day = [{"t": ts(2026, 7, 8, h), "v": i * 1.0} for i, h in enumerate(hours)]
+        night = [{"t": ts(2026, 7, 8, h), "v": i * 0.5} for i, h in enumerate(hours)]
+        days = tariffs.daily_breakdown_zone_sensors(
+            {"dzienna": day, "nocna": night}, self.G12, {"prices": {"dzienna": 1.0, "nocna": 1.0}},
+            ts(2026, 7, 8), ts(2026, 7, 9), max_gap_seconds=6 * 3600, scale=1.0,
+        )
+        assert len(days) == 1
+        assert days[0]["total_kwh"] == pytest.approx(5.0 + 2.5)
+
+
 class TestCost:
     G12 = tariffs.resolve_tariff("G12")
 
@@ -317,6 +372,48 @@ class TestValidation:
         assert tariffs.validate_energy_config(cfg)[1] is None
 
 
+class TestZoneSensorsValidation:
+    def test_zone_sensors_without_plain_sensor_is_accepted(self):
+        cfg = _valid_cfg()
+        cfg["meters"][0]["sensor"] = ""
+        cfg["meters"][0]["zone_sensors"] = {"dzienna": "s_dzien", "nocna": "s_noc"}
+        clean, err = tariffs.validate_energy_config(cfg)
+        assert err is None
+        assert clean["meters"][0]["zone_sensors"] == {"dzienna": "s_dzien", "nocna": "s_noc"}
+        assert clean["meters"][0]["sensor"] == ""
+
+    def test_unknown_zone_name_is_rejected(self):
+        cfg = _valid_cfg()
+        cfg["meters"][0]["zone_sensors"] = {"poludniowa": "s1"}
+        clean, err = tariffs.validate_energy_config(cfg)
+        assert clean is None and "nieznana strefa" in err.lower()
+
+    def test_neither_sensor_nor_zone_sensors_is_rejected(self):
+        cfg = _valid_cfg()
+        cfg["meters"][0]["sensor"] = ""
+        cfg["meters"][0]["zone_sensors"] = {}
+        clean, err = tariffs.validate_energy_config(cfg)
+        assert clean is None and "czujnik" in err.lower()
+
+    def test_both_sensor_and_zone_sensors_prefers_zone_sensors_cleanly(self):
+        cfg = _valid_cfg()
+        cfg["meters"][0]["zone_sensors"] = {"dzienna": "s_dzien"}
+        clean, err = tariffs.validate_energy_config(cfg)
+        assert err is None
+        assert clean["meters"][0]["sensor"] == "licznik_kwh"
+        assert clean["meters"][0]["zone_sensors"] == {"dzienna": "s_dzien"}
+
+    def test_non_dict_zone_sensors_is_rejected(self):
+        cfg = _valid_cfg()
+        cfg["meters"][0]["zone_sensors"] = ["dzienna"]
+        clean, err = tariffs.validate_energy_config(cfg)
+        assert clean is None and "zone_sensors" in err
+
+    def test_meter_without_zone_sensors_key_still_gets_empty_dict(self):
+        clean, err = tariffs.validate_energy_config(_valid_cfg())
+        assert err is None and clean["meters"][0]["zone_sensors"] == {}
+
+
 class TestReport:
     def test_report_compares_tariffs_on_same_readings(self):
         cfg, _ = tariffs.validate_energy_config({
@@ -333,3 +430,59 @@ class TestReport:
         assert by["G11"]["total_net"] == 12.0
         assert by["G12w"]["total_net"] == pytest.approx(7.2) and by["G12w"]["active"]
         assert rep["result"]["total_kwh"] == pytest.approx(12.0)
+
+
+class TestReportZoneSensors:
+    def _cfg(self):
+        cfg, err = tariffs.validate_energy_config({
+            "max_gap_minutes": 1440,
+            "tariffs": {
+                "G12": {"prices": {"dzienna": 1.2, "nocna": 0.6}},
+                "G12w": {"prices": {"dzienna": 1.0, "nocna": 0.5}},
+                "G11": {"prices": {"całodobowa": 1.0}},
+            },
+            "meters": [{"name": "dom", "tariff": "G12",
+                       "zone_sensors": {"dzienna": "s_dzien", "nocna": "s_noc"}}],
+        })
+        assert err is None
+        return cfg
+
+    def test_uses_each_registers_own_delta_regardless_of_time(self):
+        cfg = self._cfg()
+        zone_readings = {
+            "dzienna": [{"t": ts(2026, 7, 11, 23), "v": 0.0}, {"t": ts(2026, 7, 12, 1), "v": 4.0}],
+            "nocna": [{"t": ts(2026, 7, 11, 23), "v": 0.0}, {"t": ts(2026, 7, 12, 1), "v": 2.0}],
+        }
+        rep = tariffs.build_report(
+            cfg, cfg["meters"][0], None, ts(2026, 7, 11, 23), ts(2026, 7, 12, 1), zone_readings=zone_readings,
+        )
+        zones = {z["zone"]: z["kwh"] for z in rep["result"]["zones"]}
+        assert zones == {"dzienna": 4.0, "nocna": 2.0}
+        assert rep["result"]["total_net"] == pytest.approx(4.0 * 1.2 + 2.0 * 0.6)
+
+    def test_comparison_includes_tariff_with_same_zone_names(self):
+        cfg = self._cfg()
+        zone_readings = {
+            "dzienna": [{"t": ts(2026, 7, 11, 0), "v": 0.0}, {"t": ts(2026, 7, 12, 0), "v": 4.0}],
+            "nocna": [{"t": ts(2026, 7, 11, 0), "v": 0.0}, {"t": ts(2026, 7, 12, 0), "v": 2.0}],
+        }
+        rep = tariffs.build_report(
+            cfg, cfg["meters"][0], None, ts(2026, 7, 11), ts(2026, 7, 12), zone_readings=zone_readings,
+        )
+        by = {c["tariff"]: c for c in rep["comparison"]}
+        assert by["G12w"]["total_net"] == pytest.approx(4.0 * 1.0 + 2.0 * 0.5)
+        assert "error" not in by["G12w"]
+
+    def test_comparison_flags_tariff_with_different_zones_as_incompatible(self):
+        cfg = self._cfg()
+        zone_readings = {"dzienna": [{"t": 0, "v": 0.0}, {"t": 3600, "v": 1.0}], "nocna": []}
+        rep = tariffs.build_report(cfg, cfg["meters"][0], None, 0, 3600, zone_readings=zone_readings)
+        by = {c["tariff"]: c for c in rep["comparison"]}
+        assert "error" in by["G11"] and "stref" in by["G11"]["error"].lower()
+
+    def test_meter_field_in_response_reports_zone_sensors(self):
+        cfg = self._cfg()
+        zone_readings = {"dzienna": [], "nocna": []}
+        rep = tariffs.build_report(cfg, cfg["meters"][0], None, 0, 3600, zone_readings=zone_readings)
+        assert rep["meter"]["zone_sensors"] == {"dzienna": "s_dzien", "nocna": "s_noc"}
+        assert rep["meter"]["sensor"] == ""
