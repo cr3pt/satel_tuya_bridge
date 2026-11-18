@@ -55,13 +55,23 @@ class ConfigStore:
     def __post_init__(self) -> None:
         self.db_path = pathlib.Path(self.db_path)
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        # Patrz historia analogicznej zmiany w history_store.py - ten sam
+        # plik otwierają RÓWNOCZEŚNIE dwa osobne procesy (demon bridge'a i
+        # panel), więc WAL + busy_timeout zamiast domyślnego rollback
+        # journal, żeby uniknąć "database is locked".
+        self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
-        try:
-            os.chmod(self.db_path, 0o600)
-        except OSError:
-            pass
+        for suffix in ("", "-wal", "-shm"):
+            # WAL tworzy pliki pomocnicze obok głównej bazy, też z sekretami
+            # (klucze API/AES do niedawnego zapisu) - domyślny umask dałby
+            # im szersze prawa niż główny plik.
+            try:
+                os.chmod(f"{self.db_path}{suffix}", 0o600)
+            except OSError:
+                pass
 
     def exists(self) -> bool:
         return self.db_path.exists()

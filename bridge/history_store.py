@@ -82,13 +82,27 @@ class HistoryStore:
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        # Ten sam plik jest otwierany RÓWNOCZEŚNIE przez dwa osobne procesy
+        # (demon bridge'a i panel Quart) - domyślny tryb dziennika SQLite
+        # (rollback journal) blokuje czytelników na czas zapisu, co przy
+        # krótkiej, ale realnej kolizji dawało "database is locked" (patrz
+        # /healthz -> history.get_status). WAL pozwala czytać w trakcie
+        # zapisu z innego procesu; busy_timeout dodatkowo każe SQLite czekać
+        # zamiast od razu zgłaszać błąd, gdyby mimo to doszło do kolizji
+        # zapis-zapis.
+        self._conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
-        try:
-            os.chmod(self.db_path, 0o600)
-        except OSError:
-            pass
+        for suffix in ("", "-wal", "-shm"):
+            # WAL tworzy pliki pomocnicze obok głównej bazy - trzymają też
+            # dane do niedawnego zapisu (więc tak samo mogą zawierać klucze),
+            # a domyślny umask zrobiłby je czytelnymi dla innych.
+            try:
+                os.chmod(f"{self.db_path}{suffix}", 0o600)
+            except OSError:
+                pass
 
     def write_reading(self, sensor: str, value: float, ts: float | None = None) -> None:
         ts = ts if ts is not None else time.time()

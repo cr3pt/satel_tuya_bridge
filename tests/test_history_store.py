@@ -27,6 +27,20 @@ class TestFilePermissions:
         mode = stat.S_IMODE(os.stat(db_path).st_mode)
         assert mode == 0o600
 
+    def test_wal_sidecar_files_are_owner_only_too(self, tmp_path):
+        db_path = tmp_path / "history.db"
+        store = HistoryStore(str(db_path))
+        store.write_event("system")
+        wal_path = tmp_path / "history.db-wal"
+        assert wal_path.exists()
+        assert stat.S_IMODE(os.stat(wal_path).st_mode) == 0o600
+
+
+class TestWalMode:
+    def test_journal_mode_is_wal(self, history):
+        mode = history._conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal"
+
 
 class TestReadings:
     def test_write_and_read_reading(self, history):
