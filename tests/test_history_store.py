@@ -27,6 +27,20 @@ class TestFilePermissions:
         mode = stat.S_IMODE(os.stat(db_path).st_mode)
         assert mode == 0o600
 
+    def test_wal_sidecar_files_are_owner_only_too(self, tmp_path):
+        db_path = tmp_path / "history.db"
+        store = HistoryStore(str(db_path))
+        store.write_event("system")
+        wal_path = tmp_path / "history.db-wal"
+        assert wal_path.exists()
+        assert stat.S_IMODE(os.stat(wal_path).st_mode) == 0o600
+
+
+class TestWalMode:
+    def test_journal_mode_is_wal(self, history):
+        mode = history._conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal"
+
 
 class TestReadings:
     def test_write_and_read_reading(self, history):
@@ -149,6 +163,16 @@ class TestStatus:
         removed = history.prune_status("satel_input", {"satel_input:1", "satel_input:2"})
         assert removed == 0
         assert len(history.get_status("satel_input")) == 2
+
+    def test_delete_status_removes_single_key(self, history):
+        history.set_status("a", "cat", "1")
+        history.set_status("b", "cat", "2")
+        history.delete_status("a")
+        assert history.get_status_value("a") is None
+        assert history.get_status_value("b") == "2"
+
+    def test_delete_status_on_missing_key_is_a_noop(self, history):
+        history.delete_status("nigdy_nie_istniał")
 
 
 class TestLogs:

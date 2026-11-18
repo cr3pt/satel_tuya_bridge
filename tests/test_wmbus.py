@@ -225,6 +225,67 @@ class TestEngine:
         assert v2["payload"]["device_class"] == "voltage" and v2["payload"]["name"].endswith("[L2]")
 
 
+class TestDiscoverFromMqtt:
+    """Telegramy na nieskonfigurowanym temacie (np. z urządzenia ESPHome,
+    które samo dekoduje i publikuje gotowy JSON, bez AES/sterownika po
+    stronie bridge'a) - "🔍 Wykryte liczniki na MQTT" w panelu."""
+
+    def _make_listener(self, history, meters=None):
+        cfg = {"mqtt_host": "127.0.0.1", "topic_prefix": "wmbusmeters"}
+        return wmbus.WmbusMqttListener(cfg, meters or [], lambda m, t: None, history=history)
+
+    def _msg(self, topic: str, payload: bytes):
+        return type("FakeMqttMessage", (), {"topic": topic, "payload": payload})()
+
+    def test_unmatched_telegram_recorded_as_discovered(self, history):
+        listener = self._make_listener(history)
+        payload = json.dumps({
+            "media": "electricity", "meter": "amiplus", "id": "31623077",
+            "current_power_consumption_kw": 0.668, "voltage_at_phase_1_v": 230.0,
+        }).encode()
+        listener._on_message(None, None, self._msg("wmbusmeters/gama350", payload))
+
+        discovered = wmbus.discovered_meters(history, [])
+        assert len(discovered) == 1
+        assert discovered[0]["name"] == "gama350"
+        assert discovered[0]["id"] == "31623077"
+        assert discovered[0]["driver"] == "amiplus"
+        assert discovered[0]["phases"] == 3
+
+    def test_meter_without_phase_fields_detected_as_single_phase(self, history):
+        listener = self._make_listener(history)
+        payload = json.dumps({"meter": "auto", "id": "1", "total_energy_consumption_kwh": 5.0}).encode()
+        listener._on_message(None, None, self._msg("wmbusmeters/other", payload))
+
+        discovered = wmbus.discovered_meters(history, [])
+        assert discovered[0]["phases"] == 1
+        assert discovered[0]["field_count"] == 1
+
+    def test_matched_meter_is_not_recorded_as_discovered(self, history):
+        listener = self._make_listener(history, meters=[{"name": "gama350", "label": "l", "id": "x", "phases": 1}])
+        listener._on_message(None, None, self._msg("wmbusmeters/gama350", json.dumps({"id": "31623077"}).encode()))
+
+        assert wmbus.discovered_meters(history, ["gama350"]) == []
+
+    def test_discovered_meters_filters_out_meters_already_configured(self, history):
+        history.set_status(
+            "wmbus_seen:gama350", "wmbus_seen",
+            json.dumps({"id": "1", "driver": "amiplus", "phases": 3, "field_count": 2}), label="gama350",
+        )
+        assert wmbus.discovered_meters(history, ["gama350"]) == []
+        assert len(wmbus.discovered_meters(history, [])) == 1
+
+    def test_invalid_json_payload_is_not_recorded(self, history):
+        listener = self._make_listener(history)
+        listener._on_message(None, None, self._msg("wmbusmeters/broken", b"not json"))
+
+        assert wmbus.discovered_meters(history, []) == []
+
+    def test_without_history_does_not_crash(self):
+        listener = self._make_listener(history=None)
+        listener._on_message(None, None, self._msg("wmbusmeters/gama350", b"{}"))
+
+
 class TestAlarmNotificationFromThread:
     async def test_notification_from_non_asyncio_thread_is_delivered(self, history):
         sent = []
@@ -323,6 +384,96 @@ class TestPanel:
         assert p["configured"] is True and p["enabled"] is False
         settings = await (await client.get("/api/plugins/wmbus/settings", headers=AUTH)).get_json()
         assert settings["enabled"] is False
+
+    async def test_discovered_endpoint_requires_auth_and_returns_empty_by_default(self, client):
+        assert (await client.get("/api/plugins/wmbus/discovered")).status_code == 401
+        resp = await client.get("/api/plugins/wmbus/discovered", headers=AUTH)
+        assert resp.status_code == 200
+        assert (await resp.get_json()) == {"discovered": []}
+
+    async def test_discovered_endpoint_lists_unconfigured_meters_seen_on_mqtt(self, client):
+        import dashboard.app as app_module
+        app_module.history.set_status(
+            "wmbus_seen:gama350", "wmbus_seen",
+            json.dumps({"id": "31623077", "driver": "amiplus", "phases": 3, "field_count": 5}), label="gama350",
+        )
+        resp = await client.get("/api/plugins/wmbus/discovered", headers=AUTH)
+        data = await resp.get_json()
+        assert len(data["discovered"]) == 1
+        assert data["discovered"][0]["name"] == "gama350"
+        assert data["discovered"][0]["id"] == "31623077"
+
+    async def test_discovered_endpoint_excludes_already_configured_meters(self, client):
+        import dashboard.app as app_module
+        await _save(client, [{**METER, "name": "gama350"}])
+        app_module.history.set_status(
+            "wmbus_seen:gama350", "wmbus_seen",
+            json.dumps({"id": "31623077", "driver": "amiplus", "phases": 3, "field_count": 5}), label="gama350",
+        )
+        resp = await client.get("/api/plugins/wmbus/discovered", headers=AUTH)
+        assert (await resp.get_json()) == {"discovered": []}
+
+    async def test_readings_include_sensor_and_energy_flag_for_field_rows(self, client):
+        import dashboard.app as app_module
+        app_module.history.set_status(
+            "wmbus:dom:total_energy_consumption_kwh", "wmbus", "123.4", label="Dom: total_energy_consumption_kwh",
+        )
+        resp = await client.get("/api/plugins/wmbus/readings", headers=AUTH)
+        rows = await resp.get_json()
+        row = next(r for r in rows if r["key"] == "wmbus:dom:total_energy_consumption_kwh")
+        assert row["sensor"] == "wmbus_dom_total_energy_consumption_kwh"
+        assert row["is_energy_meter"] is False
+
+    async def test_readings_do_not_attach_sensor_to_phases_or_status_rows(self, client):
+        import dashboard.app as app_module
+        app_module.history.set_status("wmbus:dom:phases", "wmbus", "L1 L2 L3", label="Dom: fazy")
+        app_module.history.set_status("wmbus:dom:status", "wmbus", "OK", label="Dom: status")
+        resp = await client.get("/api/plugins/wmbus/readings", headers=AUTH)
+        rows = await resp.get_json()
+        for r in rows:
+            if r["key"] in ("wmbus:dom:phases", "wmbus:dom:status"):
+                assert "sensor" not in r
+
+    async def test_readings_reflect_flagged_energy_meter(self, client):
+        import dashboard.app as app_module
+        from bridge import energy_meters
+
+        app_module.history.set_status(
+            "wmbus:dom:total_energy_consumption_kwh", "wmbus", "123.4", label="Dom: total_energy_consumption_kwh",
+        )
+        energy_meters.mark_energy_meter(app_module.history, "wmbus_dom_total_energy_consumption_kwh", "Dom")
+        resp = await client.get("/api/plugins/wmbus/readings", headers=AUTH)
+        rows = await resp.get_json()
+        row = next(r for r in rows if r["key"] == "wmbus:dom:total_energy_consumption_kwh")
+        assert row["is_energy_meter"] is True
+
+    async def test_energy_meter_toggle_requires_auth(self, client):
+        assert (await client.post(
+            "/api/plugins/wmbus/energy_meter", json={"sensor": "wmbus_dom_x"},
+        )).status_code == 401
+
+    async def test_energy_meter_toggle_marks_and_unmarks(self, client):
+        import dashboard.app as app_module
+        from bridge import energy_meters
+
+        resp = await client.post(
+            "/api/plugins/wmbus/energy_meter", json={"sensor": "wmbus_dom_total_energy_consumption_kwh", "flag": True},
+            headers=AUTH,
+        )
+        assert resp.status_code == 200
+        assert energy_meters.is_energy_meter(app_module.history, "wmbus_dom_total_energy_consumption_kwh") is True
+
+        await client.post(
+            "/api/plugins/wmbus/energy_meter", json={"sensor": "wmbus_dom_total_energy_consumption_kwh", "flag": False},
+            headers=AUTH,
+        )
+        assert energy_meters.is_energy_meter(app_module.history, "wmbus_dom_total_energy_consumption_kwh") is False
+
+    async def test_energy_meter_toggle_rejects_sensor_outside_wmbus_namespace(self, client):
+        resp = await client.post(
+            "/api/plugins/wmbus/energy_meter", json={"sensor": "esphome_gama350_power"}, headers=AUTH,
+        )
+        assert resp.status_code == 400
 
 
 class TestReload:

@@ -7,7 +7,7 @@ import time
 
 from quart import Quart, jsonify, render_template, request
 
-from bridge import wmbus
+from bridge import energy_meters, wmbus
 from plugins import PluginMeta, register_settings_route
 
 
@@ -115,9 +115,44 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
                        "wtyczki wymaga restartu.",
         })
 
+    @app.route("/api/plugins/wmbus/discovered", methods=["GET"])
+    async def api_plugin_wmbus_discovered():
+        configured = [m.get("name") for m in _get_section().get("meters", []) or []]
+        return jsonify({"discovered": wmbus.discovered_meters(get_history(), configured)})
+
     @app.route("/api/plugins/wmbus/readings", methods=["GET"])
     async def api_plugin_wmbus_readings():
-        return jsonify(get_history().get_status("wmbus"))
+        history = get_history()
+        out = []
+        for r in history.get_status("wmbus"):
+            row = dict(r)
+            parts = r["key"].split(":")
+            if len(parts) == 3 and parts[2] not in ("phases", "status"):
+                sensor = f"wmbus_{parts[1]}_{parts[2]}"
+                row["sensor"] = sensor
+                row["is_energy_meter"] = energy_meters.is_energy_meter(history, sensor)
+            out.append(row)
+        return jsonify(out)
+
+    @app.route("/api/plugins/wmbus/energy_meter", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_wmbus_energy_meter():
+        form = await request.get_json(silent=True)
+        if not isinstance(form, dict):
+            return jsonify({"error": "Nieprawidłowe dane"}), 400
+        sensor = (form.get("sensor") or "").strip()
+        if not sensor or not sensor.startswith("wmbus_"):
+            return jsonify({"error": "Wymagany prawidłowy 'sensor' (wmbus_...)"}), 400
+
+        history = get_history()
+        if form.get("flag", True):
+            label = (form.get("label") or "").strip() or sensor
+            energy_meters.mark_energy_meter(history, sensor, label)
+            message = f"Oznaczono '{sensor}' jako licznik energii."
+        else:
+            energy_meters.unmark_energy_meter(history, sensor)
+            message = f"Odznaczono '{sensor}' jako licznik energii."
+        return jsonify({"sensor": sensor, "message": message})
 
     @app.route("/api/plugins/wmbus/series", methods=["GET"])
     async def api_plugin_wmbus_series():

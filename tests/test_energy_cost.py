@@ -149,6 +149,51 @@ class TestSensors:
         data = await (await client.get("/api/plugins/energy_cost/sensors", headers=AUTH)).get_json()
         assert data["suggested"] == ["licznik_kwh"] and "kociol_temp" in data["sensors"]
 
+    async def test_flagged_sensor_is_suggested_even_without_kwh_in_name(self, client):
+        import dashboard.app as app_module
+        from bridge import energy_meters
+
+        app_module.history.write_reading("esphome_gama350_zuzycie_energii", 1.0)
+        energy_meters.mark_energy_meter(app_module.history, "esphome_gama350_zuzycie_energii", "Gama 350")
+        data = await (await client.get("/api/plugins/energy_cost/sensors", headers=AUTH)).get_json()
+        assert data["suggested"] == ["esphome_gama350_zuzycie_energii"]
+
+    async def test_flagged_sensor_listed_before_kwh_matched_one(self, client):
+        import dashboard.app as app_module
+        from bridge import energy_meters
+
+        app_module.history.write_reading("licznik_kwh", 1.0)
+        app_module.history.write_reading("esphome_gama350_zuzycie_energii", 1.0)
+        energy_meters.mark_energy_meter(app_module.history, "esphome_gama350_zuzycie_energii", "Gama 350")
+        data = await (await client.get("/api/plugins/energy_cost/sensors", headers=AUTH)).get_json()
+        assert data["suggested"] == ["esphome_gama350_zuzycie_energii", "licznik_kwh"]
+
+
+class TestFlaggedSensors:
+    async def test_requires_auth(self, client):
+        assert (await client.get("/api/plugins/energy_cost/flagged_sensors")).status_code == 401
+
+    async def test_empty_without_any_flagged_sensor(self, client):
+        data = await (await client.get("/api/plugins/energy_cost/flagged_sensors", headers=AUTH)).get_json()
+        assert data == {"flagged": []}
+
+    async def test_lists_flagged_sensors_not_yet_used_as_a_meter(self, client):
+        import dashboard.app as app_module
+        from bridge import energy_meters
+
+        energy_meters.mark_energy_meter(app_module.history, "esphome_gama350_zuzycie_energii", "Gama 350: zużycie")
+        data = await (await client.get("/api/plugins/energy_cost/flagged_sensors", headers=AUTH)).get_json()
+        assert data == {"flagged": [{"sensor": "esphome_gama350_zuzycie_energii", "label": "Gama 350: zużycie"}]}
+
+    async def test_excludes_sensors_already_used_by_a_configured_meter(self, client):
+        import dashboard.app as app_module
+        from bridge import energy_meters
+
+        energy_meters.mark_energy_meter(app_module.history, "licznik_kwh", "Dom")
+        await _save(client)  # CFG's one meter uses sensor="licznik_kwh"
+        data = await (await client.get("/api/plugins/energy_cost/flagged_sensors", headers=AUTH)).get_json()
+        assert data == {"flagged": []}
+
 
 class TestPluginsList:
     async def test_listed_but_not_toggleable(self, client):

@@ -1547,7 +1547,11 @@ class RulesEngine:
             self.history.set_status("health:ebus_mqtt", "system_health", "wyłączono (wtyczka)", label="ebus_mqtt")
 
         wm_cfg = self.config.raw.get("wmbus", {}) or {}
-        if wm_cfg.get("enabled") and self._wmbus_meters:
+        if wm_cfg.get("enabled"):
+            # Uruchamiamy nasłuch MQTT nawet bez skonfigurowanych liczników
+            # (lista pusta) - dzięki temu "odkrywanie liczników z MQTT" w
+            # panelu (/plugins/wmbus) działa od razu, zanim dodasz pierwszy
+            # licznik, a nie dopiero po nim.
             self.wmbus_listener = wmbus.WmbusMqttListener(
                 {
                     "mqtt_host": wm_cfg.get("mqtt_host") or self.config.ebus.get("mqtt_host") or "127.0.0.1",

@@ -59,6 +59,10 @@
   Zapisany klucz <strong>nigdy nie wraca do przeglądarki</strong>; pole klucza zostaw puste, żeby go nie zmieniać.
   Dla liczników <strong>3-fazowych</strong> ustaw "Fazy: 3" - panel pokaże wartości osobno dla L1, L2, L3 i
   pilnuje napięcia na każdej fazie (progi min/max).
+  <br>Jeśli telegram przychodzi już ROZSZYFROWANY/zdekodowany (np. z własnego
+  urządzenia ESPHome) - zostaw pole klucza puste; sekcja "🔍 Wykryte liczniki
+  na MQTT" niżej pozwoli go dodać jednym kliknięciem, bez ręcznego
+  wpisywania nazwy/ID.
   <br>Włącz wtyczkę w <a href="/plugins">🧩 Wtyczki</a> (wymaga restartu bridge'a).
 </div>
 
@@ -83,6 +87,25 @@
   <div id="saveMessage" class="msg"></div>
 </div>
 
+<div class="card" id="discoveredCard">
+  <h2>🔍 Wykryte liczniki na MQTT</h2>
+  <div class="hint" style="margin-bottom:10px">
+    Telegramy odebrane na temacie <code>wmbusmeters/&lt;nazwa&gt;</code>
+    (albo innym ustawionym wyżej prefiksie), który NIE pasuje do żadnej
+    nazwy licznika zapisanej niżej - np. z własnego urządzenia ESPHome,
+    które samo dekoduje telegram i publikuje gotowy JSON, bez AES/sterownika
+    po stronie bridge'a. Kliknij "+ Dodaj", żeby wstawić wykryty licznik do
+    listy niżej (nazwę/ID/fazy uzupełnione automatycznie) - potem tylko
+    nadaj etykietę i zapisz.
+  </div>
+  <table>
+    <thead><tr><th>Nazwa (temat)</th><th>ID</th><th>Sterownik/media</th><th>Pól</th><th>Ostatnio widziano</th><th></th></tr></thead>
+    <tbody id="discoveredRows"></tbody>
+  </table>
+  <div class="small" id="discoveredEmpty">Jeszcze nic nie wykryto - włącz wtyczkę i upewnij się, że coś publikuje na MQTT.</div>
+  <div class="actions-bar"><button class="secondary" id="refreshDiscoveredBtn" type="button">🔄 Odśwież</button></div>
+</div>
+
 <div class="card">
   <h2>Wykresy</h2>
   <div class="toolbar">
@@ -102,8 +125,13 @@
 
 <div class="card">
   <h2>Ostatnie odczyty</h2>
+  <div class="small" style="margin-bottom:8px">
+    Zaznacz "⚡ Energia" przy polu narastającego zużycia (kWh), żeby było od razu
+    widoczne do wyboru w <a href="/plugins/energy_cost">💰 Koszty energii</a> -
+    dotyczy to też liczników z taryfami dzień/noc (G12/G12w).
+  </div>
   <table>
-    <thead><tr><th>Pole</th><th>Wartość</th><th>Odczyt</th></tr></thead>
+    <thead><tr><th>Pole</th><th>Wartość</th><th>Odczyt</th><th>⚡ Energia</th></tr></thead>
     <tbody id="readingRows"></tbody>
   </table>
   <div class="small" id="readingsEmpty">Brak danych - uruchom wmbusmeters i bridge'a.</div>
@@ -189,6 +217,21 @@ async function loadMeters() {
   data.meters.forEach(m => tbody.appendChild(makeRow(m)));
 }
 
+async function toggleWmbusEnergyMeter(checkbox, sensor, label) {
+  try {
+    const resp = await authorizedFetch('/api/plugins/wmbus/energy_meter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sensor, label, flag: checkbox.checked }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { alert('❌ ' + (data.error || 'Błąd zapisu')); checkbox.checked = !checkbox.checked; }
+  } catch (e) {
+    alert('❌ Błąd komunikacji: ' + e);
+    checkbox.checked = !checkbox.checked;
+  }
+}
+
 async function loadReadings() {
   const rows = await (await authorizedFetch('/api/plugins/wmbus/readings')).json();
   const tbody = document.getElementById('readingRows');
@@ -199,6 +242,18 @@ async function loadReadings() {
     tr.appendChild(cell(document.createTextNode(r.label)));
     tr.appendChild(cell(document.createTextNode(r.value)));
     tr.appendChild(cell(document.createTextNode(new Date(r.ts * 1000).toLocaleString('pl-PL'))));
+    const energyCell = document.createElement('td');
+    if (r.sensor) {
+      const label = document.createElement('label');
+      label.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;';
+      label.title = 'Oznacz jako licznik energii';
+      const cb = el('input', { type: 'checkbox', checked: !!r.is_energy_meter });
+      cb.addEventListener('change', () => toggleWmbusEnergyMeter(cb, r.sensor, r.label));
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode('⚡'));
+      energyCell.appendChild(label);
+    }
+    tr.appendChild(energyCell);
     tbody.appendChild(tr);
   });
 }
@@ -206,6 +261,34 @@ async function loadReadings() {
 document.getElementById('addRowBtn').addEventListener('click', () => {
   document.getElementById('meterRows').appendChild(makeRow());
 });
+
+async function loadDiscovered() {
+  const data = await (await authorizedFetch('/api/plugins/wmbus/discovered')).json();
+  const tbody = document.getElementById('discoveredRows');
+  tbody.replaceChildren();
+  const rows = data.discovered || [];
+  document.getElementById('discoveredEmpty').style.display = rows.length ? 'none' : 'block';
+  rows.forEach(d => {
+    const tr = document.createElement('tr');
+    const addBtn = el('button', { className: 'secondary', type: 'button', textContent: '+ Dodaj' });
+    addBtn.addEventListener('click', () => {
+      document.getElementById('meterRows').appendChild(
+        makeRow({ name: d.name, id: d.id, driver: d.driver || 'auto', phases: d.phases }),
+      );
+      document.getElementById('discoveredCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+    [
+      cell(document.createTextNode(d.name)),
+      cell(document.createTextNode(d.id || '—')),
+      cell(document.createTextNode(d.driver || '—')),
+      cell(document.createTextNode(String(d.field_count ?? '—'))),
+      cell(document.createTextNode(new Date(d.ts * 1000).toLocaleString('pl-PL'))),
+      cell(addBtn),
+    ].forEach(c => tr.appendChild(c));
+    tbody.appendChild(tr);
+  });
+}
+document.getElementById('refreshDiscoveredBtn').addEventListener('click', loadDiscovered);
 
 document.getElementById('saveBtn').addEventListener('click', async () => {
   const msgEl = document.getElementById('saveMessage');
@@ -301,7 +384,9 @@ document.getElementById('chartTableBtn').addEventListener('click', () => {
 loadMeters();
 loadChartMeters();
 loadReadings();
+loadDiscovered();
 setInterval(loadReadings, 15000);
+setInterval(loadDiscovered, 15000);
 </script>
 </body>
 </html>

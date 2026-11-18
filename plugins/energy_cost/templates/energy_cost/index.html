@@ -141,6 +141,19 @@
   <div class="section-hint" style="margin-top:-4px">Odcinki dłuższe niż ta przerwa (np. licznik był offline) nie są rozkładane na strefy -
     zużycie z nich pokazujemy osobno jako "nieprzypisane", zamiast zgadywać.</div>
 
+  <h3>⚡ Gotowe liczniki energii</h3>
+  <div class="section-hint">
+    Czujniki oznaczone jako "licznik energii" w innych wtyczkach
+    (<a href="/plugins/esphome">🔌 ESPHome</a>, <a href="/plugins/wmbus">⚡ wM-Bus</a>) -
+    jeszcze nieużyte poniżej. Kliknij "+ Dodaj", żeby wstawić gotowy wiersz
+    (zostaje tylko wybrać/dodać taryfę i zapisać).
+  </div>
+  <table id="flaggedTable" style="display:none">
+    <thead><tr><th>Czujnik</th><th>Etykieta</th><th></th></tr></thead>
+    <tbody id="flaggedRows"></tbody>
+  </table>
+  <div id="flaggedEmpty" style="color:var(--muted); font-size:13px;">Brak nieużytych oznaczonych liczników.</div>
+
   <h3>Liczniki</h3>
   <datalist id="sensorList"></datalist>
   <table>
@@ -232,7 +245,7 @@ function addMeterRow(m = {}) {
   cells[2].setAttribute('list', 'sensorList');
   cells.forEach(c => tr.appendChild(el('td', {}, [c])));
   const del = el('button', { className: 'icon', type: 'button', title: 'Usuń', textContent: '✕' });
-  del.addEventListener('click', () => { tr.remove(); refreshReportMeters(); });
+  del.addEventListener('click', () => { tr.remove(); refreshReportMeters(); loadFlaggedSensors(); });
   tr.appendChild(el('td', {}, [del]));
   document.getElementById('meterRows').appendChild(tr);
 }
@@ -443,6 +456,43 @@ async function init() {
     const ordered = [...s.suggested, ...s.sensors.filter(x => !s.suggested.includes(x))];
     ordered.forEach(x => list.appendChild(el('option', { value: x })));
   } catch (e) {}
+
+  loadFlaggedSensors();
+}
+
+function usedSensors() {
+  return new Set(Array.from(document.querySelectorAll('#meterRows .m-sensor')).map(i => i.value.trim()));
+}
+
+function slugify(text) {
+  return (text || 'licznik').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'licznik';
+}
+
+async function loadFlaggedSensors() {
+  let flagged = [];
+  try {
+    flagged = (await (await api('/api/plugins/energy_cost/flagged_sensors')).json()).flagged || [];
+  } catch (e) { return; }
+  const used = usedSensors();
+  flagged = flagged.filter(f => !used.has(f.sensor));
+  const tbody = document.getElementById('flaggedRows');
+  tbody.replaceChildren();
+  document.getElementById('flaggedTable').style.display = flagged.length ? '' : 'none';
+  document.getElementById('flaggedEmpty').style.display = flagged.length ? 'none' : '';
+  flagged.forEach(f => {
+    const tr = document.createElement('tr');
+    const addBtn = el('button', { className: 'secondary', type: 'button', textContent: '+ Dodaj' });
+    addBtn.addEventListener('click', () => {
+      addMeterRow({ name: slugify(f.label), label: f.label, sensor: f.sensor });
+      refreshReportMeters();
+      loadFlaggedSensors();
+    });
+    [el('td', {}, [document.createTextNode(f.sensor)]), el('td', {}, [document.createTextNode(f.label)]), el('td', {}, [addBtn])]
+      .forEach(c => tr.appendChild(c));
+    tbody.appendChild(tr);
+  });
 }
 
 document.getElementById('addMeterBtn').addEventListener('click', () => addMeterRow());

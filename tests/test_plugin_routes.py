@@ -3183,8 +3183,55 @@ class TestEsphomePluginPage:
         assert device["connected"] is True
         assert device["entities"] == [{
             "object_id": "power", "name": "Moc chwilowa", "kind": "SensorInfo",
-            "value": "1234.5", "ts": device["entities"][0]["ts"],
+            "value": "1234.5", "ts": device["entities"][0]["ts"], "is_energy_meter": False,
         }]
+
+    async def test_status_reports_entity_flagged_as_energy_meter(self, client):
+        import dashboard.app as app_module
+        from bridge import energy_meters
+
+        await client.post(
+            "/api/plugins/esphome/devices",
+            json={"devices": [{"name": "gama350", "host": "192.168.1.50"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        app_module.history.set_status("esphome_meta:gama350:power", "esphome_meta", "SensorInfo", label="Moc")
+        energy_meters.mark_energy_meter(app_module.history, "esphome_gama350_power", "gama350: Moc")
+
+        resp = await client.get("/api/plugins/esphome/status", headers=_basic_auth_header("test_haslo_123"))
+        data = await resp.get_json()
+        assert data["devices"][0]["entities"][0]["is_energy_meter"] is True
+
+    async def test_energy_meter_toggle_requires_auth(self, client):
+        assert (await client.post(
+            "/api/plugins/esphome/energy_meter", json={"device": "gama350", "object_id": "power"},
+        )).status_code == 401
+
+    async def test_energy_meter_toggle_marks_and_unmarks(self, client):
+        import dashboard.app as app_module
+        from bridge import energy_meters
+
+        resp = await client.post(
+            "/api/plugins/esphome/energy_meter",
+            json={"device": "gama350", "object_id": "power", "flag": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 200
+        assert energy_meters.is_energy_meter(app_module.history, "esphome_gama350_power") is True
+
+        await client.post(
+            "/api/plugins/esphome/energy_meter",
+            json={"device": "gama350", "object_id": "power", "flag": False},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert energy_meters.is_energy_meter(app_module.history, "esphome_gama350_power") is False
+
+    async def test_energy_meter_toggle_requires_device_and_object_id(self, client):
+        resp = await client.post(
+            "/api/plugins/esphome/energy_meter", json={"device": "", "object_id": ""},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        assert resp.status_code == 400
 
     async def test_control_requires_auth(self, client):
         assert (await client.post(
