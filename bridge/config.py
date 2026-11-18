@@ -151,3 +151,7 @@ class BridgeConfig:
     @property
     def smartthings(self) -> dict | None:
         return self.raw.get("smartthings")
+
+    @property
+    def esphome(self) -> dict | None:
+        return self.raw.get("esphome")

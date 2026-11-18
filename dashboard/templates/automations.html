@@ -391,6 +391,13 @@ function sourceDeviceOptionsHtml(system, selected) {
     }
     return devices.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
   }
+  if (system === 'esphome_state') {
+    const entities = context.esphome_entities || [];
+    if (entities.length === 0) {
+      return `<option value="">(brak zaobserwowanych encji - urządzenie musi się najpierw połączyć z bridgem)</option>`;
+    }
+    return entities.map(e => `<option value="${escapeHtml(e.value)}" ${e.value === selected ? 'selected' : ''}>${escapeHtml(e.label)}</option>`).join('');
+  }
   return deviceOptionsHtml(selected);
 }
 
@@ -890,6 +897,7 @@ function buildExtraSourceRowHtml(entry) {
           <option value="lg_thinq_state" ${system === 'lg_thinq_state' ? 'selected' : ''}>LG ThinQ (stan urządzenia AGD)</option>
           <option value="iqua_state" ${system === 'iqua_state' ? 'selected' : ''}>iQua (zmiękczacz wody)</option>
           <option value="smartthings_state" ${system === 'smartthings_state' ? 'selected' : ''}>SmartThings</option>
+          <option value="esphome_state" ${system === 'esphome_state' ? 'selected' : ''}>ESPHome</option>
         </select></div>
       <div class="field mr-ex-satel-fields" style="${system === 'satel_zone' ? '' : 'display:none;'}">
         <label>Wejście w Satelu</label>
@@ -1032,6 +1040,7 @@ function addMotionRuleCard(initial, startCollapsed) {
             <option value="lg_thinq_state" ${sourceSystem === 'lg_thinq_state' ? 'selected' : ''}>LG ThinQ (stan urządzenia AGD)</option>
             <option value="iqua_state" ${sourceSystem === 'iqua_state' ? 'selected' : ''}>iQua (zmiękczacz wody)</option>
             <option value="smartthings_state" ${sourceSystem === 'smartthings_state' ? 'selected' : ''}>SmartThings</option>
+            <option value="esphome_state" ${sourceSystem === 'esphome_state' ? 'selected' : ''}>ESPHome</option>
           </select></div>
         <div class="field mr-satel-source-fields" style="${sourceSystem === 'satel_zone' ? '' : 'display:none;'}">
           <label>Wejście w Satelu</label>

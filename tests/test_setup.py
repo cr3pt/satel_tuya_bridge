@@ -2895,11 +2895,11 @@ class TestListPlugins:
     def test_empty_config_does_not_crash_and_all_unconfigured(self):
         plugins = list_plugins({})
         by_id = {p["id"]: p for p in plugins}
-        assert len(plugins) == len(by_id) == 16
+        assert len(plugins) == len(by_id) == 17
         for plugin_id in (
             "satel", "tuya_local", "ebus", "home_assistant",
             "mqtt_publish", "unifi_protect", "homewhiz", "lg_thinq", "iqua", "smartthings",
-            "presence_simulation", "notifications", "energy_cost", "wmbus",
+            "presence_simulation", "notifications", "energy_cost", "wmbus", "esphome",
         ):
             assert by_id[plugin_id]["enabled"] is False, plugin_id
             assert by_id[plugin_id]["configured"] is False, plugin_id
@@ -2974,7 +2974,7 @@ class TestListPlugins:
         assert toggleable == {
             "satel", "tuya_local", "ebus", "home_assistant",
             "mqtt_publish", "unifi_protect", "homewhiz", "lg_thinq", "iqua", "smartthings",
-            "presence_simulation", "notifications", "mcp_server", "homekit", "wmbus",
+            "presence_simulation", "notifications", "mcp_server", "homekit", "wmbus", "esphome",
         }
 
     def test_poll_interval_ids_match_expected_set(self):

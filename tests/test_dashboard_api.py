@@ -634,6 +634,22 @@ class TestAutomationContextEndpoint:
         )).get_json()
         assert {"key": "satel_input:3", "label": "Salon", "category": "satel_input"} in data["status_keys"]
 
+    async def test_context_includes_esphome_entities_observed_in_history(self, client):
+        import dashboard.app as app_module
+        app_module.history.set_status(
+            "esphome_meta:gama350:power", "esphome_meta", "SensorInfo", label="Moc chwilowa",
+        )
+        data = await (await client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert {"value": "gama350:power", "label": "gama350:power (Moc chwilowa)"} in data["esphome_entities"]
+
+    async def test_context_esphome_entities_empty_without_observations(self, client):
+        data = await (await client.get(
+            "/api/config/automation-context", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert data["esphome_entities"] == []
+
     async def test_context_includes_motion_rule_names_for_chaining_ui(self, client):
         (await client.post(
             "/api/config/automations",

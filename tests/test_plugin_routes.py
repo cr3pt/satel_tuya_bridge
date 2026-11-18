@@ -1438,7 +1438,7 @@ class TestMqttPublishPluginPage:
         assert await resp.get_json() == {
             "satel_topic": "satel", "tuya_topic": "tuya", "homewhiz_topic": "homewhiz",
             "lg_thinq_topic": "lg_thinq", "iqua_topic": "iqua", "smartthings_topic": "smartthings",
-            "wmbus_topic": "wmbus",
+            "wmbus_topic": "wmbus", "esphome_topic": "esphome",
         }
 
     async def test_topics_post_without_auth_returns_401(self, client):
@@ -1452,7 +1452,7 @@ class TestMqttPublishPluginPage:
             json={
                 "satel_topic": "moj_satel", "tuya_topic": "moje_tuya", "homewhiz_topic": "moj_homewhiz",
                 "lg_thinq_topic": "moj_lg_thinq", "iqua_topic": "moj_iqua", "smartthings_topic": "moj_smartthings",
-                "wmbus_topic": "moj_wmbus",
+                "wmbus_topic": "moj_wmbus", "esphome_topic": "moj_esphome",
             },
             headers=_basic_auth_header("test_haslo_123"),
         ))
@@ -1463,7 +1463,7 @@ class TestMqttPublishPluginPage:
         saved = app_module.config_store.get("config")["mqtt_publish"]
         assert saved["topics"] == {
             "satel": "moj_satel", "tuya": "moje_tuya", "homewhiz": "moj_homewhiz", "lg_thinq": "moj_lg_thinq",
-            "iqua": "moj_iqua", "smartthings": "moj_smartthings", "wmbus": "moj_wmbus",
+            "iqua": "moj_iqua", "smartthings": "moj_smartthings", "wmbus": "moj_wmbus", "esphome": "moj_esphome",
         }
         assert saved["log_level"] == "WARNING"
 
@@ -1477,7 +1477,7 @@ class TestMqttPublishPluginPage:
         assert data["topics"] == []
         assert set(data["known_prefixes"]) == {
             "homeassistant", "home/bridge", "satel", "tuya", "homewhiz", "lg_thinq", "iqua", "smartthings",
-            "home/boiler", "wmbus",
+            "home/boiler", "wmbus", "esphome",
         }
 
     async def test_explorer_get_shows_recorded_topics(self, client):
@@ -3004,3 +3004,243 @@ class TestHomekitPluginPage:
         ))
         pending = app_module.history.get_pending_commands()
         assert any(c["command"] == "reload_config" for c in pending)
+
+
+class TestEsphomePluginPage:
+
+    async def test_page_redirects_to_login_without_auth(self, client):
+        resp = (await client.get("/plugins/esphome", follow_redirects=False))
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    async def test_page_loads_when_authenticated(self, client):
+        resp = (await client.get("/plugins/esphome", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+
+    async def test_devices_get_defaults_to_empty(self, client):
+        resp = (await client.get("/api/plugins/esphome/devices", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert await resp.get_json() == {"devices": []}
+
+    async def test_devices_post_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/esphome/devices", json={"devices": []})).status_code == 401
+
+    async def test_devices_post_rejects_missing_host(self, client):
+        resp = (await client.post(
+            "/api/plugins/esphome/devices", json={"devices": [{"name": "gama350", "host": ""}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_rejects_duplicate_names(self, client):
+        resp = (await client.post(
+            "/api/plugins/esphome/devices",
+            json={"devices": [
+                {"name": "gama350", "host": "1.2.3.4"},
+                {"name": "gama350", "host": "5.6.7.8"},
+            ]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_rejects_invalid_port(self, client):
+        resp = (await client.post(
+            "/api/plugins/esphome/devices", json={"devices": [{"name": "x", "host": "1.2.3.4", "port": "abc"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_devices_post_persists_and_masks_secrets(self, client):
+        import dashboard.app as app_module
+
+        resp = (await client.post(
+            "/api/plugins/esphome/devices",
+            json={"devices": [{
+                "name": "gama350", "host": "192.168.1.50", "port": 6053, "label": "Licznik",
+                "noise_psk": "dGFqbnkta2x1Y3otdGVzdA==",
+            }]},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        saved = app_module.config_store.get("config")["esphome"]["devices"]["gama350"]
+        assert saved["host"] == "192.168.1.50"
+        assert saved["noise_psk"] == "dGFqbnkta2x1Y3otdGVzdA=="
+
+        listed = await (await client.get(
+            "/api/plugins/esphome/devices", headers=_basic_auth_header("test_haslo_123"),
+        )).get_json()
+        assert listed == {"devices": [{
+            "name": "gama350", "host": "192.168.1.50", "port": 6053, "label": "Licznik",
+            "enabled": True, "noise_psk_set": True, "password_set": False,
+        }]}
+
+    async def test_devices_post_empty_secret_keeps_existing_value(self, client):
+        import dashboard.app as app_module
+
+        await client.post(
+            "/api/plugins/esphome/devices",
+            json={"devices": [{"name": "gama350", "host": "1.2.3.4", "noise_psk": "sekret123"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        await client.post(
+            "/api/plugins/esphome/devices",
+            json={"devices": [{"name": "gama350", "host": "1.2.3.4", "noise_psk": ""}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        saved = app_module.config_store.get("config")["esphome"]["devices"]["gama350"]
+        assert saved["noise_psk"] == "sekret123"
+
+    async def test_test_connection_requires_host(self, client):
+        resp = (await client.post(
+            "/api/plugins/esphome/test", json={}, headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_test_connection_without_auth_returns_401(self, client):
+        assert (await client.post("/api/plugins/esphome/test", json={"host": "1.2.3.4"})).status_code == 401
+
+    async def test_test_connection_success(self, client, monkeypatch):
+        class _FakeDeviceInfo:
+            name = "gama350"
+            model = "esp32-s3-devkitc-1"
+            esphome_version = "2026.1.0"
+            uses_password = False
+
+        class _FakeAPIClient:
+            def __init__(self, address, port, password=None, *, noise_psk=None):
+                pass
+
+            async def connect(self, login=False):
+                pass
+
+            async def device_info(self):
+                return _FakeDeviceInfo()
+
+            async def list_entities_services(self):
+                return [object(), object(), object()], []
+
+            async def disconnect(self, force=False):
+                pass
+
+        monkeypatch.setattr("aioesphomeapi.APIClient", _FakeAPIClient)
+
+        resp = (await client.post(
+            "/api/plugins/esphome/test", json={"host": "192.168.1.50"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert data == {
+            "name": "gama350", "model": "esp32-s3-devkitc-1", "esphome_version": "2026.1.0",
+            "uses_password": False, "entities": 3,
+        }
+
+    async def test_test_connection_reports_connection_error(self, client, monkeypatch):
+        from aioesphomeapi import APIConnectionError
+
+        class _FailingAPIClient:
+            def __init__(self, address, port, password=None, *, noise_psk=None):
+                pass
+
+            async def connect(self, login=False):
+                raise APIConnectionError("odmowa połączenia")
+
+            async def disconnect(self, force=False):
+                pass
+
+        monkeypatch.setattr("aioesphomeapi.APIClient", _FailingAPIClient)
+
+        resp = (await client.post(
+            "/api/plugins/esphome/test", json={"host": "192.168.1.50"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 502
+
+    async def test_status_empty_without_configured_devices(self, client):
+        resp = (await client.get("/api/plugins/esphome/status", headers=_basic_auth_header("test_haslo_123")))
+        assert resp.status_code == 200
+        assert await resp.get_json() == {"devices": []}
+
+    async def test_status_lists_configured_device_with_entities_and_health(self, client):
+        import dashboard.app as app_module
+
+        await client.post(
+            "/api/plugins/esphome/devices",
+            json={"devices": [{"name": "gama350", "host": "192.168.1.50", "label": "Licznik"}]},
+            headers=_basic_auth_header("test_haslo_123"),
+        )
+        app_module.history.set_status("health:esphome_gama350", "system_health", "połączono", label="esphome_gama350")
+        app_module.history.set_status(
+            "esphome_meta:gama350:power", "esphome_meta", "SensorInfo", label="Moc chwilowa",
+        )
+        app_module.history.set_status("esphome:gama350:power", "esphome", "1234.5", label="gama350: Moc chwilowa")
+
+        resp = await client.get("/api/plugins/esphome/status", headers=_basic_auth_header("test_haslo_123"))
+        data = await resp.get_json()
+        assert len(data["devices"]) == 1
+        device = data["devices"][0]
+        assert device["name"] == "gama350"
+        assert device["connected"] is True
+        assert device["entities"] == [{
+            "object_id": "power", "name": "Moc chwilowa", "kind": "SensorInfo",
+            "value": "1234.5", "ts": device["entities"][0]["ts"],
+        }]
+
+    async def test_control_requires_auth(self, client):
+        assert (await client.post(
+            "/api/plugins/esphome/control", json={"device": "gama350", "object_id": "relay", "action": "switch"},
+        )).status_code == 401
+
+    async def test_control_rejects_unknown_action(self, client):
+        resp = (await client.post(
+            "/api/plugins/esphome/control",
+            json={"device": "gama350", "object_id": "relay", "action": "nope"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
+
+    async def test_control_switch_enqueues_command(self, client):
+        import dashboard.app as app_module
+
+        resp = (await client.post(
+            "/api/plugins/esphome/control",
+            json={"device": "gama350", "object_id": "relay", "action": "switch", "state": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        cmd = app_module.history.get_command(data["command_id"])
+        assert cmd["command"] == "esphome_switch"
+        assert cmd["params"] == {"device": "gama350", "object_id": "relay", "state": True}
+
+    async def test_control_light_with_brightness_enqueues_command(self, client):
+        import dashboard.app as app_module
+
+        resp = (await client.post(
+            "/api/plugins/esphome/control",
+            json={"device": "gama350", "object_id": "lamp", "action": "light", "state": True, "brightness": 0.5},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        data = await resp.get_json()
+        cmd = app_module.history.get_command(data["command_id"])
+        assert cmd["params"] == {"device": "gama350", "object_id": "lamp", "state": True, "brightness": 0.5}
+
+    async def test_control_button_enqueues_command(self, client):
+        import dashboard.app as app_module
+
+        resp = (await client.post(
+            "/api/plugins/esphome/control",
+            json={"device": "gama350", "object_id": "restart", "action": "button"},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        data = await resp.get_json()
+        cmd = app_module.history.get_command(data["command_id"])
+        assert cmd["command"] == "esphome_button"
+        assert cmd["params"] == {"device": "gama350", "object_id": "restart"}
+
+    async def test_enabling_plugin_without_devices_is_rejected(self, client):
+        resp = (await client.post(
+            "/api/plugins/esphome/settings", json={"enabled": True},
+            headers=_basic_auth_header("test_haslo_123"),
+        ))
+        assert resp.status_code == 400
