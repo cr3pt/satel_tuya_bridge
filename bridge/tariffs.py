@@ -296,11 +296,26 @@ def _delta_kwh_in_range(readings: list[dict], ts_from: float, ts_to: float,
             continue
         dv *= (b - a) / dt
         if dt > max_gap_seconds:
+            # Rejestr już jest przypisany do strefy - przerwa w odczytach nie
+            # zmienia, do której strefy należy przyrost (liczona tylko w `gaps`).
             gaps += 1
-            unallocated += dv
-            continue
         kwh += dv
     return kwh, unallocated, resets, gaps, len(points)
+
+
+def counter_bounds(readings: list[dict], ts_from: float, ts_to: float, scale: float = 1.0) -> dict | None:
+    """Stan liczydła na początku i końcu okresu (ostatni odczyt nie później
+    niż granica; dla początku - pierwszy w okresie, gdy wcześniejszego brak)."""
+    points = sorted(((r["t"], r["v"] * scale) for r in readings), key=lambda p: p[0])
+    before = [p for p in points if p[0] <= ts_from]
+    inside = [p for p in points if ts_from <= p[0] <= ts_to]
+    start = before[-1] if before else (inside[0] if inside else None)
+    upto = [p for p in points if p[0] <= ts_to]
+    end = upto[-1] if upto else None
+    if start is None or end is None:
+        return None
+    return {"start_ts": start[0], "start": round(start[1], 3), "end_ts": end[0], "end": round(end[1], 3),
+            "diff": round(end[1] - start[1], 3)}
 
 
 def consumption_from_zone_sensors(zone_readings: dict[str, list[dict]], zones: tuple[str, ...], ts_from: float, ts_to: float,
@@ -677,7 +692,18 @@ def build_report(energy_cfg: dict, meter: dict, readings: list[dict] | None, ts_
                                "missing_prices": r["missing_prices"], "active": tid == meter["tariff"]})
         except ValueError as exc:
             comparison.append({"tariff": tid, "error": str(exc), "active": tid == meter["tariff"]})
+    if using_zone_sensors:
+        counter_sources = [(zone, meter["zone_sensors"][zone], (zone_readings or {}).get(zone) or [])
+                           for zone in meter_tariff.zones if zone in meter["zone_sensors"]]
+    else:
+        counter_sources = [(None, meter.get("sensor", ""), readings or [])]
+    counters = []
+    for zone, sensor, rows in counter_sources:
+        bounds = counter_bounds(rows, ts_from, ts_to, scale)
+        if bounds:
+            counters.append({"zone": zone, "sensor": sensor, **bounds})
     return {
+        "counters": counters,
         "meter": {
             "name": meter["name"], "label": meter["label"], "sensor": meter.get("sensor", ""),
             "tariff": meter["tariff"], "zone_sensors": meter.get("zone_sensors") or {},

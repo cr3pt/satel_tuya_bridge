@@ -93,6 +93,14 @@
       <thead><tr><th>Strefa</th><th class="num">kWh</th><th class="num">Cena netto/kWh</th><th class="num">Netto</th></tr></thead>
       <tbody id="zoneRows"></tbody>
     </table>
+    <div id="counterBox" style="display:none">
+      <h3>Stan liczydła licznika [kWh]</h3>
+      <div class="section-hint">Odczyty z historii - te same wartości, które licznik wysyła po MQTT/ESPHome (stan od montażu licznika). Zużycie w okresie = koniec − początek.</div>
+      <table>
+        <thead><tr><th>Rejestr</th><th class="num">Początek okresu</th><th class="num">Koniec okresu</th><th class="num">Zużycie</th></tr></thead>
+        <tbody id="counterRows"></tbody>
+      </table>
+    </div>
     <table style="margin-top:10px; max-width:420px">
       <tbody>
         <tr><td>Energia i opłaty zmienne (netto)</td><td class="num" id="varNet"></td></tr>
@@ -225,6 +233,7 @@ function showMsg(id, kind, text) {
 const zl = (n) => PluginCharts.fmtNum(n, 2);
 const kwh = (n) => PluginCharts.fmtNum(n, 3);
 const price = (n) => PluginCharts.fmtNum(n, 4);
+const fmtTs = (t) => PluginCharts.fmtTime(t, true);
 
 function customTariffs() {
   try { const v = JSON.parse(document.getElementById('customJson').value || '{}'); return v && typeof v === 'object' ? v : {}; }
@@ -453,6 +462,7 @@ async function runReport() {
   const r = data.result;
   const notes = [];
   if (r.samples < 2) notes.push('Za mało odczytów w tym okresie (potrzebne co najmniej 2) - sprawdź, czy czujnik zapisuje się do historii.');
+  if (r.gaps > 0 && !(r.unallocated_kwh > 0)) notes.push(`${r.gaps} przerw w odczytach - zużycie z nich przypisane do strefy wg rejestru licznika.`);
   if (r.unallocated_kwh > 0) notes.push(`${kwh(r.unallocated_kwh)} kWh z okresów bez odczytów (${r.gaps} przerw) nie zostało przypisane do stref i NIE jest wliczone w koszt.`);
   if (r.resets > 0) notes.push(`Wykryto ${r.resets} spadków licznika (reset/wymiana) - te odcinki pominięto.`);
   if (r.missing_prices.length) notes.push('Brak ceny dla stref: ' + r.missing_prices.join(', ') + ' - ich koszt liczony jako 0.');
@@ -465,6 +475,15 @@ async function runReport() {
   ])));
   rows.appendChild(el('tr', { className: 'total' }, [el('td', { textContent: 'Razem' }),
     el('td', { className: 'num', textContent: kwh(r.total_kwh) }), el('td'), el('td')]));
+  const counters = data.counters || [];
+  const crow = document.getElementById('counterRows'); crow.replaceChildren();
+  counters.forEach(c => crow.appendChild(el('tr', {}, [
+    el('td', { textContent: c.zone ? `${c.zone} (${c.sensor})` : c.sensor }),
+    el('td', { className: 'num', textContent: `${kwh(c.start)} (${fmtTs(c.start_ts)})` }),
+    el('td', { className: 'num', textContent: `${kwh(c.end)} (${fmtTs(c.end_ts)})` }),
+    el('td', { className: 'num', textContent: kwh(c.diff) }),
+  ])));
+  document.getElementById('counterBox').style.display = counters.length ? '' : 'none';
   document.getElementById('varNet').textContent = zl(r.variable_net) + ' zł';
   document.getElementById('fixedNet').textContent = zl(r.fixed_net) + ' zł';
   document.getElementById('totalNet').textContent = zl(r.total_net) + ' zł';

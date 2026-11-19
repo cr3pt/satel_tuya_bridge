@@ -1715,3 +1715,18 @@ class TestHomeMap:
             "/api/config/home_map", json={"rooms": [], "icons": []}, headers=_basic_auth_header("test_haslo_123"),
         )
         assert called == []
+
+
+class TestResolveAlert:
+
+    async def test_resolve_requires_auth_and_closes_alert(self, client):
+        import dashboard.app as app_module
+        alert_id = app_module.history.open_alert("Brak telegramów wM-Bus: dom", "wmbus_liczni", {})
+        assert (await client.post(f"/api/alerts/{alert_id}/resolve")).status_code == 401
+        resp = await client.post(f"/api/alerts/{alert_id}/resolve", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        assert app_module.history.get_active_alerts() == []
+
+    async def test_resolve_unknown_or_closed_alert_is_404(self, client):
+        resp = await client.post("/api/alerts/9999/resolve", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 404
