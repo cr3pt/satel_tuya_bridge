@@ -98,9 +98,9 @@
     </table>
     <div id="latestBox" style="display:none">
       <h3>Najnowszy odczyt licznika [kWh]</h3>
-      <div class="section-hint">Dokładnie wartości, które licznik wysłał po MQTT/ESPHome - bez sumowania i odejmowania. Koszt = kWh × cena strefy (bez opłat stałych).</div>
+      <div class="section-hint">Dokładnie wartości, które licznik wysłał po MQTT/ESPHome - bez sumowania i odejmowania. Koszt = (stan − START LICZNIKA) × cena netto strefy (bez opłat stałych).</div>
       <table>
-        <thead><tr><th>Rejestr</th><th class="num">Stan [kWh]</th><th class="num">Odczyt z</th></tr></thead>
+        <thead><tr><th>Rejestr</th><th class="num">Stan z MQTT</th><th class="num">START LICZNIKA</th><th class="num">Zużycie</th><th class="num">Odczyt z</th></tr></thead>
         <tbody id="latestRows"></tbody>
       </table>
     </div>
@@ -148,6 +148,14 @@
     <div style="flex:0"><button id="clearBtn" class="danger" type="button" disabled>Wyczyść odczyty</button></div>
   </div>
   <div id="clearMsg" class="msg-box"></div>
+  <h3>START LICZNIKA [kWh]</h3>
+  <div class="section-hint">Wartość odejmowana od stanu licznika z MQTT przed mnożeniem przez cenę (okres „Stan licznika”). Zużycie = stan − START. Puste = 0.</div>
+  <div class="row">
+    <div><label>Licznik</label><select id="startMeter"></select></div>
+  </div>
+  <div class="row" id="startFields"></div>
+  <div class="actions-bar"><button id="startSaveBtn" type="button">Zapisz START LICZNIKA</button></div>
+  <div id="startMsg" class="msg-box"></div>
 </div>
 
 <div class="section">
@@ -472,7 +480,46 @@ function refreshReportMeters() {
     if (n) sel.appendChild(el('option', { value: n, textContent: tr.querySelector('.m-label').value.trim() || n }));
   });
   if (cur) sel.value = cur;
+  const ssel = document.getElementById('startMeter');
+  const scur = ssel.value;
+  ssel.replaceChildren(...[...sel.options].map(o => el('option', { value: o.value, textContent: o.textContent })));
+  if (scur) ssel.value = scur;
+  if (ssel.value !== scur) loadStart();
 }
+function priceParts(p) {
+  if (!p) return '';
+  const parts = 'price_net' in p ? [`${price(p.price_net)} cena`]
+    : [`${price(p.energy_net)} energia`, `${price(p.distribution_net)} dystrybucja`];
+  if (p.other_per_kwh_net) parts.push(`${price(p.other_per_kwh_net)} opłaty zmienne`);
+  return parts.length > 1 ? '= ' + parts.join(' + ') : '';
+}
+async function loadStart() {
+  const meter = document.getElementById('startMeter').value;
+  const box = document.getElementById('startFields'); box.replaceChildren();
+  if (!meter) return;
+  const resp = await api(`/api/plugins/energy_cost/meter_start?meter=${encodeURIComponent(meter)}`);
+  const data = await resp.json();
+  if (!resp.ok) { showMsg('startMsg', 'error', data.error || 'Błąd'); return; }
+  data.registers.forEach(r => {
+    const input = el('input', { type: 'number', step: 'any', min: 0, className: 's-start', value: r.start ?? '' });
+    input.dataset.key = r.key;
+    box.appendChild(el('div', {}, [
+      el('label', { textContent: `${r.zone || 'Licznik'} (${r.sensor}) - teraz: ${r.latest === null ? 'brak odczytu' : kwh(r.latest)}` }),
+      input,
+    ]));
+  });
+}
+document.getElementById('startMeter').addEventListener('change', loadStart);
+document.getElementById('startSaveBtn').addEventListener('click', async () => {
+  const start = {};
+  document.querySelectorAll('#startFields .s-start').forEach(i => { start[i.dataset.key] = i.value.trim(); });
+  const resp = await api('/api/plugins/energy_cost/meter_start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ meter: document.getElementById('startMeter').value, start }),
+  });
+  const data = await resp.json();
+  showMsg('startMsg', resp.ok ? 'ok' : 'error', resp.ok ? data.message : (data.error || 'Błąd'));
+});
 async function runReport() {
   const out = document.getElementById('reportOut');
   out.style.display = 'none';
@@ -495,7 +542,8 @@ async function runReport() {
   const rows = document.getElementById('zoneRows'); rows.replaceChildren();
   r.zones.forEach(z => rows.appendChild(el('tr', {}, [
     el('td', { textContent: z.zone }), el('td', { className: 'num', textContent: kwh(z.kwh) }),
-    el('td', { className: 'num', textContent: z.price_net_per_kwh === null ? '—' : price(z.price_net_per_kwh) }),
+    el('td', { className: 'num' }, z.price_net_per_kwh === null ? [document.createTextNode('—')] : [
+      document.createTextNode(price(z.price_net_per_kwh)), el('div', { className: 'small', textContent: priceParts(z.price_parts) })]),
     el('td', { className: 'num', textContent: zl(z.net) }),
   ])));
   rows.appendChild(el('tr', { className: 'total' }, [el('td', { textContent: 'Razem' }),
@@ -514,6 +562,8 @@ async function runReport() {
   latest.forEach(c => lrow.appendChild(el('tr', {}, [
     el('td', { textContent: c.zone ? `${c.zone} (${c.sensor})` : c.sensor }),
     el('td', { className: 'num', textContent: c.value === null ? '—' : kwh(c.value) }),
+    el('td', { className: 'num', textContent: kwh(c.start || 0) }),
+    el('td', { className: 'num', textContent: c.used === null || c.used === undefined ? '—' : kwh(c.used) }),
     el('td', { className: 'num', textContent: c.ts ? fmtTs(c.ts) : 'brak odczytu' }),
   ])));
   document.getElementById('latestBox').style.display = stateMode ? '' : 'none';

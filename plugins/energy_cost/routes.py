@@ -95,6 +95,41 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         return jsonify({"deleted": deleted,
                         "message": f"Usunięto {deleted} odczytów. Nowe zapiszą się z kolejnych wiadomości MQTT."})
 
+    def _find_meter(name: str) -> dict | None:
+        return next((m for m in _get_energy().get("meters", []) if m.get("name") == name), None)
+
+    @app.route("/api/plugins/energy_cost/meter_start", methods=["GET"])
+    async def api_plugin_energy_cost_meter_start_get():
+        """Rejestry licznika z zapisanym START LICZNIKA i najnowszym stanem."""
+        meter = _find_meter(request.args.get("meter", ""))
+        if meter is None:
+            return jsonify({"error": "Nie znaleziono licznika"}), 404
+        history = get_history()
+        start = tariffs.load_meter_start(history, meter["name"])
+        scale = float(meter.get("scale", 1) or 1)
+        registers = []
+        for zone, sensor in tariffs.meter_registers(meter):
+            row = history.get_latest_energy_reading(sensor)
+            registers.append({"key": tariffs.START_SINGLE_KEY if zone is None else zone, "zone": zone,
+                              "sensor": sensor, "start": start.get(zone),
+                              "latest": round(row["v"] * scale, 3) if row else None})
+        return jsonify({"meter": meter["name"], "registers": registers})
+
+    @app.route("/api/plugins/energy_cost/meter_start", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_energy_cost_meter_start_post():
+        body = await request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Nieprawidłowe dane"}), 400
+        meter = _find_meter(str(body.get("meter") or ""))
+        if meter is None:
+            return jsonify({"error": "Nie znaleziono licznika"}), 404
+        try:
+            saved = tariffs.save_meter_start(get_history(), meter, body.get("start"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"start": saved, "message": "Zapisano START LICZNIKA."})
+
     @app.route("/api/plugins/energy_cost/schedule", methods=["GET"])
     async def api_plugin_energy_cost_schedule():
         """Godziny stref wybranej taryfy - do porównania z taryfą operatora."""
@@ -138,11 +173,11 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
             return jsonify({"error": f"Nie znaleziono licznika '{name}'"}), 404
 
         if request.args.get("period") == tariffs.METER_STATE_PERIOD:
-            zone_sensors = meter.get("zone_sensors") or {}
-            sources = zone_sensors.items() if zone_sensors else [(None, meter.get("sensor", ""))]
-            latest = {zone: get_history().get_latest_energy_reading(sensor) for zone, sensor in sources}
+            history = get_history()
+            latest = {zone: history.get_latest_energy_reading(sensor) for zone, sensor in tariffs.meter_registers(meter)}
             try:
-                return jsonify(tariffs.build_meter_state_report(energy, meter, latest))
+                return jsonify(tariffs.build_meter_state_report(
+                    energy, meter, latest, tariffs.load_meter_start(history, meter["name"])))
             except ValueError as exc:
                 return jsonify({"error": str(exc)}), 400
 

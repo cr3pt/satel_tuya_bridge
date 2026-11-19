@@ -366,3 +366,73 @@ class TestClearReadings:
         assert h.get_energy_sensors() == ["licznik_kwh"]
         h.write_reading("licznik_kwh", 1496.5, ts=ts(2026, 11, 19, 9))
         assert h.get_latest_energy_reading("licznik_kwh")["v"] == 1496.5
+
+
+class TestMeterStart:
+    """START LICZNIKA: odejmowany od stanu z MQTT przed mnożeniem przez cenę."""
+
+    async def _seed(self, client):
+        import dashboard.app as app_module
+        await _save(client, TestReportZoneSensors.ZONE_CFG)
+        h = app_module.history
+        h.write_reading("s_dzien", 1496.492, ts=ts(2026, 11, 19, 18))
+        h.write_reading("s_noc", 350.219, ts=ts(2026, 11, 19, 18))
+
+    async def test_start_is_subtracted_before_multiplying_by_price(self, client):
+        await self._seed(client)
+        resp = await client.post("/api/plugins/energy_cost/meter_start", headers=AUTH,
+                                 json={"meter": "dom", "start": {"dzienna": 1490.0, "nocna": "350"}})
+        assert resp.status_code == 200
+        rep = await (await client.get("/api/plugins/energy_cost/report?meter=dom&period=meter", headers=AUTH)).get_json()
+        zones = {z["zone"]: z for z in rep["result"]["zones"]}
+        assert zones["dzienna"]["kwh"] == pytest.approx(6.492)
+        assert zones["dzienna"]["net"] == pytest.approx(round(6.492 * 1.2, 2))
+        assert zones["nocna"]["kwh"] == pytest.approx(0.219)
+        latest = {r["zone"]: r for r in rep["latest"]}
+        assert latest["dzienna"]["value"] == 1496.492 and latest["dzienna"]["start"] == 1490.0
+        assert latest["dzienna"]["used"] == pytest.approx(6.492)
+
+    async def test_get_lists_registers_with_start_and_latest(self, client):
+        await self._seed(client)
+        await client.post("/api/plugins/energy_cost/meter_start", headers=AUTH,
+                          json={"meter": "dom", "start": {"dzienna": 1490}})
+        data = await (await client.get("/api/plugins/energy_cost/meter_start?meter=dom", headers=AUTH)).get_json()
+        regs = {r["key"]: r for r in data["registers"]}
+        assert regs["dzienna"]["start"] == 1490 and regs["dzienna"]["latest"] == 1496.492
+        assert regs["nocna"]["start"] is None
+
+    async def test_single_register_uses_underscore_key(self, client):
+        import dashboard.app as app_module
+        await _save(client, {**CFG, "meters": [{"name": "dom", "label": "Dom", "sensor": "licznik_kwh", "tariff": "G11"}]})
+        app_module.history.write_reading("licznik_kwh", 1846.711, ts=ts(2026, 11, 19, 18))
+        await client.post("/api/plugins/energy_cost/meter_start", headers=AUTH, json={"meter": "dom", "start": {"_": 1840}})
+        rep = await (await client.get("/api/plugins/energy_cost/report?meter=dom&period=meter", headers=AUTH)).get_json()
+        assert rep["result"]["total_kwh"] == pytest.approx(6.711)
+
+    @pytest.mark.parametrize("body", [{"meter": "dom", "start": {"zla_strefa": 1}},
+                                      {"meter": "dom", "start": {"dzienna": -5}},
+                                      {"meter": "dom", "start": {"dzienna": "abc"}},
+                                      {"meter": "dom", "start": [1]}])
+    async def test_invalid_start_rejected(self, client, body):
+        await self._seed(client)
+        assert (await client.post("/api/plugins/energy_cost/meter_start", headers=AUTH, json=body)).status_code == 400
+
+    async def test_requires_login_and_known_meter(self, client):
+        await self._seed(client)
+        body = {"meter": "dom", "start": {"dzienna": 1}}
+        assert (await client.post("/api/plugins/energy_cost/meter_start", json=body)).status_code == 401
+        resp = await client.post("/api/plugins/energy_cost/meter_start", headers=AUTH, json={**body, "meter": "nie"})
+        assert resp.status_code == 404
+
+    async def test_price_parts_shown_for_split_price(self, client):
+        import dashboard.app as app_module
+        cfg = {**CFG, "tariffs": {"G11": {"prices": {"całodobowa": {"energy_net": 0.5, "distribution_net": 0.3}},
+                                          "other_per_kwh_net": 0.05}},
+               "meters": [{"name": "dom", "label": "Dom", "sensor": "licznik_kwh", "tariff": "G11"}]}
+        await _save(client, cfg)
+        app_module.history.write_reading("licznik_kwh", 10.0, ts=ts(2026, 11, 19, 18))
+        rep = await (await client.get("/api/plugins/energy_cost/report?meter=dom&period=meter", headers=AUTH)).get_json()
+        [z] = rep["result"]["zones"]
+        assert z["price_net_per_kwh"] == pytest.approx(0.85)
+        assert z["price_parts"] == {"energy_net": 0.5, "distribution_net": 0.3, "other_per_kwh_net": 0.05}
+        assert z["net"] == pytest.approx(8.5)
