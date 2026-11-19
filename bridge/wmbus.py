@@ -240,6 +240,16 @@ def discovered_meters(history, configured_names) -> list[dict]:
     return out
 
 
+def forget_discovered(history, name: str) -> bool:
+    """Usuwa licznik z listy wykrytych na MQTT (np. stary/obcy temat). Wróci
+    sam, gdy na jego temat przyjdzie kolejny telegram. True = był na liście."""
+    key = f"wmbus_seen:{name}"
+    if history.get_status_value(key) is None:
+        return False
+    history.delete_status(key)
+    return True
+
+
 def render_meter_file(meter: dict) -> str:
     lines = [
         f"name={meter['name']}",

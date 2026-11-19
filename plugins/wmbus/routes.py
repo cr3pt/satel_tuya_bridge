@@ -120,6 +120,13 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         configured = [m.get("name") for m in _get_section().get("meters", []) or []]
         return jsonify({"discovered": wmbus.discovered_meters(get_history(), configured)})
 
+    @app.route("/api/plugins/wmbus/discovered/<name>", methods=["DELETE"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_wmbus_discovered_delete(name: str):
+        if not wmbus.forget_discovered(get_history(), name):
+            return jsonify({"error": f"Nie ma wykrytego licznika '{name}'"}), 404
+        return jsonify({"deleted": name})
+
     @app.route("/api/plugins/wmbus/readings", methods=["GET"])
     async def api_plugin_wmbus_readings():
         history = get_history()

@@ -11,6 +11,7 @@ from bridge import energy_meters, tariffs
 from plugins import PluginMeta
 
 MAX_RANGE_SECONDS = 366 * 86400
+CLEAR_CONFIRMATION = "CZYSC"
 
 
 def describe_state(config_raw: dict) -> dict:
@@ -63,7 +64,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
             "builtin": {tid: {"label": build(None).label, "zones": list(build(None).zones)}
                         for tid, build in tariffs.BUILTIN_TARIFFS.items()},
             "g12_variants": list(tariffs.G12_VARIANT_IDS),
-            "periods": list(tariffs.PERIODS),
+            "periods": [tariffs.METER_STATE_PERIOD, *tariffs.PERIODS],
         })
 
     @app.route("/api/plugins/energy_cost/config", methods=["POST"])
@@ -79,6 +80,20 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         reload_bridge_config()
         enqueue_bridge_reload()
         return jsonify({"message": "Zapisano.", "meters": len(clean["meters"]), "tariffs": len(clean["tariffs"])})
+
+    @app.route("/api/plugins/energy_cost/clear_readings", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_energy_cost_clear_readings():
+        """Czyści zapisane odczyty liczników energii - tylko po wpisaniu CZYSC."""
+        body = await request.get_json(silent=True)
+        if not isinstance(body, dict) or body.get("confirm") != CLEAR_CONFIRMATION:
+            return jsonify({"error": f"Aby wyczyścić, wpisz {CLEAR_CONFIRMATION}"}), 400
+        history = get_history()
+        deleted = history.clear_energy_readings()
+        history.write_event("system", source="dashboard",
+                            detail={"message": f"Wyczyszczono odczyty liczników energii ({deleted} wierszy)"})
+        return jsonify({"deleted": deleted,
+                        "message": f"Usunięto {deleted} odczytów. Nowe zapiszą się z kolejnych wiadomości MQTT."})
 
     @app.route("/api/plugins/energy_cost/schedule", methods=["GET"])
     async def api_plugin_energy_cost_schedule():
@@ -121,6 +136,15 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         meter = next((m for m in energy.get("meters", []) if m.get("name") == name), None)
         if meter is None:
             return jsonify({"error": f"Nie znaleziono licznika '{name}'"}), 404
+
+        if request.args.get("period") == tariffs.METER_STATE_PERIOD:
+            zone_sensors = meter.get("zone_sensors") or {}
+            sources = zone_sensors.items() if zone_sensors else [(None, meter.get("sensor", ""))]
+            latest = {zone: get_history().get_latest_energy_reading(sensor) for zone, sensor in sources}
+            try:
+                return jsonify(tariffs.build_meter_state_report(energy, meter, latest))
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
 
         now = time.time()
         try:

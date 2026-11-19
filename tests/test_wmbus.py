@@ -268,6 +268,12 @@ class TestDiscoverFromMqtt:
         [seen] = wmbus.discovered_meters(history, ["gama350"])
         assert seen["name"] == "gama350" and seen["configured"] is True
 
+    def test_forget_discovered_removes_entry_and_reports_missing(self, history):
+        history.set_status("wmbus_seen:stary", "wmbus_seen", json.dumps({"id": "1"}), label="stary")
+        assert wmbus.forget_discovered(history, "stary") is True
+        assert wmbus.discovered_meters(history, []) == []
+        assert wmbus.forget_discovered(history, "stary") is False
+
     def test_discovered_meters_flags_configured_and_lists_new_first(self, history):
         for name in ("gama350", "nowy"):
             history.set_status(
@@ -415,6 +421,21 @@ class TestPanel:
         resp = await client.get("/api/plugins/wmbus/discovered", headers=AUTH)
         [seen] = (await resp.get_json())["discovered"]
         assert seen["name"] == "gama350" and seen["configured"] is True
+
+    async def test_delete_discovered_removes_it_from_the_list(self, client):
+        import dashboard.app as app_module
+        app_module.history.set_status(
+            "wmbus_seen:stary", "wmbus_seen", json.dumps({"id": "1", "field_count": 1}), label="stary",
+        )
+        assert (await client.delete("/api/plugins/wmbus/discovered/stary")).status_code == 401
+        resp = await client.delete("/api/plugins/wmbus/discovered/stary", headers=AUTH)
+        assert resp.status_code == 200
+        listed = await (await client.get("/api/plugins/wmbus/discovered", headers=AUTH)).get_json()
+        assert listed == {"discovered": []}
+
+    async def test_delete_unknown_discovered_returns_404(self, client):
+        resp = await client.delete("/api/plugins/wmbus/discovered/nieznany", headers=AUTH)
+        assert resp.status_code == 404
 
     async def test_readings_include_sensor_and_energy_flag_for_field_rows(self, client):
         import dashboard.app as app_module

@@ -96,10 +96,11 @@
     w JSON, nie tematy z pojedynczymi polami (np. <code>wmbus-gama350/gama350/voltage_at_phase_1_v</code>).
     Licznik już dodany niżej ma znacznik "✓ na liście"; nowy wstawisz
     przyciskiem "+ Dodaj" (nazwa/ID/fazy uzupełnione automatycznie) - potem
-    tylko nadaj etykietę i zapisz.
+    tylko nadaj etykietę i zapisz. Przycisk ✕ usuwa wpis z tej listy (np. stary
+    temat) - wróci, jeśli na jego temat przyjdzie kolejny telegram.
   </div>
   <table>
-    <thead><tr><th>Nazwa (temat)</th><th>ID</th><th>Sterownik/media</th><th>Pól</th><th>Ostatnio widziano</th><th></th></tr></thead>
+    <thead><tr><th>Nazwa (temat)</th><th>ID</th><th>Sterownik/media</th><th>Pól</th><th>Ostatnio widziano</th><th></th><th></th></tr></thead>
     <tbody id="discoveredRows"></tbody>
   </table>
   <div class="small" id="discoveredEmpty">Jeszcze nic nie odebrano - włącz wtyczkę (bridge musi nasłuchiwać) i upewnij się, że licznik publikuje JSON na temat z prefiksem ustawionym wyżej.</div>
@@ -279,6 +280,11 @@ async function loadDiscovered() {
       );
       document.getElementById('discoveredCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
+    const delBtn = el('button', { className: 'danger-icon', type: 'button', title: 'Usuń z listy wykrytych', textContent: '✕' });
+    delBtn.addEventListener('click', async () => {
+      const resp = await authorizedFetch('/api/plugins/wmbus/discovered/' + encodeURIComponent(d.name), { method: 'DELETE' });
+      if (resp.ok || resp.status === 404) loadDiscovered();
+    });
     [
       cell(document.createTextNode(d.name)),
       cell(document.createTextNode(d.id || '—')),
@@ -286,6 +292,7 @@ async function loadDiscovered() {
       cell(document.createTextNode(String(d.field_count ?? '—'))),
       cell(document.createTextNode(new Date(d.ts * 1000).toLocaleString('pl-PL'))),
       cell(addBtn),
+      cell(delBtn),
     ].forEach(c => tr.appendChild(c));
     tbody.appendChild(tr);
   });
