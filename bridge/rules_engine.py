@@ -23,7 +23,7 @@ from .esphome_client import EsphomeManager
 from .lg_thinq_client import LgThinqClient
 from .smartthings_client import SmartThingsClient
 from .ebus_client import EbusMqttListener
-from . import wmbus
+from . import energy_meters, wmbus
 from .weather_client import fetch_forecast
 from .boiler_output import build_boiler_publishers, MqttBoilerPublisher, TuyaVirtualDevicePublisher
 from .history_store import HistoryStore
@@ -1132,6 +1132,7 @@ class RulesEngine:
         self._seed_iqua_status_labels()
         self._seed_smartthings_status_labels()
         self._seed_automation_status_labels()
+        energy_meters.sync_energy_sensors(self.history, self.config.raw.get("energy"))
 
         logger.info("Konfiguracja przeładowana bez restartu procesu")
         self.history.write_event("system", detail={"message": "Konfiguracja przeładowana (bez restartu procesu)"})
@@ -1492,6 +1493,7 @@ class RulesEngine:
         self._seed_iqua_status_labels()
         self._seed_smartthings_status_labels()
         self._seed_automation_status_labels()
+        energy_meters.sync_energy_sensors(self.history, self.config.raw.get("energy"))
 
         async def _on_zone_change(status: dict) -> None:
             zone_name_by_number = {v: k for k, v in self.satel.monitored_zones.items()}

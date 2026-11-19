@@ -34,3 +34,20 @@ def list_energy_meter_sensors(history) -> list[dict]:
         {"sensor": s["key"][len(_KEY_PREFIX):], "label": s["label"]}
         for s in history.get_status(_CATEGORY)
     ]
+
+
+def configured_meter_sensors(energy_cfg: dict | None) -> set[str]:
+    """Czujniki użyte w licznikach wtyczki Koszty energii (pojedynczy i per strefa)."""
+    sensors: set[str] = set()
+    for meter in (energy_cfg or {}).get("meters") or []:
+        if meter.get("sensor"):
+            sensors.add(meter["sensor"])
+        sensors.update(s for s in (meter.get("zone_sensors") or {}).values() if s)
+    return sensors
+
+
+def sync_energy_sensors(history, energy_cfg: dict | None) -> None:
+    """Odczyty oznaczonych (⚡) i użytych w Kosztach energii czujników są
+    przechowywane bezterminowo (`energy_readings`)."""
+    flagged = {m["sensor"] for m in list_energy_meter_sensors(history)}
+    history.set_energy_sensors(flagged | configured_meter_sensors(energy_cfg))
