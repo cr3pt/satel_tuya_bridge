@@ -89,3 +89,16 @@ class TestSyncEnergySensors:
         energy_meters.mark_energy_meter(history, "esphome_gama350_total", "Gama")
         energy_meters.sync_energy_sensors(history, None)
         assert history.get_energy_sensors() == ["esphome_gama350_total"]
+
+
+class TestLatestEnergyReading:
+    def test_returns_newest_value_unchanged(self, history):
+        history.set_energy_sensors({"licznik"})
+        history.write_reading("licznik", 1496.006, ts=1000.0)
+        history.write_reading("licznik", 1496.492, ts=2000.0)
+        assert history.get_latest_energy_reading("licznik") == {"t": 2000.0, "v": 1496.492}
+
+    def test_falls_back_to_regular_history_and_none_when_empty(self, history):
+        history.write_reading("zwykly", 3.5, ts=1000.0)
+        assert history.get_latest_energy_reading("zwykly") == {"t": 1000.0, "v": 3.5}
+        assert history.get_latest_energy_reading("nic") is None

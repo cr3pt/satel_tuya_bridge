@@ -299,3 +299,48 @@ class TestPermanentMeterHistory:
         url = f"/api/plugins/energy_cost/report?meter=dom&from={old}&to={old + 3600}"
         rep = await (await client.get(url, headers=AUTH)).get_json()
         assert rep["result"]["total_kwh"] == pytest.approx(1.0)
+
+
+class TestReportMeterState:
+    """Okres "meter": koszt = najnowszy stan z MQTT x cena, bez sumowania."""
+
+    async def test_uses_latest_mqtt_value_of_each_zone_register_as_is(self, client):
+        import dashboard.app as app_module
+        await _save(client, TestReportZoneSensors.ZONE_CFG)
+        h = app_module.history
+        h.write_reading("s_dzien", 1490.0, ts=ts(2026, 11, 17, 8))
+        h.write_reading("s_dzien", 1496.492, ts=ts(2026, 11, 19, 18))
+        h.write_reading("s_noc", 345.0, ts=ts(2026, 11, 17, 8))
+        h.write_reading("s_noc", 350.219, ts=ts(2026, 11, 19, 18))
+
+        rep = await (await client.get("/api/plugins/energy_cost/report?meter=dom&period=meter", headers=AUTH)).get_json()
+        assert rep["mode"] == "meter"
+        zones = {z["zone"]: z for z in rep["result"]["zones"]}
+        assert zones["dzienna"]["kwh"] == pytest.approx(1496.492)
+        assert zones["nocna"]["kwh"] == pytest.approx(350.219)
+        assert rep["result"]["total_kwh"] == pytest.approx(1846.711)
+        assert zones["dzienna"]["net"] == pytest.approx(round(1496.492 * 1.2, 2))
+        assert rep["result"]["fixed_net"] == 0
+        assert {r["zone"]: r["value"] for r in rep["latest"]} == {"dzienna": 1496.492, "nocna": 350.219}
+
+    async def test_single_register_with_single_zone_tariff(self, client):
+        import dashboard.app as app_module
+        cfg = {**CFG, "meters": [{"name": "dom", "label": "Dom", "sensor": "licznik_kwh", "tariff": "G11"}]}
+        await _save(client, cfg)
+        app_module.history.write_reading("licznik_kwh", 1846.711, ts=ts(2026, 11, 19, 18))
+        rep = await (await client.get("/api/plugins/energy_cost/report?meter=dom&period=meter", headers=AUTH)).get_json()
+        assert rep["result"]["total_kwh"] == pytest.approx(1846.711)
+        assert rep["result"]["total_net"] == pytest.approx(1846.71)
+
+    async def test_single_register_with_multi_zone_tariff_is_400_not_a_guess(self, client):
+        import dashboard.app as app_module
+        await _save(client)
+        app_module.history.write_reading("licznik_kwh", 1846.711, ts=ts(2026, 11, 19, 18))
+        resp = await client.get("/api/plugins/energy_cost/report?meter=dom&period=meter", headers=AUTH)
+        assert resp.status_code == 400
+        assert "osobny czujnik per strefa" in (await resp.get_json())["error"]
+
+    async def test_no_readings_gives_zero_samples(self, client):
+        await _save(client, TestReportZoneSensors.ZONE_CFG)
+        rep = await (await client.get("/api/plugins/energy_cost/report?meter=dom&period=meter", headers=AUTH)).get_json()
+        assert rep["result"]["samples"] == 0 and rep["result"]["total_kwh"] == 0

@@ -80,9 +80,10 @@
     <div><label>Licznik</label><select id="reportMeter"></select></div>
     <div><label>Okres</label>
       <select id="reportPeriod">
+        <option value="meter" selected>Stan licznika (najnowszy odczyt z MQTT)</option>
         <option value="today">Dziś</option><option value="yesterday">Wczoraj</option>
         <option value="7d">Ostatnie 7 dni</option><option value="30d">Ostatnie 30 dni</option>
-        <option value="this_month" selected>Ten miesiąc</option><option value="last_month">Poprzedni miesiąc</option>
+        <option value="this_month">Ten miesiąc</option><option value="last_month">Poprzedni miesiąc</option>
       </select>
     </div>
     <div style="flex:0"><button id="reportBtn" type="button">Policz</button></div>
@@ -93,6 +94,14 @@
       <thead><tr><th>Strefa</th><th class="num">kWh</th><th class="num">Cena netto/kWh</th><th class="num">Netto</th></tr></thead>
       <tbody id="zoneRows"></tbody>
     </table>
+    <div id="latestBox" style="display:none">
+      <h3>Najnowszy odczyt licznika [kWh]</h3>
+      <div class="section-hint">Dokładnie wartości, które licznik wysłał po MQTT/ESPHome - bez sumowania i odejmowania. Koszt = kWh × cena strefy (bez opłat stałych).</div>
+      <table>
+        <thead><tr><th>Rejestr</th><th class="num">Stan [kWh]</th><th class="num">Odczyt z</th></tr></thead>
+        <tbody id="latestRows"></tbody>
+      </table>
+    </div>
     <div id="counterBox" style="display:none">
       <h3>Stan liczydła licznika [kWh]</h3>
       <div class="section-hint">Odczyty z historii - te same wartości, które licznik wysyła po MQTT/ESPHome (stan od montażu licznika). Zużycie w okresie = koniec − początek.</div>
@@ -109,6 +118,7 @@
         <tr class="total"><td id="grossLabel">Razem brutto</td><td class="num" id="totalGross"></td></tr>
       </tbody>
     </table>
+    <div id="dailyBox">
     <h3>Wykresy dzienne</h3>
     <div class="toolbar"><div style="flex:0"><button id="dailyTableBtn" class="secondary" type="button">Tabela</button></div></div>
     <div id="dailyCharts">
@@ -119,6 +129,7 @@
       <div class="chart-box"><canvas id="costChart"></canvas></div>
     </div>
     <table id="dailyTable" style="display:none; margin-top:10px"></table>
+    </div>
     <h3>Porównanie taryf na tych samych odczytach</h3>
     <table>
       <thead><tr><th>Taryfa</th><th class="num">Brutto</th><th></th></tr></thead>
@@ -460,8 +471,10 @@ async function runReport() {
   const data = await resp.json();
   if (!resp.ok) { showMsg('reportMsg', 'error', data.error || 'Błąd'); return; }
   const r = data.result;
+  const stateMode = data.mode === 'meter';
   const notes = [];
-  if (r.samples < 2) notes.push('Za mało odczytów w tym okresie (potrzebne co najmniej 2) - sprawdź, czy czujnik zapisuje się do historii.');
+  if (stateMode && r.samples === 0) notes.push('Brak zapisanych odczytów tego licznika - sprawdź, czy czujnik zapisuje się do historii.');
+  if (!stateMode && r.samples < 2) notes.push('Za mało odczytów w tym okresie (potrzebne co najmniej 2) - sprawdź, czy czujnik zapisuje się do historii.');
   if (r.gaps > 0 && !(r.unallocated_kwh > 0)) notes.push(`${r.gaps} przerw w odczytach - zużycie z nich przypisane do strefy wg rejestru licznika.`);
   if (r.unallocated_kwh > 0) notes.push(`${kwh(r.unallocated_kwh)} kWh z okresów bez odczytów (${r.gaps} przerw) nie zostało przypisane do stref i NIE jest wliczone w koszt.`);
   if (r.resets > 0) notes.push(`Wykryto ${r.resets} spadków licznika (reset/wymiana) - te odcinki pominięto.`);
@@ -484,6 +497,15 @@ async function runReport() {
     el('td', { className: 'num', textContent: kwh(c.diff) }),
   ])));
   document.getElementById('counterBox').style.display = counters.length ? '' : 'none';
+  const latest = data.latest || [];
+  const lrow = document.getElementById('latestRows'); lrow.replaceChildren();
+  latest.forEach(c => lrow.appendChild(el('tr', {}, [
+    el('td', { textContent: c.zone ? `${c.zone} (${c.sensor})` : c.sensor }),
+    el('td', { className: 'num', textContent: c.value === null ? '—' : kwh(c.value) }),
+    el('td', { className: 'num', textContent: c.ts ? fmtTs(c.ts) : 'brak odczytu' }),
+  ])));
+  document.getElementById('latestBox').style.display = stateMode ? '' : 'none';
+  document.getElementById('dailyBox').style.display = stateMode ? 'none' : '';
   document.getElementById('varNet').textContent = zl(r.variable_net) + ' zł';
   document.getElementById('fixedNet').textContent = zl(r.fixed_net) + ' zł';
   document.getElementById('totalNet').textContent = zl(r.total_net) + ' zł';
@@ -496,7 +518,7 @@ async function runReport() {
     el('td', { textContent: c.error ? c.error : (c.active ? 'obecna taryfa' : (c.missing_prices.length ? 'brak cen: ' + c.missing_prices.join(', ') : '')) }),
   ])));
   out.style.display = '';
-  drawDaily(data.daily || [], r.zones.map(z => z.zone));
+  if (!stateMode) drawDaily(data.daily || [], r.zones.map(z => z.zone));
 }
 
 let dailyCharts = [];

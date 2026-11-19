@@ -301,6 +301,18 @@ class HistoryStore:
             return self.get_history(sensor, ts_from, ts_to)
         return [{"t": r[0], "v": r[1]} for r in rows]
 
+    def get_latest_energy_reading(self, sensor: str) -> dict | None:
+        """Najnowszy zapisany odczyt czujnika (dokładnie wartość, która
+        przyszła z MQTT/ESPHome) - z tabeli bezterminowej, a gdy czujnik nigdy
+        nie był w niej zapisany - z `readings`. None = brak odczytów."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT ts, value FROM energy_readings WHERE sensor = ? ORDER BY ts DESC LIMIT 1", (sensor,),
+            ).fetchone() or self._conn.execute(
+                "SELECT ts, value FROM readings WHERE sensor = ? ORDER BY ts DESC LIMIT 1", (sensor,),
+            ).fetchone()
+        return {"t": row[0], "v": row[1]} if row else None
+
     def get_sensors(self) -> list[str]:
         with self._lock:
             rows = self._conn.execute("SELECT DISTINCT sensor FROM readings ORDER BY sensor").fetchall()

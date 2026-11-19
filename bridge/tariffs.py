@@ -710,3 +710,71 @@ def build_report(energy_cfg: dict, meter: dict, readings: list[dict] | None, ts_
         },
         "period": {"from": ts_from, "to": ts_to}, "result": report, "comparison": comparison, "daily": daily,
     }
+
+
+METER_STATE_PERIOD = "meter"
+
+
+def build_meter_state_report(energy_cfg: dict, meter: dict, latest: dict) -> dict:
+    """Koszt = NAJNOWSZY stan licznika (dokładnie wartość z MQTT, bez żadnego
+    sumowania ani odejmowania) x cena za kWh danej strefy.
+
+    `latest`: {strefa: {"t","v"}|None} dla licznika z czujnikiem per strefa,
+    albo {None: {"t","v"}|None} dla licznika z jednym czujnikiem. Jeden
+    czujnik da się wycenić tylko w taryfie jednostrefowej - nie wiadomo, ile
+    ze stanu przypada na którą strefę. Opłat stałych nie ma (nie ma okresu)."""
+    custom = energy_cfg.get("custom_tariffs") or {}
+    vat = float(energy_cfg.get("vat_percent", 23))
+    scale = float(meter.get("scale", 1) or 1)
+    meter_pricing = energy_cfg["tariffs"][meter["tariff"]]
+    meter_tariff = resolve_tariff(meter["tariff"], meter_pricing.get("variant"), custom)
+    zone_sensors = meter.get("zone_sensors") or {}
+
+    def values_for(tariff: Tariff) -> dict[str, float]:
+        if zone_sensors:
+            if tariff.zones != meter_tariff.zones:
+                raise ValueError(
+                    f"Taryfa '{tariff.id}': inny zestaw stref niż czujniki per strefa tego licznika "
+                    f"({', '.join(meter_tariff.zones)}) - porównanie niemożliwe",
+                )
+            return {z: latest[z]["v"] * scale for z in tariff.zones if latest.get(z)}
+        if len(tariff.zones) != 1:
+            raise ValueError(
+                f"Taryfa '{tariff.id}' ma kilka stref, a licznik jeden rejestr - nie wiadomo, ile ze stanu "
+                "licznika przypada na którą strefę. Ustaw osobny czujnik per strefa (np. tariff_1 / tariff_2).",
+            )
+        return {tariff.zones[0]: latest[None]["v"] * scale} if latest.get(None) else {}
+
+    def one(tid: str) -> dict:
+        pricing = energy_cfg["tariffs"][tid]
+        tariff = resolve_tariff(tid, pricing.get("variant"), custom)
+        values = values_for(tariff)
+        cons = Consumption(kwh_by_zone={z: values.get(z, 0.0) for z in tariff.zones}, samples=len(values))
+        return compute_cost(cons, pricing, tariff, 0.0, 0.0, default_vat_percent=vat)
+
+    report = one(meter["tariff"])
+    comparison = []
+    for tid in energy_cfg["tariffs"]:
+        try:
+            r = report if tid == meter["tariff"] else one(tid)
+            comparison.append({"tariff": tid, "total_gross": r["total_gross"], "total_net": r["total_net"],
+                               "missing_prices": r["missing_prices"], "active": tid == meter["tariff"]})
+        except ValueError as exc:
+            comparison.append({"tariff": tid, "error": str(exc), "active": tid == meter["tariff"]})
+    readings = []
+    for zone, row in latest.items():
+        sensor = zone_sensors.get(zone, "") if zone else meter.get("sensor", "")
+        readings.append({"zone": zone, "sensor": sensor, "ts": row["t"] if row else None,
+                         "value": round(row["v"] * scale, 3) if row else None})
+    ts = [r["ts"] for r in readings if r["ts"]]
+    return {
+        "mode": METER_STATE_PERIOD,
+        "latest": readings,
+        "counters": [],
+        "meter": {
+            "name": meter["name"], "label": meter["label"], "sensor": meter.get("sensor", ""),
+            "tariff": meter["tariff"], "zone_sensors": zone_sensors,
+        },
+        "period": {"from": None, "to": max(ts) if ts else None},
+        "result": report, "comparison": comparison, "daily": [],
+    }
