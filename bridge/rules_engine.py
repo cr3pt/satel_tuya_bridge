@@ -140,6 +140,7 @@ class RulesEngine:
         self._loop = asyncio.get_event_loop()
         self.alarms.set_loop(self._loop)
         self._setup_wmbus(config)
+        self.alarms.resolve_orphaned_alerts()
 
         self.ha_mqtt: HomeAssistantMqttBridge | None = None
         self._ha_topic_prefix = config.raw.get("home_assistant", {}).get("state_topic_prefix", "home/bridge")
@@ -1093,6 +1094,7 @@ class RulesEngine:
         self.alarms = AlarmEngine(new_config.raw.get("alarm_rules", []), self.history, notify_cfg=self._notify_cfg)
         self.alarms.set_loop(self._loop)
         self._setup_wmbus(new_config)
+        self.alarms.resolve_orphaned_alerts()
         if self.wmbus_listener is not None:
             self.wmbus_listener.update_meters(list(self._wmbus_meters.values()))
 

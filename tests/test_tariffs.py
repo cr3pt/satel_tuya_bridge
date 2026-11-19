@@ -223,12 +223,12 @@ class TestZoneSensors:
         )
         assert c.kwh_by_zone["dzienna"] == pytest.approx(2.5)
 
-    def test_gap_in_one_zone_goes_to_unallocated(self):
+    def test_gap_in_zone_register_still_counts_to_that_zone(self):
         day = [{"t": ts(2026, 7, 8, 0), "v": 0.0}, {"t": ts(2026, 7, 8, 20), "v": 10.0}]
         c = tariffs.consumption_from_zone_sensors(
             {"dzienna": day}, self.G12.zones, ts(2026, 7, 8), ts(2026, 7, 9), max_gap_seconds=6 * 3600,
         )
-        assert c.kwh_by_zone["dzienna"] == 0 and c.unallocated_kwh == pytest.approx(10.0) and c.gaps == 1
+        assert c.kwh_by_zone["dzienna"] == pytest.approx(10.0) and c.unallocated_kwh == 0 and c.gaps == 1
 
     def test_reset_in_one_zone_is_skipped_and_counted(self):
         day = [{"t": ts(2026, 7, 8, 10), "v": 500.0}, {"t": ts(2026, 7, 8, 11), "v": 3.0}]
@@ -486,3 +486,31 @@ class TestReportZoneSensors:
         rep = tariffs.build_report(cfg, cfg["meters"][0], None, 0, 3600, zone_readings=zone_readings)
         assert rep["meter"]["zone_sensors"] == {"dzienna": "s_dzien", "nocna": "s_noc"}
         assert rep["meter"]["sensor"] == ""
+
+
+class TestCounterBounds:
+    def test_start_is_last_reading_before_period_and_end_last_inside(self):
+        rows = [{"t": 100.0, "v": 1485.0}, {"t": 200.0, "v": 1490.0}, {"t": 300.0, "v": 1496.006}, {"t": 900.0, "v": 1500.0}]
+        b = tariffs.counter_bounds(rows, 150.0, 400.0)
+        assert (b["start"], b["end"], b["diff"]) == (1485.0, 1496.006, pytest.approx(11.006))
+        assert (b["start_ts"], b["end_ts"]) == (100.0, 300.0)
+
+    def test_without_earlier_reading_start_is_first_inside(self):
+        b = tariffs.counter_bounds([{"t": 200.0, "v": 10.0}, {"t": 300.0, "v": 12.0}], 150.0, 400.0)
+        assert (b["start"], b["end"]) == (10.0, 12.0)
+
+    def test_no_readings_gives_none(self):
+        assert tariffs.counter_bounds([], 0.0, 10.0) is None
+
+    def test_report_includes_counters_per_zone_sensor(self):
+        cfg = {"vat_percent": 23, "max_gap_minutes": 120, "custom_tariffs": {},
+               "tariffs": {"G12": {"prices": {"dzienna": 1.0, "nocna": 0.5}}}}
+        meter = {"name": "dom", "label": "Dom", "tariff": "G12", "scale": 1,
+                 "zone_sensors": {"dzienna": "t1", "nocna": "t2"}}
+        zr = {"dzienna": [{"t": ts(2026, 7, 8, 0), "v": 1485.0}, {"t": ts(2026, 7, 8, 20), "v": 1496.006}],
+              "nocna": [{"t": ts(2026, 7, 8, 0), "v": 349.0}, {"t": ts(2026, 7, 8, 20), "v": 350.219}]}
+        rep = tariffs.build_report(cfg, meter, None, ts(2026, 7, 8), ts(2026, 7, 9), zone_readings=zr)
+        by = {c["zone"]: c for c in rep["counters"]}
+        assert by["dzienna"]["end"] == 1496.006 and by["dzienna"]["sensor"] == "t1"
+        assert by["nocna"]["diff"] == pytest.approx(1.219)
+        assert rep["result"]["total_kwh"] == pytest.approx(11.006 + 1.219)

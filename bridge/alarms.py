@@ -25,6 +25,29 @@ class AlarmEngine:
         self._rules_lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pending_notifications: set = set()
+        self._started = time.time()
+        for rule in rules:
+            self._adopt_open_alert(rule["name"])
+
+    def _adopt_open_alert(self, rule_name: str) -> None:
+        """Stan alarmów żyje w pamięci, a alerty w bazie - po restarcie/reloadzie
+        przejmujemy otwarty alert tej reguły (zamknie się, gdy warunek ustąpi),
+        zamiast otwierać kolejny. Ewentualne duplikaty zamykamy."""
+        ids = [a["id"] for a in sorted(self.history.get_active_alerts(), key=lambda a: a["started_ts"])
+               if a["rule_name"] == rule_name]
+        if not ids:
+            return
+        self._state[rule_name]["alert_id"] = ids[0]
+        for duplicate in ids[1:]:
+            self.history.resolve_alert(duplicate)
+
+    def resolve_orphaned_alerts(self) -> int:
+        """Zamyka otwarte alerty reguł, których już nie ma (np. usunięty licznik)."""
+        known = set(self._state)
+        orphaned = [a["id"] for a in self.history.get_active_alerts() if a["rule_name"] not in known]
+        for alert_id in orphaned:
+            self.history.resolve_alert(alert_id)
+        return len(orphaned)
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Pętla asyncio do powiadomień wysyłanych Z OBCYCH WĄTKÓW (callbacki MQTT)."""
@@ -38,7 +61,8 @@ class AlarmEngine:
                 return False
             self._state[rule["name"]] = {"alert_id": None}
             self.rules = [*self.rules, rule]
-            return True
+        self._adopt_open_alert(rule["name"])
+        return True
 
     def on_value(self, sensor: str, value) -> None:
         self._last_seen[sensor] = time.time()
@@ -84,7 +108,9 @@ class AlarmEngine:
             sensor = rule["sensor"]
             last_ts = self._last_seen.get(sensor)
             state = self._state[rule["name"]]
-            is_stale = last_ts is None or (now - last_ts) > rule["max_age_seconds"]
+            # Bez odczytu od startu liczymy ciszę od startu silnika - inaczej
+            # każdy restart od razu zgłaszał "brak danych".
+            is_stale = (now - (last_ts if last_ts is not None else self._started)) > rule["max_age_seconds"]
             currently_open = state["alert_id"] is not None
 
             if is_stale and not currently_open:

@@ -27,6 +27,7 @@
   }
   .alerts-banner.show { display: block; }
   .alerts-banner div { padding: 4px 0; font-size: 14px; }
+  .alerts-banner button.alert-close, .alerts-banner button.alert-close-all { padding: 2px 8px; font-size: 12px; margin: 0; }
   .controls {
     display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
     background: var(--card); border: 1px solid var(--border);
@@ -432,9 +433,18 @@ async function loadActiveAlerts() {
     return;
   }
   banner.classList.add('show');
-  banner.innerHTML = alerts.map(a =>
-    `<div><strong>⚠ ${a.rule_name}</strong> — od ${fmtTime(a.started_ts)}${a.sensor ? ' (' + a.sensor + ')' : ''}</div>`
+  banner.innerHTML = (alerts.length > 1 ? '<div style="text-align:right"><button type="button" class="alert-close-all">Zamknij wszystkie</button></div>' : '') +
+    alerts.map(a =>
+    `<div><button type="button" class="alert-close" data-id="${a.id}" title="Zamknij alert">✕</button> <strong>⚠ ${escapeHtml(a.rule_name)}</strong> — od ${fmtTime(a.started_ts)}${a.sensor ? ' (' + escapeHtml(a.sensor) + ')' : ''}</div>`
   ).join('');
+  banner.querySelectorAll('.alert-close').forEach(b => b.addEventListener('click', () => closeAlerts([b.dataset.id])));
+  const all = banner.querySelector('.alert-close-all');
+  if (all) all.addEventListener('click', () => closeAlerts(alerts.map(a => a.id)));
+}
+
+async function closeAlerts(ids) {
+  for (const id of ids) await fetch(`/api/alerts/${id}/resolve`, { method: 'POST' });
+  await loadActiveAlerts();
 }
 
 const SENSOR_CHART_COLORS = ['#4d8dfd', '#3dd68c', '#e5484d', '#f2b93d', '#c792ea', '#5ecbe0', '#ff9f68', '#8b93a1'];

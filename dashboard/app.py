@@ -1032,6 +1032,14 @@ async def api_alerts_active():
     return jsonify(history.get_active_alerts())
 
 
+@app.route("/api/alerts/<int:alert_id>/resolve", methods=["POST"])
+@require_auth()
+async def api_alerts_resolve(alert_id: int):
+    if not history.resolve_alert(alert_id):
+        return jsonify({"error": "Alert nie istnieje albo jest już zamknięty"}), 404
+    return jsonify({"message": "Alert zamknięty."})
+
+
 @app.route("/api/alerts/history")
 async def api_alerts_history():
     ts_from, ts_to = _parse_range()

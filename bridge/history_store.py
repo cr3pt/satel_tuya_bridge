@@ -150,12 +150,13 @@ class HistoryStore:
             self._conn.commit()
             return cur.lastrowid
 
-    def resolve_alert(self, alert_id: int) -> None:
+    def resolve_alert(self, alert_id: int) -> bool:
         with self._lock:
-            self._conn.execute(
-                "UPDATE alerts SET resolved_ts = ? WHERE id = ?", (time.time(), alert_id)
+            cur = self._conn.execute(
+                "UPDATE alerts SET resolved_ts = ? WHERE id = ? AND resolved_ts IS NULL", (time.time(), alert_id)
             )
             self._conn.commit()
+            return cur.rowcount > 0
 
     def set_status(self, key: str, category: str, value, label: str | None = None,
                    ts: float | None = None) -> None:
