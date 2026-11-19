@@ -367,7 +367,7 @@ async function drawCharts() {
 function fillChartTable() {
   const rows = [];
   (lastSeries || []).forEach(s => s.points.forEach(p => rows.push([seriesLabel(s), PluginCharts.fmtTime(p[0], true),
-    p[1].toLocaleString('pl-PL', { maximumFractionDigits: 3 }) + ' ' + s.unit])));
+    PluginCharts.fmtNum(p[1], 0, 3) + ' ' + s.unit])));
   PluginCharts.fillTable(document.getElementById('chartTable'), ['Pole', 'Czas', 'Wartość'], rows);
 }
 
