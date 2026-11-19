@@ -32,6 +32,8 @@
   button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; font-weight: 500; }
   button.secondary { background: #262a32; color: var(--text); border: 1px solid var(--border); }
   button.icon { background: transparent; color: var(--danger); padding: 2px 8px; font-size: 16px; }
+  button.danger { background: var(--danger); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 10px; }
   .row > div { flex: 1; min-width: 140px; }
   .row label, .field-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
@@ -136,6 +138,16 @@
       <tbody id="compareRows"></tbody>
     </table>
   </div>
+</div>
+
+<div class="section">
+  <h2>Czyszczenie odczytów prądu</h2>
+  <div class="section-hint">Usuwa wszystkie zapisane odczyty liczników energii z bazy (konfiguracja liczników i taryf zostaje). Kolejne wartości zapiszą się z następnych wiadomości MQTT. Tego nie da się cofnąć.</div>
+  <div class="row">
+    <div><label>Wpisz CZYSC, aby potwierdzić</label><input id="clearConfirm" type="text" autocomplete="off" placeholder="CZYSC"></div>
+    <div style="flex:0"><button id="clearBtn" class="danger" type="button" disabled>Wyczyść odczyty</button></div>
+  </div>
+  <div id="clearMsg" class="msg-box"></div>
 </div>
 
 <div class="section">
@@ -540,6 +552,19 @@ document.getElementById('dailyTableBtn').addEventListener('click', () => {
   const show = t.style.display === 'none';
   t.style.display = show ? '' : 'none'; c.style.display = show ? 'none' : '';
   document.getElementById('dailyTableBtn').textContent = show ? 'Wykres' : 'Tabela';
+});
+
+document.getElementById('clearConfirm').addEventListener('input', e => {
+  document.getElementById('clearBtn').disabled = e.target.value.trim() !== 'CZYSC';
+});
+document.getElementById('clearBtn').addEventListener('click', async () => {
+  const input = document.getElementById('clearConfirm');
+  const resp = await api('/api/plugins/energy_cost/clear_readings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: input.value.trim() }),
+  });
+  const data = await resp.json();
+  showMsg('clearMsg', resp.ok ? 'ok' : 'error', resp.ok ? data.message : (data.error || 'Błąd'));
+  if (resp.ok) { input.value = ''; document.getElementById('clearBtn').disabled = true; document.getElementById('reportOut').style.display = 'none'; }
 });
 
 async function showSchedule() {

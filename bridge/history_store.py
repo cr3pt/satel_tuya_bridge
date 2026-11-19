@@ -281,6 +281,20 @@ class HistoryStore:
                 )
             self._conn.commit()
 
+    def clear_energy_readings(self) -> int:
+        """Usuwa WSZYSTKIE zapisane odczyty liczników energii (tabela
+        bezterminowa + te same czujniki w `readings`). Lista czujników
+        energii zostaje, więc kolejny odczyt z MQTT zapisze się od nowa.
+        Zwraca liczbę usuniętych wierszy."""
+        with self._lock:
+            sensors = {r[0] for r in self._conn.execute("SELECT sensor FROM energy_sensors")}
+            sensors |= {r[0] for r in self._conn.execute("SELECT DISTINCT sensor FROM energy_readings")}
+            deleted = self._conn.execute("DELETE FROM energy_readings").rowcount
+            for sensor in sensors:
+                deleted += self._conn.execute("DELETE FROM readings WHERE sensor = ?", (sensor,)).rowcount
+            self._conn.commit()
+        return deleted
+
     def get_energy_sensors(self) -> list[str]:
         with self._lock:
             rows = self._conn.execute("SELECT sensor FROM energy_sensors ORDER BY sensor").fetchall()

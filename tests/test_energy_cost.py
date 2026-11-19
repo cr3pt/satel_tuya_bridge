@@ -344,3 +344,25 @@ class TestReportMeterState:
         await _save(client, TestReportZoneSensors.ZONE_CFG)
         rep = await (await client.get("/api/plugins/energy_cost/report?meter=dom&period=meter", headers=AUTH)).get_json()
         assert rep["result"]["samples"] == 0 and rep["result"]["total_kwh"] == 0
+
+
+class TestClearReadings:
+    async def test_requires_login_and_exact_confirmation(self, client):
+        url = "/api/plugins/energy_cost/clear_readings"
+        assert (await client.post(url, json={"confirm": "CZYSC"})).status_code == 401
+        for body in ({}, {"confirm": "czysc"}, {"confirm": "TAK"}):
+            assert (await client.post(url, json=body, headers=AUTH)).status_code == 400
+
+    async def test_clears_energy_readings_but_keeps_other_sensors_and_config(self, client):
+        import dashboard.app as app_module
+        await _save(client)
+        h = app_module.history
+        h.write_reading("licznik_kwh", 1496.0, ts=ts(2026, 11, 19, 8))
+        h.write_reading("temperatura", 21.5, ts=ts(2026, 11, 19, 8))
+        resp = await client.post("/api/plugins/energy_cost/clear_readings", json={"confirm": "CZYSC"}, headers=AUTH)
+        assert resp.status_code == 200 and (await resp.get_json())["deleted"] >= 1
+        assert h.get_latest_energy_reading("licznik_kwh") is None
+        assert h.get_latest_energy_reading("temperatura") == {"t": ts(2026, 11, 19, 8), "v": 21.5}
+        assert h.get_energy_sensors() == ["licznik_kwh"]
+        h.write_reading("licznik_kwh", 1496.5, ts=ts(2026, 11, 19, 9))
+        assert h.get_latest_energy_reading("licznik_kwh")["v"] == 1496.5
