@@ -75,6 +75,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         current = get_config_store().get("config")
         current["energy"] = clean
         get_config_store().set("config", current)
+        energy_meters.sync_energy_sensors(get_history(), clean)
         reload_bridge_config()
         enqueue_bridge_reload()
         return jsonify({"message": "Zapisano.", "meters": len(clean["meters"]), "tariffs": len(clean["tariffs"])})
@@ -98,7 +99,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         priorytetowe - w odróżnieniu od dopasowania po nazwie pola nie
         zależą od tego, czy nazwa zawiera "kwh"/"energy" (np. polskie nazwy
         encji ESPHome zwykle nie zawierają)."""
-        sensors = get_history().get_sensors()
+        sensors = sorted(set(get_history().get_sensors()) | set(get_history().get_energy_sensors()))
         flagged = {m["sensor"] for m in energy_meters.list_energy_meter_sensors(get_history())}
         by_name = [s for s in sensors if "kwh" in s.lower() or "energy" in s.lower()]
         suggested = [s for s in sensors if s in flagged] + [s for s in by_name if s not in flagged]
@@ -143,11 +144,11 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         if zone_sensors:
             readings = None
             zone_readings = {
-                zone: get_history().get_history(sensor, ts_from - pad, ts_to + pad)
+                zone: get_history().get_energy_history(sensor, ts_from - pad, ts_to + pad)
                 for zone, sensor in zone_sensors.items()
             }
         else:
-            readings = get_history().get_history(meter["sensor"], ts_from - pad, ts_to + pad)
+            readings = get_history().get_energy_history(meter["sensor"], ts_from - pad, ts_to + pad)
             zone_readings = None
         try:
             return jsonify(tariffs.build_report(energy, meter, readings, ts_from, ts_to, zone_readings=zone_readings))

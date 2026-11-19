@@ -68,6 +68,18 @@ CREATE TABLE IF NOT EXISTS logs (
     message TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
+
+-- Liczniki energii: odczyty trzymane bezterminowo, poza `readings`, którą
+-- czyści maintenance.purge_old_data (retention_days).
+CREATE TABLE IF NOT EXISTS energy_sensors (
+    sensor TEXT PRIMARY KEY
+);
+CREATE TABLE IF NOT EXISTS energy_readings (
+    sensor TEXT NOT NULL,
+    ts REAL NOT NULL,
+    value REAL NOT NULL,
+    PRIMARY KEY (sensor, ts)
+) WITHOUT ROWID;
 """
 
 _LOG_LEVEL_ORDER = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -110,6 +122,11 @@ class HistoryStore:
             self._conn.execute(
                 "INSERT INTO readings (ts, sensor, value) VALUES (?, ?, ?)",
                 (ts, sensor, value),
+            )
+            self._conn.execute(
+                "INSERT OR IGNORE INTO energy_readings (sensor, ts, value) "
+                "SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM energy_sensors WHERE sensor = ?)",
+                (sensor, ts, value, sensor),
             )
             self._conn.commit()
 
@@ -242,6 +259,45 @@ class HistoryStore:
                 "SELECT ts, value FROM readings WHERE sensor = ? AND ts BETWEEN ? AND ? ORDER BY ts",
                 (sensor, ts_from, ts_to),
             ).fetchall()
+        return [{"t": r[0], "v": r[1]} for r in rows]
+
+    def set_energy_sensors(self, sensors) -> None:
+        """Czujniki, których odczyty trafiają też do `energy_readings`. Nowo
+        dodane dostają od razu kopię tego, co jeszcze jest w `readings`.
+        Usunięcie z listy zatrzymuje tylko dalsze kopiowanie - zebrane
+        odczyty zostają."""
+        wanted = set(sensors)
+        with self._lock:
+            current = {r[0] for r in self._conn.execute("SELECT sensor FROM energy_sensors")}
+            for sensor in current - wanted:
+                self._conn.execute("DELETE FROM energy_sensors WHERE sensor = ?", (sensor,))
+            for sensor in wanted - current:
+                self._conn.execute("INSERT INTO energy_sensors (sensor) VALUES (?)", (sensor,))
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO energy_readings (sensor, ts, value) "
+                    "SELECT sensor, ts, value FROM readings WHERE sensor = ?",
+                    (sensor,),
+                )
+            self._conn.commit()
+
+    def get_energy_sensors(self) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute("SELECT sensor FROM energy_sensors ORDER BY sensor").fetchall()
+        return [r[0] for r in rows]
+
+    def get_energy_history(self, sensor: str, ts_from: float, ts_to: float) -> list[dict]:
+        """Odczyty licznika energii z bezterminowej tabeli; czujnik spoza niej
+        (nigdy nie oznaczony) - z `readings`."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ts, value FROM energy_readings WHERE sensor = ? AND ts BETWEEN ? AND ? ORDER BY ts",
+                (sensor, ts_from, ts_to),
+            ).fetchall()
+            known = rows or self._conn.execute(
+                "SELECT 1 FROM energy_readings WHERE sensor = ? LIMIT 1", (sensor,),
+            ).fetchone()
+        if not known:
+            return self.get_history(sensor, ts_from, ts_to)
         return [{"t": r[0], "v": r[1]} for r in rows]
 
     def get_sensors(self) -> list[str]:

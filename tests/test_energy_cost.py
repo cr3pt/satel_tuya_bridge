@@ -277,3 +277,25 @@ class TestDaily:
         url = f"/api/plugins/energy_cost/report?meter=dom&from={ts(2026, 3, 29)}&to={ts(2026, 3, 30)}"
         d = (await (await client.get(url, headers=AUTH)).get_json())["daily"][0]
         assert d["to"] - d["from"] == 23 * 3600
+
+
+class TestPermanentMeterHistory:
+    CFG = {"vat_percent": 23, "max_gap_minutes": 120,
+           "tariffs": {"G11": {"prices": {"całodobowa": 1.0}}},
+           "meters": [{"name": "dom", "label": "Dom", "tariff": "G11", "sensor": "licznik_kwh"}]}
+
+    async def test_saving_config_registers_meter_and_report_survives_purge(self, client):
+        import time as _time
+        import dashboard.app as app_module
+        from bridge.maintenance import purge_old_data
+        h = app_module.history
+        old = _time.time() - 400 * 86400
+        h.write_reading("licznik_kwh", 100.0, ts=old)
+        h.write_reading("licznik_kwh", 101.0, ts=old + 3600)
+        await _save(client, self.CFG)
+        assert "licznik_kwh" in h.get_energy_sensors()
+
+        purge_old_data(h.db_path, retention_days=90)
+        url = f"/api/plugins/energy_cost/report?meter=dom&from={old}&to={old + 3600}"
+        rep = await (await client.get(url, headers=AUTH)).get_json()
+        assert rep["result"]["total_kwh"] == pytest.approx(1.0)

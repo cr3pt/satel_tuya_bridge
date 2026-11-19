@@ -214,6 +214,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         else:
             energy_meters.unmark_energy_meter(history, sensor)
             message = f"Odznaczono '{object_id}' jako licznik energii."
+        energy_meters.sync_energy_sensors(history, get_config_store().get("config").get("energy"))
         return jsonify({"sensor": sensor, "message": message})
 
     @app.route("/api/plugins/esphome/control", methods=["POST"])
