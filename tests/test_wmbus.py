@@ -261,19 +261,21 @@ class TestDiscoverFromMqtt:
         assert discovered[0]["phases"] == 1
         assert discovered[0]["field_count"] == 1
 
-    def test_matched_meter_is_not_recorded_as_discovered(self, history):
+    def test_matched_meter_is_listed_as_configured(self, history):
         listener = self._make_listener(history, meters=[{"name": "gama350", "label": "l", "id": "x", "phases": 1}])
         listener._on_message(None, None, self._msg("wmbusmeters/gama350", json.dumps({"id": "31623077"}).encode()))
 
-        assert wmbus.discovered_meters(history, ["gama350"]) == []
+        [seen] = wmbus.discovered_meters(history, ["gama350"])
+        assert seen["name"] == "gama350" and seen["configured"] is True
 
-    def test_discovered_meters_filters_out_meters_already_configured(self, history):
-        history.set_status(
-            "wmbus_seen:gama350", "wmbus_seen",
-            json.dumps({"id": "1", "driver": "amiplus", "phases": 3, "field_count": 2}), label="gama350",
-        )
-        assert wmbus.discovered_meters(history, ["gama350"]) == []
-        assert len(wmbus.discovered_meters(history, [])) == 1
+    def test_discovered_meters_flags_configured_and_lists_new_first(self, history):
+        for name in ("gama350", "nowy"):
+            history.set_status(
+                f"wmbus_seen:{name}", "wmbus_seen",
+                json.dumps({"id": "1", "driver": "amiplus", "phases": 3, "field_count": 2}), label=name,
+            )
+        result = wmbus.discovered_meters(history, ["gama350"])
+        assert [(d["name"], d["configured"]) for d in result] == [("nowy", False), ("gama350", True)]
 
     def test_invalid_json_payload_is_not_recorded(self, history):
         listener = self._make_listener(history)
@@ -403,7 +405,7 @@ class TestPanel:
         assert data["discovered"][0]["name"] == "gama350"
         assert data["discovered"][0]["id"] == "31623077"
 
-    async def test_discovered_endpoint_excludes_already_configured_meters(self, client):
+    async def test_discovered_endpoint_marks_already_configured_meters(self, client):
         import dashboard.app as app_module
         await _save(client, [{**METER, "name": "gama350"}])
         app_module.history.set_status(
@@ -411,7 +413,8 @@ class TestPanel:
             json.dumps({"id": "31623077", "driver": "amiplus", "phases": 3, "field_count": 5}), label="gama350",
         )
         resp = await client.get("/api/plugins/wmbus/discovered", headers=AUTH)
-        assert (await resp.get_json()) == {"discovered": []}
+        [seen] = (await resp.get_json())["discovered"]
+        assert seen["name"] == "gama350" and seen["configured"] is True
 
     async def test_readings_include_sensor_and_energy_flag_for_field_rows(self, client):
         import dashboard.app as app_module
