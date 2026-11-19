@@ -224,21 +224,19 @@ def public_view(meters: list[dict]) -> list[dict]:
 
 
 def discovered_meters(history, configured_names) -> list[dict]:
-    """Liczniki widziane na MQTT na temacie, który NIE pasuje do żadnej
-    skonfigurowanej nazwy (patrz `WmbusMqttListener._record_discovered`) -
-    do przycisku "Dodaj licznik z MQTT" na stronie wtyczki."""
+    """Wszystkie liczniki widziane na MQTT (patrz
+    `WmbusMqttListener._record_discovered`), z flagą `configured` - żeby
+    licznik już dodany nie "znikał" z listy wykrytych."""
     configured = set(configured_names)
     out = []
     for row in history.get_status("wmbus_seen"):
         name = row["key"].removeprefix("wmbus_seen:")
-        if name in configured:
-            continue
         try:
             summary = json.loads(row["value"])
         except (ValueError, TypeError):
             continue
-        out.append({"name": name, "ts": row["ts"], **summary})
-    out.sort(key=lambda d: d["name"])
+        out.append({"name": name, "ts": row["ts"], "configured": name in configured, **summary})
+    out.sort(key=lambda d: (d["configured"], d["name"]))
     return out
 
 
@@ -381,9 +379,9 @@ class WmbusMqttListener:
         name = msg.topic.rsplit("/", 1)[-1]
         with self._lock:
             meter = self._meters.get(name)
+        self._record_discovered(name, msg.payload)
         if meter is None:
             logger.debug("wM-Bus: telegram z nieskonfigurowanego licznika '%s' - pomijam", name)
-            self._record_discovered(name, msg.payload)
             return
         telegram = parse_telegram(msg.payload)
         if telegram is None:

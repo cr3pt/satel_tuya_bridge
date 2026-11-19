@@ -90,19 +90,19 @@
 <div class="card" id="discoveredCard">
   <h2>🔍 Wykryte liczniki na MQTT</h2>
   <div class="hint" style="margin-bottom:10px">
-    Telegramy odebrane na temacie <code>wmbusmeters/&lt;nazwa&gt;</code>
-    (albo innym ustawionym wyżej prefiksie), który NIE pasuje do żadnej
-    nazwy licznika zapisanej niżej - np. z własnego urządzenia ESPHome,
-    które samo dekoduje telegram i publikuje gotowy JSON, bez AES/sterownika
-    po stronie bridge'a. Kliknij "+ Dodaj", żeby wstawić wykryty licznik do
-    listy niżej (nazwę/ID/fazy uzupełnione automatycznie) - potem tylko
-    nadaj etykietę i zapisz.
+    Liczniki, których telegram (JSON) przyszedł na temat <code>wmbusmeters/&lt;nazwa&gt;</code>
+    (albo inny ustawiony wyżej prefiks) - np. z własnego urządzenia ESPHome,
+    które samo dekoduje telegram. Liczone są tylko tematy z całym telegramem
+    w JSON, nie tematy z pojedynczymi polami (np. <code>wmbus-gama350/gama350/voltage_at_phase_1_v</code>).
+    Licznik już dodany niżej ma znacznik "✓ na liście"; nowy wstawisz
+    przyciskiem "+ Dodaj" (nazwa/ID/fazy uzupełnione automatycznie) - potem
+    tylko nadaj etykietę i zapisz.
   </div>
   <table>
     <thead><tr><th>Nazwa (temat)</th><th>ID</th><th>Sterownik/media</th><th>Pól</th><th>Ostatnio widziano</th><th></th></tr></thead>
     <tbody id="discoveredRows"></tbody>
   </table>
-  <div class="small" id="discoveredEmpty">Jeszcze nic nie wykryto - włącz wtyczkę i upewnij się, że coś publikuje na MQTT.</div>
+  <div class="small" id="discoveredEmpty">Jeszcze nic nie odebrano - włącz wtyczkę (bridge musi nasłuchiwać) i upewnij się, że licznik publikuje JSON na temat z prefiksem ustawionym wyżej.</div>
   <div class="actions-bar"><button class="secondary" id="refreshDiscoveredBtn" type="button">🔄 Odśwież</button></div>
 </div>
 
@@ -270,8 +270,10 @@ async function loadDiscovered() {
   document.getElementById('discoveredEmpty').style.display = rows.length ? 'none' : 'block';
   rows.forEach(d => {
     const tr = document.createElement('tr');
-    const addBtn = el('button', { className: 'secondary', type: 'button', textContent: '+ Dodaj' });
-    addBtn.addEventListener('click', () => {
+    const addBtn = d.configured
+      ? el('span', { className: 'small', textContent: '✓ na liście liczników' })
+      : el('button', { className: 'secondary', type: 'button', textContent: '+ Dodaj' });
+    if (!d.configured) addBtn.addEventListener('click', () => {
       document.getElementById('meterRows').appendChild(
         makeRow({ name: d.name, id: d.id, driver: d.driver || 'auto', phases: d.phases }),
       );
