@@ -21,8 +21,15 @@
     return withDate ? d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' }) + ' ' + t : t;
   }
 
+  // Kropka dziesiętna, przecinek tylko jako separator tysięcy: "1,491" czyta się jako tysiąc czterysta.
+  const NUM_LOCALE = 'en-US';
+  function fmtNum(n, minDigits, maxDigits) {
+    return Number(n).toLocaleString(NUM_LOCALE, { minimumFractionDigits: minDigits, maximumFractionDigits: maxDigits ?? minDigits });
+  }
+
   function baseOptions(unit, extra) {
     return Object.assign({
+      locale: NUM_LOCALE,
       responsive: true, maintainAspectRatio: false, animation: false,
       plugins: { legend: { display: false } },
       scales: {
@@ -38,7 +45,7 @@
     opts.scales.x = { type: 'linear', grid: { color: GRID }, ticks: { color: MUTED, maxTicksLimit: 8, callback: v => fmtTime(v, withDate) }, border: { color: GRID } };
     opts.plugins.tooltip = { callbacks: {
       title: items => items.length ? fmtTime(items[0].parsed.x, true) : '',
-      label: it => `${it.dataset.label}: ${it.parsed.y.toLocaleString('pl-PL', { maximumFractionDigits: 3 })} ${unit}`,
+      label: it => `${it.dataset.label}: ${fmtNum(it.parsed.y, 0, 3)} ${unit}`,
     } };
     return new Chart(canvas, {
       type: 'line', plugins: [crosshair], options: opts,
@@ -56,7 +63,7 @@
     opts.scales.x = { stacked: true, grid: { display: false }, ticks: { color: MUTED, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 }, border: { color: GRID } };
     opts.scales.y.stacked = true;
     opts.plugins.tooltip = { callbacks: {
-      label: it => `${it.dataset.label}: ${it.parsed.y.toLocaleString('pl-PL', { maximumFractionDigits: 2 })} ${unit}`,
+      label: it => `${it.dataset.label}: ${fmtNum(it.parsed.y, 0, 2)} ${unit}`,
     } };
     return new Chart(canvas, {
       type: 'bar', options: opts,
@@ -96,5 +103,5 @@
     table.appendChild(tbody);
   }
 
-  window.PluginCharts = { COLORS, lineChart, stackedBar, simpleBar, legend, fillTable, fmtTime };
+  window.PluginCharts = { COLORS, lineChart, stackedBar, simpleBar, legend, fillTable, fmtTime, fmtNum };
 })();

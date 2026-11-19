@@ -222,9 +222,9 @@ function showMsg(id, kind, text) {
   const box = document.getElementById(id);
   box.className = 'msg-box ' + kind; box.textContent = text;
 }
-const zl = (n) => Number(n).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const kwh = (n) => Number(n).toLocaleString('pl-PL', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-const price = (n) => Number(n).toLocaleString('pl-PL', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+const zl = (n) => PluginCharts.fmtNum(n, 2);
+const kwh = (n) => PluginCharts.fmtNum(n, 3);
+const price = (n) => PluginCharts.fmtNum(n, 4);
 
 function customTariffs() {
   try { const v = JSON.parse(document.getElementById('customJson').value || '{}'); return v && typeof v === 'object' ? v : {}; }
