@@ -1064,6 +1064,15 @@ class RulesEngine:
             logger.exception("Błąd wykonania komendy #%s (%s)", cmd["id"], cmd["command"])
             self.history.mark_command_error(cmd["id"], str(exc))
 
+    def _prune_esphome_health(self) -> None:
+        """Usuwa stan połączenia ESPHome urządzeń, z którymi bridge się NIE
+        łączy (wtyczka albo urządzenie wyłączone, urządzenie usunięte) - inaczej
+        w panelu wisiał ostatni "rozłączono" sprzed wyłączenia."""
+        active = {f"health:esphome_{name}" for name in (self.esphome_manager.devices if self.esphome_manager else {})}
+        for row in self.history.get_status("system_health"):
+            if row["key"].startswith("health:esphome_") and row["key"] not in active:
+                self.history.delete_status(row["key"])
+
     async def reload_config(self) -> dict:
         new_config = BridgeConfig.load(self.config.db_path)
         self.config = new_config
@@ -1622,6 +1631,7 @@ class RulesEngine:
                 history=self.history, notify_cfg=self._notify_cfg, grace_seconds=self._grace_seconds,
             )
             asyncio.create_task(self.esphome_manager.run_forever())
+        self._prune_esphome_health()
 
         if self.ha_mqtt:
             def _make_tuya_handler(name):
