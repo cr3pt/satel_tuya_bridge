@@ -90,6 +90,8 @@ class EsphomeDeviceClient:
         self._health = HealthReporter(f"esphome_{name}", history=history, notify_cfg=notify_cfg, grace_seconds=grace_seconds)
         self._entities_by_key: dict[int, EntityInfo] = {}
         self._connected = False
+        self._stopping = False
+        self._history = history
         self._client = APIClient(
             self._cfg.host, self._cfg.port,
             password=self._cfg.password, noise_psk=self._cfg.noise_psk,
@@ -116,8 +118,13 @@ class EsphomeDeviceClient:
         await self._reconnect.start()
 
     async def stop(self) -> None:
+        """Celowe zatrzymanie (wyłączenie/restart) - to nie awaria, więc bez
+        statusu "rozłączono" w panelu ani powiadomienia."""
+        self._stopping = True
         await self._reconnect.stop()
         await self._client.disconnect()
+        if self._history is not None:
+            self._history.delete_status(f"health:esphome_{self.name}")
 
     async def _on_connect(self) -> None:
         try:
@@ -135,6 +142,8 @@ class EsphomeDeviceClient:
 
     async def _on_disconnect(self, expected: bool) -> None:
         self._connected = False
+        if self._stopping:
+            return
         self._health.report(False, "rozłączono" if not expected else "rozłączono (oczekiwane)")
 
     async def _on_connect_error(self, exc: Exception) -> None:

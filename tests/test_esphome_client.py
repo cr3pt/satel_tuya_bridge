@@ -165,6 +165,46 @@ class TestEsphomeDeviceClientConnect:
         assert client._client.disconnected is True
 
 
+class TestEsphomeStopClearsHealth:
+    async def test_intentional_stop_removes_health_status_and_ignores_expected_disconnect(self, history):
+        client = esphome.EsphomeDeviceClient(
+            {"name": "gama350", "host": "192.168.1.50"}, lambda *a, **k: None, history=history)
+        await client._on_connect()
+        assert history.get_status_value("health:esphome_gama350") == "połączono"
+        await client.stop()
+        await client._on_disconnect(expected=True)
+        assert history.get_status_value("health:esphome_gama350") is None
+
+    async def test_unexpected_disconnect_still_reported(self, history):
+        client = esphome.EsphomeDeviceClient(
+            {"name": "gama350", "host": "192.168.1.50"}, lambda *a, **k: None, history=history)
+        await client._on_disconnect(expected=False)
+        assert history.get_status_value("health:esphome_gama350").startswith("rozłączono")
+
+
+class TestPruneEsphomeHealth:
+    def _engine(self, history, devices):
+        from types import SimpleNamespace
+        manager = SimpleNamespace(devices=devices) if devices is not None else None
+        return SimpleNamespace(history=history, esphome_manager=manager)
+
+    def test_disabled_plugin_removes_stale_esphome_status_only(self, history):
+        from bridge.rules_engine import RulesEngine
+        history.set_status("health:esphome_gama350", "system_health", "rozłączono: rozłączono (oczekiwane)")
+        history.set_status("health:satel", "system_health", "połączono")
+        RulesEngine._prune_esphome_health(self._engine(history, None))
+        assert history.get_status_value("health:esphome_gama350") is None
+        assert history.get_status_value("health:satel") == "połączono"
+
+    def test_active_device_status_kept(self, history):
+        from bridge.rules_engine import RulesEngine
+        history.set_status("health:esphome_gama350", "system_health", "połączono")
+        history.set_status("health:esphome_stary", "system_health", "rozłączono")
+        RulesEngine._prune_esphome_health(self._engine(history, {"gama350": object()}))
+        assert history.get_status_value("health:esphome_gama350") == "połączono"
+        assert history.get_status_value("health:esphome_stary") is None
+
+
 class TestEsphomeDeviceClientStateDispatch:
 
     async def test_known_entity_dispatches_value_to_on_state(self):

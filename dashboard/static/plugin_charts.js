@@ -21,10 +21,10 @@
     return withDate ? d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' }) + ' ' + t : t;
   }
 
-  // Kropka dziesiętna, przecinek tylko jako separator tysięcy: "1,491" czyta się jako tysiąc czterysta.
+  // Kropka dziesiętna i BEZ separatora tysięcy: "1496.492", nie "1,496.492" (przecinek mylił się z ułamkiem).
   const NUM_LOCALE = 'en-US';
   function fmtNum(n, minDigits, maxDigits) {
-    return Number(n).toLocaleString(NUM_LOCALE, { minimumFractionDigits: minDigits, maximumFractionDigits: maxDigits ?? minDigits });
+    return Number(n).toLocaleString(NUM_LOCALE, { minimumFractionDigits: minDigits, maximumFractionDigits: maxDigits ?? minDigits, useGrouping: false });
   }
 
   function baseOptions(unit, extra) {

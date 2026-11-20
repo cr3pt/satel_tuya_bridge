@@ -27,6 +27,7 @@ z taryfą swojego operatora albo zdefiniuj własną (`custom_tariffs`).
 """
 from __future__ import annotations
 
+import json
 import math
 import re
 from dataclasses import dataclass, field
@@ -350,6 +351,19 @@ def _zone_price_net(prices: dict, zone: str, other: float) -> float | None:
     return None
 
 
+def _price_parts(p, other: float) -> dict | None:
+    """Składniki ceny netto/kWh, żeby w raporcie było widać, skąd suma."""
+    if p is None:
+        return None
+    if isinstance(p, dict):
+        parts = {"energy_net": float(p.get("energy_net", 0) or 0),
+                 "distribution_net": float(p.get("distribution_net", 0) or 0)}
+    else:
+        parts = {"price_net": float(p)}
+    parts["other_per_kwh_net"] = other
+    return {k: round(v, 4) for k, v in parts.items()}
+
+
 def fixed_fee_net(monthly_net: float, ts_from: float, ts_to: float) -> float:
     """Opłaty stałe (zł/miesiąc netto) proporcjonalnie do doby (czas lokalny)
     - pełny dzień = 1/liczba_dni_miesiąca opłaty."""
@@ -393,7 +407,7 @@ def compute_cost(consumption: Consumption, pricing: dict, tariff: Tariff,
         net = kwh * price_used
         variable_net += net
         zones.append({"zone": zone, "kwh": round(kwh, 3), "price_net_per_kwh": None if price is None else round(price, 4),
-                      "net": round(net, 2)})
+                      "price_parts": _price_parts(prices.get(zone), other), "net": round(net, 2)})
 
     fixed_net = fixed_fee_net(float(pricing.get("fixed_monthly_net") or 0), ts_from, ts_to)
     total_net = variable_net + fixed_net
@@ -715,14 +729,18 @@ def build_report(energy_cfg: dict, meter: dict, readings: list[dict] | None, ts_
 METER_STATE_PERIOD = "meter"
 
 
-def build_meter_state_report(energy_cfg: dict, meter: dict, latest: dict) -> dict:
+def build_meter_state_report(energy_cfg: dict, meter: dict, latest: dict, start: dict | None = None) -> dict:
     """Koszt = NAJNOWSZY stan licznika (dokładnie wartość z MQTT, bez żadnego
     sumowania ani odejmowania) x cena za kWh danej strefy.
 
     `latest`: {strefa: {"t","v"}|None} dla licznika z czujnikiem per strefa,
     albo {None: {"t","v"}|None} dla licznika z jednym czujnikiem. Jeden
     czujnik da się wycenić tylko w taryfie jednostrefowej - nie wiadomo, ile
-    ze stanu przypada na którą strefę. Opłat stałych nie ma (nie ma okresu)."""
+    ze stanu przypada na którą strefę. Opłat stałych nie ma (nie ma okresu).
+
+    `start`: "START LICZNIKA" per rejestr (te same klucze co `latest`) -
+    odejmowany od stanu PRZED mnożeniem przez cenę."""
+    start = start or {}
     custom = energy_cfg.get("custom_tariffs") or {}
     vat = float(energy_cfg.get("vat_percent", 23))
     scale = float(meter.get("scale", 1) or 1)
@@ -737,13 +755,13 @@ def build_meter_state_report(energy_cfg: dict, meter: dict, latest: dict) -> dic
                     f"Taryfa '{tariff.id}': inny zestaw stref niż czujniki per strefa tego licznika "
                     f"({', '.join(meter_tariff.zones)}) - porównanie niemożliwe",
                 )
-            return {z: latest[z]["v"] * scale for z in tariff.zones if latest.get(z)}
+            return {z: latest[z]["v"] * scale - float(start.get(z) or 0) for z in tariff.zones if latest.get(z)}
         if len(tariff.zones) != 1:
             raise ValueError(
                 f"Taryfa '{tariff.id}' ma kilka stref, a licznik jeden rejestr - nie wiadomo, ile ze stanu "
                 "licznika przypada na którą strefę. Ustaw osobny czujnik per strefa (np. tariff_1 / tariff_2).",
             )
-        return {tariff.zones[0]: latest[None]["v"] * scale} if latest.get(None) else {}
+        return {tariff.zones[0]: latest[None]["v"] * scale - float(start.get(None) or 0)} if latest.get(None) else {}
 
     def one(tid: str) -> dict:
         pricing = energy_cfg["tariffs"][tid]
@@ -764,8 +782,11 @@ def build_meter_state_report(energy_cfg: dict, meter: dict, latest: dict) -> dic
     readings = []
     for zone, row in latest.items():
         sensor = zone_sensors.get(zone, "") if zone else meter.get("sensor", "")
+        st = float(start.get(zone) or 0)
+        value = row["v"] * scale if row else None
         readings.append({"zone": zone, "sensor": sensor, "ts": row["t"] if row else None,
-                         "value": round(row["v"] * scale, 3) if row else None})
+                         "value": round(value, 3) if row else None, "start": round(st, 3),
+                         "used": round(value - st, 3) if row else None})
     ts = [r["ts"] for r in readings if r["ts"]]
     return {
         "mode": METER_STATE_PERIOD,
@@ -778,3 +799,38 @@ def build_meter_state_report(energy_cfg: dict, meter: dict, latest: dict) -> dic
         "period": {"from": None, "to": max(ts) if ts else None},
         "result": report, "comparison": comparison, "daily": [],
     }
+
+
+START_SINGLE_KEY = "_"
+
+
+def meter_registers(meter: dict) -> list[tuple[str | None, str]]:
+    """[(strefa|None, czujnik)] - rejestry licznika (per strefa albo jeden)."""
+    zone_sensors = meter.get("zone_sensors") or {}
+    return list(zone_sensors.items()) if zone_sensors else [(None, meter.get("sensor", ""))]
+
+
+def load_meter_start(history, meter_name: str) -> dict:
+    """START LICZNIKA zapisany dla licznika: {strefa|None: kWh}."""
+    raw = history.get_status_value(f"energy_start:{meter_name}")
+    try:
+        data = json.loads(raw) if raw else {}
+    except (ValueError, TypeError):
+        data = {}
+    return {(None if k == START_SINGLE_KEY else k): float(v) for k, v in data.items()}
+
+
+def save_meter_start(history, meter: dict, values: dict) -> dict:
+    """`values`: {strefa | "_" (jeden rejestr): kWh >= 0}. Puste/0 = brak startu."""
+    keys = {START_SINGLE_KEY if z is None else z for z, _ in meter_registers(meter)}
+    if not isinstance(values, dict):
+        raise ValueError("Oczekiwano obiektu {rejestr: kWh}")
+    clean = {}
+    for k, v in values.items():
+        if k not in keys:
+            raise ValueError(f"Nieznany rejestr '{k}' licznika '{meter['name']}'")
+        if v in (None, ""):
+            continue
+        clean[k] = _num(v, f"START LICZNIKA ({k})")
+    history.set_status(f"energy_start:{meter['name']}", "energy_start", json.dumps(clean), label=meter["name"])
+    return clean
