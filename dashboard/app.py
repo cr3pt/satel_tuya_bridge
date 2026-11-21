@@ -142,10 +142,10 @@ if _plugin_load_errors:
 
 from dashboard.charts_config import register_dashboard_charts_routes
 register_dashboard_charts_routes(
-    app, 
-    require_auth=require_auth, 
-    get_auth_guard=get_auth_guard, 
-    get_config_store=get_config_store
+    app,
+    require_auth=require_auth,
+    get_auth_guard=lambda: auth_guard,
+    get_config_store=lambda: config_store
 )
 
 app.jinja_loader = ChoiceLoader([
