@@ -8,6 +8,7 @@ import time
 from quart import Quart, jsonify, render_template, request
 
 from bridge import energy_meters, wmbus
+from bridge.wmbus_key_pairs import merge_key_pairs
 from plugins import PluginMeta, register_settings_route
 
 
@@ -63,7 +64,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
     @app.route("/api/plugins/wmbus/meters", methods=["POST"])
     @require_auth(get_guard=get_auth_guard)
     async def api_plugin_wmbus_meters_post():
-        """Puste `key` = zachowaj dotychczasowy klucz; `clear_key: true` = usuń."""
+        """Puste `key` zachowuje klucz wyłącznie dla tego samego numeru seryjnego."""
         body = await request.get_json(silent=True)
         if not isinstance(body, dict) or not isinstance(body.get("meters"), list) \
                 or not all(isinstance(m, dict) for m in body["meters"]):
@@ -76,7 +77,10 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
 
         incoming = [{**m, "name": (m.get("name") or "").strip(), "id": str(m.get("id") or "").strip(),
                      "key": (m.get("key") or "").strip()} for m in body["meters"]]
-        merged = wmbus.merge_keys(incoming, section.get("meters", []) or [])
+        try:
+            merged = merge_key_pairs(incoming, section.get("meters", []) or [])
+        except ValueError as exc:
+            return jsonify({"error": "Popraw pary numer seryjny–klucz:", "details": [str(exc)]}), 400
         errors = wmbus.validate_meters(merged)
         if not wmbus.DEVICE_RE.match(device):
             errors.append("Urządzenie wmbusmeters: nieprawidłowa wartość (np. auto, im871a:t1)")
