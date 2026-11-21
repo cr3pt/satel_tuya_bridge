@@ -12,6 +12,7 @@ from plugins import PluginMeta
 
 MAX_RANGE_SECONDS = 366 * 86400
 CLEAR_CONFIRMATION = "CZYSC"
+MAX_MONTHS = 24
 
 
 def describe_state(config_raw: dict) -> dict:
@@ -65,6 +66,8 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
                         for tid, build in tariffs.BUILTIN_TARIFFS.items()},
             "g12_variants": list(tariffs.G12_VARIANT_IDS),
             "periods": [tariffs.METER_STATE_PERIOD, *tariffs.PERIODS],
+            "per_kwh_fees": [[k, v] for k, v in tariffs.PER_KWH_FEES.items()],
+            "monthly_fees": [[k, v] for k, v in tariffs.MONTHLY_FEES.items()],
         })
 
     @app.route("/api/plugins/energy_cost/config", methods=["POST"])
@@ -164,6 +167,36 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         flagged = energy_meters.list_energy_meter_sensors(get_history())
         return jsonify({"flagged": [f for f in flagged if f["sensor"] not in used]})
 
+    def _readings_for(meter: dict, ts_from: float, ts_to: float, pad: float):
+        zone_sensors = meter.get("zone_sensors") or {}
+        if zone_sensors:
+            return None, {zone: get_history().get_energy_history(sensor, ts_from - pad, ts_to + pad)
+                          for zone, sensor in zone_sensors.items()}
+        return get_history().get_energy_history(meter["sensor"], ts_from - pad, ts_to + pad), None
+
+    @app.route("/api/plugins/energy_cost/monthly", methods=["GET"])
+    async def api_plugin_energy_cost_monthly():
+        """Miesięczne okresy rozliczeniowe (ostatnie N miesięcy, najnowszy pierwszy)."""
+        energy = _get_energy()
+        meter = _find_meter(request.args.get("meter", ""))
+        if meter is None:
+            return jsonify({"error": "Nie znaleziono licznika"}), 404
+        try:
+            count = int(request.args.get("months", 12))
+        except ValueError:
+            return jsonify({"error": "months: wymagana liczba"}), 400
+        count = max(1, min(count, MAX_MONTHS))
+        now = time.time()
+        months = tariffs.recent_months(now, count)
+        ts_from = tariffs.month_bounds(*months[-1])[0]
+        pad = float(energy.get("max_gap_minutes", 360)) * 60
+        readings, zone_readings = _readings_for(meter, ts_from, now, pad)
+        try:
+            rows = tariffs.monthly_report(energy, meter, readings, months, now, zone_readings=zone_readings)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"meter": meter["name"], "tariff": meter["tariff"], "months": rows})
+
     @app.route("/api/plugins/energy_cost/report", methods=["GET"])
     async def api_plugin_energy_cost_report():
         energy = _get_energy()
@@ -199,16 +232,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
             return jsonify({"error": "Maksymalny okres to 366 dni"}), 400
 
         pad = float(energy.get("max_gap_minutes", 360)) * 60
-        zone_sensors = meter.get("zone_sensors") or {}
-        if zone_sensors:
-            readings = None
-            zone_readings = {
-                zone: get_history().get_energy_history(sensor, ts_from - pad, ts_to + pad)
-                for zone, sensor in zone_sensors.items()
-            }
-        else:
-            readings = get_history().get_energy_history(meter["sensor"], ts_from - pad, ts_to + pad)
-            zone_readings = None
+        readings, zone_readings = _readings_for(meter, ts_from, ts_to, pad)
         try:
             return jsonify(tariffs.build_report(energy, meter, readings, ts_from, ts_to, zone_readings=zone_readings))
         except ValueError as exc:

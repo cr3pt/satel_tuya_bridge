@@ -514,3 +514,88 @@ class TestCounterBounds:
         assert by["dzienna"]["end"] == 1496.006 and by["dzienna"]["sensor"] == "t1"
         assert by["nocna"]["diff"] == pytest.approx(1.219)
         assert rep["result"]["total_kwh"] == pytest.approx(11.006 + 1.219)
+
+
+INVOICE_G12W = {
+    "prices": {"dzienna": {"energy_net": 0.58123, "distribution_net": 0.42760},
+               "nocna": {"energy_net": 0.42850, "distribution_net": 0.08450}},
+    "per_kwh_fees": {"quality": 0.0332, "cogeneration": 0.003, "oze": 0.0073},
+    "monthly_fees": {"trade": 8.48, "capacity": 24.05, "network_fixed": 14.98},
+}
+
+
+class TestInvoiceFees:
+    def test_lines_match_invoice(self):
+        """Pozycje z faktury G12w 08.10-31.10.2026 (121 kWh dzień, 184 kWh noc, 0,774 m-c)."""
+        tariff = tariffs.resolve_tariff("G12w")
+        cons = tariffs.Consumption(kwh_by_zone={"dzienna": 121.0, "nocna": 184.0}, samples=2)
+        res = tariffs.compute_cost(cons, INVOICE_G12W, tariff, ts(2026, 10, 8), ts(2026, 11, 1))
+        lines = {l["label"]: l for l in res["lines"]}
+        assert lines["Energia elektryczna dzienna"]["net"] == pytest.approx(70.33)
+        assert lines["Energia elektryczna nocna"]["net"] == pytest.approx(78.84)
+        assert lines["Składnik zmienny stawki sieciowej dzienna"]["net"] == pytest.approx(51.74)
+        assert lines["Składnik zmienny stawki sieciowej nocna"]["net"] == pytest.approx(15.55)
+        assert lines["Opłata jakościowa"]["qty"] == pytest.approx(305) and lines["Opłata jakościowa"]["net"] == pytest.approx(10.13)
+        assert lines["Opłata kogeneracyjna"]["net"] == pytest.approx(0.92)
+        assert lines["Opłata OZE"]["net"] == pytest.approx(2.23)
+        assert lines["Opłata handlowa"]["qty"] == pytest.approx(0.774, abs=0.001)
+        assert lines["Opłata handlowa"]["net"] == pytest.approx(6.56)
+        assert lines["Opłata mocowa"]["net"] == pytest.approx(18.61, abs=0.01)
+        assert lines["Składnik stały stawki sieciowej"]["net"] == pytest.approx(11.59, abs=0.01)
+        assert sum(l["net"] for l in res["lines"]) == pytest.approx(res["total_net"], abs=0.05)
+        assert res["fixed_net"] == pytest.approx((8.48 + 24.05 + 14.98) * 24 / 31, abs=0.01)
+
+    def test_legacy_fields_still_work(self):
+        tariff = tariffs.resolve_tariff("G11")
+        cons = tariffs.Consumption(kwh_by_zone={"całodobowa": 10.0})
+        res = tariffs.compute_cost(cons, {"prices": {"całodobowa": 1.0}, "other_per_kwh_net": 0.1,
+                                          "fixed_monthly_net": 31.0}, tariff, ts(2026, 10, 1), ts(2026, 10, 2))
+        assert res["variable_net"] == pytest.approx(11.0) and res["fixed_net"] == pytest.approx(1.0)
+        assert [l["label"] for l in res["lines"]] == ["Energia i dystrybucja", "Inne opłaty zmienne", "Inne opłaty stałe"]
+
+    def test_validation_keeps_fees_and_rejects_unknown(self):
+        cfg = {"tariffs": {"G12w": INVOICE_G12W}, "meters": []}
+        clean, err = tariffs.validate_energy_config(cfg)
+        assert err is None and clean["tariffs"]["G12w"]["monthly_fees"]["capacity"] == 24.05
+        bad = {"tariffs": {"G11": {"prices": {}, "monthly_fees": {"abonament_tv": 5}}}, "meters": []}
+        assert "nieznana opłata" in tariffs.validate_energy_config(bad)[1]
+        neg = {"tariffs": {"G11": {"prices": {}, "per_kwh_fees": {"oze": -1}}}, "meters": []}
+        assert tariffs.validate_energy_config(neg)[1]
+
+
+class TestMonthlyPeriods:
+    def test_resolve_month_period(self):
+        now = ts(2026, 11, 21, 7)
+        assert tariffs.resolve_period("month:2026-10", now) == (ts(2026, 10, 1), ts(2026, 11, 1))
+        assert tariffs.resolve_period("month:2026-11", now) == (ts(2026, 11, 1), now)
+        assert tariffs.resolve_period("month:2025-12", now) == (ts(2025, 12, 1), ts(2026, 1, 1))
+        for bad in ("month:2026-13", "month:2026-1", "month:2027-01", "month:x"):
+            with pytest.raises(ValueError):
+                tariffs.resolve_period(bad, now)
+
+    def test_recent_months_crosses_year(self):
+        assert tariffs.recent_months(ts(2026, 2, 10), 3) == [(2026, 2), (2026, 1), (2025, 12)]
+
+    def test_monthly_report(self):
+        cfg = {"vat_percent": 23, "max_gap_minutes": 120,
+               "tariffs": {"G11": {"prices": {"całodobowa": 1.0}, "monthly_fees": {"trade": 10.0}}}}
+        meter = {"name": "dom", "tariff": "G11", "sensor": "s"}
+        # 1 kWh/h przez całą dobę 30.09 -> 01.10 (przełom miesięcy)
+        readings = [{"t": ts(2026, 9, 30) + i * 3600, "v": float(i)} for i in range(49)]
+        now = ts(2026, 10, 16)
+        rows = tariffs.monthly_report(cfg, meter, readings, tariffs.recent_months(now, 2), now)
+        oct_, sep = rows
+        assert sep["month"] == "2026-09" and sep["complete"] and sep["total_kwh"] == pytest.approx(24)
+        assert sep["fixed_net"] == pytest.approx(10.0) and sep["total_net"] == pytest.approx(34.0)
+        assert sep["total_gross"] == pytest.approx(34 * 1.23, abs=0.01) and sep["vat"] == pytest.approx(34 * 0.23, abs=0.01)
+        assert oct_["month"] == "2026-10" and not oct_["complete"] and oct_["total_kwh"] == pytest.approx(24)
+        assert oct_["fixed_net"] == pytest.approx(10.0 * 15 / 31, abs=0.01)
+
+    def test_monthly_report_skips_months_before_first_reading(self):
+        cfg = {"tariffs": {"G11": {"prices": {"całodobowa": 1.0}, "monthly_fees": {"trade": 10.0}}}}
+        meter = {"name": "dom", "tariff": "G11", "sensor": "s"}
+        now = ts(2026, 10, 16)
+        readings = [{"t": ts(2026, 10, 2), "v": 1.0}, {"t": ts(2026, 10, 2, 1), "v": 2.0}]
+        rows = tariffs.monthly_report(cfg, meter, readings, tariffs.recent_months(now, 6), now)
+        assert [r["month"] for r in rows] == ["2026-10"]
+        assert tariffs.monthly_report(cfg, meter, [], tariffs.recent_months(now, 6), now) == []

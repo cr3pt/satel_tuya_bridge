@@ -436,3 +436,32 @@ class TestMeterStart:
         assert z["price_net_per_kwh"] == pytest.approx(0.85)
         assert z["price_parts"] == {"energy_net": 0.5, "distribution_net": 0.3, "other_per_kwh_net": 0.05}
         assert z["net"] == pytest.approx(8.5)
+
+
+class TestMonthlyEndpoint:
+    async def test_requires_login(self, client):
+        assert (await client.get("/api/plugins/energy_cost/monthly?meter=dom")).status_code == 401
+
+    async def test_monthly_rows(self, client):
+        import dashboard.app as app_module
+        await _save(client)
+        now = time.time()
+        for i in range(5):
+            app_module.history.write_reading("licznik_kwh", 100.0 + i, ts=now - (5 - i) * 600)
+        resp = await client.get("/api/plugins/energy_cost/monthly?meter=dom&months=3", headers=AUTH)
+        assert resp.status_code == 200
+        data = await resp.get_json()
+        assert 1 <= len(data["months"]) <= 2  # bez miesięcy sprzed pierwszego odczytu
+        assert data["months"][0]["complete"] is False
+        assert sum(m["total_kwh"] for m in data["months"]) == pytest.approx(4.0)
+
+    async def test_unknown_meter_and_bad_count(self, client):
+        await _save(client)
+        assert (await client.get("/api/plugins/energy_cost/monthly?meter=x", headers=AUTH)).status_code == 404
+        assert (await client.get("/api/plugins/energy_cost/monthly?meter=dom&months=abc", headers=AUTH)).status_code == 400
+
+    async def test_report_for_month_period_has_invoice_lines(self, client):
+        await _save(client)
+        resp = await client.get("/api/plugins/energy_cost/report?meter=dom&period=month:2026-10", headers=AUTH)
+        assert resp.status_code == 200
+        assert "lines" in (await resp.get_json())["result"]
