@@ -6,6 +6,9 @@
   <a href="/flows" class="nav-btn {{ 'active' if request.path == '/flows' else '' }}"><span class="nav-icon">🔀</span>Flow</a>
   <a href="/map" class="nav-btn {{ 'active' if request.path == '/map' else '' }}"><span class="nav-icon">🏠</span>Mapa</a>
   <a href="/system" class="nav-btn {{ 'active' if request.path == '/system' else '' }}"><span class="nav-icon">⚙</span>Ogólne</a>
+  {% for item in nav_plugins | default([]) %}
+  <a href="{{ item.url }}" class="nav-btn {{ 'active' if request.path == item.url else '' }}"><span class="nav-icon">{{ item.icon }}</span>{{ item.label }}</a>
+  {% endfor %}
   &nbsp;·&nbsp;
   <a id="authNavLink" href="/login"></a>
 </div>

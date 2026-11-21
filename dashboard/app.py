@@ -146,6 +146,32 @@ app.jinja_loader = ChoiceLoader([
 ])
 
 
+# id wtyczki -> etykieta zakładki na górnym pasku
+_NAV_PLUGIN_LABELS = {"energy_cost": "Koszty"}
+
+
+@app.context_processor
+async def _inject_nav_plugins():
+    """Wtyczki z własną zakładką na górnym pasku - widoczne tylko gdy włączone."""
+    items = []
+    try:
+        current = config_store.get("config") if config_store is not None else (config_raw or {})
+    except Exception:
+        current = config_raw or {}
+    for meta in _plugin_metas:
+        if meta.id not in _NAV_PLUGIN_LABELS or not meta.config_url:
+            continue
+        try:
+            state = meta.describe_state(current or {}) if meta.describe_state else {}
+        except Exception:
+            logger.debug("describe_state wtyczki '%s' nie powiodło się", meta.id, exc_info=True)
+            continue
+        if state.get("enabled"):
+            items.append({"id": meta.id, "url": meta.config_url, "icon": meta.icon,
+                          "label": _NAV_PLUGIN_LABELS[meta.id]})
+    return {"nav_plugins": items}
+
+
 @app.before_request
 async def _redirect_to_setup_if_unconfigured():
     if request.endpoint in _SETUP_EXEMPT_ENDPOINTS:
