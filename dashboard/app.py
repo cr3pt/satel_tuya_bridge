@@ -139,6 +139,15 @@ _plugin_metas, _plugin_load_errors = _plugins.register_all(
 if _plugin_load_errors:
     for _err in _plugin_load_errors:
         logger.warning("Wtyczka '%s' pominięta: %s", _err.plugin_dir, _err.error)
+
+from dashboard.charts_config import register_dashboard_charts_routes
+register_dashboard_charts_routes(
+    app, 
+    require_auth=require_auth, 
+    get_auth_guard=get_auth_guard, 
+    get_config_store=get_config_store
+)
+
 app.jinja_loader = ChoiceLoader([
     app.jinja_loader,
     FileSystemLoader([str(pathlib.Path(__file__).resolve().parent.parent / "plugins" / meta.id / "templates")
