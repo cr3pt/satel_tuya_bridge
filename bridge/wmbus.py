@@ -24,7 +24,7 @@ radio, odczyta zużycie = widzi, kiedy nikogo nie ma w domu). Dlatego:
  - klucze leżą w bazie konfiguracji (config.db, prawa 0600, jak klucze Tuya),
    a wygenerowane pliki wmbusmeters też mają 0600,
  - panel NIGDY nie odsyła klucza do przeglądarki (tylko zamaskowaną końcówkę),
- - puste pole klucza przy zapisie = zachowaj dotychczasowy klucz.
+ - puste pole klucza przy zapisie = zachowaj dotychczasowy klucz dla tego samego numeru seryjnego.
 """
 from __future__ import annotations
 
@@ -70,6 +70,10 @@ _UNITS: dict[str, tuple[str, str | None, str | None]] = {
 }
 
 _PHASE_RE = re.compile(r"(?:^|_)(?:phase|ph|l)_?([123])(?:_|$)")
+
+
+def normalize_serial(serial: str | int | None) -> str:
+    return "" if serial is None else str(serial).strip().upper()
 
 
 def detect_phase(field: str) -> int | None:
@@ -146,13 +150,19 @@ def _is_number(v) -> bool:
 
 def validate_meters(meters: list[dict]) -> list[str]:
     errors = []
-    seen: set[str] = set()
+    seen_names: set[str] = set()
+    seen_ids: set[str] = set()
     for m in meters:
         errors += validate_meter(m)
         name = m.get("name")
-        if name in seen:
+        if name in seen_names:
             errors.append(f"Zduplikowana nazwa licznika: '{name}'")
-        seen.add(name)
+        seen_names.add(name)
+        serial = normalize_serial(m.get("id"))
+        if serial:
+            if serial in seen_ids:
+                errors.append(f"Zduplikowany numer seryjny (ID) licznika: '{serial}'")
+            seen_ids.add(serial)
     return errors
 
 
@@ -223,31 +233,91 @@ def public_view(meters: list[dict]) -> list[dict]:
     return out
 
 
-def discovered_meters(history, configured_names) -> list[dict]:
-    """Wszystkie liczniki widziane na MQTT (patrz
-    `WmbusMqttListener._record_discovered`), z flagą `configured` - żeby
-    licznik już dodany nie "znikał" z listy wykrytych."""
-    configured = set(configured_names)
-    out = []
+def find_meter_by_serial(meters: list[dict], serial: str | None) -> dict | None:
+    target = normalize_serial(serial)
+    if not target:
+        return None
+    for m in meters:
+        if normalize_serial(m.get("id")) == target:
+            return m
+    return None
+
+
+def meter_fields_for_serial(history, meters: list[dict], serial: str) -> list[dict]:
+    """Zwraca listę pól/czujników dostępnych dla licznika o podanym numerze seryjnym."""
+    meter = find_meter_by_serial(meters, serial)
+    target = normalize_serial(serial)
+    known_fields: set[str] = set()
+    meter_name = meter.get("name") if meter else None
+
     for row in history.get_status("wmbus_seen"):
-        name = row["key"].removeprefix("wmbus_seen:")
         try:
             summary = json.loads(row["value"])
         except (ValueError, TypeError):
             continue
-        out.append({"name": name, "ts": row["ts"], "configured": name in configured, **summary})
-    out.sort(key=lambda d: (d["configured"], d["name"]))
+        if normalize_serial(summary.get("id")) == target:
+            known_fields.update(summary.get("fields") or [])
+            if not meter_name:
+                meter_name = summary.get("topic_name") or row["key"].removeprefix("wmbus_seen:")
+
+    if meter_name:
+        prefix = f"wmbus_{meter_name}_"
+        for sensor in set(history.get_sensors()) | set(history.get_energy_sensors()):
+            if sensor.startswith(prefix):
+                known_fields.add(sensor[len(prefix):])
+
+    out = []
+    for field in sorted(known_fields):
+        info = field_unit(field)
+        sensor = f"wmbus_{meter_name}_{field}" if meter_name else field
+        out.append({
+            "field": field,
+            "sensor": sensor,
+            "unit": info[0] if info else "",
+            "kind": (info[1] if info else None) or "other",
+            "phase": detect_phase(field),
+        })
+    return out
+
+
+def discovered_meters(history, configured_names, configured_ids=None) -> list[dict]:
+    """Wszystkie liczniki widziane na MQTT (patrz
+    `WmbusMqttListener._record_discovered`), z flagą `configured` - żeby
+    licznik już dodany nie "znikał" z listy wykrytych."""
+    configured_name_set = set(configured_names or [])
+    configured_id_set = {normalize_serial(i) for i in (configured_ids or []) if normalize_serial(i)}
+    out = []
+    for row in history.get_status("wmbus_seen"):
+        key_suffix = row["key"].removeprefix("wmbus_seen:")
+        try:
+            summary = json.loads(row["value"])
+        except (ValueError, TypeError):
+            continue
+        name = summary.get("topic_name") or key_suffix
+        serial = normalize_serial(summary.get("id"))
+        is_configured = (name in configured_name_set) or (bool(serial) and serial in configured_id_set)
+        out.append({"name": name, "ts": row["ts"], "configured": is_configured, **summary})
+    out.sort(key=lambda d: (d["configured"], d.get("id") or d["name"]))
     return out
 
 
 def forget_discovered(history, name: str) -> bool:
-    """Usuwa licznik z listy wykrytych na MQTT (np. stary/obcy temat). Wróci
-    sam, gdy na jego temat przyjdzie kolejny telegram. True = był na liście."""
-    key = f"wmbus_seen:{name}"
-    if history.get_status_value(key) is None:
-        return False
-    history.delete_status(key)
-    return True
+    """Usuwa licznik z listy wykrytych na MQTT (po nazwie tematu lub numerze seryjnym)."""
+    deleted = False
+    for key in (f"wmbus_seen:{name}", f"wmbus_seen:{normalize_serial(name)}"):
+        if history.get_status_value(key) is not None:
+            history.delete_status(key)
+            deleted = True
+    if not deleted:
+        for row in history.get_status("wmbus_seen"):
+            try:
+                summary = json.loads(row["value"])
+            except (ValueError, TypeError):
+                continue
+            if summary.get("topic_name") == name or normalize_serial(summary.get("id")) == normalize_serial(name):
+                history.delete_status(row["key"])
+                deleted = True
+    return deleted
 
 
 def render_meter_file(meter: dict) -> str:
@@ -342,6 +412,9 @@ class WmbusMqttListener:
         self.on_telegram = on_telegram
         self.history = history
         self._meters = {m["name"]: m for m in meters}
+        self._meters_by_id = {
+            normalize_serial(m.get("id")): m for m in meters if normalize_serial(m.get("id"))
+        }
         self._lock = threading.Lock()
         self._prefix = cfg.get("topic_prefix", "wmbusmeters")
         if loop is None:
@@ -370,6 +443,9 @@ class WmbusMqttListener:
         """Przeładowanie konfiguracji bez restartu (lista liczników)."""
         with self._lock:
             self._meters = {m["name"]: m for m in meters}
+            self._meters_by_id = {
+                normalize_serial(m.get("id")): m for m in meters if normalize_serial(m.get("id"))
+            }
 
     def stop(self) -> None:
         self._client.loop_stop()
@@ -387,38 +463,56 @@ class WmbusMqttListener:
 
     def _on_message(self, client, userdata, msg) -> None:
         name = msg.topic.rsplit("/", 1)[-1]
-        with self._lock:
-            meter = self._meters.get(name)
-        self._record_discovered(name, msg.payload)
-        if meter is None:
-            logger.debug("wM-Bus: telegram z nieskonfigurowanego licznika '%s' - pomijam", name)
-            return
         telegram = parse_telegram(msg.payload)
+        self._record_discovered(name, msg.payload, telegram=telegram)
         if telegram is None:
             logger.warning("wM-Bus: nieprawidłowy JSON na temacie %s", msg.topic)
+            return
+        serial = normalize_serial(telegram.get("id"))
+        with self._lock:
+            meter = self._meters_by_id.get(serial) if serial else None
+            if meter is None:
+                meter = self._meters.get(name)
+        if meter is None:
+            logger.debug("wM-Bus: telegram z nieskonfigurowanego licznika '%s' (id=%s) - pomijam", name, serial or "?")
             return
         try:
             self.on_telegram(meter, telegram)
         except Exception:
             logger.exception("wM-Bus: błąd obsługi telegramu licznika '%s'", name)
 
-    def _record_discovered(self, name: str, payload: bytes | str) -> None:
-        """Zapisuje próbkę telegramu z NIESKONFIGUROWANEGO tematu, żeby
-        wtyczka (/plugins/wmbus) mogła zaproponować "Dodaj licznik z MQTT"
-        zamiast wymagać ręcznego zgadywania nazwy/ID - patrz
-        `discovered_meters()`."""
+    def _record_discovered(self, name: str, payload: bytes | str, telegram: dict | None = None) -> None:
+        """Zapisuje próbkę telegramu indeksowaną po numerze seryjnym (`id`),
+        kumulując zbiór znanych pól numerycznych zamiast nadpisywać `field_count`
+        pojedynczym niepełnym telegramem."""
         if self.history is None:
             return
-        telegram = parse_telegram(payload)
+        if telegram is None:
+            telegram = parse_telegram(payload)
         if telegram is None:
             return
         fields = numeric_fields(telegram)
+        serial = normalize_serial(telegram.get("id"))
+        status_key = f"wmbus_seen:{serial or name}"
+
+        existing_fields: set[str] = set()
+        raw_prev = self.history.get_status_value(status_key)
+        if raw_prev:
+            try:
+                prev = json.loads(raw_prev)
+                existing_fields.update(prev.get("fields") or [])
+            except (ValueError, TypeError):
+                pass
+
+        all_fields = sorted(existing_fields | set(fields.keys()))
         summary = {
             "id": str(telegram.get("id") or ""),
+            "topic_name": name,
             "driver": str(telegram.get("meter") or telegram.get("media") or ""),
-            "phases": 3 if phases_in(fields) else 1,
-            "field_count": len(fields),
+            "phases": 3 if phases_in(all_fields) else 1,
+            "fields": all_fields,
+            "field_count": len(all_fields),
         }
         self.history.set_status(
-            f"wmbus_seen:{name}", "wmbus_seen", json.dumps(summary, ensure_ascii=False), label=name,
+            status_key, "wmbus_seen", json.dumps(summary, ensure_ascii=False), label=serial or name,
         )

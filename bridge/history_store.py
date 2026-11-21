@@ -80,6 +80,21 @@ CREATE TABLE IF NOT EXISTS energy_readings (
     value REAL NOT NULL,
     PRIMARY KEY (sensor, ts)
 ) WITHOUT ROWID;
+
+-- Zagregowane cykle zużycia energii (dzienne, tygodniowe, miesięczne)
+-- do szybkich zestawień i porównań między okresami.
+CREATE TABLE IF NOT EXISTS energy_cycles (
+    meter_id TEXT NOT NULL,
+    cycle_type TEXT NOT NULL,
+    period_key TEXT NOT NULL,
+    zone TEXT NOT NULL,
+    kwh REAL NOT NULL,
+    cost_net REAL NOT NULL DEFAULT 0.0,
+    cost_gross REAL NOT NULL DEFAULT 0.0,
+    reading_ts REAL,
+    updated_ts REAL NOT NULL,
+    PRIMARY KEY (meter_id, cycle_type, period_key, zone)
+) WITHOUT ROWID;
 """
 
 _LOG_LEVEL_ORDER = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -94,23 +109,12 @@ class HistoryStore:
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
-        # Ten sam plik jest otwierany RÓWNOCZEŚNIE przez dwa osobne procesy
-        # (demon bridge'a i panel Quart) - domyślny tryb dziennika SQLite
-        # (rollback journal) blokuje czytelników na czas zapisu, co przy
-        # krótkiej, ale realnej kolizji dawało "database is locked" (patrz
-        # /healthz -> history.get_status). WAL pozwala czytać w trakcie
-        # zapisu z innego procesu; busy_timeout dodatkowo każe SQLite czekać
-        # zamiast od razu zgłaszać błąd, gdyby mimo to doszło do kolizji
-        # zapis-zapis.
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
         for suffix in ("", "-wal", "-shm"):
-            # WAL tworzy pliki pomocnicze obok głównej bazy - trzymają też
-            # dane do niedawnego zapisu (więc tak samo mogą zawierać klucze),
-            # a domyślny umask zrobiłby je czytelnymi dla innych.
             try:
                 os.chmod(f"{self.db_path}{suffix}", 0o600)
             except OSError:
@@ -294,6 +298,73 @@ class HistoryStore:
                 deleted += self._conn.execute("DELETE FROM readings WHERE sensor = ?", (sensor,)).rowcount
             self._conn.commit()
         return deleted
+
+    def clear_all_energy_data(self) -> dict[str, int]:
+        """Pełne czyszczenie wszystkich danych związanych z energią i licznikami:
+        `energy_readings`, powiązane `readings` (w tym `wmbus_%`), `energy_sensors`,
+        `energy_cycles` oraz statusy (`energy_meter`, `wmbus`, `wmbus_seen`, `energy_start`)."""
+        with self._lock:
+            sensors = {r[0] for r in self._conn.execute("SELECT sensor FROM energy_sensors")}
+            sensors |= {r[0] for r in self._conn.execute("SELECT DISTINCT sensor FROM energy_readings")}
+            er_del = self._conn.execute("DELETE FROM energy_readings").rowcount
+            r_del = self._conn.execute("DELETE FROM readings WHERE sensor LIKE 'wmbus_%'").rowcount
+            for sensor in sensors:
+                r_del += self._conn.execute("DELETE FROM readings WHERE sensor = ?", (sensor,)).rowcount
+            es_del = self._conn.execute("DELETE FROM energy_sensors").rowcount
+            ec_del = self._conn.execute("DELETE FROM energy_cycles").rowcount
+            st_del = self._conn.execute(
+                "DELETE FROM status WHERE category IN ('energy_meter', 'wmbus', 'wmbus_seen', 'energy_start') "
+                "OR key LIKE 'energy_meter:%' OR key LIKE 'wmbus:%' OR key LIKE 'wmbus_seen:%' OR key LIKE 'energy_start:%'"
+            ).rowcount
+            self._conn.commit()
+        return {
+            "energy_readings": er_del,
+            "readings": r_del,
+            "energy_sensors": es_del,
+            "energy_cycles": ec_del,
+            "status": st_del,
+        }
+
+    def upsert_energy_cycle(self, meter_id: str, cycle_type: str, period_key: str, zone: str,
+                            kwh: float, cost_net: float = 0.0, cost_gross: float = 0.0,
+                            reading_ts: float | None = None, updated_ts: float | None = None) -> None:
+        now = updated_ts if updated_ts is not None else time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO energy_cycles (meter_id, cycle_type, period_key, zone, kwh, cost_net, cost_gross, reading_ts, updated_ts) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(meter_id, cycle_type, period_key, zone) DO UPDATE SET "
+                "kwh = excluded.kwh, cost_net = excluded.cost_net, cost_gross = excluded.cost_gross, "
+                "reading_ts = excluded.reading_ts, updated_ts = excluded.updated_ts",
+                (meter_id, cycle_type, period_key, zone, float(kwh), float(cost_net), float(cost_gross), reading_ts, now),
+            )
+            self._conn.commit()
+
+    def get_energy_cycles(self, meter_id: str | None = None, cycle_type: str | None = None,
+                          limit: int = 200) -> list[dict]:
+        query = (
+            "SELECT meter_id, cycle_type, period_key, zone, kwh, cost_net, cost_gross, reading_ts, updated_ts "
+            "FROM energy_cycles WHERE 1=1"
+        )
+        params: list = []
+        if meter_id:
+            query += " AND meter_id = ?"
+            params.append(meter_id)
+        if cycle_type:
+            query += " AND cycle_type = ?"
+            params.append(cycle_type)
+        query += " ORDER BY period_key DESC, zone ASC LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [
+            {
+                "meter_id": r[0], "cycle_type": r[1], "period_key": r[2], "zone": r[3],
+                "kwh": r[4], "cost_net": r[5], "cost_gross": r[6],
+                "reading_ts": r[7], "updated_ts": r[8],
+            }
+            for r in rows
+        ]
 
     def get_energy_sensors(self) -> list[str]:
         with self._lock:

@@ -11,6 +11,8 @@ from bridge import energy_meters, wmbus
 from bridge.wmbus_key_pairs import merge_key_pairs
 from plugins import PluginMeta, register_settings_route
 
+CLEAR_CONFIRMATION = "CZYSC"
+
 
 def describe_state(config_raw: dict) -> dict:
     wm = config_raw.get("wmbus", {}) or {}
@@ -52,13 +54,18 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
 
     @app.route("/api/plugins/wmbus/meters", methods=["GET"])
     async def api_plugin_wmbus_meters_get():
-        """Lista liczników BEZ kluczy AES (tylko has_key + zamaskowana końcówka)."""
+        """Lista liczników BEZ kluczy AES (tylko has_key + zamaskowana końcówka).
+        Opcjonalny filtr `?serial=<nr_seryjny>`."""
         section = _get_section()
+        meters = section.get("meters", []) or []
+        serial = wmbus.normalize_serial(request.args.get("serial"))
+        if serial:
+            meters = [m for m in meters if wmbus.normalize_serial(m.get("id")) == serial]
         return jsonify({
             "device": section.get("device", "auto"),
             "topic_prefix": section.get("topic_prefix", "wmbusmeters"),
             "mqtt_host": section.get("mqtt_host", ""),
-            "meters": wmbus.public_view(section.get("meters", []) or []),
+            "meters": wmbus.public_view(meters),
         })
 
     @app.route("/api/plugins/wmbus/meters", methods=["POST"])
@@ -121,8 +128,10 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
 
     @app.route("/api/plugins/wmbus/discovered", methods=["GET"])
     async def api_plugin_wmbus_discovered():
-        configured = [m.get("name") for m in _get_section().get("meters", []) or []]
-        return jsonify({"discovered": wmbus.discovered_meters(get_history(), configured)})
+        meters = _get_section().get("meters", []) or []
+        configured_names = [m.get("name") for m in meters]
+        configured_ids = [m.get("id") for m in meters]
+        return jsonify({"discovered": wmbus.discovered_meters(get_history(), configured_names, configured_ids)})
 
     @app.route("/api/plugins/wmbus/discovered/<name>", methods=["DELETE"])
     @require_auth(get_guard=get_auth_guard)
@@ -131,13 +140,56 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
             return jsonify({"error": f"Nie ma wykrytego licznika '{name}'"}), 404
         return jsonify({"deleted": name})
 
+    @app.route("/api/plugins/wmbus/meter_fields", methods=["GET"])
+    async def api_plugin_wmbus_meter_fields():
+        """Zwraca pola/czujniki dostępne dla licznika o podanym numerze seryjnym (`?serial=`)."""
+        serial = wmbus.normalize_serial(request.args.get("serial"))
+        if not serial:
+            return jsonify({"error": "Wymagany parametr 'serial'"}), 400
+        meters = _get_section().get("meters", []) or []
+        meter = wmbus.find_meter_by_serial(meters, serial)
+        fields = wmbus.meter_fields_for_serial(get_history(), meters, serial)
+        return jsonify({
+            "serial": serial,
+            "meter": wmbus.public_view([meter])[0] if meter else None,
+            "fields": fields,
+        })
+
+    @app.route("/api/plugins/wmbus/clear_all", methods=["POST"])
+    @require_auth(get_guard=get_auth_guard)
+    async def api_plugin_wmbus_clear_all():
+        """Czyści wszystko związane z energią i licznikami (wymaga confirm='CZYSC')."""
+        body = await request.get_json(silent=True)
+        if not isinstance(body, dict) or body.get("confirm") != CLEAR_CONFIRMATION:
+            return jsonify({"error": f"Aby wyczyścić, wpisz {CLEAR_CONFIRMATION}"}), 400
+        history = get_history()
+        counts = history.clear_all_energy_data()
+        if body.get("clear_config"):
+            current = get_config_store().get("config")
+            if isinstance(current.get("wmbus"), dict):
+                current["wmbus"]["meters"] = []
+            if isinstance(current.get("energy"), dict):
+                current["energy"]["meters"] = []
+            get_config_store().set("config", current)
+            reload_bridge_config()
+            enqueue_bridge_reload()
+        history.write_event("system", source="dashboard", detail={"message": "Wyczyszczono wszystkie dane energii i liczników", "counts": counts})
+        return jsonify({"cleared": counts, "message": "Wyczyszczono wszystkie dane energii i liczników."})
+
     @app.route("/api/plugins/wmbus/readings", methods=["GET"])
     async def api_plugin_wmbus_readings():
         history = get_history()
+        serial = wmbus.normalize_serial(request.args.get("serial"))
+        allowed_name = None
+        if serial:
+            meter = wmbus.find_meter_by_serial(_get_section().get("meters", []) or [], serial)
+            allowed_name = meter.get("name") if meter else None
         out = []
         for r in history.get_status("wmbus"):
             row = dict(r)
             parts = r["key"].split(":")
+            if serial and (len(parts) < 2 or parts[1] != allowed_name):
+                continue
             if len(parts) == 3 and parts[2] not in ("phases", "status"):
                 sensor = f"wmbus_{parts[1]}_{parts[2]}"
                 row["sensor"] = sensor
@@ -170,9 +222,12 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
     async def api_plugin_wmbus_series():
         """Szeregi czasowe pól licznika do wykresów (z downsamplingiem do `points`)."""
         name = request.args.get("meter", "")
-        meter = next((m for m in _get_section().get("meters", []) or [] if m.get("name") == name), None)
+        serial = wmbus.normalize_serial(request.args.get("serial"))
+        meters = _get_section().get("meters", []) or []
+        meter = wmbus.find_meter_by_serial(meters, serial) if serial else next((m for m in meters if m.get("name") == name), None)
         if meter is None:
-            return jsonify({"error": f"Nie znaleziono licznika '{name}'"}), 404
+            return jsonify({"error": f"Nie znaleziono licznika '{serial or name}'"}), 404
+        name = meter["name"]
         try:
             hours = min(max(float(request.args.get("hours", 24)), 0.1), 24 * 366)
             points = min(max(int(request.args.get("points", 300)), 10), 2000)
@@ -193,7 +248,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
             series.append({"field": field, "phase": wmbus.detect_phase(field),
                            "unit": info[0] if info else "", "kind": (info[1] if info else None) or "other",
                            "points": wmbus.downsample([[r["t"], r["v"]] for r in data], points)})
-        return jsonify({"meter": name, "label": meter.get("label") or name, "from": now - hours * 3600,
+        return jsonify({"meter": name, "serial": meter.get("id", ""), "label": meter.get("label") or name, "from": now - hours * 3600,
                         "to": now, "series": series})
 
     register_settings_route(
