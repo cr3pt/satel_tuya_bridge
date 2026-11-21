@@ -338,6 +338,39 @@ def consumption_from_zone_sensors(zone_readings: dict[str, list[dict]], zones: t
     return result
 
 
+# Składniki opłat jak na fakturze (sprzedawca + OSD). Klucz -> etykieta.
+# Zmienne liczone od CAŁEGO zużycia (wszystkie strefy, ta sama stawka):
+PER_KWH_FEES = {
+    "quality": "Opłata jakościowa",
+    "cogeneration": "Opłata kogeneracyjna",
+    "oze": "Opłata OZE",
+}
+# Stałe miesięczne (zł/m-c), proporcjonalnie do dni okresu:
+MONTHLY_FEES = {
+    "trade": "Opłata handlowa",
+    "capacity": "Opłata mocowa",
+    "network_fixed": "Składnik stały stawki sieciowej",
+}
+
+
+def _fee_values(pricing: dict, key: str, catalog: dict) -> dict[str, float]:
+    raw = pricing.get(key) or {}
+    if not isinstance(raw, dict):
+        return {}
+    return {k: float(raw.get(k) or 0) for k in catalog if raw.get(k) not in (None, "")}
+
+
+def per_kwh_other(pricing: dict) -> float:
+    """Wszystkie zmienne opłaty za kWh poza energią i składnikiem zmiennym
+    sieciowym: jakościowa + kogeneracyjna + OZE + "inne" (`other_per_kwh_net`)."""
+    return float(pricing.get("other_per_kwh_net") or 0) + sum(_fee_values(pricing, "per_kwh_fees", PER_KWH_FEES).values())
+
+
+def monthly_fixed(pricing: dict) -> float:
+    """Suma opłat stałych zł/m-c: handlowa + mocowa + stały sieciowy + "inne"."""
+    return float(pricing.get("fixed_monthly_net") or 0) + sum(_fee_values(pricing, "monthly_fees", MONTHLY_FEES).values())
+
+
 def _zone_price_net(prices: dict, zone: str, other: float) -> float | None:
     """Cena netto za kWh w strefie albo None, gdy cena nie jest ustawiona.
     Ceny można podać jako liczbę (suma) albo {energy_net, distribution_net}."""
@@ -389,7 +422,7 @@ def compute_cost(consumption: Consumption, pricing: dict, tariff: Tariff,
     other_per_kwh_net, fixed_monthly_net, vat_percent}. Strefy bez ceny trafiają
     do `missing_prices` (koszt liczony jako 0 + ostrzeżenie), a nie są zgadywane."""
     prices = pricing.get("prices") or {}
-    other = float(pricing.get("other_per_kwh_net") or 0)
+    other = per_kwh_other(pricing)
     vat = float(pricing.get("vat_percent", default_vat_percent) or 0)
 
     zones = []
@@ -409,7 +442,7 @@ def compute_cost(consumption: Consumption, pricing: dict, tariff: Tariff,
         zones.append({"zone": zone, "kwh": round(kwh, 3), "price_net_per_kwh": None if price is None else round(price, 4),
                       "price_parts": _price_parts(prices.get(zone), other), "net": round(net, 2)})
 
-    fixed_net = fixed_fee_net(float(pricing.get("fixed_monthly_net") or 0), ts_from, ts_to)
+    fixed_net = fixed_fee_net(monthly_fixed(pricing), ts_from, ts_to)
     total_net = variable_net + fixed_net
     gross = total_net * (1 + vat / 100)
     return {
@@ -426,7 +459,45 @@ def compute_cost(consumption: Consumption, pricing: dict, tariff: Tariff,
         "vat_percent": vat,
         "total_gross": round(gross, 2),
         "missing_prices": missing,
+        "lines": invoice_lines(consumption, pricing, tariff, ts_from, ts_to),
     }
+
+
+def invoice_lines(consumption: Consumption, pricing: dict, tariff: Tariff, ts_from: float, ts_to: float) -> list[dict]:
+    """Pozycje jak na fakturze: składnik, ilość, j.m., cena jedn. netto, wartość netto.
+    Suma `net` = `variable_net` + `fixed_net` z `compute_cost` (z dokładnością do zaokrągleń)."""
+    lines: list[dict] = []
+    prices = pricing.get("prices") or {}
+    multi = len(tariff.zones) > 1
+
+    def add(label: str, qty: float, unit: str, unit_price: float) -> None:
+        # Jak na fakturze: wartość = ilość (zaokrąglona do 0,001) x cena jedn.
+        qty = round(qty, 3)
+        lines.append({"label": label, "qty": qty, "unit": unit, "unit_price": round(unit_price, 5),
+                      "net": round(qty * unit_price, 2)})
+
+    for zone in tariff.zones:
+        kwh = consumption.kwh_by_zone.get(zone, 0.0)
+        p = prices.get(zone)
+        suffix = f" {zone}" if multi else ""
+        if isinstance(p, dict):
+            add("Energia elektryczna" + suffix, kwh, "kWh", float(p.get("energy_net", 0) or 0))
+            add("Składnik zmienny stawki sieciowej" + suffix, kwh, "kWh", float(p.get("distribution_net", 0) or 0))
+        elif isinstance(p, (int, float)) and not isinstance(p, bool):
+            add("Energia i dystrybucja" + suffix, kwh, "kWh", float(p))
+    total_kwh = sum(consumption.kwh_by_zone.get(z, 0.0) for z in tariff.zones)
+    for key, value in _fee_values(pricing, "per_kwh_fees", PER_KWH_FEES).items():
+        add(PER_KWH_FEES[key], total_kwh, "kWh", value)
+    if float(pricing.get("other_per_kwh_net") or 0):
+        add("Inne opłaty zmienne", total_kwh, "kWh", float(pricing["other_per_kwh_net"]))
+
+    months = fixed_fee_net(1.0, ts_from, ts_to)
+    if months > 0:
+        for key, value in _fee_values(pricing, "monthly_fees", MONTHLY_FEES).items():
+            add(MONTHLY_FEES[key], months, "m-c", value)
+        if float(pricing.get("fixed_monthly_net") or 0):
+            add("Inne opłaty stałe", months, "m-c", float(pricing["fixed_monthly_net"]))
+    return lines
 
 
 def describe_schedule(tariff: Tariff) -> dict:
@@ -456,10 +527,39 @@ def describe_schedule(tariff: Tariff) -> dict:
 
 
 PERIODS = ("today", "yesterday", "7d", "30d", "this_month", "last_month")
+MONTH_PERIOD_PREFIX = "month:"
+_MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
+
+
+def month_bounds(year: int, month: int) -> tuple[float, float]:
+    """Miesięczny okres rozliczeniowy: od północy 1. dnia do północy 1. dnia
+    kolejnego miesiąca (czas lokalny)."""
+    start = datetime(year, month, 1, tzinfo=TZ)
+    end = datetime(year + (month == 12), month % 12 + 1, 1, tzinfo=TZ)
+    return start.timestamp(), end.timestamp()
+
+
+def recent_months(now: float, count: int) -> list[tuple[int, int]]:
+    """Ostatnie `count` miesięcy (rok, miesiąc), od bieżącego wstecz."""
+    d = datetime.fromtimestamp(now, TZ).date().replace(day=1)
+    out = []
+    for _ in range(count):
+        out.append((d.year, d.month))
+        d = (d - timedelta(days=1)).replace(day=1)
+    return out
 
 
 def resolve_period(name: str, now: float) -> tuple[float, float]:
-    """Nazwany okres -> (od, do) w sekundach unix, wg doby lokalnej."""
+    """Nazwany okres -> (od, do) w sekundach unix, wg doby lokalnej.
+    `month:RRRR-MM` = miesięczny okres rozliczeniowy (bieżący - do teraz)."""
+    if name.startswith(MONTH_PERIOD_PREFIX):
+        m = _MONTH_RE.match(name[len(MONTH_PERIOD_PREFIX):])
+        if not m or not 1 <= int(m.group(2)) <= 12 or not 2000 <= int(m.group(1)) <= 2100:
+            raise ValueError(f"Nieprawidłowy miesiąc: {name!r} (oczekiwano month:RRRR-MM)")
+        ts_from, ts_to = month_bounds(int(m.group(1)), int(m.group(2)))
+        if ts_from >= now:
+            raise ValueError("Ten miesiąc jeszcze się nie zaczął")
+        return ts_from, min(ts_to, now)
     if name not in PERIODS:
         raise ValueError(f"Nieznany okres: {name!r} (dostępne: {', '.join(PERIODS)})")
     now_local = datetime.fromtimestamp(now, TZ)
@@ -550,6 +650,19 @@ def _validate_energy_config(data) -> dict:
             "other_per_kwh_net": _num(spec.get("other_per_kwh_net", 0) or 0, f"{tid}: pozostałe opłaty zmienne"),
             "fixed_monthly_net": _num(spec.get("fixed_monthly_net", 0) or 0, f"{tid}: opłaty stałe"),
         }
+        for key, catalog, unit in (("per_kwh_fees", PER_KWH_FEES, "zł/kWh"), ("monthly_fees", MONTHLY_FEES, "zł/m-c")):
+            fees_in = spec.get(key) or {}
+            if not isinstance(fees_in, dict):
+                raise ValueError(f"Taryfa '{tid}': {key} - oczekiwano obiektu")
+            fees = {}
+            for fk, fv in fees_in.items():
+                if fk not in catalog:
+                    raise ValueError(f"Taryfa '{tid}': nieznana opłata '{fk}' (dostępne: {', '.join(catalog)})")
+                if fv in (None, ""):
+                    continue
+                fees[fk] = _num(fv, f"{tid}: {catalog[fk]} [{unit}]")
+            if fees:
+                entry[key] = fees
         if variant:
             entry["variant"] = variant
         if spec.get("vat_percent") not in (None, ""):
@@ -652,6 +765,47 @@ def daily_breakdown_zone_sensors(zone_readings: dict[str, list[dict]], tariff: T
                          "total_kwh": res["total_kwh"], "cost_gross": res["total_gross"]})
         d = nxt
     return days
+
+
+def monthly_report(energy_cfg: dict, meter: dict, readings: list[dict] | None, months: list[tuple[int, int]],
+                   now: float, zone_readings: dict[str, list[dict]] | None = None) -> list[dict]:
+    """Miesięczne okresy rozliczeniowe (od 1. dnia do końca miesiąca; bieżący
+    do teraz): zużycie wg stref, opłaty zmienne i stałe, netto, VAT, brutto.
+    Opłaty stałe liczone za pełny miesiąc (1 m-c), w bieżącym - proporcjonalnie."""
+    custom = energy_cfg.get("custom_tariffs") or {}
+    vat = float(energy_cfg.get("vat_percent", 23))
+    max_gap = float(energy_cfg.get("max_gap_minutes", 360)) * 60
+    scale = float(meter.get("scale", 1) or 1)
+    pricing = energy_cfg["tariffs"][meter["tariff"]]
+    tariff = resolve_tariff(meter["tariff"], pricing.get("variant"), custom)
+    if meter.get("zone_sensors"):
+        all_ts = [r["t"] for rows in (zone_readings or {}).values() for r in rows]
+    else:
+        all_ts = [r["t"] for r in readings or []]
+    first_reading = min(all_ts) if all_ts else None
+    out = []
+    for year, month in months:
+        ts_from, month_end = month_bounds(year, month)
+        # Miesiące sprzed pierwszego odczytu pomijamy - byłyby same opłaty stałe.
+        if ts_from >= now or first_reading is None or month_end <= first_reading:
+            continue
+        ts_to = min(month_end, now)
+        if meter.get("zone_sensors"):
+            cons = consumption_from_zone_sensors(zone_readings or {}, tariff.zones, ts_from, ts_to,
+                                                  max_gap_seconds=max_gap, scale=scale)
+        else:
+            cons = consumption_by_zone(readings or [], tariff, ts_from, ts_to, max_gap_seconds=max_gap, scale=scale)
+        r = compute_cost(cons, pricing, tariff, ts_from, ts_to, default_vat_percent=vat)
+        out.append({
+            "month": f"{year:04d}-{month:02d}", "from": ts_from, "to": ts_to,
+            "complete": month_end <= now,
+            "kwh_by_zone": {z["zone"]: z["kwh"] for z in r["zones"]},
+            "total_kwh": r["total_kwh"], "unallocated_kwh": r["unallocated_kwh"], "samples": r["samples"],
+            "variable_net": r["variable_net"], "fixed_net": r["fixed_net"], "total_net": r["total_net"],
+            "vat_percent": r["vat_percent"], "vat": round(r["total_gross"] - r["total_net"], 2),
+            "total_gross": r["total_gross"], "missing_prices": r["missing_prices"],
+        })
+    return out
 
 
 def build_report(energy_cfg: dict, meter: dict, readings: list[dict] | None, ts_from: float, ts_to: float,

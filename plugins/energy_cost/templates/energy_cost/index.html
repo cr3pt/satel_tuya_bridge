@@ -61,6 +61,8 @@
   .chart-title { font-size: 13px; color: var(--muted); margin: 14px 0 0; }
   .toolbar { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
   .toolbar > div { min-width: 140px; }
+  #monthlyRows a { color: var(--accent); text-decoration: none; }
+  #monthlyRows a:hover { text-decoration: underline; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
 <script src="/static/plugin_charts.js"></script>
@@ -86,6 +88,7 @@
         <option value="today">Dziś</option><option value="yesterday">Wczoraj</option>
         <option value="7d">Ostatnie 7 dni</option><option value="30d">Ostatnie 30 dni</option>
         <option value="this_month">Ten miesiąc</option><option value="last_month">Poprzedni miesiąc</option>
+        <optgroup label="Miesięczny okres rozliczeniowy" id="monthOptions"></optgroup>
       </select>
     </div>
     <div style="flex:0"><button id="reportBtn" type="button">Policz</button></div>
@@ -120,6 +123,13 @@
         <tr class="total"><td id="grossLabel">Razem brutto</td><td class="num" id="totalGross"></td></tr>
       </tbody>
     </table>
+    <div id="linesBox" style="display:none">
+      <h3>Składniki opłat (jak na fakturze)</h3>
+      <table>
+        <thead><tr><th>Składnik opłat</th><th class="num">Ilość</th><th>j.m.</th><th class="num">Cena jedn. netto</th><th class="num">Wartość netto</th></tr></thead>
+        <tbody id="lineRows"></tbody>
+      </table>
+    </div>
     <div id="dailyBox">
     <h3>Wykresy dzienne</h3>
     <div class="toolbar"><div style="flex:0"><button id="dailyTableBtn" class="secondary" type="button">Tabela</button></div></div>
@@ -138,6 +148,22 @@
       <tbody id="compareRows"></tbody>
     </table>
   </div>
+</div>
+
+<div class="section">
+  <h2>Okresy rozliczeniowe (miesięczne)</h2>
+  <div class="section-hint">Koszt w każdym miesiącu kalendarzowym (od 1. dnia do końca miesiąca, bieżący - do teraz) dla licznika wybranego wyżej.
+    Opłaty stałe liczone za pełny miesiąc (1 m-c), w niepełnym - proporcjonalnie do dni. Kliknij miesiąc, żeby zobaczyć szczegóły i składniki opłat.</div>
+  <div class="toolbar">
+    <div><label>Liczba miesięcy</label>
+      <select id="monthlyCount"><option value="6">6</option><option value="12" selected>12</option><option value="24">24</option></select></div>
+    <div style="flex:0"><button id="monthlyBtn" type="button">Pokaż</button></div>
+  </div>
+  <div id="monthlyMsg" class="msg-box"></div>
+  <table id="monthlyTable" style="display:none; margin-top:10px">
+    <thead id="monthlyHead"></thead>
+    <tbody id="monthlyRows"></tbody>
+  </table>
 </div>
 
 <div class="section">
@@ -227,7 +253,9 @@
 </div>
 
 <script>
-let BUILTIN = {}, G12_VARIANTS = [];
+let BUILTIN = {}, G12_VARIANTS = [], PER_KWH_FEES = [], MONTHLY_FEES = [];
+const MONTH_NAMES = ['styczeń', 'luty', 'marzec', 'kwiecień', 'maj', 'czerwiec', 'lipiec', 'sierpień', 'wrzesień', 'październik', 'listopad', 'grudzień'];
+const monthLabel = (ym) => { const [y, m] = ym.split('-').map(Number); return `${MONTH_NAMES[m - 1]} ${y}`; };
 
 async function api(url, options = {}) {
   const resp = await fetch(url, options);
@@ -383,9 +411,9 @@ function renderZonePrices(card, tid, prices = {}) {
     const row = el('div', { className: 'row' }, [
       el('div', {}, [el('label', { textContent: `Strefa: ${zone} - cena łączna netto [zł/kWh]` }),
         el('input', { type: 'number', step: 'any', min: 0, className: 'z-total', value: total })]),
-      el('div', {}, [el('label', { textContent: 'albo: energia netto' }),
+      el('div', {}, [el('label', { textContent: 'albo: energia elektryczna netto' }),
         el('input', { type: 'number', step: 'any', min: 0, className: 'z-energy', value: isObj ? (p.energy_net ?? '') : '' })]),
-      el('div', {}, [el('label', { textContent: '+ dystrybucja netto' }),
+      el('div', {}, [el('label', { textContent: '+ składnik zmienny stawki sieciowej netto' }),
         el('input', { type: 'number', step: 'any', min: 0, className: 'z-dist', value: isObj ? (p.distribution_net ?? '') : '' })]),
     ]);
     row.dataset.zone = zone;
@@ -404,13 +432,26 @@ function addTariffCard(tid = '', spec = {}) {
   card.appendChild(el('div', { className: 'row' }, [
     el('div', {}, [el('label', { textContent: 'Taryfa' }), idInput]),
     el('div', {}, [el('label', { textContent: 'Wariant godzin (G12 / G12w)' }), variant]),
-    el('div', {}, [el('label', { textContent: 'Opłaty stałe netto [zł/mies.]' }),
-      el('input', { type: 'number', step: 'any', min: 0, className: 't-fixed', value: spec.fixed_monthly_net ?? 0 })]),
-    el('div', {}, [el('label', { textContent: 'Pozostałe zmienne netto [zł/kWh]' }),
-      el('input', { type: 'number', step: 'any', min: 0, className: 't-other', value: spec.other_per_kwh_net ?? 0 })]),
     el('div', { style: 'flex:0' }, [del]),
   ]));
   card.appendChild(el('div', { className: 't-zones' }));
+  const feeInput = (cls, key, value) => {
+    const i = el('input', { type: 'number', step: 'any', min: 0, className: cls, value: value ?? '' });
+    i.dataset.key = key;
+    return i;
+  };
+  card.appendChild(el('div', { className: 'row' }, [
+    ...PER_KWH_FEES.map(([k, label]) => el('div', {}, [
+      el('label', { textContent: `${label} netto [zł/kWh]` }), feeInput('f-kwh', k, (spec.per_kwh_fees || {})[k])])),
+    el('div', {}, [el('label', { textContent: 'Inne opłaty zmienne netto [zł/kWh]' }),
+      el('input', { type: 'number', step: 'any', min: 0, className: 't-other', value: spec.other_per_kwh_net ?? 0 })]),
+  ]));
+  card.appendChild(el('div', { className: 'row' }, [
+    ...MONTHLY_FEES.map(([k, label]) => el('div', {}, [
+      el('label', { textContent: `${label} netto [zł/m-c]` }), feeInput('f-month', k, (spec.monthly_fees || {})[k])])),
+    el('div', {}, [el('label', { textContent: 'Inne opłaty stałe netto [zł/m-c]' }),
+      el('input', { type: 'number', step: 'any', min: 0, className: 't-fixed', value: spec.fixed_monthly_net ?? 0 })]),
+  ]));
   const onId = () => { renderZonePrices(card, idInput.value.trim(), collectPrices(card)); refreshMeterTariffSelects(); };
   idInput.addEventListener('change', onId);
   document.getElementById('tariffCards').appendChild(card);
@@ -438,6 +479,13 @@ function collectConfig() {
       fixed_monthly_net: Number(card.querySelector('.t-fixed').value || 0),
       other_per_kwh_net: Number(card.querySelector('.t-other').value || 0),
     };
+    const fees = (cls) => {
+      const out = {};
+      card.querySelectorAll(cls).forEach(i => { if (i.value !== '') out[i.dataset.key] = Number(i.value); });
+      return out;
+    };
+    spec.per_kwh_fees = fees('.f-kwh');
+    spec.monthly_fees = fees('.f-month');
     const v = card.querySelector('.t-variant').value;
     if (v) spec.variant = v;
     tariffs[tid] = spec;
@@ -489,8 +537,8 @@ function refreshReportMeters() {
 function priceParts(p) {
   if (!p) return '';
   const parts = 'price_net' in p ? [`${price(p.price_net)} cena`]
-    : [`${price(p.energy_net)} energia`, `${price(p.distribution_net)} dystrybucja`];
-  if (p.other_per_kwh_net) parts.push(`${price(p.other_per_kwh_net)} opłaty zmienne`);
+    : [`${price(p.energy_net)} energia`, `${price(p.distribution_net)} sieciowa zmienna`];
+  if (p.other_per_kwh_net) parts.push(`${price(p.other_per_kwh_net)} jakościowa/kogeneracyjna/OZE/inne`);
   return parts.length > 1 ? '= ' + parts.join(' + ') : '';
 }
 async function loadStart() {
@@ -568,6 +616,20 @@ async function runReport() {
   ])));
   document.getElementById('latestBox').style.display = stateMode ? '' : 'none';
   document.getElementById('dailyBox').style.display = stateMode ? 'none' : '';
+  const lines = r.lines || [];
+  const lrows = document.getElementById('lineRows'); lrows.replaceChildren();
+  lines.forEach(l => lrows.appendChild(el('tr', {}, [
+    el('td', { textContent: l.label }),
+    el('td', { className: 'num', textContent: l.unit === 'm-c' ? PluginCharts.fmtNum(l.qty, 3) : kwh(l.qty) }),
+    el('td', { textContent: l.unit }),
+    el('td', { className: 'num', textContent: PluginCharts.fmtNum(l.unit_price, 5) }),
+    el('td', { className: 'num', textContent: zl(l.net) }),
+  ])));
+  if (lines.length) lrows.appendChild(el('tr', { className: 'total' }, [
+    el('td', { textContent: 'Razem netto' }), el('td'), el('td'), el('td'),
+    el('td', { className: 'num', textContent: zl(r.total_net) }),
+  ]));
+  document.getElementById('linesBox').style.display = lines.length ? '' : 'none';
   document.getElementById('varNet').textContent = zl(r.variable_net) + ' zł';
   document.getElementById('fixedNet').textContent = zl(r.fixed_net) + ' zł';
   document.getElementById('totalNet').textContent = zl(r.total_net) + ' zł';
@@ -633,10 +695,72 @@ async function showSchedule() {
   });
 }
 
+async function runMonthly() {
+  const meter = document.getElementById('reportMeter').value;
+  const table = document.getElementById('monthlyTable');
+  table.style.display = 'none';
+  if (!meter) { showMsg('monthlyMsg', 'error', 'Najpierw zapisz konfigurację z co najmniej jednym licznikiem.'); return; }
+  const months = document.getElementById('monthlyCount').value;
+  const resp = await api(`/api/plugins/energy_cost/monthly?meter=${encodeURIComponent(meter)}&months=${months}`);
+  const data = await resp.json();
+  if (!resp.ok) { showMsg('monthlyMsg', 'error', data.error || 'Błąd'); return; }
+  const rows = data.months || [];
+  const zones = rows.length ? Object.keys(rows[0].kwh_by_zone) : [];
+  const head = document.getElementById('monthlyHead');
+  head.replaceChildren(el('tr', {}, ['Okres', ...zones.map(z => `${z} [kWh]`), 'Razem [kWh]', 'Zmienne netto', 'Stałe netto', 'Netto', 'VAT', 'Brutto']
+    .map((t, i) => el('th', { className: i ? 'num' : '', textContent: t }))));
+  const body = document.getElementById('monthlyRows'); body.replaceChildren();
+  const sum = { kwh: 0, net: 0, vat: 0, gross: 0 };
+  rows.forEach(m => {
+    sum.kwh += m.total_kwh; sum.net += m.total_net; sum.vat += m.vat; sum.gross += m.total_gross;
+    const link = el('a', { href: '#', textContent: monthLabel(m.month) + (m.complete ? '' : ' (w toku)') });
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById('reportPeriod').value = 'month:' + m.month;
+      runReport();
+      document.getElementById('reportMeter').scrollIntoView({ behavior: 'smooth' });
+    });
+    body.appendChild(el('tr', {}, [
+      el('td', {}, [link]),
+      ...zones.map(z => el('td', { className: 'num', textContent: kwh(m.kwh_by_zone[z] || 0) })),
+      el('td', { className: 'num', textContent: kwh(m.total_kwh) }),
+      el('td', { className: 'num', textContent: zl(m.variable_net) }),
+      el('td', { className: 'num', textContent: zl(m.fixed_net) }),
+      el('td', { className: 'num', textContent: zl(m.total_net) }),
+      el('td', { className: 'num', textContent: zl(m.vat) }),
+      el('td', { className: 'num', textContent: zl(m.total_gross) }),
+    ]));
+  });
+  body.appendChild(el('tr', { className: 'total' }, [
+    el('td', { textContent: 'Razem' }), ...zones.map(() => el('td')),
+    el('td', { className: 'num', textContent: kwh(sum.kwh) }), el('td'), el('td'),
+    el('td', { className: 'num', textContent: zl(sum.net) }),
+    el('td', { className: 'num', textContent: zl(sum.vat) }),
+    el('td', { className: 'num', textContent: zl(sum.gross) }),
+  ]));
+  const missing = [...new Set(rows.flatMap(m => m.missing_prices))];
+  const empty = rows.filter(m => m.samples < 2).length;
+  const notes = [];
+  if (missing.length) notes.push('Brak ceny dla stref: ' + missing.join(', ') + ' - ich koszt liczony jako 0.');
+  if (!rows.length) notes.push('Brak odczytów tego licznika w wybranych miesiącach.');
+  if (empty) notes.push(`${empty} mies. bez odczytów (koszt to same opłaty stałe).`);
+  showMsg('monthlyMsg', notes.length ? 'warn' : 'ok', notes.length ? notes.join(' ') : 'Obliczono.');
+  table.style.display = '';
+}
+document.getElementById('monthlyBtn').addEventListener('click', runMonthly);
+
 async function init() {
   const cfgResp = await api('/api/plugins/energy_cost/config');
   const data = await cfgResp.json();
   BUILTIN = data.builtin; G12_VARIANTS = data.g12_variants;
+  PER_KWH_FEES = data.per_kwh_fees || []; MONTHLY_FEES = data.monthly_fees || [];
+  const monthOpts = document.getElementById('monthOptions');
+  const d = new Date(); d.setDate(1);
+  for (let i = 0; i < 24; i++) {
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    monthOpts.appendChild(el('option', { value: 'month:' + ym, textContent: monthLabel(ym) }));
+    d.setMonth(d.getMonth() - 1);
+  }
   const cfg = data.config;
   document.getElementById('vat').value = cfg.vat_percent;
   document.getElementById('maxGap').value = cfg.max_gap_minutes;
