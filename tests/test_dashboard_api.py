@@ -1730,3 +1730,21 @@ class TestResolveAlert:
     async def test_resolve_unknown_or_closed_alert_is_404(self, client):
         resp = await client.post("/api/alerts/9999/resolve", headers=_basic_auth_header("test_haslo_123"))
         assert resp.status_code == 404
+
+
+class TestNavPluginLinks:
+    async def test_costs_tab_hidden_when_energy_cost_disabled(self, client):
+        resp = await client.get("/system", headers=_basic_auth_header("test_haslo_123"))
+        assert resp.status_code == 200
+        html = await resp.get_data(as_text=True)
+        assert 'href="/plugins/energy_cost"' not in html
+
+    async def test_costs_tab_shown_when_energy_cost_enabled(self, client):
+        import dashboard.app as app_module
+        current = app_module.config_store.get("config")
+        current["energy"] = {"meters": [{"name": "Dom", "sensor": "x", "tariff": "G11"}]}
+        app_module.config_store.set("config", current)
+        resp = await client.get("/system", headers=_basic_auth_header("test_haslo_123"))
+        html = await resp.get_data(as_text=True)
+        assert 'href="/plugins/energy_cost"' in html
+        assert html.index("Ogólne") < html.index(">Koszty<")
