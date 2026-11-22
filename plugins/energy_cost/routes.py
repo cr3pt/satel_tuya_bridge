@@ -372,23 +372,12 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
 
         meter_key = str(meter.get("serial") or meter.get("id") or meter["name"])
         zones_list, vat = energy_cycles.cycle_inputs(report, float(energy.get("vat_percent", 23)))
-        if zones_list:
-            if period == "today":
-                energy_cycles.persist_cycle_snapshot(
-                    history, meter_key, "daily", energy_cycles.day_period_key(now), zones_list, vat, reading_ts,
-                )
-            elif period == "7d":
-                energy_cycles.persist_cycle_snapshot(
-                    history, meter_key, "weekly", energy_cycles.week_period_key(now), zones_list, vat, reading_ts,
-                )
-            elif period == "this_month":
-                energy_cycles.persist_cycle_snapshot(
-                    history, meter_key, "monthly", energy_cycles.month_period_key(now), zones_list, vat, reading_ts,
-                )
-            elif period and period.startswith(tariffs.MONTH_PERIOD_PREFIX):
-                energy_cycles.persist_cycle_snapshot(
-                    history, meter_key, "monthly", period[len(tariffs.MONTH_PERIOD_PREFIX):], zones_list, vat, reading_ts,
-                )
+        target = energy_cycles.cycle_target(period, now, tariffs.MONTH_PERIOD_PREFIX) if zones_list else None
+        if target:
+            cycle_type, period_key = target
+            energy_cycles.persist_cycle_snapshot(
+                history, meter_key, cycle_type, period_key, zones_list, vat, reading_ts,
+            )
         return jsonify(report)
 
     return META
