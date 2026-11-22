@@ -148,6 +148,18 @@ register_dashboard_charts_routes(
     get_config_store=lambda: config_store
 )
 
+from dashboard.plugin_clear_config import register_plugin_clear_config_routes
+register_plugin_clear_config_routes(
+    app,
+    metas=_plugin_metas,
+    require_auth=require_auth,
+    get_auth_guard=lambda: auth_guard,
+    get_config_store=lambda: config_store,
+    reload_bridge_config=_reload_bridge_config_from_disk,
+    enqueue_bridge_reload=_enqueue_bridge_reload,
+    get_history=lambda: history,
+)
+
 app.jinja_loader = ChoiceLoader([
     app.jinja_loader,
     FileSystemLoader([str(pathlib.Path(__file__).resolve().parent.parent / "plugins" / meta.id / "templates")
