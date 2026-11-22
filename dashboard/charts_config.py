@@ -30,6 +30,9 @@ def validate_charts(raw) -> tuple[list[dict] | None, str | None]:
         chart_type = str(item.get("type") or "line").strip().lower()
         if chart_type not in ("line", "bar"):
             return None, f"Wykres '{title}': typ musi być 'line' lub 'bar'"
+        agg = str(item.get("agg") or "avg").strip().lower()
+        if agg not in ("avg", "sum", "last"):
+            return None, f"Wykres '{title}': agregacja musi być 'avg', 'sum' lub 'last'"
         try:
             hours = float(item.get("hours", 24))
         except (TypeError, ValueError):
@@ -42,6 +45,7 @@ def validate_charts(raw) -> tuple[list[dict] | None, str | None]:
             "sensors": [s.strip() for s in sensors],
             "type": chart_type,
             "hours": hours,
+            "agg": agg,
         })
     return cleaned, None
 
