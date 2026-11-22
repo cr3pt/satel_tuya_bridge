@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from .tariffs import is_free_day
 
 TZ = ZoneInfo("Europe/Warsaw")
+ROLLING_7D_CYCLE = "rolling_7d"
 
 
 def parse_start_date_ts(start_date_iso: str | None) -> float | None:
@@ -58,6 +59,21 @@ def cycle_inputs(report: dict, default_vat: float) -> tuple[list[dict], float]:
     zones = [z for z in (block.get("zones") or []) if isinstance(z, dict) and "zone" in z]
     vat = block.get("vat_percent")
     return zones, float(default_vat if vat is None else vat)
+
+
+def cycle_target(period: str | None, now: float, month_prefix: str = "month:") -> tuple[str, str] | None:
+    """Typ i klucz cyklu do zapisu dla nazwanego okresu raportu albo None.
+    `7d` to okno kroczące (nie tydzień kalendarzowy), więc zapisujemy je jako
+    `rolling_7d` z datą końcową - jeden wiersz na dobę, bez mieszania z tygodniami ISO."""
+    if period == "today":
+        return "daily", day_period_key(now)
+    if period == "7d":
+        return ROLLING_7D_CYCLE, day_period_key(now)
+    if period == "this_month":
+        return "monthly", month_period_key(now)
+    if period and period.startswith(month_prefix) and period[len(month_prefix):]:
+        return "monthly", period[len(month_prefix):]
+    return None
 
 
 def persist_cycle_snapshot(history, meter_id: str, cycle_type: str, period_key: str,
