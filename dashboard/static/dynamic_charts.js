@@ -86,6 +86,16 @@
     };
   }
 
+  function colorFor(cfg, name, i) {
+    const o = (cfg.options || {})[name];
+    return (o && o.color) || COLORS[i % COLORS.length];
+  }
+
+  function axisFor(cfg, name) {
+    const o = (cfg.options || {})[name];
+    return o && o.axis === 'right' ? 'y2' : 'y';
+  }
+
   async function drawChart(cfg, canvas) {
     await ensureChartJs();
     if (instances[cfg.id]) { instances[cfg.id].destroy(); delete instances[cfg.id]; }
@@ -107,7 +117,7 @@
           labels: buckets.length ? buckets[0].labels : [],
           datasets: series.map((s, i) => ({
             label: s.label, data: buckets[i].values,
-            backgroundColor: COLORS[i % COLORS.length], borderRadius: 3,
+            backgroundColor: colorFor(cfg, s.name, i), yAxisID: axisFor(cfg, s.name), borderRadius: 3,
           })),
         },
         options: {
@@ -115,6 +125,7 @@
           scales: {
             x: { ticks: { color: tick, maxTicksLimit: 8 }, grid: { color: grid } },
             y: { ticks: { color: tick }, grid: { color: grid } },
+            y2: { position: 'right', display: 'auto', ticks: { color: tick }, grid: { drawOnChartArea: false } },
           },
           plugins: { legend: { labels: { color: '#e6e8eb' } } },
         },
@@ -124,8 +135,8 @@
         type: 'line',
         data: {
           datasets: series.map((s, i) => ({
-            label: s.label, data: s.data, borderColor: COLORS[i % COLORS.length],
-            backgroundColor: COLORS[i % COLORS.length], pointRadius: 0, tension: 0.2, fill: false,
+            label: s.label, data: s.data, yAxisID: axisFor(cfg, s.name), borderColor: colorFor(cfg, s.name, i),
+            backgroundColor: colorFor(cfg, s.name, i), pointRadius: 0, tension: 0.2, fill: false,
           })),
         },
         options: {
@@ -133,6 +144,7 @@
           scales: {
             x: { type: 'linear', ticks: { color: tick, maxTicksLimit: 8, callback: v => fmtTs(v) }, grid: { color: grid } },
             y: { ticks: { color: tick }, grid: { color: grid } },
+            y2: { position: 'right', display: 'auto', ticks: { color: tick }, grid: { drawOnChartArea: false } },
           },
           plugins: { legend: { labels: { color: '#e6e8eb' } } },
         },
@@ -173,12 +185,45 @@
     const list = el('div');
     list.style.cssText = 'max-height:220px;overflow-y:auto;margin-top:8px;';
     const chosen = new Set(cfg.sensors || []);
+    const opts = JSON.parse(JSON.stringify(cfg.options || {}));
+    const optsBox = el('div');
+    optsBox.style.cssText = 'margin-top:10px;font-size:13px;';
+    function renderOpts() {
+      optsBox.replaceChildren();
+      const names = Array.from(chosen);
+      if (!names.length) return;
+      optsBox.appendChild(el('div', { textContent: 'Wybrane czujniki: o\u015b i kolor' }));
+      names.forEach((n, i) => {
+        const o = opts[n] || (opts[n] = { axis: 'left', color: '' });
+        const row = el('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:3px 0;';
+        const axisSel = el('select');
+        [['left', 'Lewa o\u015b'], ['right', 'Prawa o\u015b']].forEach(([v, t]) => axisSel.appendChild(el('option', { value: v, textContent: t })));
+        axisSel.value = o.axis || 'left';
+        axisSel.addEventListener('change', () => { o.axis = axisSel.value; });
+        const def = COLORS[i % COLORS.length];
+        const col = el('input', { type: 'color', value: o.color || def });
+        col.addEventListener('input', () => { o.color = col.value; });
+        const reset = btn('Domy\u015blny', () => { o.color = ''; col.value = def; }, 'Przywr\u00f3\u0107 domy\u015blny kolor');
+        row.appendChild(el('span', { textContent: labels[n] || n }));
+        row.appendChild(axisSel); row.appendChild(col); row.appendChild(reset);
+        optsBox.appendChild(row);
+      });
+    }
+    function collectOpts() {
+      const out = {};
+      Array.from(chosen).forEach(n => {
+        const o = opts[n];
+        if (o && (o.axis === 'right' || o.color)) out[n] = { axis: o.axis || 'left', color: o.color || '' };
+      });
+      return out;
+    }
     function renderList() {
       list.replaceChildren();
       const q = filter.value.trim().toLowerCase();
       sensors.filter(n => !q || n.toLowerCase().includes(q) || (labels[n] || '').toLowerCase().includes(q)).forEach(n => {
         const cb = el('input', { type: 'checkbox', checked: chosen.has(n) });
-        cb.addEventListener('change', () => { if (cb.checked) chosen.add(n); else chosen.delete(n); });
+        cb.addEventListener('change', () => { if (cb.checked) chosen.add(n); else chosen.delete(n); renderOpts(); });
         const row = el('label', {}, [cb, ' ' + (labels[n] || n)]);
         row.style.cssText = 'display:block;padding:3px 0;font-size:13px;cursor:pointer;';
         list.appendChild(row);
@@ -186,6 +231,7 @@
     }
     filter.addEventListener('input', renderList);
     renderList();
+    renderOpts();
     [title, hours, type, agg, filter].forEach(i => {
       i.style.cssText = 'background:#262a32;color:var(--text,#e6e8eb);border:1px solid var(--border,#2c3038);' +
         'border-radius:6px;padding:6px 10px;font-size:13px;margin:0 8px 8px 0;';
@@ -193,12 +239,13 @@
     card.appendChild(el('h2', { textContent: cfg._new ? 'Nowy wykres' : 'Edycja wykresu' }));
     card.appendChild(title); card.appendChild(hours); card.appendChild(type); card.appendChild(agg); card.appendChild(filter);
     card.appendChild(list);
+    card.appendChild(optsBox);
     const actions = el('div');
     actions.style.marginTop = '10px';
     actions.appendChild(btn('Zapisz', async () => {
       const next = {
         id: cfg.id, title: title.value.trim() || 'Wykres', sensors: Array.from(chosen),
-        type: type.value, hours: Number(hours.value), agg: agg.value,
+        type: type.value, hours: Number(hours.value), agg: agg.value, options: collectOpts(),
       };
       const idx = charts.findIndex(c => c.id === cfg.id);
       if (idx >= 0) charts[idx] = next; else charts.push(next);
