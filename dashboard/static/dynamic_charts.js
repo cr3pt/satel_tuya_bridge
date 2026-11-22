@@ -70,16 +70,18 @@
 
   function fmtTs(ms) { return new Date(ms).toLocaleString('pl-PL'); }
 
-  function bucketize(points, hours, n) {
+  function bucketize(points, hours, n, agg) {
     const end = Date.now(), start = end - hours * 3600e3, size = (end - start) / n;
     const sums = new Array(n).fill(0), cnt = new Array(n).fill(0);
+    const last = new Array(n).fill(null), lastX = new Array(n).fill(-Infinity);
     points.forEach(p => {
       if (p.x < start || p.x > end) return;
       const i = Math.min(n - 1, Math.floor((p.x - start) / size));
       sums[i] += p.y; cnt[i] += 1;
+      if (p.x >= lastX[i]) { lastX[i] = p.x; last[i] = p.y; }
     });
     return {
-      values: sums.map((s, i) => (cnt[i] ? s / cnt[i] : null)),
+      values: sums.map((s, i) => (!cnt[i] ? null : agg === 'sum' ? s : agg === 'last' ? last[i] : s / cnt[i])),
       labels: sums.map((_, i) => fmtTs(start + i * size)),
     };
   }
@@ -98,7 +100,7 @@
     }));
     const grid = '#2c3038', tick = '#8b93a1';
     if (cfg.type === 'bar') {
-      const buckets = series.map(s => bucketize(s.data, hours, 48));
+      const buckets = series.map(s => bucketize(s.data, hours, 48, cfg.agg || 'avg'));
       instances[cfg.id] = new Chart(canvas, {
         type: 'bar',
         data: {
@@ -161,6 +163,12 @@
     const type = el('select');
     [['line', 'Liniowy'], ['bar', 'Slupkowy']].forEach(([v, t]) => type.appendChild(el('option', { value: v, textContent: t })));
     type.value = cfg.type || 'line';
+    const agg = el('select', { title: 'Agregacja w przedziale (wykres s\u0142upkowy)' });
+    [['avg', '\u015arednia'], ['sum', 'Suma'], ['last', 'Ostatnia warto\u015b\u0107']].forEach(([v, t]) => agg.appendChild(el('option', { value: v, textContent: t })));
+    agg.value = cfg.agg || 'avg';
+    const syncAgg = () => { agg.disabled = type.value !== 'bar'; };
+    type.addEventListener('change', syncAgg);
+    syncAgg();
     const filter = el('input', { type: 'text', placeholder: 'Szukaj czujnika...' });
     const list = el('div');
     list.style.cssText = 'max-height:220px;overflow-y:auto;margin-top:8px;';
@@ -178,19 +186,19 @@
     }
     filter.addEventListener('input', renderList);
     renderList();
-    [title, hours, type, filter].forEach(i => {
+    [title, hours, type, agg, filter].forEach(i => {
       i.style.cssText = 'background:#262a32;color:var(--text,#e6e8eb);border:1px solid var(--border,#2c3038);' +
         'border-radius:6px;padding:6px 10px;font-size:13px;margin:0 8px 8px 0;';
     });
     card.appendChild(el('h2', { textContent: cfg._new ? 'Nowy wykres' : 'Edycja wykresu' }));
-    card.appendChild(title); card.appendChild(hours); card.appendChild(type); card.appendChild(filter);
+    card.appendChild(title); card.appendChild(hours); card.appendChild(type); card.appendChild(agg); card.appendChild(filter);
     card.appendChild(list);
     const actions = el('div');
     actions.style.marginTop = '10px';
     actions.appendChild(btn('Zapisz', async () => {
       const next = {
         id: cfg.id, title: title.value.trim() || 'Wykres', sensors: Array.from(chosen),
-        type: type.value, hours: Number(hours.value),
+        type: type.value, hours: Number(hours.value), agg: agg.value,
       };
       const idx = charts.findIndex(c => c.id === cfg.id);
       if (idx >= 0) charts[idx] = next; else charts.push(next);
