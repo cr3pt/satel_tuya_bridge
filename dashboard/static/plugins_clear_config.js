@@ -42,21 +42,28 @@
       const existing = row.querySelector('.clear-config-row');
       if (!clearable.has(id)) { if (existing) existing.remove(); return; }
       if (existing) return;
-      const body = row.querySelector('.plugin-row-body');
-      if (!body) return;
+      const actions = row.querySelector('.plugin-quick-actions');
+      if (!actions) return;
       const name = (row.querySelector('.plugin-name') || {}).textContent || id;
-      const wrap = document.createElement('div');
-      wrap.className = 'poll-interval-row clear-config-row';
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.textContent = '🗑 Wyczyść config';
-      btn.style.background = 'var(--danger)';
-      btn.addEventListener('click', () => clearConfig(id, name));
-      const hint = document.createElement('span');
-      hint.textContent = 'usuwa zapisane ustawienia nieaktywnej wtyczki';
-      wrap.appendChild(btn);
-      wrap.appendChild(hint);
-      body.appendChild(wrap);
+      btn.className = 'quick-action-btn clear-config-row';
+      btn.textContent = 'Wyczyść config';
+      btn.title = 'Usuń zapisane ustawienia nieaktywnej wtyczki';
+      btn.style.width = 'auto';
+      btn.style.padding = '0 8px';
+      btn.style.color = 'var(--danger)';
+      btn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (Object.keys(pendingChanges).length) {
+          showMsg(false, 'Najpierw zapisz oczekujące zmiany.');
+          return;
+        }
+        clearConfig(id, name);
+      });
+      const settings = actions.querySelector('.qa-config');
+      if (settings) settings.after(btn);
+      else actions.appendChild(btn);
     });
   }
 
