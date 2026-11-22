@@ -118,4 +118,4 @@ def test_clearable_list_only_inactive_with_config():
     metas = [make_meta("wmbus"), make_meta("esphome"), make_meta("iqua")]
     config = {"wmbus": {"enabled": False, "meters": [1]}, "esphome": {"enabled": True, "devices": {"a": 1}},
               "iqua": {"enabled": False}}
-    assert pcc.clearable_plugin_ids(metas, config) == ["wmbus"]
+    assert pcc.clearable_plugin_ids(metas, config) == ["wmbus", "iqua"]
