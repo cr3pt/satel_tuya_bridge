@@ -2,9 +2,13 @@
 """Atomic configuration reset for inactive plugins; history is never deleted."""
 from copy import deepcopy
 import json
+import logging
+import pathlib
 import time
 
 from quart import jsonify
+
+logger = logging.getLogger("bridge.dashboard")
 
 
 def config_key(meta):
@@ -67,6 +71,25 @@ def reset_documents(meta, documents):
     return result
 
 
+def remove_wmbusmeters_files(db_path):
+    """Usuwa wygenerowane pliki wmbusmeters (w tym klucze AES); zwraca liczbę usuniętych."""
+    base = pathlib.Path(db_path).parent / 'wmbusmeters_conf' / 'etc'
+    targets = [base / 'wmbusmeters.conf']
+    meters_dir = base / 'wmbusmeters.d'
+    if meters_dir.is_dir():
+        targets.extend(path for path in meters_dir.iterdir() if path.is_file())
+    removed = 0
+    for path in targets:
+        try:
+            path.unlink()
+            removed += 1
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.warning('Nie usunięto pliku wmbusmeters %s', path, exc_info=True)
+    return removed
+
+
 def register_plugin_clear_config_routes(app, *, metas, require_auth, get_auth_guard,
         get_config_store, reload_bridge_config, enqueue_bridge_reload, get_history):
     by_id = {m.id: m for m in metas}
@@ -110,6 +133,9 @@ def register_plugin_clear_config_routes(app, *, metas, require_auth, get_auth_gu
             except Exception:
                 connection.rollback()
                 raise
+        removed_files = 0
+        if plugin_id == 'wmbus' and getattr(store, 'db_path', None) is not None:
+            removed_files = remove_wmbusmeters_files(store.db_path)
         reload_bridge_config()
         enqueue_bridge_reload()
         get_history().write_event('system', source='dashboard',
@@ -117,6 +143,9 @@ def register_plugin_clear_config_routes(app, *, metas, require_auth, get_auth_gu
         message = f'Wyczyszczono konfigurację wtyczki {meta.name}.'
         if plugin_id == 'ebus':
             message += ' Zachowano współdzielone ustawienia brokera MQTT.'
+        if removed_files:
+            message += (f' Usunięto {removed_files} wygenerowanych plików wmbusmeters (w tym klucze AES). '
+                        'Zewnętrzny proces wmbusmeters zatrzymaj osobno.')
         if meta.restart_required:
             message += ' Wymagany pełny restart procesów, aby zwolnić stare połączenia.'
         return jsonify({'cleared': plugin_id, 'message': message})
