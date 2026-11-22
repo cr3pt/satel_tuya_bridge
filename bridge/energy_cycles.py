@@ -51,6 +51,15 @@ def is_g12w_daytime_disabled(d: date) -> bool:
     return is_free_day(d)
 
 
+def cycle_inputs(report: dict, default_vat: float) -> tuple[list[dict], float]:
+    """Strefy i VAT do zapisu cyklu. Raport może mieć wynik w `report["result"]`
+    albo (płasko) na najwyższym poziomie - obsługujemy oba kształty."""
+    block = report.get("result") if isinstance(report.get("result"), dict) else report
+    zones = [z for z in (block.get("zones") or []) if isinstance(z, dict) and "zone" in z]
+    vat = block.get("vat_percent")
+    return zones, float(default_vat if vat is None else vat)
+
+
 def persist_cycle_snapshot(history, meter_id: str, cycle_type: str, period_key: str,
                            zones: list[dict], vat_percent: float, reading_ts: float | None = None) -> None:
     """Zapisuje podsumowanie zużycia i kosztów w bazie (`energy_cycles`) dla każdej strefy."""
