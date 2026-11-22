@@ -1353,7 +1353,10 @@ async def api_system_logs_get():
 @app.route("/healthz")
 async def healthz():
     health_statuses = history.get_status("system_health")
-    disconnected = [s for s in health_statuses if not s["value"].startswith("połączono")]
+    disconnected = [
+        s for s in health_statuses
+        if not s["value"].startswith(("połączono", "wyłączono"))
+    ]
     body = {
         "ok": len(disconnected) == 0,
         "components": {s["key"].replace("health:", ""): s["value"] for s in health_statuses},
