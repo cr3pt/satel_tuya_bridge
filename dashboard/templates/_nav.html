@@ -70,3 +70,4 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 });
 </script>
+{% if request.path == '/' %}<script src="/static/dynamic_charts.js" data-scope="dashboard"></script>{% elif request.path.startswith('/plugins/energy_cost') %}<script src="/static/dynamic_charts.js" data-scope="energy_cost"></script>{% endif %}
