@@ -24,6 +24,7 @@ from .lg_thinq_client import LgThinqClient
 from .smartthings_client import SmartThingsClient
 from .ebus_client import EbusMqttListener
 from . import energy_meters, wmbus
+from .plugin_lifecycle import sync_plugin_lifecycle
 from .weather_client import fetch_forecast
 from .boiler_output import build_boiler_publishers, MqttBoilerPublisher, TuyaVirtualDevicePublisher
 from .history_store import HistoryStore
@@ -1106,6 +1107,7 @@ class RulesEngine:
         self.alarms.resolve_orphaned_alerts()
         if self.wmbus_listener is not None:
             self.wmbus_listener.update_meters(list(self._wmbus_meters.values()))
+        await sync_plugin_lifecycle(self, new_config)
 
         self.presence_simulation.cfg = new_config.raw.get("presence_simulation", {})
         self.presence_simulation.location_cfg = self._location_cfg
