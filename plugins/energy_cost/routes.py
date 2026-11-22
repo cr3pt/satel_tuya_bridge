@@ -371,8 +371,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
             report["g12w_free_day_today"] = energy_cycles.is_g12w_daytime_disabled(today_local)
 
         meter_key = str(meter.get("serial") or meter.get("id") or meter["name"])
-        zones_list = report.get("zones") or []
-        vat = float(report.get("vat_percent") or energy.get("vat_percent", 23))
+        zones_list, vat = energy_cycles.cycle_inputs(report, float(energy.get("vat_percent", 23)))
         if zones_list:
             if period == "today":
                 energy_cycles.persist_cycle_snapshot(
