@@ -5,9 +5,12 @@
 głównej (`dashboard.charts`) i dla zakładki Koszty (`energy.charts`)."""
 from __future__ import annotations
 
+import re
+
 from quart import Quart, jsonify, request
 
 MAX_CHARTS = 20
+_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def validate_charts(raw) -> tuple[list[dict] | None, str | None]:
@@ -33,6 +36,24 @@ def validate_charts(raw) -> tuple[list[dict] | None, str | None]:
         agg = str(item.get("agg") or "avg").strip().lower()
         if agg not in ("avg", "sum", "last"):
             return None, f"Wykres '{title}': agregacja musi być 'avg', 'sum' lub 'last'"
+        raw_opts = item.get("options") or {}
+        if not isinstance(raw_opts, dict):
+            return None, f"Wykres '{title}': 'options' musi być obiektem"
+        options: dict[str, dict] = {}
+        for name in [s.strip() for s in sensors]:
+            o = raw_opts.get(name)
+            if o is None:
+                continue
+            if not isinstance(o, dict):
+                return None, f"Wykres '{title}': opcje czujnika '{name}' muszą być obiektem"
+            axis = str(o.get("axis") or "left").strip().lower()
+            if axis not in ("left", "right"):
+                return None, f"Wykres '{title}': oś musi być 'left' lub 'right'"
+            color = str(o.get("color") or "").strip()
+            if color and not _COLOR_RE.match(color):
+                return None, f"Wykres '{title}': kolor musi mieć format #rrggbb"
+            if axis != "left" or color:
+                options[name] = {"axis": axis, "color": color}
         try:
             hours = float(item.get("hours", 24))
         except (TypeError, ValueError):
@@ -46,6 +67,7 @@ def validate_charts(raw) -> tuple[list[dict] | None, str | None]:
             "type": chart_type,
             "hours": hours,
             "agg": agg,
+            "options": options,
         })
     return cleaned, None
 
