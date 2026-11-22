@@ -1,86 +1,56 @@
-// Przycisk "Wyczyść config" w sekcji "Wtyczki do włączenia" (strona /plugins).
+// Configuration reset for every inactive plugin, including cards without toggles.
 (function () {
-  const LIST_ID = 'pluginListDisabled';
-  let clearable = new Set();
-  let timer = null;
-
-  function showMsg(ok, text) {
-    const el = document.getElementById('pluginsMsg');
-    if (!el) return;
-    el.className = 'msg-box ' + (ok ? 'ok' : 'error');
-    el.style.display = '';
-    el.textContent = (ok ? '✅ ' : '❌ ') + text;
-  }
-
-  async function refreshClearable() {
-    try {
-      const resp = await fetch('/api/plugins/clearable');
-      if (resp.ok) clearable = new Set(await resp.json());
-    } catch (e) { /* pozostaw poprzedni stan */ }
-  }
-
-  async function clearConfig(id, name) {
-    if (!confirm('Usunąć zapisaną konfigurację wtyczki "' + name + '"? Tej operacji nie można cofnąć.')) return;
-    try {
-      const resp = await fetch('/api/plugins/' + encodeURIComponent(id) + '/clear_config', { method: 'POST' });
-      if (resp.status === 401) { window.location.href = '/login?next=' + encodeURIComponent(location.pathname); return; }
-      const data = await resp.json();
-      showMsg(resp.ok, data.message || data.error || 'Gotowe');
-      if (typeof loadPlugins === 'function') await loadPlugins();
-    } catch (e) {
-      showMsg(false, 'Błąd komunikacji z serwerem: ' + e);
-    }
-  }
-
-  function decorate() {
-    const root = document.getElementById(LIST_ID);
+  let timer;
+  async function decorate() {
+    const root = document.getElementById('pluginListDisabled');
     if (!root) return;
-    root.querySelectorAll('.plugin-row').forEach((row) => {
+    const responses = await Promise.all([fetch('/api/plugins'), fetch('/api/plugins/clearable')]);
+    if (responses.some(r => !r.ok)) return;
+    const plugins = await responses[0].json();
+    const allowed = new Set(await responses[1].json());
+    root.querySelectorAll('.plugin-row').forEach(row => {
       const checkbox = row.querySelector('.plugin-toggle');
-      if (!checkbox) return;
-      const id = checkbox.dataset.id;
-      const existing = row.querySelector('.clear-config-row');
-      if (!clearable.has(id)) { if (existing) existing.remove(); return; }
-      if (existing) return;
+      const link = row.querySelector('.qa-config');
+      const plugin = plugins.find(p => checkbox ? p.id === checkbox.dataset.id :
+        link && p.config_url === link.getAttribute('href'));
+      if (!plugin || plugin.enabled || !allowed.has(plugin.id) || row.querySelector('.qa-clear-config')) return;
       const actions = row.querySelector('.plugin-quick-actions');
       if (!actions) return;
-      const name = (row.querySelector('.plugin-name') || {}).textContent || id;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'quick-action-btn clear-config-row';
-      btn.textContent = 'Wyczyść config';
-      btn.title = 'Usuń zapisane ustawienia nieaktywnej wtyczki';
-      btn.style.width = 'auto';
-      btn.style.padding = '0 8px';
-      btn.style.color = 'var(--danger)';
-      btn.addEventListener('click', (event) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'quick-action-btn qa-clear-config';
+      button.textContent = 'Wyczyść config';
+      button.style.cssText = 'width:auto;padding:0 8px;color:var(--danger)';
+      button.onclick = async event => {
         event.stopPropagation();
         if (Object.keys(pendingChanges).length) {
           showMsg(false, 'Najpierw zapisz oczekujące zmiany.');
           return;
         }
-        clearConfig(id, name);
-      });
-      const settings = actions.querySelector('.qa-config');
-      if (settings) settings.after(btn);
-      else actions.appendChild(btn);
+        if (!confirm('Wyczyścić konfigurację: ' + plugin.name + '? Operacji nie można cofnąć. Historia pozostanie.')) return;
+        button.disabled = true;
+        try {
+          const response = await authorizedFetch('/api/plugins/' + encodeURIComponent(plugin.id) + '/clear_config', {method: 'POST'});
+          const data = await response.json();
+          showMsg(response.ok, data.message || data.error);
+          await loadPlugins();
+        } catch (error) {
+          showMsg(false, 'Błąd czyszczenia: ' + error);
+        } finally {
+          button.disabled = false;
+        }
+      };
+      if (link) link.after(button); else actions.appendChild(button);
     });
   }
-
-  async function update() {
-    await refreshClearable();
-    decorate();
-  }
-
   function schedule() {
     clearTimeout(timer);
-    timer = setTimeout(update, 150);
+    timer = setTimeout(() => decorate().catch(error => showMsg(false, String(error))), 150);
   }
-
   document.addEventListener('DOMContentLoaded', () => {
-    const root = document.getElementById(LIST_ID);
+    const root = document.getElementById('pluginListDisabled');
     if (!root) return;
-    new MutationObserver(schedule).observe(root, { childList: true, subtree: true });
+    new MutationObserver(schedule).observe(root, {childList: true, subtree: true});
     schedule();
   });
 })();
