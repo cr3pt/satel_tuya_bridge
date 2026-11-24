@@ -29,5 +29,10 @@ def test_this_month_and_explicit_month_share_key():
 
 
 def test_other_periods_are_not_persisted():
-    for period in (None, "", "yesterday", "30d", "last_month", "month:"):
+    for period in (None, "", "30d", "month:"):
         assert energy_cycles.cycle_target(period, NOW) is None
+
+
+def test_yesterday_and_last_month_are_complete_calendar_cycles():
+    assert energy_cycles.cycle_target("yesterday", NOW) == ("daily", "2026-11-21")
+    assert energy_cycles.cycle_target("last_month", NOW) == ("monthly", "2026-10")

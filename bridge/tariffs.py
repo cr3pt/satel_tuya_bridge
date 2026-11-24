@@ -768,7 +768,8 @@ def daily_breakdown_zone_sensors(zone_readings: dict[str, list[dict]], tariff: T
 
 
 def monthly_report(energy_cfg: dict, meter: dict, readings: list[dict] | None, months: list[tuple[int, int]],
-                   now: float, zone_readings: dict[str, list[dict]] | None = None) -> list[dict]:
+                   now: float, zone_readings: dict[str, list[dict]] | None = None,
+                   start_ts: float | None = None) -> list[dict]:
     """Miesięczne okresy rozliczeniowe (od 1. dnia do końca miesiąca; bieżący
     do teraz): zużycie wg stref, opłaty zmienne i stałe, netto, VAT, brutto.
     Opłaty stałe liczone za pełny miesiąc (1 m-c), w bieżącym - proporcjonalnie."""
@@ -789,6 +790,11 @@ def monthly_report(energy_cfg: dict, meter: dict, readings: list[dict] | None, m
         # Miesiące sprzed pierwszego odczytu pomijamy - byłyby same opłaty stałe.
         if ts_from >= now or first_reading is None or month_end <= first_reading:
             continue
+        # Miesiąc, w którym wypada data startowa licznika, liczony od daty startowej.
+        if start_ts is not None:
+            if month_end <= start_ts:
+                continue
+            ts_from = max(ts_from, start_ts)
         ts_to = min(month_end, now)
         if meter.get("zone_sensors"):
             cons = consumption_from_zone_sensors(zone_readings or {}, tariff.zones, ts_from, ts_to,
@@ -806,6 +812,29 @@ def monthly_report(energy_cfg: dict, meter: dict, readings: list[dict] | None, m
             "total_gross": r["total_gross"], "missing_prices": r["missing_prices"],
         })
     return out
+
+
+def period_cost(energy_cfg: dict, meter: dict, readings: list[dict] | None, ts_from: float, ts_to: float,
+                zone_readings: dict[str, list[dict]] | None = None) -> dict:
+    """Koszt jednego okresu w taryfie licznika (bez porównania taryf i rozbicia
+    dobowego) - do zapisu cykli dziennych/tygodniowych/miesięcznych."""
+    custom = energy_cfg.get("custom_tariffs") or {}
+    vat = float(energy_cfg.get("vat_percent", 23))
+    max_gap = float(energy_cfg.get("max_gap_minutes", 360)) * 60
+    scale = float(meter.get("scale", 1) or 1)
+    pricing = energy_cfg["tariffs"][meter["tariff"]]
+    tariff = resolve_tariff(meter["tariff"], pricing.get("variant"), custom)
+    if meter.get("zone_sensors"):
+        cons = consumption_from_zone_sensors(zone_readings or {}, tariff.zones, ts_from, ts_to,
+                                              max_gap_seconds=max_gap, scale=scale)
+        rows = [r for rs in (zone_readings or {}).values() for r in rs]
+    else:
+        cons = consumption_by_zone(readings or [], tariff, ts_from, ts_to, max_gap_seconds=max_gap, scale=scale)
+        rows = readings or []
+    result = compute_cost(cons, pricing, tariff, ts_from, ts_to, default_vat_percent=vat)
+    inside = [r["t"] for r in rows if ts_from <= r["t"] <= ts_to]
+    result["reading_ts"] = max(inside) if inside else None
+    return result
 
 
 def build_report(energy_cfg: dict, meter: dict, readings: list[dict] | None, ts_from: float, ts_to: float,

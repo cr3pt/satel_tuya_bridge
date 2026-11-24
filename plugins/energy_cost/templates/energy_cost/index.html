@@ -167,6 +167,24 @@
 </div>
 
 <div class="section">
+  <h2>Cykle zużycia (dni / tygodnie / miesiące)</h2>
+  <div class="section-hint">Zużycie i koszt energii (netto × VAT, bez opłat stałych) w kolejnych dobach, tygodniach (pn-nd) i miesiącach kalendarzowych dla licznika wybranego wyżej.
+    Wyniki są zapisywane w bazie, więc zamknięte okresy nie są liczone ponownie - można je szybko porównać. „Odczyt z” = ostatni odczyt licznika w danym okresie.</div>
+  <div class="toolbar">
+    <div><label>Cykl</label>
+      <select id="cycleType"><option value="daily">Dobowy</option><option value="weekly">Tygodniowy</option><option value="monthly" selected>Miesięczny</option></select></div>
+    <div><label>Liczba okresów</label>
+      <select id="cycleCount"><option value="7">7</option><option value="12" selected>12</option><option value="31">31</option><option value="52">52</option></select></div>
+    <div style="flex:0"><button id="cycleBtn" type="button">Pokaż</button></div>
+  </div>
+  <div id="cycleMsg" class="msg-box"></div>
+  <table id="cycleTable" style="display:none; margin-top:10px">
+    <thead id="cycleHead"></thead>
+    <tbody id="cycleRows"></tbody>
+  </table>
+</div>
+
+<div class="section">
   <h2>Czyszczenie odczytów prądu</h2>
   <div class="section-hint">Usuwa wszystkie zapisane odczyty liczników energii z bazy (konfiguracja liczników i taryf zostaje). Kolejne wartości zapiszą się z następnych wiadomości MQTT. Tego nie da się cofnąć.</div>
   <div class="row">
@@ -175,9 +193,11 @@
   </div>
   <div id="clearMsg" class="msg-box"></div>
   <h3>START LICZNIKA [kWh]</h3>
-  <div class="section-hint">Wartość odejmowana od stanu licznika z MQTT przed mnożeniem przez cenę (okres „Stan licznika”). Zużycie = stan − START. Puste = 0.</div>
+  <div class="section-hint">Wartość odejmowana od stanu licznika z MQTT przed mnożeniem przez cenę (okres „Stan licznika”). Zużycie = stan − START. Puste = 0.
+    Data startowa: od tego dnia liczone są okresy wstecz (np. „Ostatnie 30 dni” przy starcie 10 dni temu = stan dzisiaj − START), a odczyty sprzed tej daty są pomijane.</div>
   <div class="row">
     <div><label>Licznik</label><select id="startMeter"></select></div>
+    <div><label>Data startowa (od kiedy obowiązuje START)</label><input id="startDate" type="date"></div>
   </div>
   <div class="row" id="startFields"></div>
   <div class="actions-bar"><button id="startSaveBtn" type="button">Zapisz START LICZNIKA</button></div>
@@ -544,15 +564,19 @@ function priceParts(p) {
 async function loadStart() {
   const meter = document.getElementById('startMeter').value;
   const box = document.getElementById('startFields'); box.replaceChildren();
+  const dateInput = document.getElementById('startDate');
+  dateInput.value = '';
   if (!meter) return;
   const resp = await api(`/api/plugins/energy_cost/meter_start?meter=${encodeURIComponent(meter)}`);
   const data = await resp.json();
   if (!resp.ok) { showMsg('startMsg', 'error', data.error || 'Błąd'); return; }
+  dateInput.value = data.start_date || '';
+  dateInput.max = new Date().toLocaleDateString('sv-SE');
   data.registers.forEach(r => {
     const input = el('input', { type: 'number', step: 'any', min: 0, className: 's-start', value: r.start ?? '' });
     input.dataset.key = r.key;
     box.appendChild(el('div', {}, [
-      el('label', { textContent: `${r.zone || 'Licznik'} (${r.sensor}) - teraz: ${r.latest === null ? 'brak odczytu' : kwh(r.latest)}` }),
+      el('label', { textContent: `${r.zone || 'Licznik'} (${r.sensor}) - teraz: ${r.latest === null ? 'brak odczytu' : `${kwh(r.latest)} (odczyt ${fmtTs(r.latest_ts)})`}` }),
       input,
     ]));
   });
@@ -563,7 +587,8 @@ document.getElementById('startSaveBtn').addEventListener('click', async () => {
   document.querySelectorAll('#startFields .s-start').forEach(i => { start[i.dataset.key] = i.value.trim(); });
   const resp = await api('/api/plugins/energy_cost/meter_start', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ meter: document.getElementById('startMeter').value, start }),
+    body: JSON.stringify({ meter: document.getElementById('startMeter').value, start,
+                           start_date: document.getElementById('startDate').value }),
   });
   const data = await resp.json();
   showMsg('startMsg', resp.ok ? 'ok' : 'error', resp.ok ? data.message : (data.error || 'Błąd'));
@@ -586,7 +611,13 @@ async function runReport() {
   if (r.unallocated_kwh > 0) notes.push(`${kwh(r.unallocated_kwh)} kWh z okresów bez odczytów (${r.gaps} przerw) nie zostało przypisane do stref i NIE jest wliczone w koszt.`);
   if (r.resets > 0) notes.push(`Wykryto ${r.resets} spadków licznika (reset/wymiana) - te odcinki pominięto.`);
   if (r.missing_prices.length) notes.push('Brak ceny dla stref: ' + r.missing_prices.join(', ') + ' - ich koszt liczony jako 0.');
-  showMsg('reportMsg', notes.length ? 'warn' : 'ok', notes.length ? notes.join(' ') : 'Obliczono.');
+  const info = [];
+  if (data.reading_ts) info.push(`Ostatni odczyt licznika: ${fmtTs(data.reading_ts)}.`);
+  if (!stateMode && data.start_date && data.period && Math.abs(data.period.from - new Date(data.start_date + 'T00:00').getTime() / 1000) < 2)
+    info.push(`Okres liczony od daty startowej ${data.start_date}.`);
+  if (data.g12w_free_day_today && period === 'today') info.push('G12w: dziś dzień wolny (weekend/święto) - cała doba w strefie nocnej.');
+  notes.push(...info);
+  showMsg('reportMsg', notes.length > info.length ? 'warn' : 'ok', notes.length ? notes.join(' ') : 'Obliczono.');
   const rows = document.getElementById('zoneRows'); rows.replaceChildren();
   r.zones.forEach(z => rows.appendChild(el('tr', {}, [
     el('td', { textContent: z.zone }), el('td', { className: 'num', textContent: kwh(z.kwh) }),
@@ -748,6 +779,34 @@ async function runMonthly() {
   table.style.display = '';
 }
 document.getElementById('monthlyBtn').addEventListener('click', runMonthly);
+async function runCycles() {
+  const table = document.getElementById('cycleTable');
+  table.style.display = 'none';
+  const meter = document.getElementById('reportMeter').value;
+  if (!meter) { showMsg('cycleMsg', 'error', 'Najpierw zapisz konfigurację z co najmniej jednym licznikiem.'); return; }
+  const type = document.getElementById('cycleType').value, count = document.getElementById('cycleCount').value;
+  const resp = await api(`/api/plugins/energy_cost/cycles?meter=${encodeURIComponent(meter)}&cycle_type=${type}&count=${count}`);
+  const data = await resp.json();
+  if (!resp.ok) { showMsg('cycleMsg', 'error', data.error || 'Błąd'); return; }
+  const periods = data.periods || [];
+  if (!periods.length) { showMsg('cycleMsg', 'warn', 'Brak odczytów w wybranych okresach.'); return; }
+  const zones = [...new Set(periods.flatMap(p => Object.keys(p.kwh_by_zone)))];
+  document.getElementById('cycleHead').replaceChildren(el('tr', {}, [
+    el('th', { textContent: 'Okres' }), ...zones.map(z => el('th', { className: 'num', textContent: `${z} [kWh]` })),
+    el('th', { className: 'num', textContent: 'Razem [kWh]' }), el('th', { className: 'num', textContent: 'Koszt brutto [zł]' }),
+    el('th', { className: 'num', textContent: 'Odczyt z' }),
+  ]));
+  const body = document.getElementById('cycleRows'); body.replaceChildren();
+  periods.forEach(p => body.appendChild(el('tr', {}, [
+    el('td', { textContent: p.period_key + (p.complete ? '' : ' (w toku)') }),
+    ...zones.map(z => el('td', { className: 'num', textContent: kwh(p.kwh_by_zone[z] || 0) })),
+    el('td', { className: 'num', textContent: kwh(p.total_kwh) }), el('td', { className: 'num', textContent: zl(p.cost_gross) }),
+    el('td', { className: 'num', textContent: p.reading_ts ? fmtTs(p.reading_ts) : '—' }),
+  ])));
+  table.style.display = '';
+  showMsg('cycleMsg', 'ok', `Okresów: ${periods.length}.`);
+}
+document.getElementById('cycleBtn').addEventListener('click', runCycles);
 
 async function init() {
   const cfgResp = await api('/api/plugins/energy_cost/config');
