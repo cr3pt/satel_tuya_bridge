@@ -101,7 +101,7 @@ class TestFiles:
 
     def test_files_have_0600_and_stale_meter_files_removed(self, tmp_path):
         out = tmp_path / "out"
-        wmbus.write_wmbusmeters_files({"device": "auto"}, "127.0.0.1", 1883, [METER, {**METER, "name": "drugi"}], out)
+        wmbus.write_wmbusmeters_files({"device": "auto"}, "127.0.0.1", 1883, [METER, {**METER, "name": "drugi", "id": "87654321"}], out)
         for p in [out / "etc/wmbusmeters.conf", out / "etc/wmbusmeters.d/prad_dom", out / "etc/wmbusmeters.d/drugi"]:
             assert stat.S_IMODE(os.stat(p).st_mode) == 0o600
         wmbus.write_wmbusmeters_files({"device": "auto"}, "127.0.0.1", 1883, [METER], out)

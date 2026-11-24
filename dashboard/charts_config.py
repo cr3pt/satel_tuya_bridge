@@ -21,6 +21,7 @@ def validate_charts(raw) -> tuple[list[dict] | None, str | None]:
     if len(raw) > MAX_CHARTS:
         return None, f"Maksymalna liczba wykresów to {MAX_CHARTS}"
     cleaned: list[dict] = []
+    seen_ids: set[str] = set()
     for idx, item in enumerate(raw):
         if not isinstance(item, dict):
             return None, f"Wykres #{idx + 1}: oczekiwano obiektu"
@@ -60,8 +61,13 @@ def validate_charts(raw) -> tuple[list[dict] | None, str | None]:
             return None, f"Wykres '{title}': 'hours' musi być liczbą"
         if not (0.1 <= hours <= 24 * 366):
             return None, f"Wykres '{title}': 'hours' poza zakresem 0.1 - 8784"
+        chart_id = str(item.get("id") or f"chart_{idx + 1}").strip()[:40] or f"chart_{idx + 1}"
+        # Unikalne id - edycja/usuwanie w UI wskazuje wykres po id.
+        while chart_id in seen_ids:
+            chart_id = f"{chart_id[:34]}_{idx + 1}"
+        seen_ids.add(chart_id)
         cleaned.append({
-            "id": str(item.get("id") or f"chart_{idx + 1}").strip()[:40],
+            "id": chart_id,
             "title": title,
             "sensors": [s.strip() for s in sensors],
             "type": chart_type,

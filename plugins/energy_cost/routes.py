@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import bisect
 import time
 from datetime import datetime
 
@@ -225,9 +226,10 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
             raw_date = str(start_date).strip()
             if raw_date:
                 try:
-                    energy_cycles.parse_start_date_ts(raw_date)
-                except ValueError:
-                    return jsonify({"error": "Nieprawidłowa data startowa (oczekiwano RRRR-MM-DD)"}), 400
+                    energy_cycles.check_start_date(raw_date, time.time())
+                except ValueError as exc:
+                    msg = str(exc) if "przyszło" in str(exc) else "Nieprawidłowa data startowa (oczekiwano RRRR-MM-DD)"
+                    return jsonify({"error": msg}), 400
                 history.set_status(f"{START_DATE_PREFIX}{meter['name']}", "energy_start", raw_date, label=meter["name"])
             else:
                 history.delete_status(f"{START_DATE_PREFIX}{meter['name']}")
@@ -266,24 +268,92 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         flagged = energy_meters.list_energy_meter_sensors(get_history())
         return jsonify({"flagged": [f for f in flagged if f["sensor"] not in used]})
 
-    @app.route("/api/plugins/energy_cost/cycles", methods=["GET"])
-    async def api_plugin_energy_cost_cycles():
-        """Zapisane cykle zużycia (dzienne/tygodniowe/miesięczne) do szybkich zestawień i porównań."""
-        meter_id = request.args.get("meter") or request.args.get("serial") or None
-        cycle_type = request.args.get("cycle_type") or None
+    def _start_ts(history, meter: dict) -> float | None:
         try:
-            limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+            return energy_cycles.parse_start_date_ts(_get_start_date(history, meter["name"]))
         except ValueError:
-            return jsonify({"error": "limit: wymagana liczba"}), 400
-        rows = get_history().get_energy_cycles(meter_id=meter_id, cycle_type=cycle_type, limit=limit)
-        return jsonify({"cycles": rows})
+            return None
 
     def _readings_for(meter: dict, ts_from: float, ts_to: float, pad: float):
+        """Odczyty z zapasem `pad`; od daty startowej licznika z START LICZNIKA
+        jako punktem bazowym (patrz `energy_cycles.apply_start_baseline`)."""
+        history = get_history()
+        start_ts = _start_ts(history, meter)
+        start = tariffs.load_meter_start(history, meter["name"]) if start_ts is not None else {}
+        scale = float(meter.get("scale", 1) or 1)
         zone_sensors = meter.get("zone_sensors") or {}
         if zone_sensors:
-            return None, {zone: get_history().get_energy_history(sensor, ts_from - pad, ts_to + pad)
+            return None, {zone: energy_cycles.apply_start_baseline(
+                              history.get_energy_history(sensor, ts_from - pad, ts_to + pad),
+                              start_ts, start.get(zone), scale)
                           for zone, sensor in zone_sensors.items()}
-        return get_history().get_energy_history(meter["sensor"], ts_from - pad, ts_to + pad), None
+        return energy_cycles.apply_start_baseline(
+            history.get_energy_history(meter["sensor"], ts_from - pad, ts_to + pad),
+            start_ts, start.get(None), scale), None
+
+    def _meter_key(meter: dict) -> str:
+        return str(meter.get("serial") or meter.get("id") or meter["name"])
+
+    def _refresh_cycles(history, energy: dict, meter: dict, cycle_type: str, count: int, now: float) -> None:
+        """Przelicza i zapisuje w `energy_cycles` ostatnie `count` cykli. Okresy
+        zamknięte, przeliczone już po swoim końcu (+ zapas na spóźnione odczyty),
+        są pomijane - zestawienia czytają wtedy gotowe wartości z bazy."""
+        pad = float(energy.get("max_gap_minutes", 360)) * 60
+        key = _meter_key(meter)
+        stored: dict[str, float] = {}
+        for row in history.get_energy_cycles(meter_id=key, cycle_type=cycle_type, limit=count * 8):
+            prev = stored.get(row["period_key"])
+            stored[row["period_key"]] = row["updated_ts"] if prev is None else min(prev, row["updated_ts"])
+        start_ts = _start_ts(history, meter)
+        todo = []
+        for period_key, ts_from, ts_to in energy_cycles.recent_periods(cycle_type, now, count):
+            if start_ts is not None:
+                if ts_to <= start_ts:
+                    continue
+                ts_from = max(ts_from, start_ts)
+            full_end = energy_cycles.period_end(cycle_type, period_key)
+            if full_end + pad <= now and stored.get(period_key, 0) >= full_end + pad:
+                continue
+            todo.append((period_key, ts_from, ts_to))
+        if not todo:
+            return
+        readings, zone_readings = _readings_for(meter, min(t[1] for t in todo), max(t[2] for t in todo), pad)
+
+        def window(rows, a: float, b: float):
+            if rows is None:
+                return None
+            ts = [r["t"] for r in rows]
+            return rows[bisect.bisect_left(ts, a - pad):bisect.bisect_right(ts, b + pad)]
+
+        for period_key, ts_from, ts_to in todo:
+            r = tariffs.period_cost(
+                energy, meter, window(readings, ts_from, ts_to), ts_from, ts_to,
+                zone_readings={z: window(rows, ts_from, ts_to) for z, rows in zone_readings.items()}
+                if zone_readings is not None else None)
+            if r["reading_ts"] is None and r["total_kwh"] == 0:
+                continue
+            energy_cycles.persist_cycle_snapshot(
+                history, key, cycle_type, period_key, r["zones"], r["vat_percent"], r["reading_ts"])
+
+    def _cycle_periods(rows: list[dict], cycle_type: str, now: float) -> list[dict]:
+        """Wiersze per strefa -> jeden wpis na okres (najnowszy pierwszy)."""
+        out: dict[str, dict] = {}
+        for row in rows:
+            p = out.setdefault(row["period_key"], {
+                "period_key": row["period_key"], "kwh_by_zone": {}, "cost_gross_by_zone": {},
+                "total_kwh": 0.0, "cost_net": 0.0, "cost_gross": 0.0, "reading_ts": None, "updated_ts": None,
+            })
+            p["kwh_by_zone"][row["zone"]] = row["kwh"]
+            p["cost_gross_by_zone"][row["zone"]] = row["cost_gross"]
+            p["total_kwh"] = round(p["total_kwh"] + row["kwh"], 3)
+            p["cost_net"] = round(p["cost_net"] + row["cost_net"], 2)
+            p["cost_gross"] = round(p["cost_gross"] + row["cost_gross"], 2)
+            for f in ("reading_ts", "updated_ts"):
+                if row[f] is not None and (p[f] is None or row[f] > p[f]):
+                    p[f] = row[f]
+        for p in out.values():
+            p["complete"] = energy_cycles.period_end(cycle_type, p["period_key"]) <= now
+        return sorted(out.values(), key=lambda p: p["period_key"], reverse=True)
 
     def _latest_reading_ts(history, meter: dict) -> float | None:
         timestamps = []
@@ -292,6 +362,39 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
             if row and row.get("t"):
                 timestamps.append(row["t"])
         return max(timestamps) if timestamps else None
+
+    @app.route("/api/plugins/energy_cost/cycles", methods=["GET"])
+    async def api_plugin_energy_cost_cycles():
+        """Cykle zużycia (dzienne / tygodniowe ISO / miesięczne) zapisane w bazie
+        do szybkich zestawień i porównań. Dla `meter` + `cycle_type` brakujące
+        i bieżące okresy są najpierw przeliczane z odczytów i zapisywane."""
+        history = get_history()
+        energy = _get_energy()
+        cycle_type = request.args.get("cycle_type") or None
+        name = request.args.get("meter") or request.args.get("serial") or ""
+        meter = _find_meter(name) if name else None
+        if name and meter is None:
+            return jsonify({"error": "Nie znaleziono licznika"}), 404
+        try:
+            limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+            count = int(request.args.get("count", 0))
+        except ValueError:
+            return jsonify({"error": "limit/count: wymagana liczba"}), 400
+        now = time.time()
+        if meter is not None and cycle_type in energy_cycles.CYCLE_TYPES and count > 0:
+            count = min(count, energy_cycles.MAX_CYCLE_COUNT[cycle_type])
+            try:
+                _refresh_cycles(history, energy, meter, cycle_type, count, now)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+            limit = max(limit, min(count * 8, 3000))
+        meter_id = _meter_key(meter) if meter is not None else None
+        rows = history.get_energy_cycles(meter_id=meter_id, cycle_type=cycle_type, limit=limit)
+        resp = {"cycles": rows}
+        if cycle_type in energy_cycles.CYCLE_TYPES:
+            periods = _cycle_periods(rows, cycle_type, now)
+            resp["periods"] = periods[:count] if count > 0 else periods
+        return jsonify(resp)
 
     @app.route("/api/plugins/energy_cost/monthly", methods=["GET"])
     async def api_plugin_energy_cost_monthly():
@@ -311,7 +414,8 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
         pad = float(energy.get("max_gap_minutes", 360)) * 60
         readings, zone_readings = _readings_for(meter, ts_from, now, pad)
         try:
-            rows = tariffs.monthly_report(energy, meter, readings, months, now, zone_readings=zone_readings)
+            rows = tariffs.monthly_report(energy, meter, readings, months, now, zone_readings=zone_readings,
+                                          start_ts=_start_ts(get_history(), meter))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify({"meter": meter["name"], "tariff": meter["tariff"], "months": rows})
@@ -370,7 +474,7 @@ def register(app: Quart, *, require_auth, get_auth_guard, get_config_store, get_
             today_local = datetime.fromtimestamp(now, energy_cycles.TZ).date()
             report["g12w_free_day_today"] = energy_cycles.is_g12w_daytime_disabled(today_local)
 
-        meter_key = str(meter.get("serial") or meter.get("id") or meter["name"])
+        meter_key = _meter_key(meter)
         zones_list, vat = energy_cycles.cycle_inputs(report, float(energy.get("vat_percent", 23)))
         target = energy_cycles.cycle_target(period, now, tariffs.MONTH_PERIOD_PREFIX) if zones_list else None
         if target:

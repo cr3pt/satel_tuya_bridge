@@ -465,3 +465,72 @@ class TestMonthlyEndpoint:
         resp = await client.get("/api/plugins/energy_cost/report?meter=dom&period=month:2026-10", headers=AUTH)
         assert resp.status_code == 200
         assert "lines" in (await resp.get_json())["result"]
+
+
+class TestStartDateAndCycles:
+    """Data startowa licznika (START jako punkt bazowy) i cykle zapisywane w bazie."""
+
+    G11 = {**CFG, "max_gap_minutes": 10080,
+           "meters": [{"name": "dom", "label": "Dom", "sensor": "licznik_kwh", "tariff": "G11"}]}
+
+    @staticmethod
+    def _days_ago(n: int) -> str:
+        from datetime import date, timedelta
+        return (datetime.now(TZ).date() - timedelta(days=n)).isoformat()
+
+    async def _seed(self, client, start_days_ago=10, start_value=100.0):
+        import dashboard.app as app_module
+        await _save(client, self.G11)
+        h = app_module.history
+        now = time.time()
+        h.write_reading("licznik_kwh", 9000.0, ts=now - 20 * 86400)  # stary licznik przed wymianą
+        h.write_reading("licznik_kwh", 110.0, ts=now - 5 * 86400)    # pierwsze odczyty w bazie po starcie
+        h.write_reading("licznik_kwh", 125.0, ts=now - 60)
+        resp = await client.post("/api/plugins/energy_cost/meter_start", headers=AUTH, json={
+            "meter": "dom", "start": {"_": start_value}, "start_date": self._days_ago(start_days_ago)})
+        assert resp.status_code == 200
+        return h
+
+    async def test_last_30_days_from_start_date_uses_start_value_as_baseline(self, client):
+        await self._seed(client)
+        rep = await (await client.get("/api/plugins/energy_cost/report?meter=dom&period=30d", headers=AUTH)).get_json()
+        assert rep["result"]["total_kwh"] == pytest.approx(25.0)
+        assert rep["result"]["resets"] == 0
+        assert rep["start_date"] == self._days_ago(10)
+        assert rep["period"]["from"] == pytest.approx(
+            datetime.fromisoformat(self._days_ago(10)).replace(tzinfo=TZ).timestamp())
+        assert rep["reading_ts"] == pytest.approx(time.time() - 60, abs=30)
+
+    async def test_future_start_date_rejected(self, client):
+        await self._seed(client)
+        resp = await client.post("/api/plugins/energy_cost/meter_start", headers=AUTH, json={
+            "meter": "dom", "start": {"_": 1}, "start_date": self._days_ago(-3)})
+        assert resp.status_code == 400 and "przyszło" in (await resp.get_json())["error"]
+
+    async def test_monthly_skips_readings_before_start_date(self, client):
+        await self._seed(client)
+        data = await (await client.get("/api/plugins/energy_cost/monthly?meter=dom&months=3", headers=AUTH)).get_json()
+        assert sum(m["total_kwh"] for m in data["months"]) == pytest.approx(25.0)
+
+    async def test_cycles_are_computed_persisted_and_have_reading_ts(self, client):
+        h = await self._seed(client)
+        url = "/api/plugins/energy_cost/cycles?meter=dom&cycle_type={}&count={}"
+        for cycle_type, count in (("daily", 31), ("weekly", 6), ("monthly", 3)):
+            resp = await client.get(url.format(cycle_type, count), headers=AUTH)
+            assert resp.status_code == 200
+            periods = (await resp.get_json())["periods"]
+            assert sum(p["total_kwh"] for p in periods) == pytest.approx(25.0, abs=0.01)
+            assert periods[0]["complete"] is False
+            assert any(p["reading_ts"] for p in periods)
+            stored = h.get_energy_cycles(meter_id="dom", cycle_type=cycle_type)
+            assert stored and all(r["cycle_type"] == cycle_type for r in stored)
+        weekly = h.get_energy_cycles(meter_id="dom", cycle_type="weekly")
+        assert all("-W" in r["period_key"] for r in weekly)
+
+    async def test_cycles_bad_type_or_meter(self, client):
+        await self._seed(client)
+        assert (await client.get("/api/plugins/energy_cost/cycles?meter=nie&cycle_type=daily&count=3",
+                                 headers=AUTH)).status_code == 404
+        data = await (await client.get("/api/plugins/energy_cost/cycles?meter=dom&cycle_type=xx&count=3",
+                                       headers=AUTH)).get_json()
+        assert data["cycles"] == [] and "periods" not in data
